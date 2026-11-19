@@ -124,7 +124,9 @@ async def get_or_create_user(
                     first_name=first_name,
                     language_code=language_code or "my",
                     account_category=AccountCategory.FREE.value,
-                    recap_credits=DEFAULT_SIGNUP_RECAP_CREDITS,
+                    recap_credits=float(DEFAULT_SIGNUP_RECAP_CREDITS),
+                    recap_credit_seconds=DEFAULT_SIGNUP_RECAP_CREDITS * 60,
+                    reserved_recap_seconds=0,
                     referral_code=gen_code,
                 )
                 session.add(user)
@@ -487,6 +489,8 @@ async def credit_purchased_minutes(
     minutes: int,
     payment_id: str | None = None,
     note: str | None = None,
+    *,
+    record_wallet_tx: bool = True,
 ) -> MinuteBalance:
     """Credit purchased minutes and update account status to PURCHASED."""
     if minutes <= 0:
@@ -516,6 +520,20 @@ async def credit_purchased_minutes(
         note=note or f"Purchased {minutes} minutes ({seconds}s)",
     )
     session.add(event)
+    if record_wallet_tx:
+        from app.services.billing import append_wallet_transaction
+
+        await append_wallet_transaction(
+            session,
+            user=user,
+            balance=balance,
+            tx_type="PURCHASE",
+            wallet_kind="VOICE",
+            recap_seconds_delta=0,
+            voice_seconds_delta=seconds,
+            reference_id=payment_id,
+            note=note or f"Purchased {minutes} voice minutes",
+        )
     await session.flush()
 
     logger.info("Credited %s minutes (%ss) to user %s (payment=%s)", minutes, seconds, user_id, payment_id)
@@ -1173,55 +1191,49 @@ async def record_recap_credit_event(
     *,
     user_id: int,
     direction: str,
-    credits: int,
+    credits: float | int,
+    seconds: int | None = None,
     reference_id: str | None = None,
     note: str | None = None,
 ) -> None:
-    """Append one recap-credit ledger event (Batch O, billing option C).
+    """Append one recap-credit ledger event (supports fractional second-level credits).
 
     The caller owns the transaction: the event is added to `session`
     alongside the balance change it describes, so the two commit (or
     roll back) together.
     """
-    if credits <= 0:
+    val = float(credits or 0.0)
+    if val <= 0:
         return
+    sec_val = int(seconds) if seconds is not None else int(round(val * 60))
     session.add(
         RecapCreditLedgerEvent(
             user_id=user_id,
             source="RECAP",
             direction=direction,
-            credits=int(credits),
+            credits=round(val, 4),
+            seconds=max(0, sec_val),
             reference_id=reference_id,
             note=note,
         )
     )
 
 
-async def recap_debit_total_for_job(session: AsyncSession, job_id: str) -> int:
-    """Batch AJ (H11): total recap credits EVER charged for a job,
-    from the durable ledger (submit DEBIT reference = the bare job
-    id; top-ups and retry charges share it). Summed in Python — the
-    codebase bans func.sum under app/."""
+async def recap_debit_total_for_job(session: AsyncSession, job_id: str) -> float:
+    """Total recap credits EVER charged for a job, from the durable ledger."""
     rows = (await session.execute(
         select(RecapCreditLedgerEvent).where(
             RecapCreditLedgerEvent.reference_id == job_id,
             RecapCreditLedgerEvent.direction == LedgerDirection.DEBIT.value,
         )
     )).scalars().all()
-    return sum(int(r.credits or 0) for r in rows)
+    return round(sum(float(r.credits or 0) for r in rows), 4)
 
 
 async def recap_refund_family(
     session: AsyncSession, job_id: str
-) -> tuple[int, int]:
-    """Batch DC: (total credits, row count) across a job's refund
-    family — the plain ``REFUND:<job_id>`` row plus any
-    ``REFUND:<job_id>#<n>`` top-up rows. A job re-charged by an
-    admin retry (Batch AJ H6) can legitimately be refunded more
-    than once, but the partial unique index
-    ``uq_recap_ledger_refund_ref`` allows only one CREDIT row per
-    exact reference, so later refunds take a ``#<n>`` suffix and
-    every total must sum the whole family."""
+) -> tuple[float, int]:
+    """(total credits, row count) across a job's refund family."""
     base = recap_refund_reference(job_id)
     like_base = (
         base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -1242,13 +1254,11 @@ async def recap_refund_family(
         if r.reference_id == base
         or (r.reference_id or "").startswith(base + "#")
     ]
-    return sum(int(r.credits or 0) for r in rows), len(rows)
+    return round(sum(float(r.credits or 0) for r in rows), 4), len(rows)
 
 
-async def recap_refund_total_for_job(session: AsyncSession, job_id: str) -> int:
-    """Batch AJ (H11): total recap credits ever refunded for a job
-    (CREDIT events under the REFUND:<job_id> reference; Batch DC:
-    the whole refund family, including #<n> top-up rows)."""
+async def recap_refund_total_for_job(session: AsyncSession, job_id: str) -> float:
+    """Total recap credits ever refunded for a job."""
     total, _count = await recap_refund_family(session, job_id)
     return total
 
@@ -1309,28 +1319,28 @@ async def backfill_recap_credit_opening_balances(
         )
     ).all()
 
-    net_by_user: dict[int, int] = {}
+    net_by_user: dict[int, float] = {}
     for uid, direction, credits in events:
-        delta = int(credits or 0)
+        delta = float(credits or 0.0)
         if direction == LedgerDirection.CREDIT.value:
-            net_by_user[uid] = net_by_user.get(uid, 0) + delta
+            net_by_user[uid] = round(net_by_user.get(uid, 0.0) + delta, 4)
         elif direction == LedgerDirection.DEBIT.value:
-            net_by_user[uid] = net_by_user.get(uid, 0) - delta
+            net_by_user[uid] = round(net_by_user.get(uid, 0.0) - delta, 4)
 
     candidate_ids: list[int] = []
     already_balanced = 0
     needing_backfill = 0
-    total_shortfall = 0
+    total_shortfall = 0.0
     negative_shortfall = 0
 
     for uid, raw_balance in users:
-        balance = int(raw_balance or 0)
-        shortfall = balance - net_by_user.get(uid, 0)
-        if shortfall == 0:
+        balance = round(float(raw_balance or 0.0), 4)
+        shortfall = round(balance - net_by_user.get(uid, 0.0), 4)
+        if abs(shortfall) < 1e-4:
             already_balanced += 1
         elif shortfall > 0:
             needing_backfill += 1
-            total_shortfall += shortfall
+            total_shortfall = round(total_shortfall + shortfall, 4)
             candidate_ids.append(uid)
         else:
             negative_shortfall += 1
@@ -1339,7 +1349,7 @@ async def backfill_recap_credit_opening_balances(
                 uid,
                 shortfall,
                 balance,
-                net_by_user.get(uid, 0),
+                net_by_user.get(uid, 0.0),
             )
 
     summary = {
@@ -1349,13 +1359,13 @@ async def backfill_recap_credit_opening_balances(
         "total_shortfall_credits": total_shortfall,
         "negative_shortfall_users": negative_shortfall,
         "users_backfilled": 0,
-        "credits_written": 0,
+        "credits_written": 0.0,
     }
     if dry_run or not candidate_ids:
         return summary
 
     users_backfilled = 0
-    credits_written = 0
+    credits_written = 0.0
     for uid in candidate_ids:
         locked_user = (
             await session.execute(
@@ -1373,16 +1383,16 @@ async def backfill_recap_credit_opening_balances(
                 ).where(RecapCreditLedgerEvent.user_id == uid)
             )
         ).all()
-        user_net = 0
+        user_net = 0.0
         for direction, credits in user_events:
-            delta = int(credits or 0)
+            delta = float(credits or 0.0)
             if direction == LedgerDirection.CREDIT.value:
-                user_net += delta
+                user_net = round(user_net + delta, 4)
             elif direction == LedgerDirection.DEBIT.value:
-                user_net -= delta
+                user_net = round(user_net - delta, 4)
 
-        shortfall = int(locked_user.recap_credits or 0) - user_net
-        if shortfall <= 0:
+        shortfall = round(float(locked_user.recap_credits or 0.0) - user_net, 4)
+        if shortfall <= 1e-4:
             continue
 
         await record_recap_credit_event(
@@ -1394,7 +1404,7 @@ async def backfill_recap_credit_opening_balances(
             note="opening balance backfill 2026-11",
         )
         users_backfilled += 1
-        credits_written += shortfall
+        credits_written = round(credits_written + shortfall, 4)
 
     await session.flush()
     summary["users_backfilled"] = users_backfilled
@@ -1540,6 +1550,20 @@ async def admin_adjust_balance(
                 note=f"Admin {admin_id} adjustment: {clean_reason} ({source.value})",
             )
             session.add(event)
+
+            from app.services.billing import append_wallet_transaction
+
+            await append_wallet_transaction(
+                session,
+                user=user,
+                balance=balance,
+                tx_type="ADMIN_ADJUST",
+                wallet_kind="VOICE",
+                recap_seconds_delta=0,
+                voice_seconds_delta=(seconds if direction == LedgerDirection.CREDIT else -seconds),
+                reference_id=idempotency_key,
+                note=f"Admin {admin_id}: {clean_reason} ({source.value})",
+            )
 
             audit_details = {
                 "seconds": seconds,

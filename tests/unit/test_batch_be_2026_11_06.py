@@ -388,144 +388,88 @@ def _submit(ledger, monkeypatch, *, uid=USER_ID, credits=5,
 
 def test_submit_on_max_quotes_band_plus_one_and_stamps(ledger, monkeypatch):
     from app.webapp import api as api_mod
-    from app.webapp.api import (
-        _apply_recap_band_top_up,
-        _refund_recap_job_charge,
-    )
 
+    _tiered_on(monkeypatch)
+    # Official 1 Credit = 1 Min Final Output billing: 324s reserves 5.40 Cr
+    # regardless of render_quality (no arbitrary Max +1 credit surcharge).
+    result = _submit(
+        ledger, monkeypatch, credits=6, duration_seconds=324,
+        render_quality="max",
+    )
+    assert result[0] == "ok"
+    resp = result[1]
+    assert resp["estimated_recap_credits"] == pytest.approx(5.4, abs=0.01)
+    assert resp["estimated_recap_seconds"] == 324
+    assert ledger.credits() == pytest.approx(0.6, abs=0.01)
+    entry = api_mod.RECAP_JOBS_REGISTRY[resp["recap_id"]]
+    assert asyncio.run(api_mod._refund_recap_job_charge(USER_ID, entry)) is True
+    assert ledger.credits() == 6
+
+
+def test_submit_on_standard_and_high_have_no_surcharge(ledger, monkeypatch):
+    _tiered_on(monkeypatch)
+    for quality in ("standard", "high"):
+        uid = USER_ID + (10 if quality == "high" else 0)
+        result = _submit(
+            ledger, monkeypatch, uid=uid, credits=6,
+            duration_seconds=324, render_quality=quality,
+        )
+        assert result[0] == "ok"
+        resp = result[1]
+        assert resp["estimated_recap_credits"] == pytest.approx(5.4, abs=0.01)
+
+
+def test_submit_on_max_blocks_when_balance_covers_band_only(ledger, monkeypatch):
     _tiered_on(monkeypatch)
     result = _submit(
         ledger, monkeypatch, credits=5, duration_seconds=324,
         render_quality="max",
     )
-    assert result[0] == "ok"
-    resp = result[1]
-    # 5:24 → band 2, Max → quote 3; the submit still takes 1 credit.
-    assert resp["credits_total"] == 3
-    assert resp["credits_charged"] == 1
-    assert ledger.credits() == 4
-
-    entry = api_mod.RECAP_JOBS_REGISTRY[resp["recap_id"]]
-    assert entry["tiered_pricing"] is True
-    assert entry["max_quality_surcharge"] == 1
-
-    # The worker charges exactly the quote; a failure refunds it all.
-    charged = asyncio.run(
-        _apply_recap_band_top_up(USER_ID, entry, is_admin_user=False)
-    )
-    assert charged == resp["credits_total"]
-    assert ledger.credits() == 2  # 5 − 3 in total
-    assert asyncio.run(_refund_recap_job_charge(USER_ID, entry)) is True
-    assert ledger.credits() == 5
-    assert entry["credits_refunded"] == 3
-
-    # The persisted blob carries the pinned surcharge for restarts.
-    import json
-
-    async def _blob():
-        from app.models.schema import Job
-
-        async with ledger.make_session() as s:
-            job = await s.get(Job, resp["recap_id"])
-            return json.loads(job.recap_config)
-
-    state = asyncio.run(_blob())
-    assert state["max_quality_surcharge"] == 1
-    assert state["tiered_pricing"] is True
-
-
-def test_submit_on_standard_and_high_have_no_surcharge(ledger, monkeypatch):
-    from app.webapp import api as api_mod
-
-    _tiered_on(monkeypatch)
-    for quality in ("standard", "high"):
-        uid = USER_ID + (10 if quality == "high" else 0)
-        result = _submit(
-            ledger, monkeypatch, uid=uid, credits=5,
-            duration_seconds=324, render_quality=quality,
-        )
-        assert result[0] == "ok"
-        resp = result[1]
-        assert resp["credits_total"] == 2  # band only
-        entry = api_mod.RECAP_JOBS_REGISTRY[resp["recap_id"]]
-        assert entry["max_quality_surcharge"] == 0
-
-
-def test_submit_on_max_blocks_when_balance_covers_band_only(ledger, monkeypatch):
-    _tiered_on(monkeypatch)
-    # Band is 2 and the user holds exactly 2 — Max makes the total 3,
-    # so the submit is refused before any credit moves.
-    result = _submit(
-        ledger, monkeypatch, credits=2, duration_seconds=324,
-        render_quality="max",
-    )
     assert result[0] == "error"
     assert result[1] == 403
-    assert "3 Credits" in result[2]
-    assert ledger.credits() == 2
+    assert ledger.credits() == 5
 
 
 def test_submit_on_segmented_max_quote_includes_surcharge(ledger, monkeypatch):
     _tiered_on(monkeypatch)
-    # 25 minutes → band 9; Max → 10. A balance of 9 covered the old
-    # band and must now be refused; 10 is accepted with quote 10.
     result = _submit(
-        ledger, monkeypatch, credits=9, duration_seconds=1500,
+        ledger, monkeypatch, credits=24, duration_seconds=1500,
         split_video=True, split_minutes=10, render_quality="max",
     )
     assert result[0] == "error"
     assert result[1] == 403
-    assert "10 Credits" in result[2]
-    assert ledger.credits() == 9
+    assert ledger.credits() == 24
 
     result = _submit(
-        ledger, monkeypatch, uid=USER_ID + 2, credits=10,
+        ledger, monkeypatch, uid=USER_ID + 2, credits=25,
         duration_seconds=1500, split_video=True, split_minutes=10,
         render_quality="max",
     )
     assert result[0] == "ok"
     resp = result[1]
     assert resp["estimated_parts"] == 3
-    assert resp["credits_total"] == 10
-    assert resp["credits_charged"] == 1
+    assert resp["estimated_recap_credits"] == 25.0
 
 
 def test_submit_off_max_is_legacy_byte_identical(ledger, monkeypatch):
-    from app.webapp import api as api_mod
-
-    # Switch OFF + Max: no tiered keys anywhere, one credit charged,
-    # surcharge stamp is 0 — the pre-AO world exactly.
+    _tiered_on(monkeypatch)
     result = _submit(
-        ledger, monkeypatch, credits=5, duration_seconds=324,
+        ledger, monkeypatch, credits=6, duration_seconds=324,
         render_quality="max",
     )
     assert result[0] == "ok"
-    resp = result[1]
-    assert "credits_total" not in resp
-    assert resp["credits_charged"] == 1
-    assert ledger.credits() == 4
-    entry = api_mod.RECAP_JOBS_REGISTRY[resp["recap_id"]]
-    assert entry["tiered_pricing"] is False
-    assert entry["max_quality_surcharge"] == 0
+    assert result[1]["estimated_recap_credits"] == pytest.approx(5.4, abs=0.01)
 
 
 def test_submit_on_free_user_max_is_clamped_before_pricing(ledger, monkeypatch):
-    from app.webapp import api as api_mod
-
     _tiered_on(monkeypatch)
-    # A FREE user asking for Max is AU-clamped to Standard at
-    # submit, so no surcharge can accrue: 100s → band 1, quote 1.
     result = _submit(
         ledger, monkeypatch, credits=3, category="FREE",
         duration_seconds=100, render_quality="max",
     )
     assert result[0] == "ok"
-    resp = result[1]
-    assert resp["credits_total"] == 1
-    assert resp["credits_charged"] == 1
-    entry = api_mod.RECAP_JOBS_REGISTRY[resp["recap_id"]]
-    assert entry["max_quality_surcharge"] == 0
-    assert ledger.credits() == 2
+    assert result[1]["estimated_recap_seconds"] == 100
+    assert ledger.credits() == pytest.approx(3 - 100 / 60, abs=0.02)
 
 
 # ── BE-2: admin toggle rides the audited write path ──────────────────
@@ -581,17 +525,9 @@ def test_admin_settings_toggle_round_trip(ledger):
 def test_fact_sheet_follows_the_switch(ledger, monkeypatch):
     from app.services.group_ai_admin import build_fact_sheet
 
-    off = build_fact_sheet()
-    assert "၁ ကြိမ်ကို Recap Credit 1 ခု" in off
-    assert "အပိုင်း ၁ ပိုင်းကို Credit 1 ခု စီ ကျပါတယ်" in off
-    assert "Max အရည်အသွေး ရွေးရင်" not in off
-
-    _tiered_on(monkeypatch)
-    on = build_fact_sheet()
-    assert "၃ မိနစ် တစ်ပိုင်းလျှင်" in on
-    assert "Recap Credit 1 ခု (ဥပမာ ၁၀ မိနစ် = 4 Credits)" in on
-    assert "+1 Credit ထပ်ကျပါတယ်" in on
-    assert "အပိုင်း ၁ ပိုင်းကို Credit 1 ခု စီ ကျပါတယ်" not in on
+    sheet = build_fact_sheet()
+    assert "1 Credit = Final Recap Output 1" in sheet
+    assert "Normal AI Voice" in sheet
 
 
 def test_help_guide_states_band_rule_both_locales():
@@ -604,14 +540,12 @@ def test_help_guide_states_band_rule_both_locales():
         (REPO_ROOT / "locales/en/messages.json").read_text(encoding="utf-8")
     )
     my_guide = my["help_settings_guide"]
-    assert "၃ မိနစ် တစ်ပိုင်းလျှင် 1 Credit" in my_guide
-    assert "Max အရည်အသွေး ရွေးချယ်လျှင် +1 Credit" in my_guide
-    assert "အပိုင်းတစ်ခုလျှင် 1 Credit ကျသင့်ပါသည်" not in my_guide
+    assert "1 Recap Credit = Final Output 1 မိနစ်" in my_guide
+    assert "၃ မိနစ် တစ်ပိုင်း" not in my_guide
 
     en_guide = en["help_settings_guide"]
-    assert "1 credit per started 3 minutes" in en_guide
-    assert "+1 credit when you choose Max render quality" in en_guide
-    assert "1 credit per part" not in en_guide
+    assert "1 Recap Credit = 1 Minute Final Recap Output" in en_guide
+    assert "1 credit per started 3 minutes" not in en_guide
 
 
 # ── Wiring contracts (API / Mini App / i18n / token) ─────────────────
@@ -626,36 +560,13 @@ def test_batch_be_wiring_contracts():
     i18n_js = _read("app/webapp/static/js/i18n.js")
     html = _read("app/webapp/static/index.html")
 
-    # BE-1: helpers + both top-up targets + submit pin + blob pin +
-    # execution-entry derivation for unstamped entries.
     assert "def _recap_max_quality_surcharge(" in api_py
     assert "def _entry_max_quality_surcharge(" in api_py
-    assert api_py.count("+ _entry_max_quality_surcharge(entry)") == 2
-    assert '"max_quality_surcharge": submit_max_surcharge' in api_py
-    assert "max_quality_surcharge=submit_max_surcharge" in api_py
-    assert "submit_max_surcharge = (" in api_py
-    assert 'entry["max_quality_surcharge"] = (' in api_py
     assert "_tiered_recap_pricing_enabled()" in api_py
 
-    # BE-1 quote: the tiered branch adds the surcharge from the
-    # selected quality and shows the breakdown in BOTH surfaces
-    # (cost hint + Step-4 line); quality changes repaint the quote.
-    assert 'state.recapRenderQuality === "max"' in app_js
-    assert 'tf("recap_tiered_cost_estimate_max"' in app_js
-    assert 'tf("recap_step4_quote_breakdown"' in app_js
     assert 'id="recap-step4-quote-breakdown"' in html
-    for key in (
-        "recap_tiered_cost_estimate_max:",
-        "recap_step4_quote_breakdown:",
-    ):
-        assert i18n_js.count(key) == 2, key
-    assert "{duration}" in i18n_js and "{total}" in i18n_js
-
-    # BE-2: toggle element + load + save wiring + i18n pair, riding
-    # the existing payload field and GET exposure.
     assert 'id="adm-set-tiered-pricing"' in html
     assert 'data-i18n="settings_tiered_pricing"' in html
-    # Batch BY: the load paint goes through the dirty guard helper.
     assert "_admPaintChecked(elTieredPricing, !!s.tiered_recap_pricing_enabled)" in app_js
     assert "tiered_recap_pricing_enabled: tieredPricing" in app_js
     assert '"tiered_recap_pricing_enabled": bool(getattr(settings,' in api_py

@@ -136,7 +136,7 @@ async def test_f1_approve_slip_recap_only_plan_still_works(db_session, monkeypat
     bal = await get_minute_balance(db_session, buyer.id)
     assert bal.purchased_seconds == 0  # no minutes on a recap-only plan
     await db_session.refresh(buyer)
-    assert buyer.recap_credits == 3 + 5
+    assert buyer.recap_credits == 3 + 30
     assert buyer.account_category == AccountCategory.PURCHASED.value
     stored = await db_session.get(PaymentRequest, pay.id)
     assert stored.status == PaymentStatus.APPROVED.value

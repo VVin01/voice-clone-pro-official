@@ -179,23 +179,18 @@ async def test_history_job_id_prefix_search(db_session):
 
 @pytest.mark.asyncio
 async def test_pricing_list_returns_active_plans(db_session):
+    from app.services.payments import PLAN_CATALOGUE
+
     admin = _user(ADMIN_ID)
     await _seed(
         db_session, admin,
-        PricingPlan(code="MIN_10", minutes=10, price_mmk=8000, is_active=True, sort_order=1),
-        PricingPlan(code="MIN_30", minutes=30, price_mmk=20000, is_active=True, sort_order=2),
+        PricingPlan(code="voice_mini", category="voice", minutes=10, recap_credits=0, price_mmk=3000, is_active=True, sort_order=1),
+        PricingPlan(code="voice_starter", category="voice", minutes=20, recap_credits=0, price_mmk=5000, is_active=True, sort_order=2),
     )
     res = await api_mod.get_admin_pricing(admin, db_session)
     codes = [p["code"] for p in res["plans"]]
-    # Batch BS: the pricing list fills in every missing catalogue
-    # plan, so all 8 plans are listed in catalogue order (the two
-    # hand-seeded rows keep their own values and sort positions).
-    assert codes == [
-        "MIN_10", "MIN_30", "MIN_60", "voice_studio_pro",
-        "recap_starter", "recap_studio_pro", "combined_starter",
-        "all_in_one_master",
-    ]
-    assert res["plans"][0]["price_mmk"] == 8000
+    assert codes == [p["code"] for p in PLAN_CATALOGUE]
+    assert res["plans"][0]["price_mmk"] == 3000
     assert res["plans"][0]["category"] == "voice"
 
 
@@ -204,22 +199,24 @@ async def test_pricing_update_writes_audit(db_session):
     admin = _user(ADMIN_ID)
     await _seed(
         db_session, admin,
-        PricingPlan(code="MIN_10", minutes=10, price_mmk=8000, is_active=True, sort_order=1),
+        PricingPlan(code="voice_mini", category="voice", minutes=10, recap_credits=0, price_mmk=3000, is_active=True, sort_order=1),
     )
     res = await api_mod.update_admin_pricing(
-        "MIN_10", api_mod.AdminPricingUpdateRequest(price_mmk=9500), admin, db_session
+        "voice_mini", api_mod.AdminPricingUpdateRequest(price_mmk=3500), admin, db_session
     )
-    assert res["success"] is True and res["price_mmk"] == 9500
+    assert res["success"] is True and res["price_mmk"] == 3500
     plan = (await db_session.execute(
-        select(PricingPlan).where(PricingPlan.code == "MIN_10")
+        select(PricingPlan).where(PricingPlan.code == "voice_mini")
     )).scalar_one()
-    assert plan.price_mmk == 9500
+    assert plan.price_mmk == 3500
     logs = (await db_session.execute(
         select(AuditLog).where(AuditLog.action == "pricing.update")
     )).scalars().all()
     assert len(logs) == 1
     details = json.loads(logs[0].details_json)
-    assert details == {"old_price": 8000, "new_price": 9500}
+    assert details["old_price"] == 3000
+    assert details["new_price"] == 3500
+    assert details["changes"]["price_mmk"] == {"old": 3000, "new": 3500}
 
 
 @pytest.mark.asyncio
@@ -227,16 +224,16 @@ async def test_pricing_update_bounds_and_unknown_plan(db_session):
     admin = _user(ADMIN_ID)
     await _seed(
         db_session, admin,
-        PricingPlan(code="MIN_10", minutes=10, price_mmk=8000, is_active=True, sort_order=1),
+        PricingPlan(code="voice_mini", category="voice", minutes=10, recap_credits=0, price_mmk=3000, is_active=True, sort_order=1),
     )
     with pytest.raises(HTTPException) as exc:
         await api_mod.update_admin_pricing(
-            "MIN_10", api_mod.AdminPricingUpdateRequest(price_mmk=50), admin, db_session
+            "voice_mini", api_mod.AdminPricingUpdateRequest(price_mmk=50), admin, db_session
         )
     assert exc.value.status_code == 400
     with pytest.raises(HTTPException) as exc:
         await api_mod.update_admin_pricing(
-            "MIN_10", api_mod.AdminPricingUpdateRequest(price_mmk=10_000_001), admin, db_session
+            "voice_mini", api_mod.AdminPricingUpdateRequest(price_mmk=10_000_001), admin, db_session
         )
     assert exc.value.status_code == 400
     with pytest.raises(HTTPException) as exc:

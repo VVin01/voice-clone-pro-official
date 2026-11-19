@@ -712,6 +712,7 @@ def run_recap_pipeline(
     overlays["sub_effect"] = _seff if _seff in ("none", "fade", "pop", "karaoke") else "none"
     overlays["embed_soft_subs"] = bool(embed_soft_subs)
     overlays["protection_level"] = normalize_protection_level(protection_level)
+    overlays["protection_strong"] = (overlays["protection_level"] == "strong")
     overlays["tts_engine"] = str(tts_engine or "edge_tts")
     # Production-grade options, consumed by EdgeSmartSync (core.py):
     # render_quality picks the encoder preset; gemini_voice names the
@@ -729,7 +730,12 @@ def run_recap_pipeline(
         overlays["bgm_volume"] = float(bgm_volume or 0.18)
 
     # Step 2: RENDER (Edge TTS or VoxCPM 2 + Smart Sync Video)
-    tts_lbl = {"voxcpm": "VoxCPM 2 Cloud Voice", "gemini": "Gemini TTS"}.get(str(tts_engine).lower(), "Microsoft Edge TTS")
+    tts_lbl = {
+        "voxcpm": "VoxCPM 2 Cloud Voice",
+        "gemini": "Gemini TTS",
+        "none": "Subtitle Only (No Voice)",
+        "subtitle_only": "Subtitle Only (No Voice)",
+    }.get(str(tts_engine).lower(), "Microsoft Edge TTS")
     _progress(3, 4, f"🗣️ [3/4] {tts_lbl} & Smart Sync Render...")
     runner = EdgeSmartSync(
         job_dir=target_job_dir,
@@ -786,7 +792,11 @@ def run_recap_pipeline(
     # micro speed/pitch pass is removed (owner order: Strong back
     # to pre-DD behaviour — no retime, no pitch shift). Failure
     # keeps the original file (helper never raises).
-    if normalize_protection_level(protection_level) == "strong" and result.get("final"):
+    if (
+        normalize_protection_level(protection_level) == "strong"
+        and result.get("final")
+        and not result.get("protection_strong_baked")
+    ):
         _final_path = Path(str(result["final"]))
         if _final_path.is_file():
             result["final"] = str(apply_protection_strong(
@@ -804,6 +814,9 @@ def run_recap_pipeline(
         "job_dir": str(target_job_dir),
         "segments": result.get("segments", len(plan.get("segments", []))),
         "duration": result.get("duration", 0.0),
+        "actual_voice_seconds": result.get("actual_voice_seconds"),
+        "tts_runtime_seconds": result.get("tts_runtime_seconds", 0.0),
+        "api_usage": plan.get("api_usage") or {},
         "warnings": _job_warnings,
         # Batch CG: BYOK route outcome for the runner's accounting.
         "gemini_route": result.get("gemini_route"),
@@ -1109,6 +1122,7 @@ def generate_recap_preview(
     overlays["sub_effect"] = _seff if _seff in ("none", "fade", "pop", "karaoke") else "none"
     overlays["embed_soft_subs"] = bool(embed_soft_subs)
     overlays["protection_level"] = normalize_protection_level(protection_level)
+    overlays["protection_strong"] = (overlays["protection_level"] == "strong")
 
     if logo_enabled and logo_path:
         overlays["logo_enabled"] = True

@@ -538,9 +538,9 @@ def test_fact_sheet_knowledge_coverage():
     # Personas derived from the curated catalogue + Gemini voices.
     assert "ကိုမင်း" in sheet and "မနှင်း" in sheet
     assert "ကိုသီဟ" in sheet and "မသွန်းရည်" in sheet
-    # Recap knowledge: styles, engines, split rule, watermark rule.
+    # Recap knowledge: styles, engines, 1 Credit = 1 Min Final Output rule, watermark rule.
     assert "POV" in sheet and "Funny" in sheet
-    assert "Split" in sheet and "Credit 1 ခု စီ" in sheet
+    assert "1 Credit = Final Recap Output 1" in sheet and "Normal AI Voice" in sheet
     assert "Watermark" in sheet
     # Refer programme constants from the ledger (Batch AW: the reward
     # is 120 seconds of TTS-only time per referral).

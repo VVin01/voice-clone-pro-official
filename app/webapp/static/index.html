@@ -118,6 +118,7 @@
                         </div>
                         <div class="home-status-right vcp-hero-badges">
                             <span class="vcp-hero-ready-chip"><span class="vcp-pulse-dot" aria-hidden="true"></span><span data-i18n="home_status_ready">အဆင်သင့်</span></span>
+                            <span class="vcp-badge vcp-badge-gold hidden" id="home-expiry-pill"></span>
                             <span class="vcp-badge vcp-badge-info" id="home-tier-badge" data-i18n="vip_free">FREE</span>
                             <span class="home-bal-summary vcp-sr-only" id="home-bal-summary">🎙️ — · 🎬 — · 🎧 —</span>
                             <span class="home-status-chevron" aria-hidden="true">›</span>
@@ -431,36 +432,32 @@
                 <div id="voxcpm-mode-section">
                     <!-- 12 VoxCPM Curated Personas & Custom Toggle Card -->
                     <div class="card glass" id="curated-personas-card-wrap">
+                        <div class="step-badge-title mb-2">
+                            <span class="step-num-pill">2</span>
+                            <span class="step-title" data-i18n="voice_step2_select">အသံ ရွေးချယ်ရန် (ကိုယ်ပိုင် / Persona)</span>
+                        </div>
                         <div class="segmented-control sm mb-2">
-                            <button class="seg-btn active" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
-                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 အသင့်သုံး Persona အသံများ</span>
+                            <button class="seg-btn active" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
+                                <span class="seg-title" data-i18n="btn_mode_custom">🎙️ ကိုယ်ပိုင်အသံ (My Voice)</span>
                             </button>
-                            <button class="seg-btn" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
-                                <span class="seg-title" data-i18n="btn_mode_custom">🎙️ Custom Voice Clone</span>
+                            <button class="seg-btn" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
+                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Persona ၁၂ မျိုး</span>
                             </button>
                         </div>
 
-                        <!-- Selected voice summary (compact UX): always shows the
-                             current persona; Change expands the persona picker
-                             IN PLACE directly beneath this row (owner follow-up
-                             2026-11-01: the picker used to open below the text
-                             input card, disconnected from the tap). Picker stays
-                             collapsed otherwise and collapses on selection. -->
-                        <div class="voice-selected-row" id="voice-selected-row">
+                        <!-- Selected voice summary (compact UX): shown in Persona mode -->
+                        <div class="voice-selected-row hidden" id="voice-selected-row">
                             <span class="vsr-label" data-i18n="voice_selected_label">ရွေးထားသောအသံ</span>
                             <span class="vsr-avatar" id="voice-selected-avatar">🎙️</span>
                             <span class="vsr-name" id="voice-selected-name">—</span>
                             <button type="button" class="mini-chip vsr-change" id="btn-change-voice" onclick="togglePersonaPicker()" aria-expanded="false" aria-controls="persona-picker-card" data-i18n="voice_change">ပြောင်းမည်</button>
                         </div>
 
-                        <!-- Persona picker (compact UX): the SAME single grid,
-                             now nested in this card under the summary row.
-                             state.selectedPersona remains the only source of
-                             truth; the generate flow is untouched. -->
-                        <div class="persona-picker-card picker-collapsed" id="persona-picker-card">
-                            <div id="curated-personas-card">
+                        <!-- Persona picker (compact UX): secondary option for users without a custom voice sample -->
+                        <div class="persona-picker-card picker-collapsed hidden" id="persona-picker-card">
+                            <div id="curated-personas-card" class="hidden">
                                 <div class="card-header-row">
-                                    <div class="card-label" data-i18n="curated_section_title">အသင့်သုံး Persona အသံများ</div>
+                                    <div class="card-label" data-i18n="curated_section_title">အသင့်သုံး Persona အသံများ (အသံနမူနာ မရှိသူများအတွက်)</div>
                                     <span class="count-badge" id="personas-count">12 Personas</span>
                                 </div>
                                 <div class="persona-filter-row">
@@ -474,11 +471,11 @@
                             </div>
                         </div>
 
-                        <!-- Custom Reference Audio Section (inside same unified card) -->
-                        <div class="ref-audio-card hidden" id="ref-audio-section">
+                        <!-- Custom Reference Audio Section (PRIMARY default mode) -->
+                        <div class="ref-audio-card" id="ref-audio-section">
                             <div class="card-header-row">
                                 <div class="card-label" data-i18n="custom_ref_title">🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)</div>
-                                <span class="hint-tag" data-i18n="custom_ref_optional">ရွေးချယ်ခွင့်</span>
+                                <span class="hint-tag" data-i18n="custom_ref_optional">အဓိက</span>
                             </div>
                             <!-- Phase 3: Custom clone as 5 visible guided steps (upload → check → create → test-listen → save) -->
                             <div class="vcp-clone-steps-bar" id="custom-clone-stepper">
@@ -491,7 +488,7 @@
                             <!-- File requirements shown clearly before upload -->
                             <div class="vcp-clone-req-box" id="custom-clone-req-box">
                                 <span class="vcp-clone-req-item" data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50 စက္ကန့်)</span>
-                                <span class="vcp-clone-req-item" data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 20 MB)</span>
+                                <span class="vcp-clone-req-item" data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 50 MB)</span>
                                 <span class="vcp-clone-req-item" data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</span>
                             </div>
                             <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် — ပိုရှည်ပါက ပထမ 45 စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်၊ WAV/MP3) တင်ပါ။ မတင်ပါက မူလ မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
@@ -549,7 +546,7 @@
                 <!-- Step 3: Generate -->
                 <div class="cta-block" id="voice-cta-block">
                     <div class="step-badge-title">
-                        <span class="step-num-pill">2</span>
+                        <span class="step-num-pill">3</span>
                         <span class="step-title" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
                     </div>
                     <div id="voice-preflight" class="voice-preflight" aria-live="polite"></div>
@@ -630,7 +627,10 @@
                 </div>
 
                 <div class="card glass input-card">
-                    <div class="card-label" data-i18n="tts_engine_label">အသံ Engine:</div>
+                    <div class="step-badge-title mb-2">
+                        <span class="step-num-pill">2</span>
+                        <span class="step-title" data-i18n="tts_engine_label">အသံ Engine နှင့် အသံရွေးချယ်ရန်</span>
+                    </div>
                     <div class="segmented-control sm mb-2" id="tts-engine-picker">
                         <button type="button" class="seg-btn active" data-tts-engine="gemini">
                             <span class="seg-title" data-i18n="tts_engine_gemini">✨ Gemini AI</span>
@@ -657,14 +657,17 @@
                     <div class="control-row mt-2 hidden" id="tts-edge-voice-row">
                         <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
                         <select id="tts-edge-voice-select" class="studio-select glass-dropdown">
-                            <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (ကျား)</option>
-                            <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မ)</option>
+                            <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (မြန်မာ · ကျား)</option>
+                            <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မြန်မာ · မ)</option>
+                            <option value="andrew" data-i18n="tts_edge_andrew">ကိုအန်ဒရူး (Multilingual · ကျား · နွေးထွေး)</option>
+                            <option value="brian" data-i18n="tts_edge_brian">ကိုဘရိုင်ယန် (Multilingual · ကျား · တည်ငြိမ်)</option>
+                            <option value="remy" data-i18n="tts_edge_remy">ကိုရီမီ (Multilingual · ကျား · ကြည်လင်)</option>
+                            <option value="ava" data-i18n="tts_edge_ava">မအေဗာ (Multilingual · မ · ချိုသာ)</option>
+                            <option value="emma" data-i18n="tts_edge_emma">မအမ်မာ (Multilingual · မ · သွက်လက်)</option>
+                            <option value="vivienne" data-i18n="tts_edge_vivienne">မဗီဗီယန် (Multilingual · မ · ငြိမ့်ညောင်း)</option>
                         </select>
                     </div>
-                    <!-- Batch CN: Edge carries exactly 2 Myanmar voices —
-                         say so where the shorter list appears, instead of
-                         letting 10 → 2 look like voices went missing. -->
-                    <p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ အသံ ၂ မျိုးပဲ ရပါတယ်</p>
+                    <p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ &amp; Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်</p>
                     <p class="ref-desc" id="tts-balance-line" data-i18n="tts_balance_loading">လက်ကျန် စစ်ဆေးနေသည်…</p>
                     <!-- Batch CN: one short hint line stays on screen;
                          the full billing explanation is tap-to-expand
@@ -755,7 +758,7 @@
 
                 <div class="cta-block" id="tts-cta-block">
                     <div class="step-badge-title">
-                        <span class="step-num-pill">2</span>
+                        <span class="step-num-pill">3</span>
                         <span class="step-title" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
                     </div>
                     <div id="tts-preflight" class="voice-preflight" aria-live="polite"></div>
@@ -1040,22 +1043,22 @@
                     </div>
                 </div>
 
-                <!-- 5-Category Segmented Control Deck Tabs -->
+                <!-- Streamlined Core 3 Tabs (Blur / Subtitle / Logo) + Always-Visible Ratio + Collapsed Advanced (Presets / Crop / Protection) -->
                 <div class="vcp-segmented vcp-step2-cat-tabs mt-3" id="recap-step2-cat-tabs" role="tablist">
-                    <button type="button" class="vcp-seg-btn active" data-step2-cat="preset" onclick="switchRecapStep2Category('preset')" role="tab" aria-selected="true">
-                        <span data-i18n="recap_cat_preset">✨ Preset</span>
-                    </button>
-                    <button type="button" class="vcp-seg-btn" data-step2-cat="frame" onclick="switchRecapStep2Category('frame')" role="tab" aria-selected="false">
-                        <span data-i18n="recap_cat_frame">📐 Frame/Crop</span>
-                    </button>
-                    <button type="button" class="vcp-seg-btn" data-step2-cat="subtitle" onclick="switchRecapStep2Category('subtitle')" role="tab" aria-selected="false">
+                    <button type="button" class="vcp-seg-btn active" data-step2-cat="subtitle" onclick="switchRecapStep2Category('subtitle')" role="tab" aria-selected="true">
                         <span data-i18n="recap_cat_subtitle">📝 Subtitle</span>
                     </button>
                     <button type="button" class="vcp-seg-btn" data-step2-cat="blur" onclick="switchRecapStep2Category('blur')" role="tab" aria-selected="false">
                         <span data-i18n="recap_cat_blur">🌫️ Blur</span>
                     </button>
                     <button type="button" class="vcp-seg-btn" data-step2-cat="protection" onclick="switchRecapStep2Category('protection')" role="tab" aria-selected="false">
-                        <span data-i18n="recap_cat_protection">🛡️ Logo &amp; Protection</span>
+                        <span data-i18n="recap_cat_protection">⭐ Logo</span>
+                    </button>
+                    <button type="button" class="vcp-seg-btn vcp-seg-adv" data-step2-cat="preset" onclick="switchRecapStep2Category('preset')" role="tab" aria-selected="false">
+                        <span data-i18n="recap_cat_preset">⚙️ Advanced</span>
+                    </button>
+                    <button type="button" class="vcp-seg-btn hidden" data-step2-cat="frame" onclick="switchRecapStep2Category('frame')" role="tab" aria-selected="false">
+                        <span data-i18n="recap_cat_frame">📐 Ratio/Crop</span>
                     </button>
                 </div>
 
@@ -1501,6 +1504,20 @@
                                 <button class="pill-btn" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</button>
                             </div>
                         </div>
+                        <div class="slider-group mt-2">
+                            <div class="slider-header">
+                                <span data-i18n="recap_logo_size_label">📐 Logo အရွယ်အစား (Size):</span>
+                                <span class="slider-val" id="val-logo-scale">16%</span>
+                            </div>
+                            <input type="range" id="slider-logo-scale" min="4" max="40" step="1" value="16" class="studio-slider">
+                        </div>
+                        <div class="slider-group mt-2">
+                            <div class="slider-header">
+                                <span data-i18n="recap_logo_opacity_label">💧 Logo အလင်းဖောက်မှု (Opacity):</span>
+                                <span class="slider-val" id="val-logo-opacity">70%</span>
+                            </div>
+                            <input type="range" id="slider-logo-opacity" min="10" max="100" step="5" value="70" class="studio-slider">
+                        </div>
                         <!-- Custom channel logo (paid-only, owner decision 2026-11-02) -->
                         <div class="style-selector-row mt-2" id="recap-logo-manager">
                             <span class="style-lbl" data-i18n="recap_logo_custom_label">🖼️ ကိုယ်ပိုင် Logo:</span>
@@ -1576,6 +1593,7 @@
                                                 <button type="button" class="pill-btn capsule-seg active" data-engine="voxcpm"><span class="seg-short" aria-hidden="true">🎙️</span><span class="seg-full" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</span></button>
                                                 <button type="button" class="pill-btn capsule-seg" data-engine="gemini"><span class="seg-short" aria-hidden="true">✨</span><span class="seg-full" data-i18n="recap_engine_gemini">✨ Gemini AI</span></button>
                                                 <button type="button" class="pill-btn capsule-seg" data-engine="edge"><span class="seg-short" aria-hidden="true">🎧</span><span class="seg-full" data-i18n="recap_engine_edge">🎧 Edge TTS</span></button>
+                                                <button type="button" class="pill-btn capsule-seg" data-engine="none"><span class="seg-short" aria-hidden="true">📝</span><span class="seg-full" data-i18n="recap_engine_none">📝 No Voice</span></button>
                                             </div>
         <p class="vcp-engine-billing-hint" id="recap-engine-billing-hint" data-i18n="recap_engine_hint_voxcpm">🎙️ Persona 12 သံကို FREE / VIP အားလုံး သုံးနိုင်ပါတယ် (Recap Credit + Voice မိနစ် ပူးတွဲကုန်ကျပါမယ်) • ကိုယ်ပိုင်အသံက VIP အတွက်သာ ဖြစ်ပါတယ်</p>
         </div>
@@ -2148,8 +2166,8 @@
                     <p data-i18n="vip_subtitle">Creator များအတွက် အဆင့်မြင့် စတူဒီယို အစီအစဉ်များ</p>
                 </div>
 
-                <!-- User Stats Card: Separate Minutes and Recap Credits -->
-                <div class="card glass vcp-card stats-card">
+                <!-- User Stats Card: Dual-Wallet Available + Reserved for Recap & Voice -->
+                <div class="card glass vcp-card stats-card" id="vip-wallet-card">
                     <div class="stats-row">
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_current_tier">လက်ရှိ အဆင့်</span>
@@ -2158,10 +2176,12 @@
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_balance_min">အသံမိနစ် လက်ကျန်</span>
                             <span class="stat-val" id="profile-balance-min">—</span>
+                            <span class="stat-sub text-xs text-muted" id="vip-res-voice">Reserved: 0m</span>
                         </div>
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_recap_credits">Recap Credit လက်ကျန်</span>
                             <span class="stat-val text-cyan" id="profile-balance-credits">—</span>
+                            <span class="stat-sub text-xs text-muted" id="vip-res-credits">Reserved: 0 Cr</span>
                         </div>
                         <div class="stat-col">
                             <span class="stat-label" data-i18n="stat_tts_balance">🎧 TTS ယနေ့ လက်ကျန်</span>
@@ -2171,114 +2191,75 @@
                     <button type="button" class="vcp-btn vcp-btn-glass mt-2 w-100" onclick="switchTab('tab-tts')" data-i18n="vip_byok_shortcut_btn">🔑 ကိုယ်ပိုင် Gemini Key ထည့်ရန် / စီမံရန်</button>
                 </div>
 
-
-                <details class="card glass vcp-card plan-how-card">
-                    <summary class="card-label plan-how-summary"><span data-i18n="plan_how_title">💎 Plan ဘယ်လို အလုပ်လုပ်သလဲ</span><span class="plan-how-chevron" aria-hidden="true">▾</span></summary>
-                    <p class="plan-how-text" data-i18n="plan_how_text1">၁) Plan ရွေးပါ → ၂) KBZPay / WavePay ဖြင့် ငွေလွှဲ၍ ပြေစာ တင်ပါ → ၃) Admin အတည်ပြုပြီးနောက် မိနစ် / Recap Credit ဝင်ပါမည်။ ဝယ်ယူပြီးပါက Free မှ VIP သို့ တက်ပါမည် — တစ်ကြိမ် စာလုံးရေ 1,000 မှ 5,000 အထိ၊ Recap ၂ မိနစ်မှ ၁၀ မိနစ်အထိ တိုးပြီး Watermark ပျောက်ပါမည်။</p>
-                </details>
-
-                <!-- Plan categories as tabs: one category at a time (no long scroll) -->
-                <div class="segmented-control plan-tabs" role="tablist">
-                    <button type="button" class="seg-btn plan-tab-btn active" data-plan-cat="voice" onclick="switchPlanCategory('voice')">
-                        <span class="seg-title" data-i18n="plan_tab_voice">🎙️ Voice</span>
+                <!-- Storefront vs Wallet & Orders Sub-View Toggle -->
+                <div class="segmented-control vcp-vip-subnav mb-2" role="tablist">
+                    <button type="button" class="seg-btn active" id="vip-subbtn-plans" onclick="switchVipSubView('plans')">
+                        <span class="seg-title" data-i18n="vip_sub_plans">🛒 Packages &amp; Top-up</span>
                     </button>
-                    <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="recap" onclick="switchPlanCategory('recap')">
-                        <span class="seg-title" data-i18n="plan_tab_recap">🎬 Recap</span>
-                    </button>
-                    <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="combined" onclick="switchPlanCategory('combined')">
-                        <span class="seg-title" data-i18n="plan_tab_combined">✨ နှစ်မျိုးလုံး</span>
+                    <button type="button" class="seg-btn" id="vip-subbtn-wallet" onclick="switchVipSubView('wallet')">
+                        <span class="seg-title" data-i18n="vip_sub_wallet">💼 Wallet &amp; Orders</span>
                     </button>
                 </div>
-                <p class="plan-free-note" data-i18n="plan_free_note">💡 Free အဆင့် — အခမဲ့ စမ်းသုံးနိုင်ပါတယ် (Recap အများဆုံး ၂ မိနစ် • Watermark ပါမည်)</p>
-                <div class="vcp-vip-trust-note">
-                    <span class="vcp-badge vcp-badge--info" data-i18n="vip_never_expires_badge">♾️ ဝယ်ယူထားသော မိနစ်နှင့် Credit များ သက်တမ်းမကုန်ပါ</span>
-                </div>
 
-                <div class="plan-panel" id="plan-panel-voice">
-                <div class="pricing-grid">
+                <div id="vip-sub-plans">
+                    <details class="card glass vcp-card plan-how-card">
+                        <summary class="card-label plan-how-summary"><span data-i18n="plan_how_title">💎 Plan ဘယ်လို အလုပ်လုပ်သလဲ</span><span class="plan-how-chevron" aria-hidden="true">▾</span></summary>
+                        <p class="plan-how-text" data-i18n="plan_how_text1">၁) Package ရွေးပါ → ၂) KBZPay / WavePay ဖြင့် ငွေလွှဲ၍ ပြေစာ တင်ပါ → ၃) Admin အတည်ပြုပြီးနောက် Wallet ထဲသို့ အလိုအလျောက် ဝင်ပါမည်။ 1 Recap Credit = Final Output 1 မိနစ်ဖြစ်ပြီး Combo ဝယ်ယူပါက 10% သက်သာကာ Wallet နှစ်ခုလုံးထဲ သီးခြားစီ ထည့်ပေးပါသည်။</p>
+                    </details>
 
-                    <!-- Voice minute packs (also sold in the bot buy menu) -->
-                    <div class="card glass vcp-card pricing-card" id="card-plan-voice-packs">
-                        <div class="plan-name" data-i18n="plan_packs_name">🎙️ Voice Packs</div>
-                        <div class="plan-allocation" data-i18n="plan_packs_alloc">မိနစ် ၁၀ / ၃၀ / ၆၀ — လိုသလောက်ဝယ်၊ သက်တမ်းမကုန်</div>
-                        <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_packs_price" data-price-for="MIN_10">8,000</span>
-                            <span class="currency">MMK</span>
-                            <span data-i18n="plan_packs_from">မှစ၍</span>
-                        </div>
-                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('MIN_10', 8000, '🎙️ Voice Pack 10 Minutes')" data-i18n="plan_packs_btn10">💎 ၁၀ မိနစ် — ၈,၀၀၀</button>
-                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('MIN_30', 20000, '🎙️ Voice Pack 30 Minutes')" data-i18n="plan_packs_btn30">⭐ ၃၀ မိနစ် — ၂၀,၀၀၀</button>
-                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('MIN_60', 38000, '🎙️ Voice Pack 60 Minutes')" data-i18n="plan_packs_btn60">🔥 ၆၀ မိနစ် — ၃၈,၀၀၀</button>
+                    <!-- 4 Package Categories dynamically populated from /api/vip/plans -->
+                    <div class="segmented-control plan-tabs plan-tabs-4" role="tablist">
+                        <button type="button" class="seg-btn plan-tab-btn active" data-plan-cat="voice" onclick="switchPlanCategory('voice')">
+                            <span class="seg-title" data-i18n="plan_tab_voice">🎙️ Voice</span>
+                        </button>
+                        <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="recap" onclick="switchPlanCategory('recap')">
+                            <span class="seg-title" data-i18n="plan_tab_recap">🎬 Recap</span>
+                        </button>
+                        <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="combo" onclick="switchPlanCategory('combo')">
+                            <span class="seg-title" data-i18n="plan_tab_combo">🎁 Combo</span>
+                        </button>
+                        <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="topup" onclick="switchPlanCategory('topup')">
+                            <span class="seg-title" data-i18n="plan_tab_topup">⚡ Top-up</span>
+                        </button>
                     </div>
-                    
-                    <!-- PLAN 1: Voice Clone Studio Pro -->
-                    <div class="card glass vcp-card pricing-card" id="card-plan-voice">
-                        <div class="plan-name" data-i18n="plan_voice_name">🎙️ Voice Pro</div>
-                        <div class="plan-allocation" data-i18n="plan_voice_alloc">မိနစ် ၂၅၀ (၄ နာရီကျော်) အသံထုတ်ခွင့်</div>
-                        <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_voice_price" data-price-for="voice_studio_pro">75,000</span>
-                            <span class="currency">MMK</span>
-                        </div>
-                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')" data-i18n="btn_buy_voice">💎 Voice Plan ဝယ်မည်</button>
+                    <p class="plan-free-note" data-i18n="plan_free_note">💡 1 Recap Credit = Final Output 1 မိနစ် (တစ်စက္ကန့်ချင်း အတိအကျ) • Unused Reserve အလိုအလျောက် ပြန်အမ်းသည်</p>
+                    <div class="vcp-vip-trust-note">
+                        <span class="vcp-badge vcp-badge--info" data-i18n="vip_never_expires_badge">⏳ အသစ်ဝယ်ယူသော Package များ သက်တမ်း ၃၀ ရက် (30 Days) အကျုံးဝင်ပါသည်</span>
                     </div>
 
-                </div>
+                    <div class="plan-panel" id="plan-panel-voice"><div class="pricing-grid" id="vip-grid-voice"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div></div>
+                    <div class="plan-panel hidden" id="plan-panel-recap"><div class="pricing-grid" id="vip-grid-recap"></div></div>
+                    <div class="plan-panel hidden" id="plan-panel-combo"><div class="pricing-grid" id="vip-grid-combo"></div></div>
+                    <div class="plan-panel hidden" id="plan-panel-topup"><div class="pricing-grid" id="vip-grid-topup"></div></div>
                 </div>
 
-                <div class="plan-panel hidden" id="plan-panel-recap">
-                <div class="pricing-grid">
-
-                    <!-- PLAN 2a: Movie Recap Starter (new entry pack) -->
-                    <div class="card glass vcp-card pricing-card" id="card-plan-recap-starter">
-                        <div class="plan-name" data-i18n="plan_recap_starter_name">🎬 Recap Starter</div>
-                        <div class="plan-allocation" data-i18n="plan_recap_starter_alloc">Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)</div>
-                        <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_recap_starter_price" data-price-for="recap_starter">20,000</span>
-                            <span class="currency">MMK</span>
+                <div id="vip-sub-wallet" class="hidden">
+                    <div class="card glass vcp-card mb-3">
+                        <div class="card-header-row">
+                            <span class="card-label" data-i18n="vip_grants_title">⏳ ဝယ်ယူထားသော Package သက်တမ်းများ</span>
+                            <button type="button" class="mini-chip" onclick="loadVipWalletHistory(true)">🔄</button>
                         </div>
-                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('recap_starter', 20000, '🎬 Recap Starter')" data-i18n="btn_buy_recap_starter">🎬 Recap Starter ဝယ်မည်</button>
+                        <div id="vip-grants-list" class="mt-2"><p class="text-muted text-xs" data-i18n="admin_loading">ရယူနေသည်…</p></div>
                     </div>
-
-                    <!-- PLAN 2: Movie Recap Studio Pro -->
-                    <div class="card glass vcp-card pricing-card" id="card-plan-recap">
-                        <div class="plan-name" data-i18n="plan_recap_name">🎬 Recap Pro</div>
-                        <div class="plan-allocation" data-i18n="plan_recap_alloc">Recap Credit ၂၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)</div>
-                        <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_recap_price" data-price-for="recap_studio_pro">90,000</span>
-                            <span class="currency">MMK</span>
+                    <div class="card glass vcp-card">
+                        <div class="card-header-row">
+                            <span class="card-label" data-i18n="vip_orders_title">🧾 ဝယ်ယူမှု မှတ်တမ်း (Orders)</span>
+                            <button type="button" class="mini-chip" onclick="loadVipWalletHistory(true)">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
                         </div>
-                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('recap_studio_pro', 90000, '🎬 Recap Pro')" data-i18n="btn_buy_recap">🎬 Recap Plan ဝယ်မည်</button>
+                        <div id="vip-orders-list" class="mt-2"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div>
                     </div>
-
-                </div>
-                </div>
-
-                <div class="plan-panel hidden" id="plan-panel-combined">
-                <div class="pricing-grid">
-
-                    <!-- PLAN 3a: Voice + Recap Starter (new entry bundle) -->
-                    <div class="card glass vcp-card pricing-card" id="card-plan-combined-starter">
-                        <div class="plan-name" data-i18n="plan_combined_starter_name">🎙️🎬 Combined Starter</div>
-                        <div class="plan-allocation" data-i18n="plan_combined_starter_alloc">မိနစ် ၃၀ + Recap Credit ၅ ခု</div>
-                        <div class="plan-price">
-                            <span class="price-val" data-i18n="plan_combined_starter_price" data-price-for="combined_starter">30,000</span>
-                            <span class="currency">MMK</span>
+                    <div class="card glass vcp-card mt-3">
+                        <div class="card-header-row">
+                            <span class="card-label" data-i18n="vip_tx_title">📒 Wallet Transaction Ledger</span>
+                            <div class="vcp-tx-filters">
+                                <button type="button" class="mini-chip active" data-tx-kind="" onclick="loadVipWalletTx('')">All</button>
+                                <button type="button" class="mini-chip" data-tx-kind="RECAP" onclick="loadVipWalletTx('RECAP')">Recap</button>
+                                <button type="button" class="mini-chip" data-tx-kind="VOICE" onclick="loadVipWalletTx('VOICE')">Voice</button>
+                                <button type="button" class="mini-chip" data-tx-kind="COMBO" onclick="loadVipWalletTx('COMBO')">Combo</button>
+                            </div>
                         </div>
-                        <button class="btn secondary-gold-btn vcp-btn mt-3" onclick="openPaymentDrawer('combined_starter', 30000, '🎙️🎬 Combined Starter')" data-i18n="btn_buy_combined_starter">✨ Combined Starter ဝယ်မည်</button>
+                        <div id="vip-tx-list" class="mt-2"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div>
                     </div>
-
-                    <!-- PLAN 3: All-in-One Master Suite (Featured Gold Halo) -->
-                    <div class="card glass vcp-card vcp-card--gold pricing-card featured-master" id="card-plan-master">
-                        <div class="plan-name master-title" data-i18n="plan_master_name">👑 Master</div>
-                        <div class="plan-allocation text-gold" data-i18n="plan_master_alloc">မိနစ် ၅၀၀ + Recap Credit ၆၀ ခု</div>
-                        <div class="plan-price master-price">
-                            <span class="price-val" data-i18n="plan_master_price" data-price-for="all_in_one_master">180,000</span>
-                            <span class="currency">MMK</span>
-                        </div>
-                        <button class="btn gold-gradient-btn vcp-btn vcp-btn--gold mt-3" onclick="openPaymentDrawer('all_in_one_master', 180000, '👑 Master')" data-i18n="btn_buy_master">👑 Master Suite ဝယ်မည်</button>
-                    </div>
-
-                </div>
                 </div>
 
                 <!-- Payment Info Drawer -->
@@ -2309,11 +2290,13 @@
                             </div>
                             <span class="acc-name" id="wave-name">—</span>
                         </div>
+                        <div id="extra-payment-accounts" class="pay-extra-accounts"></div>
                     </div>
-                    
+
                     <!-- Direct Slip Upload Form -->
                     <div class="slip-uploader-box mt-3">
                         <div class="card-label" data-i18n="slip_upload_title">📸 ငွေလွှဲပြေစာ (Screenshot) တင်ရန်</div>
+                        <input type="text" id="slip-pay-ref" class="studio-input mt-2" data-i18n-ph="slip_ref_ph" placeholder="Payment Reference / Txn No (Optional)">
                         <div class="slip-preview-container hidden" id="slip-preview-box">
                             <img id="slip-preview-img" src="" alt="Slip Preview">
                         </div>
@@ -2493,6 +2476,20 @@
                         </div>
                     </div>
 
+                    <div class="card glass mt-3" id="adm-analytics-card">
+                        <div class="card-header-row">
+                            <div class="card-label">📊 <span data-i18n="adm_analytics_title">Business Analytics &amp; Cost Monitoring</span></div>
+                            <div class="vcp-tx-filters" id="adm-analytics-window-btns">
+                                <button type="button" class="mini-chip" data-days="7" onclick="loadAdminAnalytics(7)">7D</button>
+                                <button type="button" class="mini-chip active" data-days="30" onclick="loadAdminAnalytics(30)">30D</button>
+                                <button type="button" class="mini-chip" data-days="0" onclick="loadAdminAnalytics(0)">All</button>
+                            </div>
+                        </div>
+                        <div id="adm-analytics-body" class="mt-2">
+                            <p class="text-muted text-xs" data-i18n="admin_loading">ရယူနေသည်…</p>
+                        </div>
+                    </div>
+
                     <div class="card glass mt-3" id="admin-recent-card">
                         <div class="card-header-row">
                             <div class="card-label" data-i18n="admin_recent_actions">🕘 Admin လုပ်ဆောင်ချက် နောက်ဆုံးများ</div>
@@ -2520,11 +2517,36 @@
                     <div class="card glass">
                         <div class="card-header-row">
                             <div class="card-label" data-i18n="admin_slips_header">📋 စစ်ဆေးရန် စောင့်ဆိုင်းနေသော ပြေစာများ</div>
-                            <button class="mini-chip" onclick="loadAdminData()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                            <div class="vcp-tx-filters">
+                                <button type="button" class="mini-chip" id="btn-adm-pricing-shortcut" onclick="openAdminPricingShortcut()" data-i18n="adm_pricing_shortcut_btn">💰 ဈေးနှုန်း/သက်တမ်း</button>
+                                <button class="mini-chip" onclick="loadAdminData()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                            </div>
                         </div>
                         <div id="admin-slips-list" class="mt-2">
                             <p class="text-muted" data-i18n="admin_loading">ရယူနေသည်…</p>
                         </div>
+                    </div>
+                    <div class="card glass mt-3">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="adm_orders_header">🧾 Purchase &amp; Top-up Order History</div>
+                            <div class="vcp-tx-filters">
+                                <button type="button" class="mini-chip active" data-ord-st="" onclick="loadAdminOrders('')">All</button>
+                                <button type="button" class="mini-chip" data-ord-st="APPROVED" onclick="loadAdminOrders('APPROVED')">Approved</button>
+                                <button type="button" class="mini-chip" data-ord-st="REJECTED" onclick="loadAdminOrders('REJECTED')">Rejected</button>
+                            </div>
+                        </div>
+                        <div id="adm-orders-list" class="mt-2"><p class="text-muted text-xs" data-i18n="admin_loading">ရယူနေသည်…</p></div>
+                    </div>
+                    <div class="card glass mt-3">
+                        <div class="card-header-row">
+                            <div class="card-label" data-i18n="adm_refunds_header">↩️ Job Refund Management &amp; History</div>
+                            <button type="button" class="mini-chip" onclick="loadAdminRefunds()">🔄</button>
+                        </div>
+                        <div class="form-row-2 mt-2">
+                            <input type="text" id="adm-refund-job-id" class="studio-input" placeholder="Job ID (e.g. rc_... / uuid)">
+                            <button type="button" class="btn mini-btn gold-btn" onclick="adminManualRefundJob()" data-i18n="adm_refund_btn">↩️ Refund Job</button>
+                        </div>
+                        <div id="adm-refunds-list" class="mt-2"></div>
                     </div>
                 </div>
 
@@ -2678,6 +2700,7 @@
                                         <option value="all" data-i18n="adm_opt_recap_voice">Recap &amp; Voice</option>
                                         <option value="RECAP" data-i18n="adm_opt_engine_recap">🎬 Movie Recap</option>
                                         <option value="VOICE_CLONE" data-i18n="adm_opt_voice_clone">🎙️ Voice Clone</option>
+                                        <option value="TTS">🗣️ TTS</option>
                                     </select>
                                 </div>
                             </div>
@@ -2772,6 +2795,7 @@
                         <div class="card glass mt-3">
                             <div class="card-label" data-i18n="admin_balance_breakdown">💰 လက်ကျန် အသေးစိတ်</div>
                             <div id="adm-detail-breakdown" class="mt-2"></div>
+                            <div id="adm-detail-grants" class="mt-2"></div>
                             <div id="adm-detail-tts" class="mt-2"></div>
                             <div id="adm-detail-gemini-key" class="mt-2"></div>
                             <div id="adm-detail-verify" class="adm-detail-meta mt-2"></div>
@@ -2788,7 +2812,7 @@
                             <div class="form-row-2 mt-2">
                                 <div>
                                     <label class="input-label text-xs" data-i18n="admin_adjust_minutes">မိနစ် (+ / −)</label>
-                                    <input type="number" id="adm-adj-minutes" class="studio-input" value="0">
+                                    <input type="number" id="adm-adj-minutes" class="studio-input" value="0" step="0.5">
                                 </div>
                                 <div>
                                     <label class="input-label text-xs" data-i18n="admin_adjust_seconds">စက္ကန့် (+ / −)</label>
@@ -2798,7 +2822,7 @@
                             <div class="form-row-2 mt-2">
                                 <div>
                                     <label class="input-label text-xs" data-i18n="admin_adjust_credits">Recap Credit (+ / −)</label>
-                                    <input type="number" id="adm-adj-credits" class="studio-input" value="0">
+                                    <input type="number" id="adm-adj-credits" class="studio-input" value="0" step="0.01">
                                 </div>
                                 <div>
                                     <label class="input-label text-xs" data-i18n="admin_adjust_tier">အဆင့် (Tier)</label>
@@ -2809,7 +2833,16 @@
                                     </select>
                                 </div>
                             </div>
-                            <input type="text" id="adm-adjust-reason" data-i18n-ph="admin_adjust_reason_ph" placeholder="အကြောင်းပြချက် (မဖြစ်မနေ ရိုက်ပါ)" class="studio-input mt-2">
+                            <div class="form-row-2 mt-2">
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="admin_adjust_vdays">သက်တမ်း (ရက် · 0 = မကုန်)</label>
+                                    <input type="number" id="adm-adj-vdays" class="studio-input" value="30" min="0" max="3650">
+                                </div>
+                                <div>
+                                    <label class="input-label text-xs" data-i18n="admin_adjust_reason_lbl">အကြောင်းပြချက်</label>
+                                    <input type="text" id="adm-adjust-reason" data-i18n-ph="admin_adjust_reason_ph" placeholder="အကြောင်းပြချက် (မဖြစ်မနေ ရိုက်ပါ)" class="studio-input">
+                                </div>
+                            </div>
                             <button class="btn gold-gradient-btn mt-3" id="adm-adjust-apply-btn" onclick="adminApplyAdjust()">
                                 <span data-i18n="btn_apply_adjust">ပြင်ဆင်ချက် အတည်ပြုမည်</span>
                             </button>
@@ -3056,7 +3089,7 @@
                                     <button type="button" id="adm-group-ai-sheet-save" class="btn btn-primary btn-sm" onclick="saveGroupAiKnowledgeSheet()" data-i18n="adm_group_ai_save_sheet">Sheet သိမ်းဆည်းမည်</button>
                                 </div>
                             </div>
-                            <p class="text-xs text-warning mb-4" data-i18n="adm_group_ai_precedence_note">⚠️ သတိပြုရန်: စနစ်၏ အခြေခံ လုံခြုံရေး စည်းမျဉ်းများ (မြန်မာဘာသာ သီးသန့်၊ Emoji မသုံးခြင်း၊ ငွေလွှဲ/အကောင့် ကိစ္စများ Admin ထံ လွှဲပြောင်းခြင်းနှင့် ဝယ်ယူထားသော မိနစ်/Credit များ သက်တမ်းမကုန်ခြင်း) သည် Knowledge Sheet စာသားထက် အမြဲ ဦးစားပေး အကျုံးဝင်ပါသည်။</p>
+                            <p class="text-xs text-warning mb-4" data-i18n="adm_group_ai_precedence_note">⚠️ သတိပြုရန်: စနစ်၏ အခြေခံ လုံခြုံရေး စည်းမျဉ်းများ (မြန်မာဘာသာ သီးသန့်၊ Emoji မသုံးခြင်း၊ ငွေလွှဲ/အကောင့် ကိစ္စများ Admin ထံ လွှဲပြောင်းခြင်းနှင့် အသစ်ဝယ်ယူသော Package များ သက်တမ်း ၃၀ ရက် အကျုံးဝင်ခြင်း) သည် Knowledge Sheet စာသားထက် အမြဲ ဦးစားပေး အကျုံးဝင်ပါသည်။</p>
 
                             <hr class="border-glass mb-3">
 
@@ -3384,7 +3417,13 @@
                         </summary>
                         <div class="adm-acc-body">
                             <div class="card-header-row">
-                                <span class="text-xs text-muted" data-i18n="adm_plan_rates_pill">Plan Rates</span>
+                                <div class="vcp-tx-filters" id="adm-pricing-cat-btns">
+                                    <button type="button" class="mini-chip active" data-pcat="all" onclick="filterAdminPricing('all')">All</button>
+                                    <button type="button" class="mini-chip" data-pcat="voice" onclick="filterAdminPricing('voice')">Voice</button>
+                                    <button type="button" class="mini-chip" data-pcat="recap" onclick="filterAdminPricing('recap')">Recap</button>
+                                    <button type="button" class="mini-chip" data-pcat="combo" onclick="filterAdminPricing('combo')">Combo</button>
+                                    <button type="button" class="mini-chip" data-pcat="topup" onclick="filterAdminPricing('topup')">Top-up</button>
+                                </div>
                                 <button class="mini-chip" onclick="loadAdminPricing()">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
                             </div>
                             <div id="admin-pricing-list" class="mt-2">

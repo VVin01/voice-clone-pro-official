@@ -281,7 +281,7 @@ def test_b0_ui_i18n_and_cache_token():
     assert '"/api/admin/stage-timings"' in APP_JS
     assert "loadAdminStageTimings(false)" in APP_JS
     assert "syncTabAdminLifecycle(tabId)" in APP_JS
-    assert "syncTabAdminLifecycle(targetTab)" in APP_JS
+    assert "switchTab(targetTab);" in APP_JS
     assert INDEX_HTML.count("?v=20261118_r164") == 4
     assert "20261114_r149" not in INDEX_HTML
 

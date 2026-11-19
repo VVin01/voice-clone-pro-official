@@ -111,6 +111,25 @@ def test_v2_phase3_recap_studio_v2_surfaces_dark_and_lite():
         assert marker in PHASE3_CSS, marker
 
 
+_RETIRED_VIP_STATIC_IDS = {
+    "card-plan-combined-starter", "card-plan-master", "card-plan-recap",
+    "card-plan-recap-starter", "card-plan-voice", "card-plan-voice-packs",
+    "plan-panel-combined",
+}
+_RETIRED_VIP_STATIC_ONCLICKS = {
+    "copyAccount('09790760003')",
+    "openPaymentDrawer('MIN_10', 8000, '🎙️ Voice Pack 10 Minutes')",
+    "openPaymentDrawer('MIN_30', 20000, '🎙️ Voice Pack 30 Minutes')",
+    "openPaymentDrawer('MIN_60', 38000, '🎙️ Voice Pack 60 Minutes')",
+    "openPaymentDrawer('all_in_one_master', 180000, '👑 Master')",
+    "openPaymentDrawer('combined_starter', 30000, '🎙️🎬 Combined Starter')",
+    "openPaymentDrawer('recap_starter', 20000, '🎬 Recap Starter')",
+    "openPaymentDrawer('recap_studio_pro', 90000, '🎬 Recap Pro')",
+    "openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')",
+    "switchPlanCategory('combined')",
+}
+
+
 def test_v2_phase3_zero_deleted_ids_or_onclicks_vs_main():
     try:
         main_html = subprocess.check_output(
@@ -122,7 +141,7 @@ def test_v2_phase3_zero_deleted_ids_or_onclicks_vs_main():
         return
     main_ids = set(re.findall(r'\bid="([^"]+)"', main_html))
     curr_ids = set(re.findall(r'\bid="([^"]+)"', INDEX_HTML))
-    assert not (main_ids - curr_ids), sorted(main_ids - curr_ids)
+    assert not ((main_ids - curr_ids) - _RETIRED_VIP_STATIC_IDS), sorted((main_ids - curr_ids) - _RETIRED_VIP_STATIC_IDS)
     main_on = set(re.findall(r'\bonclick="([^"]+)"', main_html))
     curr_on = set(re.findall(r'\bonclick="([^"]+)"', INDEX_HTML))
-    assert not ((main_on - curr_on) - {"copyAccount('09790760003')"}), sorted(main_on - curr_on)
+    assert not ((main_on - curr_on) - _RETIRED_VIP_STATIC_ONCLICKS), sorted((main_on - curr_on) - _RETIRED_VIP_STATIC_ONCLICKS)

@@ -321,9 +321,10 @@ async def test_recap_precheck_get_info_runs_off_event_loop(db_session, monkeypat
     monkeypatch.setattr(dl_mod.MediaDownloader, "get_info", fake_get_info)
     monkeypatch.setattr(api_mod, "_run_recap_background_job", _fake_runner)
     try:
+        # 90s output requires 1.50 Recap Credits (1 Credit = 60s final output).
         user = await _make_user(
             db_session, 880812,
-            account_category="FREE", recap_credits=1,
+            account_category="FREE", recap_credits=2,
         )
         # Option B: default tts_engine="voxcpm" pre-checks Voice Clone Minutes.
         bal = await get_minute_balance(db_session, user.id)

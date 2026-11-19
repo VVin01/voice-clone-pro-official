@@ -124,20 +124,21 @@ def _submit_tts(db_session, user_id, text="မင်္ဂလာပါ၊ ဒါ
 # ── AW-1/AW-4: edge is an accepted engine everywhere ─────────────────
 
 def test_aw_recap_engine_set_includes_edge():
-    assert api_mod.RECAP_TTS_ENGINES == frozenset({"voxcpm", "gemini", "edge"})
+    assert api_mod.RECAP_TTS_ENGINES == frozenset({"voxcpm", "gemini", "edge", "none", "subtitle_only"})
 
 
 def test_aw_validator_accepts_edge_and_rejects_unknown():
     assert _req("edge").tts_engine == "edge"
     assert _req("gemini").tts_engine == "gemini"
     assert _req("voxcpm").tts_engine == "voxcpm"
+    assert _req("none").tts_engine == "none"
     with pytest.raises(Exception):
         _req("bogus-engine")
 
 
 def test_aw_prefs_enum_accepts_edge():
-    assert api_mod.USER_PREF_ENUMS["recapTtsEngine"] == ["voxcpm", "gemini", "edge"]
-    assert 'recapTtsEngine: ["voxcpm", "gemini", "edge"]' in APP_JS
+    assert api_mod.USER_PREF_ENUMS["recapTtsEngine"] == ["voxcpm", "gemini", "edge", "none"]
+    assert 'recapTtsEngine: ["voxcpm", "gemini", "edge", "none"]' in APP_JS
 
 
 def test_aw_tts_endpoints_registered():

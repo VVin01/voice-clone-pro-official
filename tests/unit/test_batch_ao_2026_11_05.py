@@ -467,133 +467,111 @@ def _submit(ledger, monkeypatch, *, uid=USER_ID, credits=5,
 
 
 def test_submit_off_has_no_credits_total_and_charges_one(ledger, monkeypatch):
-    result = _submit(ledger, monkeypatch, credits=5, duration_seconds=324)
+    # Official rule: 1 Recap Credit = 1 Min Final Output (second-level reserve).
+    # 324s output reserve requires 324s (5.40 Credits); with 6.0 Credits, 0.60 remains available.
+    result = _submit(ledger, monkeypatch, credits=6, duration_seconds=324)
     assert result[0] == "ok"
     resp = result[1]
-    # Legacy response shape: the tiered quote key does not exist.
-    assert "credits_total" not in resp
-    assert resp["credits_charged"] == 1
-    assert resp["remaining_credits"] == 4
-    assert ledger.credits() == 4
+    assert resp["estimated_recap_seconds"] == 324
+    assert resp["estimated_recap_credits"] == pytest.approx(5.4, abs=0.01)
+    assert resp["remaining_credits"] == pytest.approx(0.6, abs=0.01)
+    assert ledger.credits() == pytest.approx(0.6, abs=0.01)
 
 
 def test_submit_on_quotes_band_and_stamps_entry(ledger, monkeypatch):
     from app.webapp import api as api_mod
 
     _tiered_on(monkeypatch)
-    result = _submit(ledger, monkeypatch, credits=5, duration_seconds=324)
+    result = _submit(ledger, monkeypatch, credits=6, duration_seconds=324)
     assert result[0] == "ok"
     resp = result[1]
-    # The quote is the band total; the submit itself still takes the
-    # single submit credit (the worker tops up to the quote).
-    assert resp["credits_total"] == 2
-    assert resp["credits_charged"] == 1
-    assert ledger.credits() == 4
+    assert resp["estimated_recap_credits"] == pytest.approx(5.4, abs=0.01)
+    assert resp["credits_charged"] == pytest.approx(5.4, abs=0.01)
+    assert ledger.credits() == pytest.approx(0.6, abs=0.01)
     entry = api_mod.RECAP_JOBS_REGISTRY[resp["recap_id"]]
-    assert entry["tiered_pricing"] is True
     assert entry["source_duration_seconds"] == 324.0
 
 
 def test_submit_on_blocks_when_balance_cannot_cover_band(ledger, monkeypatch):
     _tiered_on(monkeypatch)
-    # 5:24 → band 2, but the user holds exactly 1 credit: blocked at
-    # submit with the tiered message, before any credit moves.
+    # 324s needs 5.40 Credits; 1 Credit is blocked cleanly at submit before any credit moves.
     result = _submit(ledger, monkeypatch, credits=1, duration_seconds=324)
     assert result[0] == "error"
     assert result[1] == 403
-    assert "2 Credits" in result[2]
     assert ledger.credits() == 1
 
 
 def test_submit_off_allows_what_tiered_blocks(ledger, monkeypatch):
+    # Insufficient credits (1.0 Cr < 5.40 Cr needed) is blocked universally.
     result = _submit(ledger, monkeypatch, credits=1, duration_seconds=324)
-    assert result[0] == "ok"
-    assert result[1]["credits_charged"] == 1
-    assert ledger.credits() == 0
+    assert result[0] == "error"
+    assert result[1] == 403
+    assert ledger.credits() == 1
 
 
 def test_submit_on_segmented_precheck_uses_band_not_parts(
     ledger, monkeypatch
 ):
     _tiered_on(monkeypatch)
-    # 25 minutes, split size 10 → the part ESTIMATE is 3, but the
-    # band total is 9. A balance of 5 covers the old per-part price
-    # and must now be refused; a balance of 10 is accepted with the
-    # quote set to the band, not the estimate.
+    # 1500s output = 25.0 Credits; 5 Credits blocked, 30 Credits accepted with 3 parts estimated.
     result = _submit(
         ledger, monkeypatch, credits=5, duration_seconds=1500,
         split_video=True, split_minutes=10,
     )
     assert result[0] == "error"
     assert result[1] == 403
-    assert "9 Credits" in result[2]
     assert ledger.credits() == 5
 
     result = _submit(
-        ledger, monkeypatch, uid=USER_ID + 2, credits=10,
+        ledger, monkeypatch, uid=USER_ID + 2, credits=30,
         duration_seconds=1500, split_video=True, split_minutes=10,
     )
     assert result[0] == "ok"
     resp = result[1]
     assert resp["estimated_parts"] == 3
-    assert resp["credits_total"] == 9
-    assert resp["credits_charged"] == 1
+    assert resp["estimated_recap_credits"] == 25.0
 
 
 def test_submit_off_segmented_precheck_uses_parts(ledger, monkeypatch):
     result = _submit(
-        ledger, monkeypatch, credits=5, duration_seconds=1500,
+        ledger, monkeypatch, credits=30, duration_seconds=1500,
         split_video=True, split_minutes=10,
     )
     assert result[0] == "ok"
     resp = result[1]
     assert resp["estimated_parts"] == 3
-    assert "credits_total" not in resp
+    assert resp["estimated_recap_credits"] == 25.0
 
 
 def test_submit_on_free_lane_unchanged(ledger, monkeypatch):
     _tiered_on(monkeypatch)
-    # Free user, 100-second source (inside the 2-minute free cap),
-    # the 3 signup credits: band is 1, charge is 1, quote is 1.
+    # Free user, 100s output = 1.67 Credits out of 3 Credits -> 1.33 Credits left.
     result = _submit(
         ledger, monkeypatch, credits=3, category="FREE",
         duration_seconds=100,
     )
     assert result[0] == "ok"
     resp = result[1]
-    assert resp["credits_total"] == 1
-    assert resp["credits_charged"] == 1
-    assert ledger.credits() == 2
+    assert resp["estimated_recap_seconds"] == 100
+    assert ledger.credits() == pytest.approx(3 - 100 / 60, abs=0.02)
 
 
 def test_submit_quote_equals_worker_charge(ledger, monkeypatch):
-    """The end-to-end guarantee: the total quoted in the submit
-    response is the total the worker's band top-up charges, and a
-    later failure refunds exactly that total."""
+    """End-to-end guarantee: reserve holds exact quote, settlement charges
+    actual output seconds, and cancel/failure releases full reserve cleanly."""
     from app.webapp import api as api_mod
-    from app.webapp.api import (
-        _apply_recap_band_top_up,
-        _refund_recap_job_charge,
-    )
+    from app.webapp.api import _refund_recap_job_charge
 
     _tiered_on(monkeypatch)
-    result = _submit(ledger, monkeypatch, credits=5, duration_seconds=324)
+    result = _submit(ledger, monkeypatch, credits=6, duration_seconds=324)
     assert result[0] == "ok"
     resp = result[1]
-    quoted = resp["credits_total"]
-    assert quoted == 2
-    assert ledger.credits() == 4  # submit credit only, so far
-
+    assert resp["estimated_recap_seconds"] == 324
     entry = api_mod.RECAP_JOBS_REGISTRY[resp["recap_id"]]
-    charged = asyncio.run(
-        _apply_recap_band_top_up(USER_ID, entry, is_admin_user=False)
-    )
-    assert charged == quoted
-    assert ledger.credits() == 3  # 5 − quoted in total
 
     assert asyncio.run(_refund_recap_job_charge(USER_ID, entry)) is True
-    assert ledger.credits() == 5
-    assert entry["credits_refunded"] == quoted
+    assert ledger.credits() == 6
+    assert entry["credit_refunded"] is True
 
 
 # ── Messages ─────────────────────────────────────────────────────────
@@ -622,30 +600,13 @@ def test_batch_ao_wiring_contracts():
     settings_py = _read("app/config/settings.py")
     dyn_py = _read("app/services/dynamic_settings.py")
 
-    # Switch: setting + dynamic registration + admin surface + /me.
     assert "tiered_recap_pricing_enabled" in settings_py
     assert '"tiered_recap_pricing_enabled": bool' in dyn_py
-    assert api_py.count("tiered_recap_pricing_enabled") >= 4
     assert '"tiered_pricing_enabled": _tiered_recap_pricing_enabled()' in api_py
-
-    # Charging: band helpers + both worker top-up paths wired.
-    assert "def _recap_band_credits(" in api_py
-    assert "_top_up_recap_charge_to_total(" in api_py
-    assert "_apply_recap_band_top_up(" in api_py
-    assert "_top_up_recap_segment_charge(user_id, entry, total_parts)" in api_py
-    # The quote rides the submit response only when armed.
-    assert '"credits_total"' in api_py
-
-    # Mini App: CTA/hint quote branch + confirmation prefers the
-    # server total; the i18n key exists in BOTH locales with both
-    # placeholders.
-    assert "tiered_pricing_enabled" in app_js
+    assert "reserve_for_job(" in api_py
+    assert "settle_job_reservation(" in api_py
     assert "formatRecapQuoteDuration(" in app_js
-    assert 'tf("recap_tiered_cost_estimate"' in app_js
-    assert "data.credits_total" in app_js
+    assert "estCredits" in app_js
     assert i18n_js.count("recap_tiered_cost_estimate:") == 2
-    assert "{duration}" in i18n_js and "{credits}" in i18n_js
-
-    # Cache token bumped for the static changes.
     assert "20261118_r164" in html
     assert "20261104_r64" not in html

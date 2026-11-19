@@ -77,7 +77,11 @@ class User(Base):
         String(20), nullable=False, default=UserStatus.ACTIVE.value
     )
 
-    recap_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    recap_credits: Mapped[float] = mapped_column(Float, nullable=False, default=3.0)
+    # Exact second-level recap balance (1 Recap Credit = 60 seconds final output)
+    # plus live in-flight reservation hold (in seconds).
+    recap_credit_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=180)
+    reserved_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     channel_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     group_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     welcome_bonus_awarded: Mapped[bool] = mapped_column(
@@ -153,6 +157,9 @@ class MinuteBalance(Base):
     referral_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     purchased_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     consumed_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_monthly_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_welcome_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_purchased_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -165,13 +172,13 @@ class MinuteBalance(Base):
 
     @property
     def total_usable_seconds(self) -> int:
-        return max(
-            0,
+        gross = (
             self.monthly_free_seconds
             + self.purchased_seconds
             + self.welcome_seconds
-            + self.referral_seconds,
+            + self.referral_seconds
         )
+        return max(0, gross - self.reserved_seconds)
 
     @property
     def clone_spendable_seconds(self) -> int:
@@ -179,14 +186,15 @@ class MinuteBalance(Base):
 
         Referral-earned seconds are TTS-only since Batch AW: they are
         excluded here, and every clone balance check / deduction uses
-        this figure instead of the grand total.
+        this figure instead of the grand total. Reserved holds from
+        in-flight jobs are subtracted so concurrent jobs cannot overdraft.
         """
-        return max(
-            0,
+        gross = (
             self.monthly_free_seconds
             + self.purchased_seconds
-            + self.welcome_seconds,
+            + self.welcome_seconds
         )
+        return max(0, gross - self.reserved_seconds)
 
     @property
     def clone_spendable_minutes(self) -> float:
@@ -211,6 +219,19 @@ class MinuteBalance(Base):
     @property
     def referral_minutes(self) -> float:
         return max(0, self.referral_seconds) / 60.0
+
+    @property
+    def reserved_seconds(self) -> int:
+        return max(
+            0,
+            int(getattr(self, "reserved_monthly_free_seconds", 0) or 0)
+            + int(getattr(self, "reserved_welcome_seconds", 0) or 0)
+            + int(getattr(self, "reserved_purchased_seconds", 0) or 0),
+        )
+
+    @property
+    def reserved_minutes(self) -> float:
+        return round(self.reserved_seconds / 60.0, 2)
 
     __table_args__ = (
         CheckConstraint("monthly_free_seconds >= 0", name="chk_balance_monthly_free_non_neg"),
@@ -284,7 +305,8 @@ class RecapCreditLedgerEvent(Base):
     )
     source: Mapped[str] = mapped_column(String(20), nullable=False)
     direction: Mapped[str] = mapped_column(String(20), nullable=False)
-    credits: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    credits: Mapped[float] = mapped_column(Float, nullable=False)
+    seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     reference_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -377,10 +399,20 @@ class PricingPlan(Base):
 
     id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(20), nullable=False, default="voice")
+    sub_type: Mapped[str] = mapped_column(String(20), nullable=False, default="voice")
     minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    recap_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     price_mmk: Mapped[int] = mapped_column(Integer, nullable=False)
+    validity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_topup: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    badge: Mapped[str] = mapped_column(String(30), nullable=False, default="")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=True
+    )
 
 
 class PaymentRequest(Base):
@@ -392,7 +424,10 @@ class PaymentRequest(Base):
     )
     package_code: Mapped[str] = mapped_column(String(50), nullable=False)
     minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    recap_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     amount_mmk: Mapped[int] = mapped_column(Integer, nullable=False)
+    validity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    payment_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
     receipt_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     slip_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
@@ -594,6 +629,10 @@ class Job(Base):
     speed_preset: Mapped[str | None] = mapped_column(String(20), nullable=True)   # slow, normal, fast
     seconds_estimated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     seconds_consumed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    voice_audio_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    recap_credits_charged: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     result_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1018,4 +1057,184 @@ class RecapThumbnailPoolUsage(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now()
     )
+
+
+class WalletReservation(Base):
+    """Per-job atomic reserve / settle / release ledger row for dual wallets."""
+
+    __tablename__ = "wallet_reservations"
+
+    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    job_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    billing_mode: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="RESERVED")
+    reserved_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_monthly: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_welcome: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_purchased: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    settled_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    settled_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    refunded_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    refunded_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    partial_delivered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('RESERVED', 'SETTLED', 'RELEASED')",
+            name="chk_wallet_reservation_status",
+        ),
+        Index("ix_wr_user_status", "user_id", "status"),
+    )
+
+
+class WalletTransaction(Base):
+    """Unified customer & admin-auditable wallet transaction log."""
+
+    __tablename__ = "wallet_transactions"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    tx_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    wallet_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    recap_seconds_delta: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    voice_seconds_delta: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    balance_recap_seconds_after: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_recap_seconds_after: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    balance_voice_seconds_after: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_seconds_after: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reference_id: Mapped[str | None] = mapped_column(String(100), index=True, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "tx_type IN ('PURCHASE', 'RESERVE', 'DEDUCT', 'RELEASE', 'REFUND', 'ADMIN_ADJUST', 'BONUS', 'EXPIRE')",
+            name="chk_wallet_tx_type",
+        ),
+        CheckConstraint(
+            "wallet_kind IN ('RECAP', 'VOICE', 'COMBO')",
+            name="chk_wallet_tx_kind",
+        ),
+        Index("ix_wt_user_created", "user_id", "created_at"),
+    )
+
+
+class WalletGrant(Base):
+    """Per-purchase / per-grant expiring credit & minute lot (FEFO consumption)."""
+
+    __tablename__ = "wallet_grants"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    source_type: Mapped[str] = mapped_column(String(24), nullable=False, default="PACKAGE")
+    payment_request_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    package_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    package_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    validity_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    purchased_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
+    initial_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    remaining_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    initial_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    remaining_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
+    reminded_3d_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminded_24h_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "source_type IN ('PACKAGE', 'COMBO', 'TOPUP', 'ADMIN_GRANT', 'LEGACY_GRANDFATHER', 'REFUND_GRACE')",
+            name="chk_wallet_grant_source",
+        ),
+        CheckConstraint(
+            "status IN ('ACTIVE', 'DEPLETED', 'EXPIRED', 'REVOKED')",
+            name="chk_wallet_grant_status",
+        ),
+        Index("ix_wg_user_status_exp", "user_id", "status", "expires_at"),
+    )
+
+
+class WalletReservationLot(Base):
+    """Per-job mapping of reserved/settled/released seconds to specific WalletGrant lots."""
+
+    __tablename__ = "wallet_reservation_lots"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("wallet_reservations.job_id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    grant_id: Mapped[int] = mapped_column(
+        PK_INT, ForeignKey("wallet_grants.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    reserved_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    settled_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    settled_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    released_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    released_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class JobCostTelemetry(Base):
+    """Provider usage & cost telemetry for Admin Cost Monitoring (actual vs estimated)."""
+
+    __tablename__ = "usage_cost_events"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    job_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    is_own_key: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    requests_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    audio_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    runtime_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    bytes_transferred: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cost_basis: Mapped[str] = mapped_column(String(32), nullable=False, default="estimated")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now(), index=True
+    )
+
 

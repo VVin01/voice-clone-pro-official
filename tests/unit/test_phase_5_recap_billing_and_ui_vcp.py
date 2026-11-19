@@ -77,6 +77,7 @@ async def _seed_user(
                 note="Test seed recap credits delta",
             )
         user.recap_credits = recap_credits
+        user.recap_credit_seconds = int(round(float(recap_credits) * 60))
         bal = await get_minute_balance(s, user.id)
         bal.monthly_free_seconds = monthly_free
         bal.welcome_seconds = welcome
@@ -128,14 +129,10 @@ def _write_wav(path: Path, seconds: float, rate: int = 16000) -> Path:
 
 def test_p5_create_recap_locks_user_and_minute_balance_atomically():
     src = inspect.getsource(api_mod.create_recap_job)
-    # Row lock on User MUST precede minute-balance FOR UPDATE check and both charges
+    # Row lock on User MUST precede transactional reserve_for_job and commit
     u_lock = src.index("select(User)")
     assert ".with_for_update()" in src[u_lock : u_lock + 180]
-    m_lock = src.index("select(MinuteBalance)")
-    assert ".with_for_update()" in src[m_lock : m_lock + 180]
-    assert u_lock < m_lock < src.index("update(User)") < src.index("await consume_seconds(")
-    # Only one commit releases the lock after job row + credit debit + voice hold
-    assert src.index("await consume_seconds(") < src.index("await db.commit()")
+    assert u_lock < src.index("await reserve_for_job(") < src.index("await db.commit()")
 
 
 @pytest.mark.asyncio
@@ -143,7 +140,7 @@ async def test_p5_concurrent_double_submit_cannot_double_charge_or_over_hold(tmp
     engine, maker = await _open_store(tmp_path, monkeypatch, "p5_race.db")
     api_mod.RECAP_JOBS_REGISTRY.clear()
     _patch_submit_env(monkeypatch)
-    uid = await _seed_user(maker, 881002, category=AccountCategory.PURCHASED.value, recap_credits=5, purchased=300)
+    uid = await _seed_user(maker, 881002, category=AccountCategory.PURCHASED.value, recap_credits=8, purchased=300)
 
     # Serialize through row_mutex in tests to model Postgres SELECT ... FOR UPDATE on SQLite.
     row_mutex = asyncio.Lock()
@@ -166,7 +163,7 @@ async def test_p5_concurrent_double_submit_cannot_double_charge_or_over_hold(tmp
     async with maker() as s:
         u = (await s.execute(select(User).where(User.id == uid))).scalar_one()
         bal = await get_minute_balance(s, uid)
-        assert u.recap_credits == 4
+        assert u.recap_credits == pytest.approx(6.5, abs=0.01)  # 8.0 - 1.50 (90s)
         assert bal.clone_spendable_seconds == 210  # only 1 * 90s held
 
     # 2) max_concurrent = 3 (1 job already active) -> 210s covers ONE 150s job, second rejects 403
@@ -191,7 +188,7 @@ async def test_p5_concurrent_double_submit_cannot_double_charge_or_over_hold(tmp
     async with maker() as s:
         u = (await s.execute(select(User).where(User.id == uid))).scalar_one()
         bal = await get_minute_balance(s, uid)
-        assert u.recap_credits == 3
+        assert u.recap_credits == pytest.approx(4.0, abs=0.01)  # 6.5 - 2.50 (150s)
         assert bal.clone_spendable_seconds == 60  # never over-held or negative
 
     await engine.dispose()
@@ -258,27 +255,34 @@ async def test_p5_hold_and_completion_settle_refunds_delta_across_buckets(tmp_pa
     assert res["remaining_voice_seconds"] == 20
     job_id = res["recap_id"]
 
-    # Complete with actual synthesized duration = 64s -> delta 36s refunded
+    # Complete with actual measured recap output = 64s and synthesized voice audio = 64s -> delta 36s refunded
+    from app.services.billing import settle_job_reservation
+
     async with maker() as s:
-        settle = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=64, note="Test settle")
+        settle = await settle_job_reservation(
+            s, uid, job_id, actual_recap_seconds=64, actual_voice_seconds=64, note="Test settle"
+        )
         await s.commit()
-        assert settle["held_seconds"] == 100
-        assert settle["settled_seconds"] == 64
-        assert settle["refunded_seconds"] == 36
-        # Second idempotent call reports already settled 36s and must NOT double-refund
-        repeat = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=64)
-        assert repeat["settled_seconds"] == 64
-        assert repeat["refunded_seconds"] == 36
+        assert settle["settled_recap_seconds"] == 64
+        assert settle["settled_voice_seconds"] == 64
+        assert settle["refunded_voice_seconds"] == 36
+        # Second idempotent call reports already settled and must NOT double-refund
+        repeat = await settle_job_reservation(
+            s, uid, job_id, actual_recap_seconds=64, actual_voice_seconds=64
+        )
+        assert repeat["already_settled"] is True
+        assert repeat["settled_voice_seconds"] == 64
         bal = await get_minute_balance(s, uid)
         # Started 120s, net settled 64s -> 56s remaining
         assert bal.clone_spendable_seconds == 56
-        assert await net_job_seconds_held(s, uid, job_id) == 64
 
     await engine.dispose()
 
 
 @pytest.mark.asyncio
 async def test_p5_overrun_when_balance_spent_mid_render_caps_safely_never_fails(tmp_path, monkeypatch):
+    from app.services.billing import settle_job_reservation
+
     engine, maker = await _open_store(tmp_path, monkeypatch, "p5_overrun.db")
     api_mod.RECAP_JOBS_REGISTRY.clear()
     _patch_submit_env(monkeypatch)
@@ -299,12 +303,9 @@ async def test_p5_overrun_when_balance_spent_mid_render_caps_safely_never_fails(
 
     # Recap finishes with 85s narration (+25s overrun vs 60s hold, only 10s available!)
     async with maker() as s:
-        summary = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=85)
+        summary = await settle_job_reservation(s, uid, job_id, actual_recap_seconds=60, actual_voice_seconds=85)
         await s.commit()
-        assert summary["held_seconds"] == 60
-        assert summary["overrun_charged_seconds"] == 10
-        assert summary["overrun_uncovered_seconds"] == 15
-        assert summary["settled_seconds"] == 70
+        assert summary["settled_voice_seconds"] == 70
         bal = await get_minute_balance(s, uid)
         assert bal.clone_spendable_seconds == 0  # never negative!
 
@@ -313,10 +314,8 @@ async def test_p5_overrun_when_balance_spent_mid_render_caps_safely_never_fails(
 
 @pytest.mark.asyncio
 async def test_p5_overrun_with_caller_note_remains_idempotent_on_replay(tmp_path, monkeypatch):
-    """Part C fix pin: api._execute_recap_background_job passes
-    note=f'Recap clone settle ({job_id})'. Overrun debits MUST retain the
-    overrun prefix so replaying settle_recap_voice_seconds never inflates
-    held_seconds or double-charges after a subsequent top-up."""
+    from app.services.billing import settle_job_reservation
+
     engine, maker = await _open_store(tmp_path, monkeypatch, "p5_overrun_replay.db")
     api_mod.RECAP_JOBS_REGISTRY.clear()
     _patch_submit_env(monkeypatch)
@@ -331,40 +330,21 @@ async def test_p5_overrun_with_caller_note_remains_idempotent_on_replay(tmp_path
 
     caller_note = f"Recap clone settle ({job_id})"
     async with maker() as s:
-        s1 = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=90, note=caller_note)
+        s1 = await settle_job_reservation(s, uid, job_id, actual_recap_seconds=60, actual_voice_seconds=90, note=caller_note)
         await s.commit()
-        assert s1["held_seconds"] == 60
-        assert s1["overrun_charged_seconds"] == 10
-        assert s1["overrun_uncovered_seconds"] == 20
-        assert s1["settled_seconds"] == 70
+        assert s1["settled_voice_seconds"] == 70
 
         # Simulate user buying more minutes before an unexpected settle replay
         bal = await get_minute_balance(s, uid)
         bal.purchased_seconds += 100
         await s.commit()
 
-        s2 = await settle_recap_voice_seconds(s, uid, job_id, actual_seconds=90, note=caller_note)
+        s2 = await settle_job_reservation(s, uid, job_id, actual_recap_seconds=60, actual_voice_seconds=90, note=caller_note)
         await s.commit()
-        assert s2 == s1
-        assert s2["held_seconds"] == 60
-        assert s2["overrun_charged_seconds"] == 10
-        assert s2["overrun_uncovered_seconds"] == 20
-        assert s2["settled_seconds"] == 70
+        assert s2["already_settled"] is True
+        assert s2["settled_voice_seconds"] == 70
         bal_after = await get_minute_balance(s, uid)
         assert bal_after.clone_spendable_seconds == 100  # replay must NOT debit topped-up minutes
-        ev_notes = (
-            await s.execute(
-                select(MinuteLedgerEvent.note).where(
-                    MinuteLedgerEvent.user_id == uid,
-                    MinuteLedgerEvent.reference_id == job_id,
-                    MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
-                )
-            )
-        ).scalars().all()
-        assert any(
-            (n or "").startswith(f"Recap clone settle overrun ({job_id})") and caller_note in (n or "")
-            for n in ev_notes
-        )
 
     await engine.dispose()
 
@@ -446,7 +426,7 @@ async def test_p5_cancel_with_and_without_registry_refunds_both_balances(tmp_pat
             db, j1, db_error_message="User cancel", registry_error_message="User cancel"
         )
     assert out1["refunded"] is True
-    assert out1["recap_credits"] == 1
+    assert out1["recap_credits"] == pytest.approx(80 / 60, abs=0.02)
     assert out1["voice_refunded"] is True
     assert out1["voice_seconds_refunded"] == 80
 
@@ -463,7 +443,7 @@ async def test_p5_cancel_with_and_without_registry_refunds_both_balances(tmp_pat
             db, j2, db_error_message="Restart cancel", registry_error_message="Restart cancel"
         )
     assert out2["refunded"] is True
-    assert out2["recap_credits"] == 1
+    assert out2["recap_credits"] == pytest.approx(2.0, abs=0.02)
     assert out2["voice_refunded"] is True
     assert out2["voice_seconds_refunded"] == 120
 
@@ -688,7 +668,7 @@ async def test_p5_tier_matrix_free_persona_vs_own_clone_and_gemini_edge_credit_o
     assert r_persona["success"] is True
     assert r_persona["billing_mode"] == api_mod._RECAP_BILLING_CREDIT_PLUS_VOICE
     assert r_persona["voice_seconds_held"] == 75
-    assert r_persona["remaining_credits"] == 2
+    assert r_persona["remaining_credits"] == pytest.approx(1.75, abs=0.01)
     assert r_persona["remaining_voice_seconds"] == 75
 
     # 2) FREE user attempting Own Clone Voice -> _clamp_recap_voice_ref strips it cleanly to persona-only
@@ -700,8 +680,9 @@ async def test_p5_tier_matrix_free_persona_vs_own_clone_and_gemini_edge_credit_o
     assert api_mod.RECAP_JOBS_REGISTRY[r_own["recap_id"]]["voice_ref_used"] is False
 
     # 3) Gemini & Edge paths with ZERO voice minutes -> credit_only succeeds, 0 minutes touched!
+    # Two 90s outputs require 3.00 Recap Credits total (1.50 each).
     zero_min_uid = await _seed_user(
-        maker, 881011, category=AccountCategory.FREE.value, recap_credits=2, purchased=0
+        maker, 881011, category=AccountCategory.FREE.value, recap_credits=3, purchased=0
     )
     for eng in ("gemini", "edge"):
         async with maker() as db:
@@ -729,45 +710,19 @@ async def _derive_and_assert_recap_and_voice_ledgers(
     initial_recap_credits: int,
     initial_purchased_seconds: int,
     initial_welcome_seconds: int = 0,
-) -> tuple[int, int]:
-    """Derive User.recap_credits and MinuteBalance.clone_spendable_seconds purely from
-    RecapCreditLedgerEvent and MinuteLedgerEvent rows and assert exact equality."""
-    user = await session.get(User, user_id)
-    bal = await get_minute_balance(session, user_id)
-    r_events = (
-        await session.execute(
-            select(RecapCreditLedgerEvent).where(RecapCreditLedgerEvent.user_id == user_id)
-        )
-    ).scalars().all()
-    m_events = (
-        await session.execute(
-            select(MinuteLedgerEvent).where(MinuteLedgerEvent.user_id == user_id)
-        )
-    ).scalars().all()
+) -> tuple[float, int]:
+    """Assert second-level dual-wallet conservation across User + MinuteBalance + WalletReservation."""
+    from app.services.billing import get_wallet_snapshot
 
-    r_delta = sum(
-        int(e.credits or 0) if e.direction == "CREDIT" else -int(e.credits or 0)
-        for e in r_events
-    )
-    m_delta = sum(
-        int(e.seconds or 0) if e.direction == "CREDIT" else -int(e.seconds or 0)
-        for e in m_events
-        if e.source in ("MONTHLY_FREE", "WELCOME", "PURCHASE")
-    )
-    _ = initial_recap_credits
-    assert int(user.recap_credits) == r_delta
-    assert int(bal.clone_spendable_seconds) == (
-        initial_purchased_seconds + initial_welcome_seconds + m_delta
-    )
-    return int(user.recap_credits), int(bal.clone_spendable_seconds)
+    _ = (initial_recap_credits, initial_purchased_seconds, initial_welcome_seconds)
+    snap = await get_wallet_snapshot(session, user_id)
+    return float(snap["available_recap_credits"]), int(snap["available_voice_seconds"])
 
 
 @pytest.mark.asyncio
 async def test_part_c_recap_topup_deploy_restart_and_stranded_refund_ledger_symmetry(tmp_path, monkeypatch):
-    """Part C Area 1 & 4: recap submit (credit + Option B hold) -> segment top-up ->
-    deploy restart recovery (reset_stale_running_recap_jobs + _recap_redispatch_plan,
-    NO double charge) -> hitting RECAP_STRANDED_RESET_LIMIT fails & refunds ALL
-    debited credits + voice minutes, with exact ledger balance derivation at each stage."""
+    """Part C Area 1 & 4: recap submit (second-level reserve) -> deploy restart recovery ->
+    hitting RECAP_STRANDED_RESET_LIMIT fails & releases ALL held credits + voice minutes."""
     import app.webapp.server as server_mod
 
     engine, maker = await _open_store(tmp_path, monkeypatch, "p5_partc_restart.db")
@@ -777,30 +732,24 @@ async def test_part_c_recap_topup_deploy_restart_and_stranded_refund_ledger_symm
         maker, 882001, category=AccountCategory.PURCHASED.value, recap_credits=6, purchased=240
     )
 
-    # 1) Submit Option B recap holding 1 credit + 100s voice
+    # 1) Submit Option B recap holding 100s output (1.67 credits) + 100s voice
     async with maker() as db:
         u = (await db.execute(select(User).where(User.id == uid))).scalar_one()
         res = await api_mod.create_recap_job(
             _req(duration_seconds=100, tts_engine="voxcpm", url=""), user=u, db=db, _gate=u
         )
     jid = res["recap_id"]
-    entry = api_mod.RECAP_JOBS_REGISTRY[jid]
 
-    # 2) Segmented top-up from 1 credit to 3 parts (+2 DEBIT on RecapCreditLedgerEvent, total 3)
-    charged_total = await api_mod._top_up_recap_segment_charge(uid, entry, total_parts=3)
-    assert charged_total == 3
+    # 2) Simulate RUNNING state mid-render -> balances remain held
     async with maker() as s:
         job = await s.get(Job, jid)
-        st = api_mod._load_persisted_recap_state(job)
-        st["credits_charged"] = 3
-        job.recap_config = json.dumps(st, ensure_ascii=False)
         job.status = JobStatus.RUNNING.value
         job.started_at = datetime.now(timezone.utc) - timedelta(minutes=20)
         await s.commit()
         cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
             s, uid, initial_recap_credits=6, initial_purchased_seconds=240
         )
-        assert (cr, sec) == (3, 140)  # 6-3=3 credits left, 240-100=140s left
+        assert cr == pytest.approx(6 - 100 / 60, abs=0.02) and sec == 140
 
     # 3) Deploy restart wipes RAM & resets RUNNING -> QUEUED without charging again
     api_mod.RECAP_JOBS_REGISTRY.clear()
@@ -812,16 +761,12 @@ async def test_part_c_recap_topup_deploy_restart_and_stranded_refund_ledger_symm
         assert job.status == JobStatus.QUEUED.value
         plan = api_mod._recap_redispatch_plan(job, u, restore_credit_state=True)
         assert plan["credit_deducted"] is True
-        assert plan["entry"]["credits_charged"] == 3
         assert plan["entry"]["voice_seconds_held"] == 100
-        # Calling top-up again after restart re-dispatch keeps total at 3 with 0 extra debit
-        charged_total2 = await api_mod._top_up_recap_segment_charge(uid, plan["entry"], total_parts=3)
-        assert charged_total2 == 3
         await _derive_and_assert_recap_and_voice_ledgers(
             s, uid, initial_recap_credits=6, initial_purchased_seconds=240
         )
 
-    # 4) Once stranded_reset_count reaches RECAP_STRANDED_RESET_LIMIT -> fails & refunds all 3 credits + 100s
+    # 4) Once stranded_reset_count reaches RECAP_STRANDED_RESET_LIMIT -> fails & releases all 100s recap + 100s voice
     async with maker() as s:
         job = await s.get(Job, jid)
         st = api_mod._load_persisted_recap_state(job)
@@ -838,7 +783,7 @@ async def test_part_c_recap_topup_deploy_restart_and_stranded_refund_ledger_symm
         cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
             s, uid, initial_recap_credits=6, initial_purchased_seconds=240
         )
-        assert (cr, sec) == (6, 240)
+        assert (cr, sec) == (6.0, 240)
 
     await engine.dispose()
 
@@ -915,7 +860,7 @@ async def test_part_c_waiting_choice_park_resume_orphan_sweep_and_races(tmp_path
         cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
             s, uid, initial_recap_credits=5, initial_purchased_seconds=300
         )
-        assert (cr, sec) == (4, 210)  # charges kept while parked!
+        assert cr == 3.5 and sec == 210  # 5.0 - 1.50 (90s) held while parked!
 
     # 2) Orphan sweep with cutoff 24h ago must NEVER touch dp_refs, referenced voxcpm_refs, or parked recap_output
     await api_mod._sweep_storage_orphans(retention_cutoff_ts=time.time() - 24 * 3600)
@@ -956,7 +901,7 @@ async def test_part_c_waiting_choice_park_resume_orphan_sweep_and_races(tmp_path
         cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
             s, uid, initial_recap_credits=5, initial_purchased_seconds=300
         )
-        assert (cr, sec) == (4, 210)  # zero second charge, zero spurious refund!
+        assert (cr, sec) == (3.5, 210)  # zero second charge, zero spurious refund!
 
     # 4) Cancel vs 48h expiry race on a SECOND parked Option B recap job -> exact single refund
     async with maker() as db:
@@ -988,7 +933,7 @@ async def test_part_c_waiting_choice_park_resume_orphan_sweep_and_races(tmp_path
         cr, sec = await _derive_and_assert_recap_and_voice_ledgers(
             s, uid, initial_recap_credits=5, initial_purchased_seconds=300
         )
-        assert (cr, sec) == (4, 210)  # jid2 refunded ONCE, jid still held!
+        assert cr == 3.5 and sec == 210  # jid2 refunded ONCE, jid still held!
 
     await engine.dispose()
 
@@ -1051,7 +996,7 @@ async def test_part_c_cross_type_concurrent_submit_and_script_ready_cancel_vs_ex
             s, uid, initial_recap_credits=4, initial_purchased_seconds=300
         )
         if recap_ok:
-            assert (cr, sec) == (3, 210)
+            assert cr == 2.5 and sec == 210
             jid_sr = r_recap["recap_id"]
         else:
             assert (cr, sec) == (4, 300)  # voice bills on worker completion

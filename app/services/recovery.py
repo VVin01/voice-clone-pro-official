@@ -97,17 +97,37 @@ async def recover_stale_running_jobs(
             continue
         await session.refresh(job)
 
-        # Step 3: Inspect ledger for charges and refund idempotently
+        # Step 3: Release/refund reservation & ledger charges idempotently
+        from app.services.billing import refund_or_release_job
+
+        rel_res = await refund_or_release_job(
+            session,
+            job.user_id,
+            str(job.id),
+            reason="STALE_RECOVERY",
+            note=f"Automatic recovery: job {job.id} interrupted by worker termination",
+        )
+        res_refunded_any = bool(
+            rel_res.get("found")
+            and (
+                int(rel_res.get("refunded_recap_seconds") or 0) > 0
+                or int(rel_res.get("refunded_voice_seconds") or 0) > 0
+            )
+        )
+
         debit_stmt = select(MinuteLedgerEvent).where(
             MinuteLedgerEvent.user_id == job.user_id,
             MinuteLedgerEvent.reference_id == str(job.id),
             MinuteLedgerEvent.direction == LedgerDirection.DEBIT.value,
         )
         debits = (await session.execute(debit_stmt)).scalars().all()
-        was_charged = len(debits) > 0
-        refunded_seconds = sum(d.seconds for d in debits)
+        was_charged = (len(debits) > 0) or res_refunded_any
+        refunded_seconds = max(
+            sum(d.seconds for d in debits),
+            int(rel_res.get("refunded_voice_seconds") or 0),
+        )
 
-        if was_charged:
+        if len(debits) > 0 and not rel_res.get("found"):
             if job.job_type == JobType.TTS.value:
                 await refund_tts_referral_seconds(
                     session=session,
@@ -124,6 +144,14 @@ async def recover_stale_running_jobs(
                     note=f"Automatic refund: job {job.id} interrupted by worker termination",
                 )
             logger.info("Refunded %ss to user %s for stale job %s", refunded_seconds, job.user_id, job.id)
+        elif res_refunded_any:
+            logger.info(
+                "Released/refunded stale job %s for user %s (recap=%ss, voice=%ss)",
+                job.id,
+                job.user_id,
+                rel_res.get("refunded_recap_seconds"),
+                rel_res.get("refunded_voice_seconds"),
+            )
 
         # Step 4: Record AuditLog
         session.add(

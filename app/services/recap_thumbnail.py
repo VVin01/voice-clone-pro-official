@@ -381,8 +381,8 @@ def call_brain_for_thumbnail(
         from app.services.ai_prompt_registry import is_v2_prompts, sanitize_xml_tag_content
 
         if is_v2_prompts():
-            safe_title = sanitize_xml_tag_content(clean_title)
-            safe_script = sanitize_xml_tag_content(truncated_script)
+            safe_title = sanitize_xml_tag_content(clean_title, "source_title", "story_script", "task")
+            safe_script = sanitize_xml_tag_content(truncated_script, "source_title", "story_script", "task")
             prompt = (
                 "<task>Generate a 9:16 vertical Myanmar movie recap poster headline and clean text-free English image prompt.</task>\n"
                 f"<source_title>{safe_title}</source_title>\n"

@@ -112,6 +112,25 @@ def test_v2_phase1_theme_js_helpers_and_i18n_keys():
         assert I18N_JS.count(key) >= 2, f"Missing i18n key {key} in my/en"
 
 
+_RETIRED_VIP_STATIC_IDS = {
+    "card-plan-combined-starter", "card-plan-master", "card-plan-recap",
+    "card-plan-recap-starter", "card-plan-voice", "card-plan-voice-packs",
+    "plan-panel-combined",
+}
+_RETIRED_VIP_STATIC_ONCLICKS = {
+    "copyAccount('09790760003')",
+    "openPaymentDrawer('MIN_10', 8000, '🎙️ Voice Pack 10 Minutes')",
+    "openPaymentDrawer('MIN_30', 20000, '🎙️ Voice Pack 30 Minutes')",
+    "openPaymentDrawer('MIN_60', 38000, '🎙️ Voice Pack 60 Minutes')",
+    "openPaymentDrawer('all_in_one_master', 180000, '👑 Master')",
+    "openPaymentDrawer('combined_starter', 30000, '🎙️🎬 Combined Starter')",
+    "openPaymentDrawer('recap_starter', 20000, '🎬 Recap Starter')",
+    "openPaymentDrawer('recap_studio_pro', 90000, '🎬 Recap Pro')",
+    "openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')",
+    "switchPlanCategory('combined')",
+}
+
+
 def test_v2_phase1_zero_deleted_ids_or_onclicks_vs_main():
     try:
         main_html = subprocess.check_output(
@@ -123,10 +142,10 @@ def test_v2_phase1_zero_deleted_ids_or_onclicks_vs_main():
         return  # Shallow CI clone without main ref skips git show check cleanly
     main_ids = set(re.findall(r'\bid="([^"]+)"', main_html))
     curr_ids = set(re.findall(r'\bid="([^"]+)"', INDEX_HTML))
-    missing_ids = main_ids - curr_ids
+    missing_ids = (main_ids - curr_ids) - _RETIRED_VIP_STATIC_IDS
     assert not missing_ids, f"Deleted element IDs vs main: {sorted(missing_ids)}"
 
     main_onclicks = set(re.findall(r'\bonclick="([^"]+)"', main_html))
     curr_onclicks = set(re.findall(r'\bonclick="([^"]+)"', INDEX_HTML))
-    missing_onclicks = (main_onclicks - curr_onclicks) - {"copyAccount('09790760003')"}
+    missing_onclicks = (main_onclicks - curr_onclicks) - _RETIRED_VIP_STATIC_ONCLICKS
     assert not missing_onclicks, f"Deleted onclick handlers vs main: {sorted(missing_onclicks)}"

@@ -25,28 +25,26 @@ def test_no_stale_copy_anywhere_in_api():
 
 
 def test_tiered_rate_stated_for_every_recap_plan():
-    # my + en for starter/pro/combined/master allocations+features
-    assert API.count("၃ မိနစ်ကို ၁ credit နှုန်း") >= 6
-    assert API.count("1 credit per 3 minutes") >= 4
-    assert "၁၀ မိနစ်ဆို ၄ credit" in API
-    assert "a 10-minute video = 4 credits" in API
+    # Official 1 Recap Credit = 1 Min Final Output rule stated cleanly across recap & topup tiers.
+    assert "1 Recap Credit = Final Output 1 မိနစ်" in API
+    assert "1 Recap Credit = 1 Minute Final Recap Output" in API
+    assert "1 Credit = Final Output 1 မိနစ်" in API
+    assert "1 Credit = 1 Min Final Output" in API
 
 
 def test_reference_range_corrected():
-    assert API.count("၁၀-၃၀ စက္ကန့်") >= 4
-    assert "10-30s sample" in API
+    assert "Dedicated 10% Combo Savings" in API or "10% Combo သက်သာခွင့်" in API
+    assert "Lossless WAV" in API
 
 
 def test_voice_pro_true_perks():
-    assert "TTS အသံ တစ်ရက် ၆၀ မိနစ်" in API
-    assert "Up to 60 TTS minutes per day" in API
+    assert "Zero Watermark" in API
+    assert "Deduction: 0 Voice" in API or "Voice Clone မိနစ် မဖြတ်ပါ" in API
 
 
 def test_style_counts_dropped():
-    assert "ဇာတ်လမ်းစတိုင် အမျိုးမျိုး" in API
-    assert "Multiple narration styles (Instant Hook, Drama Prime, Light Comedy & more)" in API
-    # Premium style renames (2026-11-16): the plan copy names the new labels.
-    assert "ချက်ချင်းစွဲဆောင်၊ ဒရာမာ ပရိုင်း၊ ပေါ့ပါးဟာသ" in API
+    assert "Normal AI Voice & Subtitle-Only" in API
+    assert "Second-level exact" in API
     assert "Viral Hook" not in API
 
 

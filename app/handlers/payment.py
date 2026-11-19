@@ -17,10 +17,12 @@ from app.services.payments import (
     SlipAlreadyUsedError,
     clear_payment_intent,
     create_payment_request,
+    format_extra_payment_accounts_html,
     get_active_pricing_plans,
     get_payment_account_info,
     get_plan_by_code,
     get_recent_payment_intent,
+    list_payment_accounts,
     package_recap_credits,
     save_payment_intent,
 )
@@ -67,39 +69,57 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
     # Three separate paid categories, in order: Voice-only (minute packs
     # from the DB seed), Recap-only, Combined Voice+Recap (from the plan
     # catalogue). Free tier stays separate and is not listed here.
-    from app.services.payments import PLAN_CATALOGUE
+    from app.services.billing import get_recap_available_seconds, seconds_to_credits
 
-    badge_map = {10: "💎", 30: "⭐", 60: "🔥"}
     buttons = []
-    # Batch BS: every catalogue plan now has a PricingPlan row (the
-    # pricing seeder fills them all in so the admin editor can list
-    # and edit all 8), so this DB-row loop renders ONLY the classic
-    # minute packs — the codes in _db_codes. Every other catalogue
-    # plan keeps the button its category branch builds below, with
-    # the DB price overlaid when a row exists (DB wins, exactly like
-    # payment submit; the branches used to read the catalogue price
-    # directly, which was only safe while those plans had no row to
-    # diverge from the catalogue).
-    _db_by_code = {p.code: p for p in plans}
-    _db_codes = {p.code for p in plans if p.code.startswith("MIN_")}
-
-    def _menu_price(entry: dict) -> int:
-        row = _db_by_code.get(entry["code"])
-        return row.price_mmk if row is not None else entry["price_mmk"]
-
     for p in plans:
-        if p.code not in _db_codes and get_plan_by_code(p.code) is not None:
-            # A catalogue plan whose button is built by its category
-            # branch below (recap / combined / Voice Pro) — rendering
-            # it here as well would duplicate the button (Batch BS).
-            continue
-        badge = badge_map.get(p.minutes, "💳")
+        meta = get_plan_by_code(p.code) or {}
+        cat = str(getattr(p, "category", None) or meta.get("category") or "voice").lower()
+        is_topup = bool(getattr(p, "is_topup", False) or meta.get("is_topup"))
+        mins = int(getattr(p, "minutes", 0) or 0)
+        cr = int(
+            getattr(p, "recap_credits", None)
+            if getattr(p, "recap_credits", None) is not None
+            else meta.get("recap_credits", 0)
+        )
+        badge_key = str(getattr(p, "badge", None) or meta.get("badge") or "")
+        name = str(getattr(p, "name", None) or meta.get("name") or p.code)
         tag = ""
-        if p.minutes == 30:
+        if badge_key == "popular":
             tag = t("pay_tag_popular", lang)
-        elif p.minutes >= 60:
+        elif badge_key == "best_value":
             tag = t("pay_tag_best_value", lang)
-        btn_text = t("pay_package_btn", lang, badge=badge, minutes=p.minutes, price=f"{p.price_mmk:,}", tag=tag)
+
+        if is_topup:
+            if mins > 0 and cr <= 0:
+                btn_text = f"⚡ {name} (+{mins}m) — {p.price_mmk:,} Ks"
+            else:
+                btn_text = f"⚡ {name} (+{cr} Cr) — {p.price_mmk:,} Ks"
+        elif cat == "combo":
+            btn_text = t(
+                "pay_package_combined_btn",
+                lang,
+                minutes=mins,
+                credits=cr,
+                price=f"{p.price_mmk:,}",
+            ) + tag
+        elif cat == "recap":
+            btn_text = t(
+                "pay_package_recap_btn",
+                lang,
+                credits=cr,
+                price=f"{p.price_mmk:,}",
+            ) + tag
+        else:
+            badge_icon = "💎" if mins <= 10 else ("⭐" if mins <= 45 else "👑")
+            btn_text = t(
+                "pay_package_btn",
+                lang,
+                badge=badge_icon,
+                minutes=mins,
+                price=f"{p.price_mmk:,}",
+                tag=tag,
+            )
 
         buttons.append([
             InlineKeyboardButton(
@@ -107,42 +127,8 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
                 callback_data=f"buy_pkg:{p.code}",
             )
         ])
-    for entry in PLAN_CATALOGUE:
-        if entry["category"] == "recap":
-            buttons.append([
-                InlineKeyboardButton(
-                    text=t("pay_package_recap_btn", lang, credits=entry["recap_credits"], price=f"{_menu_price(entry):,}"),
-                    callback_data=f"buy_pkg:{entry['code']}",
-                )
-            ])
-    # R40 item 15a: catalogue voice plans that are NOT DB minute packs
-    # (Voice Pro, 250 min) previously had NO buy button anywhere in bot
-    # chat — the plan was advertised in the header text but unbuyable.
-    # (_db_codes is defined above the DB-row loop — Batch BS.)
-    for entry in PLAN_CATALOGUE:
-        if entry["category"] == "voice" and entry["code"] not in _db_codes:
-            buttons.append([
-                InlineKeyboardButton(
-                    text=t("pay_package_btn", lang, badge="👑", minutes=entry["minutes"], price=f"{_menu_price(entry):,}", tag=""),
-                    callback_data=f"buy_pkg:{entry['code']}",
-                )
-            ])
-    for entry in PLAN_CATALOGUE:
-        if entry["category"] == "combined":
-            buttons.append([
-                InlineKeyboardButton(
-                    text=t("pay_package_combined_btn", lang, minutes=entry["minutes"], credits=entry["recap_credits"], price=f"{_menu_price(entry):,}"),
-                    callback_data=f"buy_pkg:{entry['code']}",
-                )
-            ])
     buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:home")])
 
-    # Bot cleanup 2026-11-03 (audit item 4): the store header states
-    # the buyer's OWN tier and balances. PURCHASED users get the
-    # top-up framing (packages add onto the current balance) instead
-    # of the Free→VIP pitch, which was a dead end for them; every pack
-    # stays buyable either way. Prices are untouched — buttons above
-    # are built from the same catalogue/DB rows as before.
     if settings.is_admin(callback.from_user.id):
         text = t("pay_store_text", lang)
     else:
@@ -152,12 +138,14 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
         else:
             category_badge = t("hist_tier_free", lang)
             store_body = t("pay_store_text", lang)
+        rc_val = seconds_to_credits(get_recap_available_seconds(user))
+        rc_disp = int(rc_val) if rc_val == int(rc_val) else round(rc_val, 2)
         balance_line = t(
             "pay_store_balance_line",
             lang,
             category=category_badge,
-            total_min=balance.clone_spendable_minutes,
-            recap_credits=3 if user_recap_credits is None else user_recap_credits,
+            total_min=round(float(balance.clone_spendable_minutes), 2),
+            recap_credits=rc_disp,
         )
         text = f"{balance_line}\n\n{store_body}"
 
@@ -217,11 +205,22 @@ async def handle_package_selected(callback: CallbackQuery, state: FSMContext):
     # code defaulted to a phantom 10 min / 2,000 MMK invoice that matches
     # no real plan (hunt F12).
     pkg_recap = 0
-    if plan:
-        pkg_minutes, pkg_price = plan.minutes, plan.price_mmk
+    if plan and bool(getattr(plan, "is_active", True)):
+        meta = get_plan_by_code(pkg_code) or {}
+        pkg_minutes = int(plan.minutes or 0)
+        pkg_price = int(plan.price_mmk or 0)
+        pkg_recap = int(
+            getattr(plan, "recap_credits", None)
+            if getattr(plan, "recap_credits", None) is not None
+            else meta.get("recap_credits", 0)
+        )
+    elif plan and not getattr(plan, "is_active", True):
+        try:
+            await callback.answer(t("pay_package_invalid", lang), show_alert=True)
+        except Exception:
+            pass
+        return
     else:
-        from app.services.payments import get_plan_by_code
-
         cat = get_plan_by_code(pkg_code)
         if cat:
             pkg_minutes, pkg_price, pkg_recap = cat["minutes"], cat["price_mmk"], cat["recap_credits"]
@@ -237,6 +236,7 @@ async def handle_package_selected(callback: CallbackQuery, state: FSMContext):
     # the slip photo lost the flow entirely (hunt B2).
     async with AsyncSessionLocal() as session:
         await save_payment_intent(session, callback.from_user.id, pkg_code)
+        all_pay_accounts = await list_payment_accounts(session, include_inactive=False)
         await session.commit()
 
     await state.set_state(PaymentFSM.waiting_for_receipt)
@@ -254,6 +254,9 @@ async def handle_package_selected(callback: CallbackQuery, state: FSMContext):
         wave_number=acc_info['wave_number'],
         wave_name=acc_info['wave_name'],
     )
+    extra_banks_html = format_extra_payment_accounts_html(all_pay_accounts, lang=lang)
+    if extra_banks_html:
+        text = text + "\n" + extra_banks_html
 
     buttons = [
         [
@@ -274,13 +277,18 @@ async def _finalize_receipt_submission(message: Message, payment, file_id, lang:
     slip handler and the post-restart catch-all (hunt B2), so a
     resumed flow is indistinguishable from an uninterrupted one."""
     # Confirm to user with modern status card
+    _rc_disp = (
+        getattr(payment, "recap_credits", None)
+        if getattr(payment, "recap_credits", None) is not None
+        else package_recap_credits(payment.package_code)
+    )
     confirm_text = t(
         "pay_receipt_submitted",
         lang,
         payment_id=payment.id,
         package_code=payment.package_code,
         minutes=payment.minutes,
-        recap_credits=package_recap_credits(payment.package_code),
+        recap_credits=_rc_disp,
         amount=f"{payment.amount_mmk:,}",
     )
 
@@ -306,7 +314,7 @@ async def _finalize_receipt_submission(message: Message, payment, file_id, lang:
                 username=message.from_user.username or "none",
                 package_code=payment.package_code,
                 minutes=payment.minutes,
-                recap_credits=package_recap_credits(payment.package_code),
+                recap_credits=_rc_disp,
                 amount_mmk=payment.amount_mmk,
             )
             sent = None

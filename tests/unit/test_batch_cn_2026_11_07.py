@@ -108,11 +108,13 @@ def test_cn_cache_token_is_r110():
 # ── CN-1: key-card first-glyph clip ─────────────────────────────────
 
 def test_cn1_key_card_keeps_the_shared_card_classes():
-    # The fix is NOT a markup change: the key card carries exactly
-    # the engine card's horizontal-inset classes (the shared .card
-    # rhythm), so the two cards can never drift apart in markup.
+    # Both the Step 2 engine card and the BYOK key card carry the shared
+    # .card.glass.input-card rhythm so they stay visually aligned.
     pane = _tts_pane()
-    engine = re.search(r'<div class="([^"]+)"[^>]*>\s*<div class="card-label" data-i18n="tts_engine_label"', pane)
+    engine = re.search(
+        r'<div class="([^"]+)"[^>]*>\s*(?:<div class="step-badge-title[^"]*">[\s\S]*?)?data-i18n="tts_engine_label"',
+        pane,
+    )
     key = re.search(r'<div class="([^"]+)" id="tts-gemini-key-card"', pane)
     assert engine and key
     assert key.group(1) == engine.group(1) == "card glass input-card"
@@ -124,12 +126,11 @@ def test_cn1_base_card_padding_is_unchanged():
 
 
 def test_cn1_key_card_start_inset_rule():
-    # One extra spacing step of start padding, scoped to the card:
-    # every child (text lines, input row, button row) clears the
-    # card's left glass edge uniformly.
+    # One extra spacing step of start padding, scoped to the card, plus
+    # the flex-order rule placing optional BYOK below the Generate CTA.
     assert "#tts-gemini-key-card { padding-inline-start: calc(var(--s4) + var(--s2)); }" in CSS
-    # …and it is the ONLY rule keyed on the card (no per-child hacks).
-    assert CSS.count("#tts-gemini-key-card") == 1
+    assert "#tab-tts > .input-card#tts-gemini-key-card { order: 6; }" in CSS
+    assert CSS.count("#tts-gemini-key-card") == 2
 
 
 # ── CN-2: tap-to-expand detail blocks ───────────────────────────────
@@ -218,11 +219,11 @@ def test_cn2_toggle_pattern_css_and_js():
 
 def test_cn3_edge_voice_hint_element_and_copy():
     assert _i18n_values("tts_edge_voice_hint") == [
-        "Edge မှာ မြန်မာ အသံ ၂ မျိုးပဲ ရပါတယ်",
-        "Edge offers 2 Myanmar voices",
+        "Edge မှာ မြန်မာ & Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်",
+        "Edge offers 8 Burmese-fluent Neural voices (4 Male · 4 Female)",
     ]
     pane = _tts_pane()
-    hint = '<p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ အသံ ၂ မျိုးပဲ ရပါတယ်</p>'
+    hint = '<p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ &amp; Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်</p>'
     assert hint in pane
     # It sits with the Edge voice row it explains (before the
     # balance line), inside the engine card.

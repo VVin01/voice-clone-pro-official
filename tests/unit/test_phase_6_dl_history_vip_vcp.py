@@ -255,13 +255,9 @@ def test_vip_design_pass_preserves_prices_and_never_expires_copy():
     vip = INDEX_HTML.split('<section id="tab-vip" class="tab-pane">', 1)[1].split("</section>", 1)[0]
     assert 'data-i18n="vip_never_expires_badge"' in vip
     assert 'data-i18n="vip_pay_step_hint"' in vip
-    assert 'data-price-for="MIN_10">8,000<' in vip
-    assert 'data-price-for="voice_studio_pro">75,000<' in vip
-    assert 'data-price-for="recap_starter">20,000<' in vip
-    assert 'data-price-for="recap_studio_pro">90,000<' in vip
-    assert 'data-price-for="combined_starter">30,000<' in vip
-    assert 'data-price-for="all_in_one_master">180,000<' in vip
-    assert 'openPaymentDrawer(\'MIN_10\', 8000' in vip
+    for eid in ("vip-sub-plans", "vip-grid-voice", "vip-grid-recap", "vip-grid-combo", "vip-grid-topup"):
+        assert f'id="{eid}"' in vip
+    assert "syncPlanPrices" in APP_JS
     assert 'for="slip-file-input"' in vip
     assert 'id="slip-file-input"' in vip
     assert 'id="btn-submit-slip-action"' in vip

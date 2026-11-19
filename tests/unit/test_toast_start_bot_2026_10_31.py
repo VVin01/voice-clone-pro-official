@@ -148,9 +148,7 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
                 "<b>၆။ ဘာသာစကား (Language)</b>",
                 "• ဖန်တီးထားသော ဖိုင်များကို မှတ်တမ်း (History) မှာ 24 နာရီအထိ ပြန်ဒေါင်းနိုင်ပါတယ်။",
                 "• 🚀 <b>Studio ဖွင့်မည်</b> ခလုတ်မှ Voice Tab ကို ဖွင့်ပါ (သို့မဟုတ် ဒီ Chat ထဲမှာပဲ စာသား ပို့လည်း ရပါတယ်)။",
-                # Batch BE-3: the price marker follows the armed
-                # truth (duration band), replacing the per-part one.
-                "၃ မိနစ် တစ်ပိုင်းလျှင် 1 Credit",
+                "1 Recap Credit = Final Output 1 မိနစ်",
             ],
         ),
         (
@@ -163,8 +161,7 @@ async def test_recap_credits_none_falls_back_to_default(db_session):
                 "<b>6. Language</b>",
                 "• Your creations stay downloadable from History for 24 hours.",
                 "• 🚀 Open the Voice tab from <b>Launch Studio</b> (or just send your text right here in this chat).",
-                # Batch BE-3: band-rule marker (was "1 credit per part").
-                "1 credit per started 3 minutes",
+                "1 Recap Credit = 1 Minute Final Recap Output",
             ],
         ),
     ],

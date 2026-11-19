@@ -85,18 +85,18 @@ def test_engine_picker_is_a_one_row_capsule():
     seg = _picker("recap-engine-picker", "recap-gemini-voice-wrap")
     assert "seg-capsule" in INDEX_HTML.split('id="recap-engine-picker"', 1)[0].rsplit('class="', 1)[1]
     assert '<span class="seg-capsule-pill" aria-hidden="true"></span>' in seg
-    assert seg.count("capsule-seg") == 3
+    assert seg.count("capsule-seg") == 4
     # Behaviour hooks untouched.
-    for engine in ("voxcpm", "gemini", "edge"):
+    for engine in ("voxcpm", "gemini", "edge", "none"):
         assert f'data-engine="{engine}"' in seg
     # Full labels keep their i18n keys — on the .seg-full span, NOT
     # on the button (setLanguage's innerText pass would wipe the
     # span structure if the key sat on the button itself).
-    for key in ("recap_engine_voxcpm", "recap_engine_gemini", "recap_engine_edge"):
+    for key in ("recap_engine_voxcpm", "recap_engine_gemini", "recap_engine_edge", "recap_engine_none"):
         assert f'<span class="seg-full" data-i18n="{key}">' in seg
     assert not re.search(r'<button[^>]*data-i18n="recap_engine_', INDEX_HTML)
     # Compact labels are the labels' own emoji — no new strings.
-    for glyph in ("🎙️", "✨", "🎧"):
+    for glyph in ("🎙️", "✨", "🎧", "📝"):
         assert f'<span class="seg-short" aria-hidden="true">{glyph}</span>' in seg
     # The field label moved above the track (speed-row pattern).
     field = INDEX_HTML.split('<div class="capsule-field">', 1)[1].split('id="recap-gemini-voice-wrap"', 1)[0]

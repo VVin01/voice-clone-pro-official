@@ -410,7 +410,11 @@ async def handle_admin_pay_detail(callback: CallbackQuery, session: AsyncSession
         user_id=payment.user_id,
         package_code=payment.package_code,
         minutes=payment.minutes,
-        recap_credits=package_recap_credits(payment.package_code),
+        recap_credits=(
+            getattr(payment, "recap_credits", None)
+            if getattr(payment, "recap_credits", None) is not None
+            else package_recap_credits(payment.package_code)
+        ),
         amount_mmk=payment.amount_mmk,
         status=payment.status,
         created_at=payment.created_at,
@@ -563,13 +567,14 @@ async def handle_admin_pay_approve_prompt(callback: CallbackQuery, session: Asyn
         await callback.answer(_EDIT_CLAIMED_ALERT, show_alert=True)
         return
 
+    _eff_rc = _payment_effective_recap_credits(payment)
     confirm_text = (
         f"⚠️ <b>Confirm Payment Approval</b>\n\n"
         f"• Payment ID: <code>{payment.id}</code>\n"
         f"• Target User: <code>{payment.user_id}</code>\n"
-        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} minutes + {package_recap_credits(payment.package_code)} recap credits)\n"
+        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} minutes + {_eff_rc} recap credits)\n"
         f"• Amount: <b>{payment.amount_mmk:,} MMK</b>\n\n"
-        f"<i>Are you sure you want to approve this payment and credit {payment.minutes} minutes + {package_recap_credits(payment.package_code)} recap credits?</i>"
+        f"<i>Are you sure you want to approve this payment and credit {payment.minutes} minutes + {_eff_rc} recap credits?</i>"
     )
     kb = admin_pay_approve_confirm_kb(payment.id, lang=lang)
     await safe_edit_message(callback, confirm_text, reply_markup=kb, parse_mode="HTML")
@@ -577,6 +582,16 @@ async def handle_admin_pay_approve_prompt(callback: CallbackQuery, session: Asyn
         await callback.answer()
     except Exception:
         pass
+
+
+def _payment_effective_recap_credits(payment: PaymentRequest) -> int:
+    edited = getattr(payment, "edited_recap_credits", None)
+    if edited is not None:
+        return int(edited)
+    snap = getattr(payment, "recap_credits", None)
+    if snap is not None and int(snap) > 0:
+        return int(snap)
+    return int(package_recap_credits(payment.package_code))
 
 
 @admin_router.callback_query(F.data.startswith("admin:pay_approve_confirm:"))
@@ -600,7 +615,7 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
                 target_lang = target_user.language_code if target_user else "my"
                 await callback.bot.send_message(
                     chat_id=payment.user_id,
-                    text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes, recap_credits=package_recap_credits(payment.package_code)),
+                    text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes, recap_credits=_payment_effective_recap_credits(payment)),
                     parse_mode="HTML",
                 )
             except Exception as e:
@@ -621,7 +636,7 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
                     target_lang = target_user.language_code if target_user else "my"
                     await callback.bot.send_message(
                         chat_id=payment.user_id,
-                        text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes, recap_credits=package_recap_credits(payment.package_code)),
+                        text=t("payment_approved_user_notify", target_lang, minutes=payment.minutes, recap_credits=_payment_effective_recap_credits(payment)),
                         parse_mode="HTML",
                     )
                 except Exception as e:
@@ -642,7 +657,7 @@ async def handle_admin_pay_approve_confirm(callback: CallbackQuery, session: Asy
         f"✅ <b>Payment Approved (#{payment.id})</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• User ID: <code>{payment.user_id}</code>\n"
-        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} mins + {package_recap_credits(payment.package_code)} recap credits)\n"
+        f"• Package: <b>{payment.package_code}</b> ({payment.minutes} mins + {_payment_effective_recap_credits(payment)} recap credits)\n"
         f"• Amount: <b>{payment.amount_mmk:,} MMK</b>\n"
         f"• Status: 🟢 <b>APPROVED</b>\n"
         f"• Approved by Admin: <code>{callback.from_user.id}</code>\n"
@@ -902,9 +917,9 @@ async def handle_admin_pay_edit_minutes_input(
         value = int(raw)
     except (TypeError, ValueError):
         value = None
-    if value is None or not (1 <= value <= 100_000):
+    if value is None or not (0 <= value <= 100_000):
         await message.answer(
-            "⚠️ မိနစ် ပမာဏကို ဂဏန်း မှန်ကန်စွာ ရိုက်ထည့်ပေးပါ (1 – 100,000)။",
+            "⚠️ မိနစ် ပမာဏကို ဂဏန်း မှန်ကန်စွာ ရိုက်ထည့်ပေးပါ (0 – 100,000)။",
             reply_markup=_pay_edit_cancel_kb(pay_id),
             parse_mode="HTML",
         )
@@ -928,6 +943,15 @@ async def handle_admin_pay_edit_minutes_input(
         await message.answer("ဒီ တောင်းဆိုချက်ကို ကိုင်တွယ်ပြီးသား (သို့) အခြေအနေ ပြောင်းလဲသွားပါပြီ။")
         return
 
+    _pkg_recap_credits = _payment_effective_recap_credits(payment)
+    if value <= 0 and _pkg_recap_credits <= 0:
+        await message.answer(
+            "⚠️ မိနစ် ပမာဏကို ဂဏန်း မှန်ကန်စွာ ရိုက်ထည့်ပေးပါ (1 – 100,000)။",
+            reply_markup=_pay_edit_cancel_kb(pay_id),
+            parse_mode="HTML",
+        )
+        return
+
     await state.update_data(corrected_minutes=value)
 
     # Batch AJ M4: for recap-bearing packages, the correction is only
@@ -935,7 +959,6 @@ async def handle_admin_pay_edit_minutes_input(
     # credits too (they ride to apply_edited_approval and are granted
     # instead of the catalogue amount). Minutes-only plans keep the
     # original one-step flow.
-    _pkg_recap_credits = package_recap_credits(payment.package_code)
     if _pkg_recap_credits > 0:
         await state.set_state(PaymentReviewFSM.waiting_for_corrected_recap_credits)
         await message.answer(
@@ -1017,7 +1040,7 @@ async def handle_admin_pay_edit_recap_credits_input(
         f"• Payment ID: <code>{payment.id}</code>\n"
         f"• မူလ မိနစ်: <b>{payment.minutes} မိနစ်</b>\n"
         f"• ပြင်ဆင်မည့် မိနစ်: <b>{corrected_minutes} မိနစ်</b>\n"
-        f"• မူလ Recap Credit: <b>{package_recap_credits(payment.package_code)}</b>\n"
+        f"• မူလ Recap Credit: <b>{_payment_effective_recap_credits(payment)}</b>\n"
         f"• ပြင်ဆင်မည့် Recap Credit: <b>{value}</b>\n\n"
         "<i>အတည်ပြုလိုက်ပါက ပြင်ဆင်ထားသော မိနစ် + Recap Credit ဖြင့် ထည့်ပေးပါမည်။</i>"
     )
@@ -1086,11 +1109,7 @@ async def handle_admin_pay_edit_confirm(
                 "payment_approved_user_notify",
                 target_lang,
                 minutes=payment.minutes,
-                recap_credits=(
-                    payment.edited_recap_credits
-                    if getattr(payment, "edited_recap_credits", None) is not None
-                    else package_recap_credits(payment.package_code)
-                ),
+                recap_credits=_payment_effective_recap_credits(payment),
             ),
             parse_mode="HTML",
         )

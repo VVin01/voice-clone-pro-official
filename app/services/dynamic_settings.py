@@ -85,6 +85,8 @@ SETTING_TYPES: dict[str, type] = {
     "payment_kpay_name": str,
     "payment_wave_number": str,
     "payment_wave_name": str,
+    "payment_accounts_json": str,
+    "usd_to_mmk_rate": float,
     "gemini_primary_model": str,
     "gemini_fallback_1": str,
     "gemini_fallback_2": str,

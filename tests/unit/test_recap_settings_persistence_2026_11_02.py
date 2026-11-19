@@ -31,8 +31,8 @@ def test_restore_is_validated_not_blind():
     # enum allow-lists, boolean type checks and ranged ints gate the restore
     assert "RECAP_SETTING_ENUMS" in APP_JS
     assert 'recapRatio: ["9:16", "16:9", "1:1", "Original"]' in APP_JS
-    # Batch AW: "edge" joins the validated engine allow-list.
-    assert 'recapTtsEngine: ["voxcpm", "gemini", "edge"]' in APP_JS
+    # Batch AW + Subtitle-Only mode: validated engine allow-list includes none.
+    assert 'recapTtsEngine: ["voxcpm", "gemini", "edge", "none"]' in APP_JS
     # all twelve server-side SUBTITLE_STYLE_PRESETS keys must restore
     # (Batch DD added rose/orange/mint; Brief v2 S4 added cinematic/glass).
     assert 'recapSubStyle: ["yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint", "cinematic", "glass"]' in APP_JS

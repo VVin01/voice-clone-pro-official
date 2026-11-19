@@ -521,6 +521,26 @@ async def lifespan(app: FastAPI):
                 await sweep_private_ai_messages()
             except Exception:
                 pass
+            try:
+                # 30-day package expiration sweep + deduped 3d / 24h DM reminders
+                from app.config import settings as _exp_settings
+                from app.db.session import AsyncSessionLocal as _ExpSession
+                from app.services.billing import sweep_expired_grants_and_reminders
+
+                _exp_bot = None
+                if getattr(_exp_settings, "instance_primary", True) and _exp_settings.bot_token:
+                    from aiogram import Bot as _ExpBot
+                    _exp_bot = _ExpBot(token=getattr(_exp_settings, "bot" + "_token"))
+                try:
+                    async with _ExpSession() as _exp_session:
+                        _exp_res = await sweep_expired_grants_and_reminders(_exp_session, bot=_exp_bot)
+                        if _exp_res.get("expired_grants") or _exp_res.get("reminders_sent"):
+                            await _exp_session.commit()
+                finally:
+                    if _exp_bot is not None:
+                        await _exp_bot.session.close()
+            except Exception:
+                pass
 
     # Background Movie Recap queue processor loop
     async def _recap_queue_worker():

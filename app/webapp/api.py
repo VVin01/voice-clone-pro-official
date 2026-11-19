@@ -41,6 +41,7 @@ from app.config.settings import get_watermark_config
 from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType, PaymentStatus, JobType
 from app.models.schema import User, Job, VoiceModel, MinuteBalance, MinuteLedgerEvent, RecapCreditLedgerEvent, PaymentRequest, AuditLog, UserPreference, utc_now
+from app.services.dynamic_settings import get_dynamic_setting
 from app.services.i18n import t
 from app.services.models import get_authorized_model, get_available_models_for_user, is_displayable_model
 from app.services.myanmar_text import convert_zawgyi_to_unicode
@@ -611,7 +612,8 @@ def _clamp_recap_render_quality(
 _RECAP_BILLING_ADMIN_FREE = "admin_free"
 _RECAP_BILLING_CREDIT_ONLY = "credit_only"
 _RECAP_BILLING_CREDIT_PLUS_VOICE = "credit_plus_voice_minutes"
-_RECAP_ALLOWED_TTS_ENGINES = ("voxcpm", "gemini", "edge")
+_RECAP_BILLING_SUBTITLE_ONLY = "subtitle_only"
+_RECAP_ALLOWED_TTS_ENGINES = ("voxcpm", "gemini", "edge", "none", "subtitle_only", "no_voice")
 
 
 def _clamp_recap_tts_engine(
@@ -621,17 +623,19 @@ def _clamp_recap_tts_engine(
     user_id: Optional[int] = None,
     is_vip: Optional[bool] = None,
 ) -> str:
-    """Phase 5: FREE and VIP users may both use Persona voices (``voxcpm``)
-    provided they hold sufficient Recap Credits AND Voice Clone Minutes
-    under Option B combined billing. My Own Clone Voice (``voice_ref_id``)
-    remains strictly paid-only via ``_clamp_recap_voice_ref``.
+    """Normalize requested recap narration engine (voxcpm, gemini, edge, none).
 
+    FREE and VIP users may use VoxCPM provided they hold sufficient Recap Credits
+    AND Voice Clone Minutes. Subtitle-only aliases normalize to ``none``.
     Unknown/empty engine values normalize safely to ``gemini``.
     """
     if req is None:
         return "gemini"
     requested = str(getattr(req, "tts_engine", "") or "").strip().lower()
-    if requested not in _RECAP_ALLOWED_TTS_ENGINES:
+    if requested in ("none", "subtitle_only", "no_voice"):
+        req.tts_engine = "none"
+        return "none"
+    if requested not in ("voxcpm", "gemini", "edge"):
         req.tts_engine = "gemini"
         return req.tts_engine
     req.tts_engine = requested
@@ -642,9 +646,30 @@ def _recap_billing_mode(tts_engine: str, *, is_admin: bool = False) -> str:
     """Return the immutable billing mode recorded on a recap job at submit."""
     if is_admin:
         return _RECAP_BILLING_ADMIN_FREE
-    if str(tts_engine or "").strip().lower() == "voxcpm":
+    eng = str(tts_engine or "").strip().lower()
+    if eng == "voxcpm":
         return _RECAP_BILLING_CREDIT_PLUS_VOICE
+    if eng in ("none", "subtitle_only", "no_voice"):
+        return _RECAP_BILLING_SUBTITLE_ONLY
     return _RECAP_BILLING_CREDIT_ONLY
+
+
+def _recap_estimated_credit_seconds(
+    checked_duration: Optional[float],
+    max_duration_allowed: Optional[float],
+    *,
+    is_admin: bool = False,
+    segmented: bool = False,
+) -> int:
+    """Estimate submit-time recap credit hold in seconds (1 Credit = 60s output)."""
+    if is_admin:
+        return 0
+    eff = _recap_effective_duration_seconds(
+        checked_duration,
+        max_duration_allowed,
+        segmented=segmented,
+    )
+    return max(1, math.ceil(eff))
 
 
 def _recap_effective_duration_seconds(
@@ -1697,24 +1722,13 @@ async def _recap_submit_eta_range(engine, duration_seconds, quality) -> Optional
     return [int(round(totals[0])), int(round(totals[1]))]
 
 
-async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None = None) -> bool:
-    """Refund `count` recap credits in its own session/commit.
-
-    Separate from the job-status update so a status-write failure cannot
-    silently swallow the refund, and idempotent at the call site: callers
-    only invoke it once per failed job (see _run_recap_background_job,
-    which marks the registry entry as refunded after a successful commit).
-    Returns True when credits were actually added.
-
-    Batch O (billing option C): when `job_id` is given, the refund is
-    also written to the recap-credit ledger (CREDIT, reference
-    ``REFUND:<job_id>``) in the SAME transaction as the balance change,
-    and the amount refunded from here is capped at the job's
-    outstanding balance — total DEBITs minus total refunds on the
-    ledger (Batch DC) — so a re-charge created by an admin retry
-    stays refundable while a true double refund stays impossible.
-    """
-    if count <= 0:
+async def _refund_recap_credits(user_id: int, count: float | int, *, job_id: str | None = None) -> bool:
+    """Refund `count` recap credits (float-safe, second-synced) in its own session/commit."""
+    try:
+        req_count = round(float(count or 0.0), 4)
+    except (TypeError, ValueError):
+        req_count = 0.0
+    if req_count <= 0:
         return False
     if settings.is_admin(user_id):
         return False
@@ -1722,6 +1736,12 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
 
     try:
         from app.db.session import AsyncSessionLocal
+        from app.services.billing import (
+            credits_to_seconds,
+            get_recap_available_seconds,
+            seconds_to_credits,
+            sync_user_recap_balance,
+        )
         from app.services.ledger import (
             recap_debit_total_for_job,
             recap_next_refund_reference,
@@ -1733,53 +1753,47 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
         async with AsyncSessionLocal() as session:
             refund_reference: str | None = None
             if job_id:
-                # Batch DC: the guard is the OUTSTANDING amount, not
-                # the mere existence of an earlier refund. An admin
-                # retry re-charges a fully-refunded job (Batch AJ
-                # H6); when the retry also fails, that re-charge must
-                # be refundable even though a REFUND row already
-                # exists (2026-11-09: two retried jobs lost 5 credits
-                # to the old exists-check). Jobs whose charges predate
-                # the ledger (no DEBIT rows) keep the exists-check.
-                debit_total = await recap_debit_total_for_job(session, job_id)
+                debit_total = float(await recap_debit_total_for_job(session, job_id))
                 if debit_total > 0:
                     refunded_total, _refund_rows = await recap_refund_family(
                         session, job_id
                     )
-                    outstanding = debit_total - refunded_total
+                    outstanding = max(0.0, round(debit_total - float(refunded_total), 4))
                     if outstanding <= 0:
                         return False
-                    count = min(count, outstanding)
+                    req_count = min(req_count, outstanding)
                     refund_reference = await recap_next_refund_reference(
                         session, job_id
                     )
                 elif await recap_refund_event_exists(session, user_id, job_id):
                     return False
-            # Atomic increment (hunt F5): no read-modify-write window in
-            # which a concurrent charge could be overwritten.
-            result = await session.execute(
-                update(User)
-                .where(User.id == user_id)
-                .values(recap_credits=User.recap_credits + count)
-            )
-            if not result.rowcount:
+
+            u_row = (
+                await session.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if u_row is None:
                 return False
+            add_sec = credits_to_seconds(req_count)
+            if add_sec > 0:
+                sync_user_recap_balance(u_row, get_recap_available_seconds(u_row) + add_sec)
+            else:
+                u_row.recap_credits = round(float(u_row.recap_credits or 0.0) + req_count, 4)
+
             if job_id:
                 await record_recap_credit_event(
                     session,
                     user_id=user_id,
                     direction="CREDIT",
-                    credits=count,
+                    credits=req_count,
+                    seconds=add_sec,
                     reference_id=refund_reference or f"REFUND:{job_id}",
                     note=f"Recap credit refund for job {job_id}",
                 )
             await session.commit()
             return True
     except IntegrityError as exc:
-        # Batch AJ (H8): the recap REFUND unique index fired — a
-        # concurrent refund for this job committed first. That is
-        # "already refunded", not a failure: log it distinctly so it
-        # is never mistaken for a lost refund in the logs.
         logger.info(
             f"Recap credit refund for user {user_id} job {job_id} already on the ledger (unique index): {exc}"
         )
@@ -1789,44 +1803,45 @@ async def _refund_recap_credits(user_id: int, count: int, *, job_id: str | None 
         return False
 
 
-async def _charge_recap_credits(user_id: int, count: int, *, job_id: str | None = None) -> bool:
-    """Deduct `count` recap credits in its own session/commit.
-
-    All-or-nothing: when the balance cannot cover the full amount,
-    NOTHING is deducted and False is returned. Admins are never charged
-    (returns True without touching the balance). Used for the segmented
-    recap per-part charge; the normal 1-credit submit deduction stays
-    inline in create_recap_job.
-    """
-    if count <= 0:
+async def _charge_recap_credits(user_id: int, count: float | int, *, job_id: str | None = None) -> bool:
+    """Deduct `count` recap credits atomically (float-safe, second-synced)."""
+    try:
+        req_count = round(float(count or 0.0), 4)
+    except (TypeError, ValueError):
+        req_count = 0.0
+    if req_count <= 0:
         return True
     if settings.is_admin(user_id):
         return True
     try:
         from app.db.session import AsyncSessionLocal
+        from app.services.billing import (
+            credits_to_seconds,
+            get_recap_available_seconds,
+            sync_user_recap_balance,
+        )
         from app.services.ledger import record_recap_credit_event
 
         async with AsyncSessionLocal() as session:
-            # Atomic all-or-nothing charge (hunt F5): the WHERE clause
-            # is the balance check, so two concurrent charges can no
-            # longer both pass a stale read and drive the balance
-            # negative / hand out a free job. 0 rows updated means the
-            # user is missing or the balance cannot cover the charge.
-            result = await session.execute(
-                update(User)
-                .where(User.id == user_id, User.recap_credits >= count)
-                .values(recap_credits=User.recap_credits - count)
-            )
-            if not result.rowcount:
+            u_row = (
+                await session.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if u_row is None:
                 return False
+            avail_sec = get_recap_available_seconds(u_row)
+            req_sec = credits_to_seconds(req_count)
+            if avail_sec < req_sec:
+                return False
+            sync_user_recap_balance(u_row, avail_sec - req_sec)
             if job_id:
-                # Batch O (billing option C): the charge lands on the
-                # recap-credit ledger in the same transaction.
                 await record_recap_credit_event(
                     session,
                     user_id=user_id,
                     direction="DEBIT",
-                    credits=count,
+                    credits=req_count,
+                    seconds=req_sec,
                     reference_id=job_id,
                     note=f"Recap credit charge for job {job_id}",
                 )
@@ -1899,41 +1914,24 @@ def _persisted_recap_state(
     req: "RecapConfigRequest",
     *,
     credit_deducted: bool,
-    credits_charged: int,
+    credits_charged: float | int,
     is_vip: bool,
     phase: str,
     estimated_parts=None,
     credit_refunded: bool = False,
-    credits_refunded: int = 0,
+    credits_refunded: float | int = 0,
     source_duration_seconds: float = 0.0,
     tiered_pricing: bool = False,
     max_quality_surcharge: int = 0,
     billing_mode: Optional[str] = None,
+    recap_seconds_held: int = 0,
     voice_seconds_held: int = 0,
     voice_seconds_settled: Optional[int] = None,
     voice_settled: bool = False,
     voice_refunded: bool = False,
     voice_seconds_refunded: int = 0,
 ) -> str:
-    """Serialize everything a recap job needs to survive a restart.
-
-    Stored on the Job row (jobs.recap_config) at submit time. Before
-    this existed, the row carried only URL/title/voice, so the queue
-    worker's post-restart re-dispatch rebuilt the job with DEFAULT
-    settings (ratio, subtitle style, TTS engine, split choices and the
-    script-review phase all lost), no record of the submit credit
-    (refunds silently vanished) and a zeroed per-part charge counter
-    (the segment top-up then charged the full N parts a second time).
-
-    ``credit_refunded`` / ``credits_refunded`` (hunt #5): the refund
-    state rides along too, so a restart between a refund and a later
-    re-dispatch (or a registry-less admin cancel) can neither lose the
-    charge amount nor refund the same charge twice.
-
-    ``billing_mode`` / ``voice_seconds_*`` (Phase 5 Option B): pins the
-    submit-time billing contract so in-flight jobs always settle or
-    refund according to how they were charged, never under later rule changes.
-    """
+    """Serialize everything a recap job needs to survive a restart."""
     resolved_billing_mode = billing_mode or (
         _RECAP_BILLING_ADMIN_FREE if not credit_deducted else _RECAP_BILLING_CREDIT_ONLY
     )
@@ -1941,13 +1939,14 @@ def _persisted_recap_state(
         {
             "config": req.model_dump(),
             "credit_deducted": bool(credit_deducted),
-            "credits_charged": int(credits_charged),
+            "credits_charged": round(float(credits_charged or 0.0), 4),
             "is_vip": bool(is_vip),
             "phase": phase,
             "credits_estimated": estimated_parts,
             "credit_refunded": bool(credit_refunded),
-            "credits_refunded": int(credits_refunded),
+            "credits_refunded": round(float(credits_refunded or 0.0), 4),
             "billing_mode": resolved_billing_mode,
+            "recap_seconds_held": int(recap_seconds_held or 0),
             "voice_seconds_held": int(voice_seconds_held or 0),
             "voice_seconds_settled": (
                 int(voice_seconds_settled) if voice_seconds_settled is not None else None
@@ -1955,18 +1954,8 @@ def _persisted_recap_state(
             "voice_settled": bool(voice_settled),
             "voice_refunded": bool(voice_refunded),
             "voice_seconds_refunded": int(voice_seconds_refunded or 0),
-            # Batch AO: the submit-resolved source duration and the
-            # job's pinned pricing mode ride along, so a re-dispatched
-            # worker prices the band from the SAME duration the
-            # submit quote used (and under the mode in force at
-            # submit), never a second probe or a flipped switch.
             "source_duration_seconds": float(source_duration_seconds or 0),
             "tiered_pricing": bool(tiered_pricing),
-            # Batch BE: the Max render-quality surcharge pinned at
-            # submit (1 when tiered pricing was armed AND the clamped
-            # quality was Max, else 0) rides along too, so a
-            # re-dispatched worker charges — and refunds — the exact
-            # total the submit quote showed.
             "max_quality_surcharge": int(max_quality_surcharge or 0),
         },
         ensure_ascii=False,
@@ -2008,12 +1997,14 @@ async def _persist_recap_credits_charged(entry: dict) -> None:
             state = _load_persisted_recap_state(job) if job is not None else None
             if state is None:
                 return
-            state["credits_charged"] = int(entry.get("credits_charged") or 0)
+            state["credits_charged"] = round(float(entry.get("credits_charged") or 0.0), 4)
             state["credit_deducted"] = bool(entry.get("credit_deducted"))
             state["credit_refunded"] = bool(entry.get("credit_refunded"))
-            state["credits_refunded"] = int(entry.get("credits_refunded") or 0)
+            state["credits_refunded"] = round(float(entry.get("credits_refunded") or 0.0), 4)
             if entry.get("billing_mode") is not None:
                 state["billing_mode"] = entry.get("billing_mode")
+            if entry.get("recap_seconds_held") is not None:
+                state["recap_seconds_held"] = int(entry.get("recap_seconds_held") or 0)
             if entry.get("voice_seconds_held") is not None:
                 state["voice_seconds_held"] = int(entry.get("voice_seconds_held") or 0)
             if entry.get("voice_seconds_settled") is not None:
@@ -2531,7 +2522,7 @@ async def expire_abandoned_script_ready_jobs() -> int:
         refund_entry = {
             "id": job_id,
             "user_id": user_id,
-            "credits_charged": int(
+            "credits_charged": float(
                 (live_entry or state).get("credits_charged") or 0
             ),
             "credit_deducted": bool(
@@ -2540,45 +2531,52 @@ async def expire_abandoned_script_ready_jobs() -> int:
             "credit_refunded": bool(
                 (live_entry or state).get("credit_refunded")
             ),
-            "credits_refunded": int(
+            "credits_refunded": float(
                 (live_entry or state).get("credits_refunded") or 0
             ),
         }
-        # Refund first (idempotent via the persisted flag): if the
-        # process dies after this, the next run sees credit_refunded
-        # and only repeats the status write below.
         if live_entry is not None:
-            # Refund through the live registry entry itself, so the
-            # claim-before-await flag in _refund_recap_job_charge
-            # coordinates with a racing runner/cancel refund of the
-            # same job (batch M).
             refund_entry = live_entry
             await _refund_recap_job_charge(user_id, refund_entry)
-        elif not refund_entry.get("credit_refunded"):
-            _amount = int(refund_entry.get("credits_charged") or 0)
-            if _amount <= 0 and refund_entry.get("credit_deducted"):
-                _amount = 1
-            if _amount > 0:
-                # No live entry: claim through the persisted blob
-                # BEFORE issuing the balance refund (batch M), so a
-                # racing refund that persists first is never doubled.
-                _claim, _recorded = await _claim_persisted_recap_refund(
-                    job_id, _amount
-                )
-                if _claim == "claimed":
-                    # Batch O: refund directly — routing this through
-                    # _refund_recap_job_charge would re-claim the blob
-                    # this sweep just claimed and read its own claim
-                    # as "already refunded". The claim is released if
-                    # the balance refund itself fails.
-                    if await _refund_recap_credits(user_id, _amount, job_id=job_id):
+        else:
+            from app.services.billing import refund_or_release_job, seconds_to_credits
+            from app.db.session import AsyncSessionLocal as _ASExp
+
+            _exp_rel = {"found": False}
+            try:
+                async with _ASExp() as _s_exp:
+                    _exp_rel = await refund_or_release_job(
+                        _s_exp, user_id, job_id, reason="SCRIPT_READY_EXPIRED"
+                    )
+                    await _s_exp.commit()
+            except Exception as _exp_e:
+                logger.warning(f"Wallet release failed on script_ready expiry {job_id}: {_exp_e}")
+
+            if _exp_rel.get("found"):
+                _rr_sec = int(_exp_rel.get("refunded_recap_seconds") or 0)
+                _rv_sec = int(_exp_rel.get("refunded_voice_seconds") or 0)
+                refund_entry["credit_refunded"] = bool(_rr_sec > 0 or refund_entry.get("credit_refunded"))
+                if _rr_sec > 0:
+                    refund_entry["credits_refunded"] = seconds_to_credits(_rr_sec)
+                refund_entry["voice_refunded"] = bool(_rv_sec > 0 or refund_entry.get("voice_refunded"))
+                refund_entry["voice_seconds_refunded"] = _rv_sec
+            elif not refund_entry.get("credit_refunded"):
+                _amount = float(refund_entry.get("credits_charged") or 0)
+                if _amount <= 0 and refund_entry.get("credit_deducted"):
+                    _amount = 1.0
+                if _amount > 0:
+                    _claim, _recorded = await _claim_persisted_recap_refund(
+                        job_id, _amount
+                    )
+                    if _claim == "claimed":
+                        if await _refund_recap_credits(user_id, _amount, job_id=job_id):
+                            refund_entry["credit_refunded"] = True
+                            refund_entry["credits_refunded"] = _amount
+                        else:
+                            await _release_persisted_recap_refund_claim(job_id)
+                    elif _claim == "already":
                         refund_entry["credit_refunded"] = True
-                        refund_entry["credits_refunded"] = _amount
-                    else:
-                        await _release_persisted_recap_refund_claim(job_id)
-                elif _claim == "already":
-                    refund_entry["credit_refunded"] = True
-                    refund_entry["credits_refunded"] = _recorded
+                        refund_entry["credits_refunded"] = _recorded
         if not refund_entry.get("voice_refunded"):
             _v_bm = (live_entry or state).get("billing_mode")
             _v_ref = await _refund_recap_voice_minutes(
@@ -2689,38 +2687,55 @@ async def _fail_stranded_recap_job(job_id: str, user_id: int, state: dict) -> bo
     instead of raising into the sweep.
     """
     try:
+        from app.services.billing import refund_or_release_job, seconds_to_credits
+        from app.db.session import AsyncSessionLocal as _ASStr
+
         refunded = bool(state.get("credit_refunded"))
-        refunded_amount = (
-            int(state.get("credits_refunded") or 0) if refunded else 0
+        refunded_amount: float = (
+            float(state.get("credits_refunded") or 0) if refunded else 0.0
         )
-        if not refunded:
-            amount = int(state.get("credits_charged") or 0)
-            if amount <= 0 and state.get("credit_deducted"):
-                amount = 1
-            if amount > 0:
-                # Claim through the persisted blob BEFORE issuing the
-                # balance refund (Batch O), so a racing refund that
-                # persists first is never doubled; the claim is
-                # released if the balance refund itself fails.
-                _claim, _recorded = await _claim_persisted_recap_refund(
-                    job_id, amount
-                )
-                if _claim == "claimed":
-                    if await _refund_recap_credits(
-                        user_id, amount, job_id=job_id
-                    ):
-                        refunded = True
-                        refunded_amount = amount
-                    else:
-                        await _release_persisted_recap_refund_claim(job_id)
-                elif _claim == "already":
-                    refunded = True
-                    refunded_amount = int(_recorded or 0)
         voice_refunded_now = 0
-        if not state.get("voice_refunded"):
-            voice_refunded_now = await _refund_recap_voice_minutes(
-                user_id, job_id, billing_mode=state.get("billing_mode")
-            )
+        _str_rel = {"found": False}
+        try:
+            async with _ASStr() as _s_str:
+                _str_rel = await refund_or_release_job(
+                    _s_str, user_id, job_id, reason="STRANDED_JOB_FAILED"
+                )
+                await _s_str.commit()
+        except Exception as _se:
+            logger.warning(f"Wallet release failed for stranded job {job_id}: {_se}")
+
+        if _str_rel.get("found"):
+            _rr_s = int(_str_rel.get("refunded_recap_seconds") or 0)
+            _rv_s = int(_str_rel.get("refunded_voice_seconds") or 0)
+            if _rr_s > 0:
+                refunded = True
+                refunded_amount = seconds_to_credits(_rr_s)
+            voice_refunded_now = _rv_s
+        else:
+            if not refunded:
+                amount = float(state.get("credits_charged") or 0)
+                if amount <= 0 and state.get("credit_deducted"):
+                    amount = 1.0
+                if amount > 0:
+                    _claim, _recorded = await _claim_persisted_recap_refund(
+                        job_id, amount
+                    )
+                    if _claim == "claimed":
+                        if await _refund_recap_credits(
+                            user_id, amount, job_id=job_id
+                        ):
+                            refunded = True
+                            refunded_amount = amount
+                        else:
+                            await _release_persisted_recap_refund_claim(job_id)
+                    elif _claim == "already":
+                        refunded = True
+                        refunded_amount = float(_recorded or 0)
+            if not state.get("voice_refunded"):
+                voice_refunded_now = await _refund_recap_voice_minutes(
+                    user_id, job_id, billing_mode=state.get("billing_mode")
+                )
         try:
             from app.db.session import AsyncSessionLocal
 
@@ -3145,11 +3160,40 @@ async def _apply_recap_band_top_up(user_id: int, entry: dict, *, is_admin_user: 
 
 
 async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
-    """Refund whatever a recap job was actually charged — both Recap Credits
-    and, for Option B clone jobs (``billing_mode == 'credit_plus_voice_minutes'``),
-    any held Voice Clone Minutes — exactly once per job.
-    """
+    """Refund/release whatever a recap job held or charged (Recap Credits + Voice Minutes)."""
     _job_id = entry.get("id")
+    if _job_id and not settings.is_admin(user_id):
+        try:
+            from app.db.session import AsyncSessionLocal
+            from app.services.billing import refund_or_release_job, seconds_to_credits
+
+            async with AsyncSessionLocal() as _rel_session:
+                _rel = await refund_or_release_job(
+                    _rel_session,
+                    user_id,
+                    _job_id,
+                    reason="JOB_FAILED_OR_CANCELLED",
+                )
+                await _rel_session.commit()
+            if _rel.get("found"):
+                _rr = int(_rel.get("refunded_recap_seconds") or 0)
+                _rv = int(_rel.get("refunded_voice_seconds") or 0)
+                if _rr > 0:
+                    entry["credit_refunded"] = True
+                    entry["credits_refunded"] = seconds_to_credits(_rr)
+                if _rv > 0:
+                    entry["voice_refunded"] = True
+                    entry["voice_seconds_refunded"] = int(entry.get("voice_seconds_refunded") or 0) + _rv
+                if _rel.get("already_released"):
+                    entry["credit_refunded"] = bool(entry.get("credit_refunded") or _rr > 0)
+                    entry["voice_refunded"] = bool(entry.get("voice_refunded") or _rv > 0)
+                    return False
+                if _rr > 0 or _rv > 0:
+                    await _persist_recap_credits_charged(entry)
+                return bool(_rr > 0 or _rv > 0)
+        except Exception as _rel_exc:
+            logger.warning(f"Wallet reservation refund failed for recap job {_job_id}: {_rel_exc}")
+
     _billing_mode = entry.get("billing_mode")
     _voice_refunded_now = 0
     if (
@@ -3169,9 +3213,9 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
         if _voice_refunded_now > 0:
             await _persist_recap_credits_charged(entry)
         return _voice_refunded_now > 0
-    amount = int(entry.get("credits_charged") or 0)
+    amount = float(entry.get("credits_charged") or 0)
     if amount <= 0 and entry.get("credit_deducted"):
-        amount = 1
+        amount = 1.0
     entry["credit_refunded"] = True
     entry["credits_refunded"] = amount
     if _job_id:
@@ -3183,11 +3227,11 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
             )
 
             async with AsyncSessionLocal() as _ledger_session:
-                _net_charged = await recap_debit_total_for_job(
+                _net_charged = float(await recap_debit_total_for_job(
                     _ledger_session, _job_id
-                ) - await recap_refund_total_for_job(_ledger_session, _job_id)
-            amount = max(amount, int(_net_charged))
-            entry["credits_refunded"] = amount
+                )) - float(await recap_refund_total_for_job(_ledger_session, _job_id))
+            amount = max(amount, _net_charged)
+            entry["credits_refunded"] = round(amount, 4)
         except Exception as exc:
             logger.warning(
                 f"Could not reconcile recap refund total from the ledger for {_job_id}: {exc}"
@@ -3202,7 +3246,7 @@ async def _refund_recap_job_charge(user_id: int, entry: dict) -> bool:
     if _job_id:
         _claim_state, _recorded = await _claim_persisted_recap_refund(_job_id, amount)
         if _claim_state == "already":
-            entry["credits_refunded"] = int(_recorded or amount)
+            entry["credits_refunded"] = float(_recorded or amount)
             if _voice_refunded_now > 0:
                 await _persist_recap_credits_charged(entry)
             return _voice_refunded_now > 0
@@ -3318,79 +3362,98 @@ async def _cancel_recap_job_core(
             if await _refund_recap_job_charge(job.user_id, entry):
                 refund_info = {
                     "refunded": True,
-                    "recap_credits": int(entry.get("credits_refunded") or 0),
+                    "recap_credits": float(entry.get("credits_refunded") or 0),
                     "voice_refunded": bool(entry.get("voice_refunded")),
                     "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
                 }
         else:
-            persisted = _load_persisted_recap_state(job)
-            proven_credits = 1
-            already_refunded = False
-            _p_billing_mode = None
-            if persisted is not None:
-                already_refunded = bool(persisted.get("credit_refunded"))
-                _p_billing_mode = persisted.get("billing_mode")
-                if persisted.get("credit_deducted"):
-                    proven_credits = max(1, int(persisted.get("credits_charged") or 1))
-            _v_ref_sec = 0
+            from app.services.billing import refund_or_release_job, seconds_to_credits
+
+            _cold_rel = {"found": False}
             if not settings.is_admin(job.user_id):
-                _v_ref_sec = await _refund_recap_voice_minutes(
-                    job.user_id, job.id, billing_mode=_p_billing_mode
+                _cold_rel = await refund_or_release_job(
+                    db, job.user_id, job.id, reason="USER_OR_ADMIN_CANCEL"
                 )
-            if already_refunded:
+                await db.commit()
+            if _cold_rel.get("found"):
+                _c_rr = int(_cold_rel.get("refunded_recap_seconds") or 0)
+                _c_rv = int(_cold_rel.get("refunded_voice_seconds") or 0)
                 refund_info = {
-                    "refunded": True,
-                    "recap_credits": int(persisted.get("credits_refunded") or proven_credits),
-                    "voice_refunded": bool(_v_ref_sec > 0 or persisted.get("voice_refunded")),
-                    "voice_seconds_refunded": int(_v_ref_sec or persisted.get("voice_seconds_refunded") or 0),
-                    "note": "charge already refunded before the restart (persisted state)",
+                    "refunded": bool((not _cold_rel.get("already_released")) and (_c_rr > 0 or _c_rv > 0)),
+                    "recap_credits": seconds_to_credits(_c_rr),
+                    "voice_refunded": bool(_c_rv > 0),
+                    "voice_seconds_refunded": _c_rv,
+                    "note": "released from wallet reservation",
                 }
-            elif not settings.is_admin(job.user_id):
-                _did_refund = False
+            else:
+                persisted = _load_persisted_recap_state(job)
+                proven_credits = 1.0
+                already_refunded = False
+                _p_billing_mode = None
                 if persisted is not None:
-                    _claim, _recorded = await _claim_persisted_recap_refund(
-                        job.id, proven_credits
+                    already_refunded = bool(persisted.get("credit_refunded"))
+                    _p_billing_mode = persisted.get("billing_mode")
+                    if persisted.get("credit_deducted"):
+                        proven_credits = max(0.01, float(persisted.get("credits_charged") or 1))
+                _v_ref_sec = 0
+                if not settings.is_admin(job.user_id):
+                    _v_ref_sec = await _refund_recap_voice_minutes(
+                        job.user_id, job.id, billing_mode=_p_billing_mode
                     )
-                    if _claim == "already":
-                        refund_info = {
-                            "refunded": True,
-                            "recap_credits": int(_recorded or proven_credits),
-                            "voice_refunded": bool(_v_ref_sec > 0 or persisted.get("voice_refunded")),
-                            "voice_seconds_refunded": int(_v_ref_sec or persisted.get("voice_seconds_refunded") or 0),
-                            "note": "charge already refunded before the restart (persisted state)",
-                        }
-                    elif _claim == "claimed":
-                        if await _refund_recap_credits(job.user_id, proven_credits, job_id=job.id):
-                            _did_refund = True
+                if already_refunded:
+                    refund_info = {
+                        "refunded": True,
+                        "recap_credits": float(persisted.get("credits_refunded") or proven_credits),
+                        "voice_refunded": bool(_v_ref_sec > 0 or persisted.get("voice_refunded")),
+                        "voice_seconds_refunded": int(_v_ref_sec or persisted.get("voice_seconds_refunded") or 0),
+                        "note": "charge already refunded before the restart (persisted state)",
+                    }
+                elif not settings.is_admin(job.user_id):
+                    _did_refund = False
+                    if persisted is not None:
+                        _claim, _recorded = await _claim_persisted_recap_refund(
+                            job.id, proven_credits
+                        )
+                        if _claim == "already":
+                            refund_info = {
+                                "refunded": True,
+                                "recap_credits": float(_recorded or proven_credits),
+                                "voice_refunded": bool(_v_ref_sec > 0 or persisted.get("voice_refunded")),
+                                "voice_seconds_refunded": int(_v_ref_sec or persisted.get("voice_seconds_refunded") or 0),
+                                "note": "charge already refunded before the restart (persisted state)",
+                            }
+                        elif _claim == "claimed":
+                            if await _refund_recap_credits(job.user_id, proven_credits, job_id=job.id):
+                                _did_refund = True
+                            else:
+                                await _release_persisted_recap_refund_claim(job.id)
                         else:
-                            await _release_persisted_recap_refund_claim(job.id)
+                            _did_refund = await _refund_recap_credits(
+                                job.user_id, proven_credits, job_id=job.id
+                            )
                     else:
                         _did_refund = await _refund_recap_credits(
                             job.user_id, proven_credits, job_id=job.id
                         )
-                else:
-                    _did_refund = await _refund_recap_credits(
-                        job.user_id, proven_credits, job_id=job.id
-                    )
-                if _did_refund:
-                    refund_info = {
-                        "refunded": True,
-                        "recap_credits": proven_credits,
-                        "voice_refunded": bool(_v_ref_sec > 0),
-                        "voice_seconds_refunded": int(_v_ref_sec),
-                        "note": (
-                            "registry unavailable; amount restored from persisted recap state"
-                            if persisted is not None
-                            else "base credit only (registry unavailable)"
-                        ),
-                    }
-                elif _v_ref_sec > 0:
-                    refund_info = {
-                        "refunded": True,
-                        "recap_credits": 0,
-                        "voice_refunded": True,
-                        "voice_seconds_refunded": int(_v_ref_sec),
-                    }
+                    if _did_refund:
+                        refund_info = {
+                            "refunded": True,
+                            "recap_credits": proven_credits,
+                            "voice_refunded": bool(_v_ref_sec > 0),
+                            "voice_seconds_refunded": int(_v_ref_sec),
+                            "note": (
+                                "registry unavailable; amount restored from persisted recap state"
+                                if persisted is not None
+                                else "base credit only (registry unavailable)"
+                            ),
+                        }
+                    elif _v_ref_sec > 0:
+                        refund_info = {
+                            "refunded": True,
+                            "recap_credits": 0,
+                            "voice_refunded": True,
+                            "voice_seconds_refunded": int(_v_ref_sec),
+                        }
     except Exception as exc:
         logger.warning(f"Cancel refund failed for job {job.id}: {exc}")
         refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
@@ -3698,6 +3761,16 @@ async def get_user_profile(
         referral_code = referral_code or ""
         referral_stats = None
 
+    from app.services.billing import get_wallet_snapshot
+
+    wallet_snap = await get_wallet_snapshot(db, user.id)
+    try:
+        await db.commit()
+    except Exception:
+        pass
+    is_vip = (wallet_snap["account_category"] == "PURCHASED") or is_admin
+    seconds_left = int(wallet_snap["available_voice_seconds"])
+
     return {
         "id": user.id,
         "first_name": user.first_name,
@@ -3707,7 +3780,17 @@ async def get_user_profile(
         "is_admin": is_admin,
         "is_vip": is_vip,
         "balance_seconds": seconds_left,
-        "balance_minutes": round(seconds_left / 60, 1),
+        "balance_minutes": round(seconds_left / 60, 2),
+        "available_voice_seconds": wallet_snap["available_voice_seconds"],
+        "available_voice_minutes": wallet_snap["available_voice_minutes"],
+        "reserved_voice_seconds": wallet_snap["reserved_voice_seconds"],
+        "earliest_expires_at": wallet_snap["earliest_expires_at"],
+        "earliest_days_left": wallet_snap["earliest_days_left"],
+        "expiring_soon": wallet_snap["expiring_soon"],
+        "has_grandfathered_balance": wallet_snap["has_grandfathered_balance"],
+        "active_grants_count": wallet_snap["active_grants_count"],
+        "wallet_grants": wallet_snap["grants"],
+        "reserved_voice_minutes": wallet_snap["reserved_voice_minutes"],
         "tts_balance_seconds": tts_seconds_left,
         "tts_balance_minutes": round(tts_seconds_left / 60, 1),
         # Batch BZ: today's TTS spendable picture (see above). Null
@@ -3716,7 +3799,11 @@ async def get_user_profile(
         "tts_today_consumed_seconds": tts_today_consumed_seconds,
         "tts_referral_seconds": (None if is_admin else tts_seconds_left),
         "tts_today_remaining_seconds": tts_today_remaining_seconds,
-        "recap_credits": getattr(user, "recap_credits", 3),
+        "recap_credits": wallet_snap["available_recap_credits"],
+        "available_recap_credits": wallet_snap["available_recap_credits"],
+        "available_recap_seconds": wallet_snap["available_recap_seconds"],
+        "reserved_recap_credits": wallet_snap["reserved_recap_credits"],
+        "reserved_recap_seconds": wallet_snap["reserved_recap_seconds"],
         "character_limit": char_limit,
         # R40 deck I4: the plan "how it works" copy states BOTH limits
         # via placeholders — expose the pair so the client never
@@ -4492,7 +4579,7 @@ USER_PREF_ENUMS: Dict[str, List[str]] = {
         "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr",
     ],
     "recapRenderQuality": ["standard", "high", "max"],
-    "recapTtsEngine": ["voxcpm", "gemini", "edge"],
+    "recapTtsEngine": ["voxcpm", "gemini", "edge", "none"],
     "recapSubRenderMode": ["png", "timeline", "ass", "karaoke", "soft"],
     "recapSubEffect": ["none", "fade", "pop", "karaoke"],
 }
@@ -5011,22 +5098,66 @@ async def get_live_jobs(
     }
 
 
+async def _refund_cancelled_non_recap_job(db: AsyncSession, job: Job, *, actor: str) -> Dict[str, Any]:
+    """Shared cancel refund/release path for user & admin cancels of voice/TTS jobs."""
+    refund_info: Dict[str, Any] = {"refunded": False}
+    try:
+        if job.job_type == JobType.TTS.value:
+            from app.services.ledger import refund_tts_referral_seconds
+
+            before = (await db.execute(
+                select(MinuteLedgerEvent).where(
+                    MinuteLedgerEvent.user_id == job.user_id,
+                    MinuteLedgerEvent.reference_id == f"REFUND:{job.id}",
+                )
+            )).first()
+            await refund_tts_referral_seconds(
+                db, job.user_id, str(job.id), keep_seconds=0, note=f"Refund: TTS job cancelled by {actor}"
+            )
+            await db.commit()
+            if not before:
+                refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
+            return refund_info
+
+        from app.services.billing import refund_or_release_job
+
+        rel = await refund_or_release_job(
+            db, job.user_id, str(job.id), reason=f"CANCELLED_BY_{actor.upper()}", note=f"Refund: voice job cancelled by {actor}"
+        )
+        if rel.get("found"):
+            await db.commit()
+            rv = int(rel.get("refunded_voice_seconds") or 0)
+            refund_info = {
+                "refunded": bool((not rel.get("already_released")) and rv > 0),
+                "voice_seconds": rv,
+            }
+            return refund_info
+
+        from app.services.ledger import refund_job_seconds
+
+        before = (await db.execute(
+            select(MinuteLedgerEvent).where(
+                MinuteLedgerEvent.user_id == job.user_id,
+                MinuteLedgerEvent.reference_id == f"REFUND:{job.id}",
+            )
+        )).first()
+        await refund_job_seconds(db, job.user_id, str(job.id), note=f"Refund: voice job cancelled by {actor}")
+        await db.commit()
+        if not before:
+            refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
+    except Exception as exc:
+        logger.warning(f"Cancel refund failed for {job.id} ({actor}): {exc}")
+        refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
+    return refund_info
+
+
 @api_router.post("/jobs/{job_id}/cancel")
 async def cancel_voice_job(
     job_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """User cancel for their OWN queued / running VOICE job (Batch AC).
-
-    Recap jobs keep their dedicated endpoint (/recap/{id}/cancel with
-    its credit machinery); anything that is not a voice row is a 404
-    here, with the same owner-only discipline as every other job
-    endpoint. Refund semantics mirror the admin console's voice
-    branch exactly: flip to CANCELLED, then the idempotent ledger
-    refund (a job the worker already charged gets its seconds back;
-    an uncharged job refunds nothing).
-    """
+    """User cancel for their OWN queued / running VOICE job (Batch AC)."""
     job = await db.get(Job, str(job_id))
     if not job or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -5049,28 +5180,7 @@ async def cancel_voice_job(
         conflict_detail="လုပ်ဆောင်နေဆဲ အသံ အလုပ်ကိုသာ ရပ်တန့်နိုင်ပါတယ်။",
     )
 
-    refund_info: Dict[str, Any] = {"refunded": False}
-    try:
-        from app.services.ledger import refund_job_seconds, refund_tts_referral_seconds
-
-        before = (await db.execute(
-            select(MinuteLedgerEvent).where(
-                MinuteLedgerEvent.user_id == job.user_id,
-                MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
-            )
-        )).first()
-        if job.job_type == JobType.TTS.value:
-            await refund_tts_referral_seconds(
-                db, job.user_id, str(job.id), keep_seconds=0, note="Refund: TTS job cancelled by user"
-            )
-        else:
-            await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: voice job cancelled by user")
-        await db.commit()
-        if not before:
-            refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
-    except Exception as exc:
-        logger.warning(f"User cancel refund failed for voice job {job_id}: {exc}")
-        refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
+    refund_info = await _refund_cancelled_non_recap_job(db, job, actor="user")
     return {"success": True, "status": "CANCELLED", "refund": refund_info}
 
 
@@ -6237,6 +6347,8 @@ class RecapPreviewCompositeRequest(BaseModel):
     sub_font_custom_id: Optional[str] = Field(None, max_length=80)
     include_logo: bool = True
     logo_pos: str = "top-right"
+    logo_scale: float = Field(0.16, ge=0.04, le=0.40)
+    logo_opacity: float = Field(0.70, ge=0.10, le=1.00)
 
     @field_validator("sub_outline_width")
     @classmethod
@@ -6394,6 +6506,8 @@ async def recap_preview_composite(
             logo_enabled=bool(logo_path_arg),
             logo_path=logo_path_arg,
             logo_position=logo_pos_coords if logo_path_arg else None,
+            logo_scale=float(req.logo_scale),
+            logo_opacity=float(req.logo_opacity),
             is_vip=is_vip,
         )
     except Exception as e:
@@ -6633,7 +6747,8 @@ RECAP_SOURCE_LANGUAGE_CODES = frozenset({
 RECAP_RENDER_QUALITIES = frozenset({"standard", "high", "max"})
 # Batch AW: "edge" (Microsoft Edge TTS) is a first-class user-selectable
 # recap narration engine alongside voxcpm (clone/persona) and gemini.
-RECAP_TTS_ENGINES = frozenset({"voxcpm", "gemini", "edge"})
+# Monetization Pricing Upgrade: "none" / "subtitle_only" renders captions without AI narration (billed as subtitle_only).
+RECAP_TTS_ENGINES = frozenset({"voxcpm", "gemini", "edge", "none", "subtitle_only"})
 # Recap narrator slugs the worker still maps even though they are not
 # curated personas (legacy Edge female voice). Every other legitimate
 # recap voice_slug is a curated persona slug — see create_recap_job.
@@ -6759,7 +6874,9 @@ class RecapConfigRequest(BaseModel):
     sub_lines: int = Field(1, ge=1, le=3)
     sub_font: str = "padauk"          # padauk, noto_sans, pyidaungsu, noto_serif
     include_logo: bool = True
-    logo_pos: str = "top-right"       # top-right, top-left, bottom-right, bottom-left, top-center
+    logo_pos: str = "top-right"
+    logo_scale: float = Field(0.16, ge=0.04, le=0.40)
+    logo_opacity: float = Field(0.70, ge=0.10, le=1.00)       # top-right, top-left, bottom-right, bottom-left, top-center
     duration_seconds: Optional[int] = None
     # Two-phase flow (desktop Recapter "Edit Text" parity): when true, the
     # job stops after transcription + translation with status SCRIPT_READY
@@ -6896,8 +7013,8 @@ class RecapConfigRequest(BaseModel):
     def _check_tts_engine(cls, v: str) -> str:
         e = str(v or "voxcpm").strip().lower()
         if e not in RECAP_TTS_ENGINES:
-            raise ValueError(f"Unsupported tts_engine '{v}'. Use: voxcpm, gemini, edge")
-        return e
+            raise ValueError(f"Unsupported tts_engine '{v}'. Use: voxcpm, gemini, edge, none")
+        return "none" if e == "subtitle_only" else e
 
     @field_validator("voice_ref_id")
     @classmethod
@@ -7638,19 +7755,9 @@ def _build_recap_failure_dm_text(
     job_id: str,
     reason: str = "",
     reason_key: Optional[str] = None,
-    credits_refunded: int = 0,
+    credits_refunded: float | int = 0,
 ) -> str:
-    """Compose the recap failure DM (batch K).
-
-    Mirrors the success notification's shape (heading, title, task
-    id) but carries the CURATED failure reason — the same user-safe
-    string the Mini App surfaces, or a locale key resolved here —
-    never raw engine text. The refund line appears only when a
-    refund was actually issued (``credits_refunded`` > 0), and the
-    upload hint only for jobs whose source was a direct upload.
-    Title and reason are HTML-escaped: both can carry user-supplied
-    text and the message is sent with parse_mode="HTML".
-    """
+    """Compose the recap failure DM (batch K)."""
     clean_title = html.escape(str(title or "").strip()) or "Recap"
     if reason_key:
         reason_text = t(reason_key, lang)
@@ -7663,9 +7770,11 @@ def _build_recap_failure_dm_text(
         reason=html.escape(reason_text),
         job_id=job_id,
     )
-    if credits_refunded:
+    if float(credits_refunded or 0) > 0:
+        cr_num = round(float(credits_refunded), 2)
+        cr_disp = int(cr_num) if cr_num == int(cr_num) else cr_num
         text += t(
-            "recap_failure_refund_note", lang, credits=int(credits_refunded)
+            "recap_failure_refund_note", lang, credits=cr_disp
         )
     if "Uploaded Video" in str(title or ""):
         text += t("recap_failure_upload_hint", lang)
@@ -7679,7 +7788,7 @@ async def _send_recap_failure_dm(
     title: str,
     reason: str = "",
     reason_key: Optional[str] = None,
-    credits_refunded: int = 0,
+    credits_refunded: float | int = 0,
     entry: Optional[dict] = None,
 ) -> bool:
     """Send the recap failure DM exactly once per job (batch K).
@@ -8194,62 +8303,17 @@ async def _execute_recap_background_job(
                 segmented_mode = len(segment_files) >= 2
                 if segmented_mode:
                     total_parts = len(segment_files)
-                    if is_admin_user:
-                        # Owner ruling 2026-11-02: admin segments like
-                        # a VIP but is NEVER charged — the per-part
-                        # top-up is skipped entirely, so the job's
-                        # credit bookkeeping stays at 0 (the ledger
-                        # helper would no-op the deduction, but the
-                        # top-up would still stamp credits_charged = N
-                        # onto the entry and the Job row). Only the
-                        # part count is recorded, so status/history
-                        # show the parts exactly as for a VIP.
-                        entry["parts_count"] = total_parts
-                        _recap_set_entry_label(
-                            entry,
-                            f"✂️ အပိုင်း {total_parts} ပိုင်း ခွဲပြီးပါပြီ — "
-                            "အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
-                        )
-                    else:
-                        # Per-part charging (owner decision 2026-10-30):
-                        # the job costs 1 credit PER PART. The exact total
-                        # is charged NOW — one top-up ledger action over
-                        # the submit-time single credit — BEFORE any part
-                        # renders. If the balance cannot cover it, the job
-                        # fails here and the failure path refunds the
-                        # submit credit, leaving the user exactly whole.
-                        await _top_up_recap_segment_charge(user_id, entry, total_parts)
-                        credit_deducted = True
-                        if entry.get("tiered_pricing"):
-                            # Batch AO: the charge followed the
-                            # duration band, not the part count — the
-                            # label must say what was actually charged.
-                            _recap_set_entry_label(
-                                entry,
-                                f"💳 ဗီဒီယို ကြာချိန်အလိုက် စုစုပေါင်း {int(entry.get('credits_charged') or 0)} Credits "
-                                "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
-                            )
-                        else:
-                            _recap_set_entry_label(
-                                entry,
-                                f"💳 အပိုင်း {total_parts} ပိုင်း × 1 Credit = {total_parts} Credits "
-                                "ကောက်ခံပြီးပါပြီ — အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
-                            )
+                    entry["parts_count"] = total_parts
+                    _recap_set_entry_label(
+                        entry,
+                        f"✂️ အပိုင်း {total_parts} ပိုင်း ခွဲပြီးပါပြီ — "
+                        "အပိုင်းများ စတင်ထုတ်နေပါတယ်...",
+                    )
             canonical_source_url = local_source
 
-        # Batch AO: a NON-segmented tier-priced job is topped up to
-        # its duration-band total here — after the split decision (so
-        # segmented jobs, priced above, are skipped) and before any
-        # render. Inert for legacy-priced jobs, admins and unpaid
-        # entries; a band of 1 never moves money (see
-        # _apply_recap_band_top_up). A balance that cannot cover the
-        # band fails the job here and the failure path refunds the
-        # submit credit, exactly like the segmented top-up.
-        if not segmented_mode:
-            await _apply_recap_band_top_up(
-                user_id, entry, is_admin_user=is_admin_user
-            )
-            credit_deducted = bool(entry.get("credit_deducted"))
+        # Resolution of credits/minutes reservation already happened atomically
+        # at submit time (reserve_for_job); actual usage settles on completion.
+        credit_deducted = bool(entry.get("credit_deducted"))
 
         # Batch CG: resolve the BYOK route context for Gemini
         # narration (own key → pool). In-memory only — it never
@@ -8347,6 +8411,8 @@ async def _execute_recap_background_job(
             embed_soft_subs=bool(getattr(req, "embed_soft_subs", True)),
             logo_path=logo_path_arg,
             logo_position=logo_pos_coords if logo_path_arg else None,
+            logo_scale=float(getattr(req, "logo_scale", 0.16) or 0.16),
+            logo_opacity=float(getattr(req, "logo_opacity", 0.70) or 0.70),
             extra_text=watermark_text,
             is_vip=is_vip,
             max_duration_seconds=max_dur_limit,
@@ -8360,9 +8426,11 @@ async def _execute_recap_background_job(
         _cg_outcomes: list[dict] = []
         _seg_media_records: list[tuple[int, Optional[str], Optional[str], Optional[float]]] = []
         _seg_stage_timings: list[dict] = []
+        _seg_api_usage: dict[str, Any] = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "model": ""}
+        _total_tts_runtime: float = 0.0
+        _partial_delivered: bool = False
+        _partial_note: Optional[str] = None
         if segmented_mode:
-            # Process every segment through the normal pipeline; each
-            # segment render becomes one deliverable part (≤cap each).
             from app.services.recap_engine.video_splitter import (
                 DEFAULT_LABEL_TEMPLATE,
                 part_label,
@@ -8375,58 +8443,84 @@ async def _execute_recap_background_job(
             seg_warnings: list[str] = []
             running_prev_summary = ""
             for seg in segment_files:
-                _recap_set_entry_label(
-                    entry, f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
-                )
-                seg_res = await loop.run_in_executor(
-                    None,
-                    _make_recap_fn(
-                        seg["path"],
-                        str(job_dir / f"seg{seg['n']:02d}"),
-                        part_index=int(seg["n"]),
-                        total_parts=total_segs,
-                        prev_part_summary=running_prev_summary,
-                    ),
-                )
-                if seg_res.get("part_summary"):
-                    running_prev_summary = str(seg_res["part_summary"]).strip()
-                if seg_res.get("gemini_route"):
-                    _cg_outcomes.append(seg_res["gemini_route"])
-                if isinstance(seg_res.get("stage_timings"), dict):
-                    _seg_stage_timings.append(seg_res["stage_timings"])
-                for _w in (seg_res.get("warnings") or []):
-                    if _w not in seg_warnings:
-                        seg_warnings.append(_w)
-                seg_video = seg_res.get("final_video") or seg_res.get("final_video_path")
-                if not seg_video or not Path(seg_video).is_file():
-                    raise RuntimeError(
-                        f"Segment {seg['n']}/{total_segs} render produced no video"
+                if await _recap_job_marked_cancelled(job_id, entry):
+                    raise asyncio.CancelledError()
+                try:
+                    _recap_set_entry_label(
+                        entry, f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
                     )
-                dest = parts_dir / f"recap_part_{seg['n']:02d}.mp4"
-                if Path(seg_video).resolve() != dest.resolve():
-                    shutil.move(seg_video, dest)
-                seg_audio = seg_res.get("audio") or seg_res.get("final_audio_path")
-                _seg_explicit_dur = seg_res.get("actual_voice_seconds") or seg_res.get("audio_duration")
-                _seg_media_records.append(
-                    (
-                        int(seg["n"]),
-                        str(seg_audio) if seg_audio else None,
-                        str(dest),
-                        float(_seg_explicit_dur) if _seg_explicit_dur is not None else None,
+                    seg_res = await loop.run_in_executor(
+                        None,
+                        _make_recap_fn(
+                            seg["path"],
+                            str(job_dir / f"seg{seg['n']:02d}"),
+                            part_index=int(seg["n"]),
+                            total_parts=total_segs,
+                            prev_part_summary=running_prev_summary,
+                        ),
                     )
-                )
-                entry[f"part{seg['n']}_path"] = str(dest)
-                part_urls.append({
-                    "n": seg["n"],
-                    "label": part_label(DEFAULT_LABEL_TEMPLATE, seg["n"], total_segs),
-                    "url": f"/api/recap/download/{job_id}/part{seg['n']}",
-                })
-                if recap_res is None:
-                    recap_res = seg_res
-                    first_part_dest = str(dest)
+                    if seg_res.get("part_summary"):
+                        running_prev_summary = str(seg_res["part_summary"]).strip()
+                    if seg_res.get("gemini_route"):
+                        _cg_outcomes.append(seg_res["gemini_route"])
+                    if isinstance(seg_res.get("stage_timings"), dict):
+                        _seg_stage_timings.append(seg_res["stage_timings"])
+                    _su = seg_res.get("api_usage") or {}
+                    if isinstance(_su, dict):
+                        _seg_api_usage["requests"] += int(_su.get("requests") or 0)
+                        _seg_api_usage["input_tokens"] += int(_su.get("input_tokens") or 0)
+                        _seg_api_usage["output_tokens"] += int(_su.get("output_tokens") or 0)
+                        if _su.get("model") and not _seg_api_usage["model"]:
+                            _seg_api_usage["model"] = str(_su["model"])
+                    _total_tts_runtime += float(seg_res.get("tts_runtime_seconds") or 0.0)
+                    for _w in (seg_res.get("warnings") or []):
+                        if _w not in seg_warnings:
+                            seg_warnings.append(_w)
+                    seg_video = seg_res.get("final_video") or seg_res.get("final_video_path")
+                    if not seg_video or not Path(seg_video).is_file():
+                        raise RuntimeError(
+                            f"Segment {seg['n']}/{total_segs} render produced no video"
+                        )
+                    dest = parts_dir / f"recap_part_{seg['n']:02d}.mp4"
+                    if Path(seg_video).resolve() != dest.resolve():
+                        shutil.move(seg_video, dest)
+                    seg_audio = seg_res.get("audio") or seg_res.get("final_audio_path")
+                    _seg_explicit_dur = seg_res.get("actual_voice_seconds") or seg_res.get("audio_duration")
+                    _seg_media_records.append(
+                        (
+                            int(seg["n"]),
+                            str(seg_audio) if seg_audio else None,
+                            str(dest),
+                            float(_seg_explicit_dur) if _seg_explicit_dur is not None else None,
+                        )
+                    )
+                    entry[f"part{seg['n']}_path"] = str(dest)
+                    part_urls.append({
+                        "n": seg["n"],
+                        "label": part_label(DEFAULT_LABEL_TEMPLATE, seg["n"], total_segs),
+                        "url": f"/api/recap/download/{job_id}/part{seg['n']}",
+                    })
+                    if recap_res is None:
+                        recap_res = seg_res
+                        first_part_dest = str(dest)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as _seg_err:
+                    if len(part_urls) >= 1:
+                        _partial_delivered = True
+                        _partial_note = (
+                            f"အပိုင်း {len(part_urls)}/{total_segs} အထိသာ ထုတ်လုပ်နိုင်ခဲ့ပြီး "
+                            "မပြီးဆုံးသေးသည့် အပိုင်းများအတွက် Credit ကို အလိုအလျောက် ပြန်အမ်းပေးထားပါသည်။"
+                        )
+                        seg_warnings.append(_partial_note)
+                        logger.warning(
+                            "Recap job %s partial failure at segment %s/%s (%s) — delivering %s completed part(s)",
+                            job_id, seg["n"], total_segs, _seg_err, len(part_urls),
+                        )
+                        break
+                    raise
             logger.info(
-                f"Recap job {job_id}: segmented source processed as "
-                f"{total_segs} parts (each ≤ cap)"
+                f"Recap job {job_id}: segmented source processed {len(part_urls)}/{total_segs} parts"
             )
         else:
             recap_res = await loop.run_in_executor(
@@ -8434,6 +8528,14 @@ async def _execute_recap_background_job(
             )
             if recap_res.get("gemini_route"):
                 _cg_outcomes.append(recap_res["gemini_route"])
+            _su = recap_res.get("api_usage") or {}
+            if isinstance(_su, dict):
+                _seg_api_usage["requests"] += int(_su.get("requests") or 0)
+                _seg_api_usage["input_tokens"] += int(_su.get("input_tokens") or 0)
+                _seg_api_usage["output_tokens"] += int(_su.get("output_tokens") or 0)
+                if _su.get("model"):
+                    _seg_api_usage["model"] = str(_su["model"])
+            _total_tts_runtime += float(recap_res.get("tts_runtime_seconds") or 0.0)
 
         video_path = recap_res.get("final_video") or recap_res.get("final_video_path") or recap_res.get("final")
         if segmented_mode and first_part_dest:
@@ -8537,29 +8639,16 @@ async def _execute_recap_background_job(
         }
         if segmented_mode:
             entry["segmented"] = True
+            entry["partial_delivered"] = bool(_partial_delivered)
             entry["parts"] = part_urls
             entry["download_urls"]["parts"] = part_urls
-            _seg_charged = int(entry.get("credits_charged") or 0)
-            if _seg_charged <= 0:
-                # Admin segmented run (owner ruling 2026-11-02):
-                # never charged — the note must not claim a cost.
-                _seg_cost_note = "(Admin — Credit မကောက်ခံထားပါ။)"
-            elif entry.get("tiered_pricing"):
-                # Batch AO: the charge followed the duration band,
-                # not the part count — the note must not claim a
-                # per-part rate the user did not pay.
-                _seg_cost_note = (
-                    f"(ဗီဒီယို ကြာချိန်အလိုက် စုစုပေါင်း {_seg_charged} Credits သုံးခဲ့ပါတယ်။)"
-                )
+            if _partial_note:
+                entry["split_note"] = _partial_note
             else:
-                _seg_cost_note = (
-                    f"(အပိုင်းတစ်ခုစီ 1 Credit နှုန်းနဲ့ စုစုပေါင်း {_seg_charged} Credits သုံးခဲ့ပါတယ်။)"
+                entry["split_note"] = (
+                    f"မူရင်းဗီဒီယို ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်း {len(part_urls)} ပိုင်း "
+                    "ခွဲပြီး လုပ်ပေးထားပါတယ် — အပိုင်းအားလုံး ဒေါင်းလုဒ်ရယူနိုင်ပါတယ်။"
                 )
-            entry["split_note"] = (
-                f"မူရင်းဗီဒီယို ၁၀ မိနစ်ထက် ရှည်လို့ အပိုင်း {len(part_urls)} ပိုင်း "
-                "ခွဲပြီး လုပ်ပေးထားပါတယ် — အပိုင်းအားလုံး ဒေါင်းလုဒ်ရယူနိုင်ပါတယ်။ "
-                + _seg_cost_note
-            )
 
         # Optional Video Splitter post-process (Recapter parity): cut the
         # FINISHED recap into labelled parts at narration pauses. It is
@@ -8632,91 +8721,42 @@ async def _execute_recap_background_job(
         entry["final_script"] = final_script_text
 
         try:
-            # R40 item 15c: record the REAL output duration so history
-            # rows show actual seconds instead of the creation estimate.
-            _real_seconds = 0
-            try:
-                from app.services.downloader import probe_local_media as _plm
-
-                _real_seconds = int(round(float(_plm(video_path).get("duration", 0.0) or 0.0)))
-            except Exception:
-                _real_seconds = 0
-            async with AsyncSessionLocal() as session:
-                # Second Worker Phase 2 (2026-11-16): persist final script and stage timings
-                # into recap_config so support lookups and AI Thumbnail v2 can inspect them
-                db_job = await session.get(Job, job_id)
-                recap_cfg_dict = {}
-                if db_job and db_job.recap_config:
-                    try:
-                        recap_cfg_dict = json.loads(db_job.recap_config)
-                    except Exception:
-                        recap_cfg_dict = {}
-                if final_script_text:
-                    recap_cfg_dict["final_script"] = final_script_text
-                if entry.get("stage_timings"):
-                    recap_cfg_dict["stage_timings"] = entry["stage_timings"]
-                if "script_ready" in recap_cfg_dict:
-                    recap_cfg_dict["script_ready"] = False
-                new_recap_cfg_json = json.dumps(recap_cfg_dict, ensure_ascii=False) if recap_cfg_dict else None
-
-                _succ_values = {
-                    "result_path": video_path,
-                    "finished_at": func.now(),
-                    "final_script": final_script_text,
-                }
-                if new_recap_cfg_json is not None:
-                    _succ_values["recap_config"] = new_recap_cfg_json
-                if _real_seconds > 0:
-                    _succ_values["seconds_consumed"] = _real_seconds
-
-                # Batch AJ H5: the SUCCESS write is conditioned on the
-                # row still being active — a cancel landing between
-                # the check above and this write flips the row to a
-                # terminal state first, and the cancel (with its
-                # refund) must win over a late SUCCESS + delivery.
-                _succ_res = await session.execute(
-                    update(Job).where(
-                        Job.id == job_id,
-                        Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
-                    ).values(status=JobStatus.SUCCESS.value, **_succ_values)
-                )
-                await session.commit()
-                _succ_written = bool(_succ_res.rowcount)
-        except Exception as db_succ_err:
-            logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
-
-        if not _succ_written:
-            entry["status"] = "FAILED"
-            entry["error_message"] = "Cancelled by Administrator"
-            logger.info(
-                f"Recap job {job_id} finished rendering but its row is no "
-                "longer active (cancelled); not delivering."
+            from app.services.billing import (
+                record_cost_telemetry,
+                seconds_to_credits,
+                settle_job_reservation,
             )
-            return
+            from app.services.downloader import probe_local_media as _plm
 
-        # Batch AB: terminal state clears the stranded-reset count.
-        await _clear_recap_stranded_reset_count(job_id)
+            # Measure REAL final output video duration & output size across delivered files
+            _real_seconds_f = 0.0
+            _total_out_bytes = 0
+            if segmented_mode and _seg_media_records:
+                for _rec in _seg_media_records:
+                    _vp = _rec[2]
+                    if _vp and Path(_vp).is_file():
+                        _total_out_bytes += int(Path(_vp).stat().st_size)
+                        _vd = _probe_single_media_duration(_vp)
+                        if _vd and _vd > 0:
+                            _real_seconds_f += float(_vd)
+            if _real_seconds_f <= 0 and video_path:
+                try:
+                    _real_seconds_f = float(_plm(video_path).get("duration", 0.0) or 0.0)
+                except Exception:
+                    _real_seconds_f = float(_probe_single_media_duration(video_path) or 0.0)
+                if Path(video_path).is_file():
+                    _total_out_bytes = int(Path(video_path).stat().st_size)
+            _real_seconds = max(0, int(round(_real_seconds_f)))
 
-        # Phase 5 Option B settlement: use the job's recorded billing_mode
-        # from submit time — never re-compute from changed rules/engines.
-        if (
-            entry.get("billing_mode") == _RECAP_BILLING_CREDIT_PLUS_VOICE
-            and not entry.get("voice_settled")
-            and not settings.is_admin(user_id)
-        ):
-            try:
-                from app.services.ledger import settle_recap_voice_seconds
-
+            # Measure actual generated voice duration strictly separated from video duration
+            _actual_voice_seconds = 0
+            if entry.get("billing_mode") == _RECAP_BILLING_CREDIT_PLUS_VOICE:
                 _fb_set = {int(x) for x in (_fb_segs or []) if str(x).isdigit()}
                 _total_recs = len(_seg_media_records)
                 _dp_switched_away = bool(dp_resume and tts_engine != "voxcpm")
-                if _dp_switched_away or (_fb_used and (_total_recs <= 1 or len(_fb_set) >= _total_recs)):
-                    _actual_voice_seconds = 0
-                else:
+                if not (_dp_switched_away or (_fb_used and (_total_recs <= 1 or len(_fb_set) >= _total_recs))):
                     _vox_recs = [
-                        rec
-                        for rec in _seg_media_records
-                        if not _fb_used or int(rec[0]) not in _fb_set
+                        rec for rec in _seg_media_records if not _fb_used or int(rec[0]) not in _fb_set
                     ]
                     _explicit_vals = [rec[3] for rec in _vox_recs if rec[3] is not None]
                     if _explicit_vals and len(_explicit_vals) == len(_vox_recs):
@@ -8731,36 +8771,166 @@ async def _execute_recap_background_job(
                         else:
                             _actual_voice_seconds = int(entry.get("voice_seconds_held") or 0)
 
-                async with AsyncSessionLocal() as _settle_session:
-                    _j_row = await _settle_session.get(Job, job_id)
-                    _j_state = _load_persisted_recap_state(_j_row) if _j_row is not None else None
-                    if _j_state is None or not _j_state.get("voice_settled"):
-                        _settle_res = await settle_recap_voice_seconds(
-                            _settle_session,
+            async with AsyncSessionLocal() as session:
+                db_job = await session.get(Job, job_id)
+                recap_cfg_dict = {}
+                if db_job and db_job.recap_config:
+                    try:
+                        recap_cfg_dict = json.loads(db_job.recap_config)
+                    except Exception:
+                        recap_cfg_dict = {}
+                if final_script_text:
+                    recap_cfg_dict["final_script"] = final_script_text
+                if entry.get("stage_timings"):
+                    recap_cfg_dict["stage_timings"] = entry["stage_timings"]
+                if "script_ready" in recap_cfg_dict:
+                    recap_cfg_dict["script_ready"] = False
+                recap_cfg_dict["partial_delivered"] = bool(_partial_delivered)
+
+                _succ_values = {
+                    "result_path": video_path,
+                    "finished_at": func.now(),
+                    "final_script": final_script_text,
+                    "output_duration_seconds": _real_seconds,
+                    "voice_audio_seconds": int(_actual_voice_seconds),
+                    "output_size_bytes": int(_total_out_bytes),
+                }
+                if _real_seconds > 0:
+                    _succ_values["seconds_consumed"] = _real_seconds
+
+                _succ_res = await session.execute(
+                    update(Job).where(
+                        Job.id == job_id,
+                        Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                    ).values(status=JobStatus.SUCCESS.value, **_succ_values)
+                )
+                _succ_written = bool(_succ_res.rowcount)
+                if not _succ_written:
+                    await session.rollback()
+                else:
+                    if not settings.is_admin(user_id):
+                        _act_recap_sec = _real_seconds if _real_seconds > 0 else int(entry.get("recap_seconds_held") or 60)
+                        _settle_res = await settle_job_reservation(
+                            session,
                             user_id,
                             job_id,
-                            _actual_voice_seconds,
-                            note=f"Recap clone settle ({job_id})",
+                            actual_recap_seconds=_act_recap_sec,
+                            actual_voice_seconds=_actual_voice_seconds,
+                            partial_delivered=bool(_partial_delivered),
+                            note=f"Recap finish settle ({job_id}: output={_act_recap_sec}s, voice={_actual_voice_seconds}s)",
                         )
-                        await _settle_session.commit()
-                        entry["voice_settled"] = True
-                        entry["voice_seconds_held"] = int(
-                            _settle_res["held_seconds"] or entry.get("voice_seconds_held") or 0
+                        if _settle_res.get("found"):
+                            _s_recap = int(_settle_res["settled_recap_seconds"] or 0)
+                            _r_recap = int(_settle_res["refunded_recap_seconds"] or 0)
+                            _s_voice = int(_settle_res["settled_voice_seconds"] or 0)
+                            _r_voice = int(_settle_res["refunded_voice_seconds"] or 0)
+                            entry["credits_charged"] = seconds_to_credits(_s_recap)
+                            entry["credits_refunded"] = seconds_to_credits(_r_recap)
+                            entry["credit_refunded"] = bool(_r_recap > 0 and _partial_delivered)
+                            entry["voice_settled"] = True
+                            entry["voice_seconds_settled"] = _s_voice
+                            entry["voice_seconds_refunded"] = _r_voice
+                            recap_cfg_dict["credits_charged"] = entry["credits_charged"]
+                            recap_cfg_dict["credits_refunded"] = entry["credits_refunded"]
+                            recap_cfg_dict["credit_refunded"] = entry["credit_refunded"]
+                            recap_cfg_dict["voice_settled"] = True
+                            recap_cfg_dict["voice_seconds_settled"] = _s_voice
+                            recap_cfg_dict["voice_seconds_refunded"] = _r_voice
+                        elif (
+                            entry.get("billing_mode") == _RECAP_BILLING_CREDIT_PLUS_VOICE
+                            and not entry.get("voice_settled")
+                        ):
+                            from app.services.ledger import settle_recap_voice_seconds
+                            _leg_res = await settle_recap_voice_seconds(
+                                session, user_id, job_id, _actual_voice_seconds, note=f"Recap clone settle ({job_id})"
+                            )
+                            entry["voice_settled"] = True
+                            entry["voice_seconds_settled"] = int(_leg_res["settled_seconds"])
+                            entry["voice_seconds_refunded"] = int(_leg_res["refunded_seconds"])
+                            recap_cfg_dict["voice_settled"] = True
+                            recap_cfg_dict["voice_seconds_settled"] = int(_leg_res["settled_seconds"])
+                            recap_cfg_dict["voice_seconds_refunded"] = int(_leg_res["refunded_seconds"])
+
+                    # Record Job.recap_credits_charged & settled config
+                    _final_cfg_json = json.dumps(recap_cfg_dict, ensure_ascii=False)
+                    await session.execute(
+                        update(Job)
+                        .where(Job.id == job_id)
+                        .values(
+                            recap_config=_final_cfg_json,
+                            recap_credits_charged=float(entry.get("credits_charged") or 0.0),
                         )
-                        entry["voice_seconds_settled"] = int(_settle_res["settled_seconds"])
-                        entry["voice_seconds_refunded"] = int(_settle_res["refunded_seconds"])
-                    else:
-                        entry["voice_settled"] = True
-                        entry["voice_seconds_settled"] = _j_state.get("voice_seconds_settled")
-                        entry["voice_seconds_refunded"] = int(_j_state.get("voice_seconds_refunded") or 0)
-                await _persist_recap_credits_charged(entry)
-            except Exception as _settle_err:
-                logger.warning(
-                    "Recap job %s: Option B voice settlement failed (job remains completed): %s",
-                    job_id,
-                    _settle_err,
-                    exc_info=True,
-                )
+                    )
+
+                    # Record Cost Telemetry (actual measured tokens / audio / runtime / bandwidth)
+                    if _seg_api_usage["requests"] > 0 or _seg_api_usage["input_tokens"] > 0:
+                        await record_cost_telemetry(
+                            session,
+                            job_id=job_id,
+                            user_id=user_id,
+                            provider="gemini_text",
+                            model_name=_seg_api_usage["model"] or "gemini-2.5-flash",
+                            requests_count=_seg_api_usage["requests"],
+                            input_tokens=_seg_api_usage["input_tokens"],
+                            output_tokens=_seg_api_usage["output_tokens"],
+                        )
+                    if tts_engine == "gemini":
+                        _pool_tts_reqs = sum(int(o.get("pool_requests") or 0) for o in _cg_outcomes)
+                        _own_only = bool(_cg_outcomes and _pool_tts_reqs == 0 and not entry.get("gemini_taste_blocked"))
+                        await record_cost_telemetry(
+                            session,
+                            job_id=job_id,
+                            user_id=user_id,
+                            provider="gemini_tts",
+                            model_name="gemini-2.5-flash-preview-tts",
+                            is_own_key=_own_only,
+                            requests_count=max(1, len(_seg_media_records)),
+                            audio_seconds=float(_real_seconds or 0.0),
+                            runtime_seconds=float(_total_tts_runtime),
+                        )
+                    elif tts_engine == "voxcpm" and not _fb_used and _actual_voice_seconds > 0:
+                        await record_cost_telemetry(
+                            session,
+                            job_id=job_id,
+                            user_id=user_id,
+                            provider="voxcpm",
+                            model_name="VoxCPM",
+                            requests_count=max(1, len(_seg_media_records)),
+                            audio_seconds=float(_actual_voice_seconds),
+                            runtime_seconds=float(_total_tts_runtime),
+                        )
+                    elif tts_engine in ("edge", "gemini") or _fb_used:
+                        await record_cost_telemetry(
+                            session,
+                            job_id=job_id,
+                            user_id=user_id,
+                            provider="edge_tts",
+                            audio_seconds=float(_real_seconds or 0.0),
+                            runtime_seconds=float(_total_tts_runtime),
+                        )
+                    if _total_out_bytes > 0:
+                        await record_cost_telemetry(
+                            session,
+                            job_id=job_id,
+                            user_id=user_id,
+                            provider="bandwidth",
+                            bytes_transferred=_total_out_bytes,
+                        )
+                    await session.commit()
+        except Exception as db_succ_err:
+            logger.warning(f"Failed to update Job {job_id} to SUCCESS in DB: {db_succ_err}")
+
+        if not _succ_written:
+            entry["status"] = "FAILED"
+            entry["error_message"] = "Cancelled by Administrator"
+            logger.info(
+                f"Recap job {job_id} finished rendering but its row is no "
+                "longer active (cancelled); not delivering."
+            )
+            return
+
+        # Batch AB: terminal state clears the stranded-reset count.
+        await _clear_recap_stranded_reset_count(job_id)
 
         await _persist_recap_warnings(entry)
 
@@ -9829,38 +9999,30 @@ async def create_recap_job(
         req.sub_font_custom_path = str(
             _resolve_recap_sub_font(req.sub_font_custom_id, user)
         )
-    credits = getattr(user, "recap_credits", 0) or 0
+    from app.services.billing import (
+        InsufficientRecapCreditsError,
+        InsufficientVoiceMinutesError,
+        get_recap_available_seconds,
+        get_wallet_snapshot,
+        reserve_for_job,
+        seconds_to_credits,
+    )
 
-    # Credit gate (money fix 2026-10-31): EVERY non-admin needs at
-    # least one recap credit to submit. Previously this gate skipped
-    # PURCHASED ("VIP") users entirely while the deduction below only
-    # ran when the balance was positive — so anyone who had bought a
-    # voice-only plan (recap_credits == 0) could run recaps free
-    # forever. VIP status keeps its duration-tier benefits; it no
-    # longer bypasses the credit check, exactly like the segmented
-    # path's _recap_segment_balance_ok pre-check already required.
-    if not settings.is_admin(user.id) and credits <= 0:
+    avail_recap_seconds = get_recap_available_seconds(user)
+    if not settings.is_admin(user.id) and avail_recap_seconds <= 0:
         raise HTTPException(
             status_code=403,
             detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
         )
 
-    # Duration cap (owner's design): 10 min per job for everyone,
-    # VIP included; free tier 2 min. Admins are exempt. A VIP source
-    # over the cap is accepted ONLY via the split path (no script
-    # review): the worker cuts the source into ≤cap segments and
-    # processes each part separately.
     is_admin_user = settings.is_admin(user.id)
     max_duration_allowed = _recap_max_duration_allowed(is_vip, is_admin_user)
     checked_duration = req.duration_seconds
 
-    # Early duration validation via yt-dlp or ffprobe before deducting credits or queueing
     if (not checked_duration or checked_duration <= 0) and req.url:
         try:
             if req.url.startswith("http://") or req.url.startswith("https://"):
                 from app.services.downloader import extract_first_url, unshorten_url, MediaDownloader
-                # Both calls are synchronous network work — keep them
-                # off the single shared event loop (deep-hunt #4 D1).
                 can_url = await asyncio.to_thread(
                     unshorten_url, extract_first_url(req.url) or req.url
                 )
@@ -9875,21 +10037,9 @@ async def create_recap_job(
 
     submit_decision = "ok"
     estimated_parts = None
-    # Batch AO: the tiered-pricing switch state at submit pins this
-    # job's pricing mode (stamped on the registry entry and the
-    # persisted state below); the balance pre-checks and the response
-    # quote follow it. While the switch is off, quoted_total_credits
-    # stays None and every check below is the legacy one, untouched.
     tiered_on = _tiered_recap_pricing_enabled()
     quoted_total_credits = None
-    # Batch BE: the Max render-quality surcharge rides the same pin —
-    # computed once here from the AU-clamped request above, so the
-    # quote, both balance pre-checks below and the worker's top-up
-    # target all include the identical +1. Zero while the switch is
-    # off, so every legacy check below is untouched.
-    submit_max_surcharge = (
-        _recap_max_quality_surcharge(req.render_quality) if tiered_on else 0
-    )
+    submit_max_surcharge = 0
     if checked_duration and checked_duration > max_duration_allowed:
         submit_decision = _recap_submit_duration_decision(
             is_vip=is_vip,
@@ -9912,76 +10062,19 @@ async def create_recap_job(
                 status_code=400,
                 detail=recap_over_limit_message(float(checked_duration), float(max_duration_allowed), is_vip) + " " + hint,
             )
-        # Segmented path (owner decision 2026-10-30): 1 credit PER
-        # PART. Estimate the part count from the duration and the
-        # chosen split size (the same target the segmenter will use)
-        # and pre-check the balance now, so a user who clearly cannot
-        # cover the total is blocked here — before any deduction or
-        # queueing — instead of failing later inside the worker. The
-        # exact charge happens in the worker once the real part count
-        # is known; it can only be lower than this estimate.
         estimated_parts = _recap_estimate_part_count(
             float(checked_duration),
             float(req.split_minutes),
             float(max_duration_allowed),
         )
-        if tiered_on:
-            # Batch AO: the balance must cover the BAND total over the
-            # total duration — under tiered pricing the split size
-            # (and thus the part estimate) no longer sets the price,
-            # so the pre-check and the quote use the band total, the
-            # exact number the worker will charge.
-            required_credits = _recap_band_credits(float(checked_duration)) + submit_max_surcharge
-            if not is_admin_user:
-                quoted_total_credits = required_credits
-            if not _recap_segment_balance_ok(
-                is_admin=is_admin_user,
-                balance=credits,
-                estimated_parts=required_credits,
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail=_tiered_credits_message(required_credits, balance=credits),
-                )
-        elif not _recap_segment_balance_ok(
-            is_admin=is_admin_user,
-            balance=credits,
-            estimated_parts=estimated_parts,
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=_segmented_credits_message(estimated_parts, balance=credits),
-            )
-    elif tiered_on and checked_duration and not is_admin_user:
-        # Batch AO: single-job path (duration within the cap). The
-        # worker tops the submit credit up to the band total before
-        # rendering, so the balance must cover that total BEFORE any
-        # credit moves — the same number the pre-submit quote shows
-        # and the worker charges. Free-lane sources (≤2 min) always
-        # price as band 1, which the credit gate above already
-        # required, so this check can never newly block them.
-        required_credits = _recap_band_credits(float(checked_duration)) + submit_max_surcharge
-        quoted_total_credits = required_credits
-        if credits < required_credits:
-            raise HTTPException(
-                status_code=403,
-                detail=_tiered_credits_message(required_credits, balance=credits),
-            )
 
-    # Concurrency: at most settings.max_concurrent_jobs_per_user (default
-    # 1, same as voice clones) active recap jobs per user; admins exempt.
-    # Checked before any credit is deducted, so a rejected job costs nothing.
-    #
-    # Batch N: for non-admins the count check, the charge and the Job
-    # insert below now run under a User-row lock (SELECT … FOR UPDATE —
-    # the same pattern as the voice path in queue.py) inside ONE
-    # transaction that commits only after the insert. Two concurrent
-    # submits (or a submit racing a retry of a failed job) used to
-    # interleave check-pass / check-pass / charge / charge; the loser
-    # now blocks on the row lock until the winner commits, then counts
-    # the winner's committed job and is rejected BEFORE any credit
-    # moves. SQLite (tests) ignores FOR UPDATE; Postgres honours it.
     submit_billing_mode = _recap_billing_mode(req.tts_engine, is_admin=is_admin_user)
+    estimated_recap_seconds = _recap_estimated_credit_seconds(
+        checked_duration,
+        max_duration_allowed,
+        is_admin=is_admin_user,
+        segmented=(submit_decision == "segment"),
+    )
     estimated_voice_seconds = _recap_estimated_voice_seconds(
         req.tts_engine,
         checked_duration,
@@ -9989,6 +10082,7 @@ async def create_recap_job(
         is_admin=is_admin_user,
         segmented=(submit_decision == "segment"),
     )
+    estimated_recap_credits = seconds_to_credits(estimated_recap_seconds)
     job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     remaining_voice_seconds: Optional[int] = None
 
@@ -10009,98 +10103,38 @@ async def create_recap_job(
                 detail="A recap job is already running for your account. Please wait for it to finish before starting another.",
             )
 
-        locked_credits = int(getattr(locked_user or user, "recap_credits", 0) or 0)
-        if tiered_on and checked_duration:
-            needed_submit_credits = max(
-                1, _recap_band_credits(float(checked_duration)) + submit_max_surcharge
+        try:
+            await reserve_for_job(
+                db,
+                user.id,
+                job_id,
+                job_type=JobType.RECAP.value,
+                billing_mode=submit_billing_mode,
+                reserve_recap_seconds=estimated_recap_seconds,
+                reserve_voice_seconds=estimated_voice_seconds,
+                note=f"Recap job reserve ({job_id})",
             )
-        elif submit_decision == "segment":
-            needed_submit_credits = max(1, int(estimated_parts or 1))
-        else:
-            needed_submit_credits = 1
-        if locked_credits < needed_submit_credits:
-            await db.rollback()
-            if tiered_on and checked_duration:
-                raise HTTPException(
-                    status_code=403,
-                    detail=_tiered_credits_message(needed_submit_credits, balance=locked_credits),
-                )
-            if submit_decision == "segment":
-                raise HTTPException(
-                    status_code=403,
-                    detail=_segmented_credits_message(needed_submit_credits, balance=locked_credits),
-                )
-            raise HTTPException(
-                status_code=403,
-                detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
-            )
-
-        if (
-            submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
-            and estimated_voice_seconds > 0
-        ):
-            from app.services.ledger import get_minute_balance
-
-            bal_row = (
-                await db.execute(
-                    select(MinuteBalance)
-                    .where(MinuteBalance.user_id == user.id)
-                    .with_for_update()
-                    .execution_options(populate_existing=True)
-                )
-            ).scalar_one_or_none()
-            if bal_row is None:
-                bal_row = await get_minute_balance(db, user.id)
-            _avail_clone_sec = int(bal_row.clone_spendable_seconds)
-            if _avail_clone_sec < estimated_voice_seconds:
-                await db.rollback()
-                return _recap_insufficient_voice_minutes_response(
-                    required_seconds=estimated_voice_seconds,
-                    available_seconds=_avail_clone_sec,
-                )
-
-    # Deduct the submit credit: unconditional for non-admins. Admins are
-    # never charged. Option B voice minutes are held in this SAME locked
-    # transaction via consume_seconds so credits + minutes + job row move
-    # atomically or roll back together.
-    deducted_credit = False
-    if not settings.is_admin(user.id):
-        charge_result = await db.execute(
-            update(User)
-            .where(User.id == user.id, User.recap_credits >= 1)
-            .values(recap_credits=User.recap_credits - 1)
-        )
-        if not charge_result.rowcount:
+        except InsufficientRecapCreditsError as r_exc:
             await db.rollback()
             raise HTTPException(
                 status_code=403,
-                detail="Recap Video ဖန်တီးရန် Credit မလုံလောက်တော့ပါ။ VIP tab တွင် Recap Plan ဝယ်ယူနိုင်ပါသည်။",
+                detail=(
+                    f"Recap Credit မလုံလောက်ပါ "
+                    f"(လိုအပ်ချက် ~{seconds_to_credits(r_exc.required_seconds):.2f} Cr • "
+                    f"လက်ကျန် {seconds_to_credits(r_exc.available_seconds):.2f} Cr)။ VIP tab တွင် ဖြည့်သွင်းနိုင်ပါသည်။"
+                ),
             )
-        deducted_credit = True
+        except InsufficientVoiceMinutesError as v_exc:
+            await db.rollback()
+            return _recap_insufficient_voice_minutes_response(
+                required_seconds=v_exc.required_seconds,
+                available_seconds=v_exc.available_seconds,
+            )
 
-        if (
-            submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
-            and estimated_voice_seconds > 0
-        ):
-            from app.services.ledger import consume_seconds, get_minute_balance
-
-            try:
-                bal_after = await consume_seconds(
-                    db,
-                    user.id,
-                    estimated_voice_seconds,
-                    job_id=job_id,
-                    note=f"Recap clone voice hold ({job_id})",
-                )
-            except ValueError:
-                await db.rollback()
-                bal_now = await get_minute_balance(db, user.id)
-                _avail_after_sec = int(bal_now.clone_spendable_seconds)
-                return _recap_insufficient_voice_minutes_response(
-                    required_seconds=estimated_voice_seconds,
-                    available_seconds=_avail_after_sec,
-                )
-            remaining_voice_seconds = int(bal_after.clone_spendable_seconds)
+    deducted_credit = bool(_submit_locked and estimated_recap_seconds > 0)
+    if deducted_credit and estimated_voice_seconds > 0:
+        _snap_tmp = await get_wallet_snapshot(db, user.id)
+        remaining_voice_seconds = int(_snap_tmp["available_voice_seconds"])
 
     clean_display_title = _clean_recap_display_title(req.title, req.url)
     RECAP_JOBS_REGISTRY[job_id] = {
@@ -10120,31 +10154,20 @@ async def create_recap_job(
         "error_message": None,
         "script_review": bool(req.script_review),
         "segments_count": None,
-        # Batch CB: the ETA shape (engine class + render quality) —
-        # read by the shape-conditioned estimator on the status path.
         "tts_engine": req.tts_engine,
         "render_quality": req.render_quality,
-        # Batch BV: own-voice truth for the status payload — set from
-        # the submit-resolved reference; reference_trimmed is filled
-        # in at completion from the engine's plan JSON.
         "voice_ref_used": bool(req.voice_ref_path),
         "reference_trimmed": False,
         "split_video": bool(req.split_video),
         "parts": [],
         "split_error": None,
         "split_note": None,
-        # Per-part credit accounting (segmented path): credits_charged
-        # starts at the submit-time single credit and is topped up to
-        # the exact part count in the worker before any part renders.
         "credit_deducted": deducted_credit,
-        "credits_charged": 1 if deducted_credit else 0,
-        "credits_estimated": estimated_parts,
-        # Batch AO: the pricing inputs — the submit-resolved duration
-        # the quote was computed from, and the pinned pricing mode.
+        "credits_charged": estimated_recap_credits if deducted_credit else 0.0,
+        "credits_estimated": estimated_recap_credits if deducted_credit else 0.0,
+        "recap_seconds_held": int(estimated_recap_seconds),
         "source_duration_seconds": float(checked_duration or 0),
         "tiered_pricing": tiered_on,
-        # Batch BE: the pinned Max-quality surcharge for this job
-        # (0 unless tiered pricing was armed AND quality is Max).
         "max_quality_surcharge": submit_max_surcharge,
         "billing_mode": submit_billing_mode,
         "voice_seconds_held": int(estimated_voice_seconds),
@@ -10156,7 +10179,6 @@ async def create_recap_job(
         "stage_timings": {},
     }
 
-    # Record Recap Job in database table for 24h history and tracking
     db_job = Job(
         id=job_id,
         user_id=user.id,
@@ -10167,25 +10189,16 @@ async def create_recap_job(
         preset_voice=req.voice_slug,
         input_text=clean_display_title,
         source_audio_path=req.url,
-        # Batch BV: the resolved own-voice sample path (None for
-        # persona jobs) — the row-level truth the retention sweep's
-        # referenced-paths scan protects while this job is alive.
         recap_ref_audio_path=req.voice_ref_path,
-        # R40 item 15c: the old hardcoded 120 made EVERY recap row
-        # in /history display "120s" forever. Estimate from the
-        # source duration verified above; the real output duration
-        # replaces it in seconds_consumed on completion.
         seconds_estimated=(
-            int(checked_duration)
-            if checked_duration
-            else (int(estimated_voice_seconds) if estimated_voice_seconds else 0)
+            int(estimated_recap_seconds)
+            if estimated_recap_seconds
+            else (int(checked_duration) if checked_duration else 0)
         ),
-        # Full config + credit + Option B state, so a restart/deploy
-        # re-dispatch restores THIS job and its exact billing contract.
         recap_config=_persisted_recap_state(
             req,
             credit_deducted=deducted_credit,
-            credits_charged=1 if deducted_credit else 0,
+            credits_charged=estimated_recap_credits if deducted_credit else 0.0,
             is_vip=is_vip,
             phase="script" if req.script_review else "full",
             estimated_parts=estimated_parts,
@@ -10193,29 +10206,11 @@ async def create_recap_job(
             tiered_pricing=tiered_on,
             max_quality_surcharge=submit_max_surcharge,
             billing_mode=submit_billing_mode,
+            recap_seconds_held=int(estimated_recap_seconds),
             voice_seconds_held=int(estimated_voice_seconds),
         ),
     )
-    if deducted_credit:
-        # Batch O (billing option C): the submit charge lands on the
-        # recap-credit ledger in the SAME transaction as the charge
-        # itself (both branches below commit this session), so the
-        # audit row can never exist without the charge or vice versa.
-        db.add(RecapCreditLedgerEvent(
-            user_id=user.id,
-            source="RECAP",
-            direction="DEBIT",
-            credits=1,
-            reference_id=job_id,
-            note=f"Recap job {job_id} submit charge",
-        ))
     if _submit_locked:
-        # Batch N locked path: insert inside the SAME transaction as
-        # the row lock + charge. The savepoint keeps a failed insert
-        # from discarding the charge (historical behaviour: the job
-        # still runs from the registry when the history row cannot be
-        # persisted); the single commit below then releases the lock
-        # with charge and job row becoming visible together.
         try:
             async with db.begin_nested():
                 db.add(db_job)
@@ -10223,8 +10218,6 @@ async def create_recap_job(
         except Exception as err_db:
             logger.warning(f"Could not persist recap Job record in DB: {err_db}")
         await db.commit()
-        # The bulk UPDATE does not sync the in-memory instance; reload
-        # so remaining_credits and the persisted job state are exact.
         await db.refresh(user)
     else:
         try:
@@ -10233,7 +10226,6 @@ async def create_recap_job(
         except Exception as err_db:
             logger.warning(f"Could not persist recap Job record in DB: {err_db}")
 
-    # Start background task only when RECAP_ON_QUEUE is off (when ON, queue worker claims db_job).
     if not getattr(settings, "recap_on_queue", False):
         try:
             asyncio.create_task(_run_recap_background_job(
@@ -10242,66 +10234,41 @@ async def create_recap_job(
                 phase="script" if req.script_review else "full",
             ))
         except Exception:
-            # The job never ran, so a deducted credit must not be lost.
-            # Batch O: refund under the persisted claim (the Job row and
-            # its blob committed above), so this refund is as durable as
-            # every other path; "error" (row/blob unexpectedly missing)
-            # falls back to the plain refund, still ledger-guarded.
-            if deducted_credit:
-                _claim, _recorded = await _claim_persisted_recap_refund(job_id, 1)
-                if _claim == "claimed":
-                    if not await _refund_recap_credits(user.id, 1, job_id=job_id):
-                        await _release_persisted_recap_refund_claim(job_id)
-                elif _claim == "error":
-                    await _refund_recap_credits(user.id, 1, job_id=job_id)
-            if (
-                submit_billing_mode == _RECAP_BILLING_CREDIT_PLUS_VOICE
-                and estimated_voice_seconds > 0
-            ):
-                await _refund_recap_voice_minutes(
-                    user.id,
-                    job_id,
-                    billing_mode=submit_billing_mode,
-                    entry=RECAP_JOBS_REGISTRY.get(job_id),
-                )
+            if not settings.is_admin(user.id):
+                from app.services.billing import refund_or_release_job
+                await refund_or_release_job(db, user.id, job_id, reason="DISPATCH_FAILED")
+                await db.commit()
             raise
 
-    # Batch CB Item 3: the honest total range for THIS job's shape,
-    # computed from the same resolver the Step-4 wizard consulted —
-    # the client paints it as the initial estimate (and it is the
-    # range the overrun flag later compares against). Null when the
-    # duration is unknown: no invented number.
     _submit_eta_range = await _recap_submit_eta_range(
         req.tts_engine,
         checked_duration or req.duration_seconds,
         req.render_quality,
     )
+    _snap_final = await get_wallet_snapshot(db, user.id)
     response = {
         "success": True,
         "recap_id": job_id,
         "status": "QUEUED",
         "story_style": req.story_style,
         "ratio": req.ratio,
-        "remaining_credits": getattr(user, "recap_credits", 0),
+        "remaining_credits": _snap_final["available_recap_credits"],
+        "remaining_recap_seconds": _snap_final["available_recap_seconds"],
+        "reserved_recap_credits": _snap_final["reserved_recap_credits"],
+        "reserved_voice_minutes": _snap_final["reserved_voice_minutes"],
         "estimated_parts": estimated_parts,
-        "credits_charged": 1 if deducted_credit else 0,
+        "estimated_recap_credits": estimated_recap_credits,
+        "estimated_recap_seconds": int(estimated_recap_seconds),
+        "estimated_voice_seconds": int(estimated_voice_seconds),
+        "estimated_voice_minutes": round(int(estimated_voice_seconds) / 60.0, 2),
+        "credits_charged": estimated_recap_credits if deducted_credit else 0.0,
         "billing_mode": submit_billing_mode,
         "voice_seconds_held": int(estimated_voice_seconds),
         "eta_range_seconds": _submit_eta_range,
         "message": "AI Myanmar Recap ဖန်တီးမှု စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ!",
     }
     if remaining_voice_seconds is not None:
-        response["remaining_voice_seconds"] = remaining_voice_seconds
-    if tiered_on:
-        # Batch AO: the authoritative total this submission will be
-        # charged (the band total, when the duration is known) — the
-        # confirmation the Mini App shows quotes exactly this number,
-        # computed by the same helper the worker charges with. Batch
-        # BE: a Max-quality submission's total includes the +1
-        # surcharge, exactly as quoted pre-submit. The key is omitted
-        # entirely while the switch is off, so the legacy response
-        # shape is byte-identical.
-        response["credits_total"] = quoted_total_credits
+        response["remaining_voice_seconds"] = _snap_final["available_voice_seconds"]
     return response
 
 
@@ -12117,8 +12084,10 @@ async def get_admin_global_history(
 
     if job_type == "RECAP":
         stmt = stmt.where((Job.job_type == JobType.RECAP.value) | Job.id.startswith("rc_") | (Job.engine == "recap"))
+    elif job_type == "TTS":
+        stmt = stmt.where((Job.job_type == "TTS") | (Job.engine.in_(("gemini_tts", "edge_tts", "tts"))))
     elif job_type == "VOICE_CLONE":
-        stmt = stmt.where((Job.job_type != JobType.RECAP.value) & (~Job.id.startswith("rc_")) & (Job.engine != "recap"))
+        stmt = stmt.where((Job.job_type != JobType.RECAP.value) & (Job.job_type != "TTS") & (~Job.id.startswith("rc_")) & (Job.engine != "recap"))
 
     stmt = stmt.order_by(Job.created_at.desc()).limit(min(300, max(10, limit)))
     res = await db.execute(stmt)
@@ -12340,201 +12309,129 @@ async def purge_admin_history(
 
 
 # ── 6. VIP Pricing Plans & Payments ────────────────────────────────────────
+def _format_plan_presentation(row: "PricingPlan", is_my: bool) -> dict:
+    """Build dynamic package metadata strictly from the PricingPlan DB row."""
+    from app.services.payments import get_plan_by_code
+
+    meta = get_plan_by_code(row.code) or {}
+    raw_cat = str(getattr(row, "category", "") or meta.get("category") or "voice").lower()
+    is_topup = bool(getattr(row, "is_topup", False) or meta.get("is_topup"))
+    cat_group = "topup" if is_topup else raw_cat
+    sub_type = getattr(row, "sub_type", None) or meta.get("sub_type")
+    mins = int(row.minutes or 0)
+    credits = int(getattr(row, "recap_credits", None) if getattr(row, "recap_credits", None) is not None else meta.get("recap_credits", 0))
+    price_mmk = int(row.price_mmk or 0)
+    vdays = int(getattr(row, "validity_days", 30) if getattr(row, "validity_days", None) is not None else 30)
+    validity_label = (
+        (f"သက်တမ်း {vdays} ရက်" if is_my else f"Valid {vdays} Days")
+        if vdays > 0
+        else ("သက်တမ်းမကုန်" if is_my else "No Expiry")
+    )
+    name = str(getattr(row, "name", "") or meta.get("name") or row.code)
+    badge_raw = getattr(row, "badge", None) if getattr(row, "badge", None) is not None else meta.get("badge")
+
+    badge_text = ""
+    if badge_raw == "popular":
+        badge_text = "Popular ⭐"
+    elif badge_raw == "best_value":
+        badge_text = "Best Value 💎"
+    elif badge_raw:
+        badge_text = str(badge_raw)
+
+    if is_topup:
+        if sub_type == "voice" or (mins > 0 and credits <= 0):
+            alloc = f"+{mins} Voice Clone Mins" if not is_my else f"Voice Clone +{mins} မိနစ် (Top-up)"
+            features = [
+                f"Voice Clone မိနစ် +{mins} မိနစ် ({validity_label})" if is_my else f"+{mins} Voice Clone Minutes ({validity_label})",
+                "VoxCPM Persona & Custom Voice Clone အားလုံးသုံးနိုင်သည်" if is_my else "Works for Personas and Custom Voice Cloning",
+                "Purchased Balance ထဲသို့ တိုက်ရိုက်ပေါင်းထည့်ပေးသည်" if is_my else "Added directly to Purchased Voice Wallet",
+            ]
+        else:
+            alloc = f"+{credits} Recap Credits ({credits} Min Output)" if not is_my else f"Recap +{credits} Credits (Output {credits} မိနစ်)"
+            features = [
+                f"Recap Credit +{credits} ခု (1 Credit = Final Output 1 မိနစ် · {validity_label})" if is_my else f"+{credits} Recap Credits (1 Credit = 1 Min Final Output · {validity_label})",
+                "တစ်စက္ကန့်ချင်းစီ အတိအကျ တွက်ချက်ပေးသည်" if is_my else "Second-level exact billing & auto reserve-release",
+                "Watermark လုံးဝမပါ" if is_my else "Zero Watermark",
+            ]
+    elif cat_group == "combo":
+        alloc = f"{credits} Recap Credits + {mins} Voice Mins"
+        features = [
+            f"Recap Wallet +{credits} Credits (Output {credits} မိနစ်) & Voice Wallet +{mins} Mins" if is_my else f"Recap Wallet +{credits} Credits & Voice Wallet +{mins} Mins (stored separately)",
+            f"တစ်ခုချင်းဝယ်သည်ထက် 10% Combo သက်သာခွင့် · {validity_label}" if is_my else f"10% Combo Savings vs separate packs · {validity_label}",
+            "Custom Voice Clone Recap + Normal AI Recap အားလုံးသုံးနိုင်သည်" if is_my else "Works across Custom Voice Clone Recap & AI Recap",
+            "Watermark လုံးဝမပါ & VIP Priority" if is_my else "Zero Watermark & VIP Priority",
+        ]
+    elif cat_group == "recap":
+        alloc = f"{credits} Credits • {credits} Min Final Output" if not is_my else f"Recap Credit {credits} ခု (Final Output {credits} မိနစ်)"
+        features = [
+            f"1 Recap Credit = Final Output 1 မိနစ် · {validity_label}" if is_my else f"1 Recap Credit = 1 Minute Final Recap Output · {validity_label}",
+            "Normal AI Voice & Subtitle-Only တွင် Voice Clone မိနစ် မဖြတ်ပါ" if is_my else "Normal AI Voice & Subtitle-Only never deduct Voice Clone Minutes",
+            "Failed / Cancel ဖြစ်ပါက Auto Refund / Release" if is_my else "100% Auto Release / Refund on fail or cancel",
+            "Watermark လုံးဝမပါ & Custom Branding" if is_my else "Zero Watermark & Custom Branding",
+        ]
+    else:
+        alloc = f"{mins} Voice Clone Minutes" if not is_my else f"Voice Clone {mins} မိနစ်"
+        features = [
+            f"Voice Clone မိနစ် {mins} မိနစ် · {validity_label}" if is_my else f"{mins} Voice Clone Minutes · {validity_label}",
+            "တကယ့် Generate လုပ်သော Audio Duration အတိုင်းသာ ဖြတ်သည်" if is_my else "Deducted strictly by actual synthesized audio duration",
+            "Edge Fallback ဖြစ်ပါက Voice Clone မိနစ် လုံးဝ မဖြတ်ပါ" if is_my else "0 Voice Clone minutes deducted on fallback",
+            "Lossless WAV Direct Download" if is_my else "Direct Lossless WAV Audio Downloads",
+        ]
+
+    return {
+        "id": row.code,
+        "code": row.code,
+        "name": name,
+        "category": cat_group,
+        "sub_type": sub_type or ("combo" if cat_group == "combo" else raw_cat),
+        "allocation": alloc,
+        "minutes": mins,
+        "recap_credits": credits,
+        "output_minutes": credits if cat_group in ("recap", "combo") or sub_type == "recap" else 0,
+        "price": f"{price_mmk:,}",
+        "price_mmk": price_mmk,
+        "validity_days": vdays,
+        "validity_label": validity_label,
+        "currency": "MMK",
+        "is_topup": is_topup,
+        "is_active": bool(row.is_active),
+        "features": features,
+        "badge": badge_text,
+        "badge_key": badge_raw or "",
+        "sort_order": int(row.sort_order or 0),
+    }
+
+
 @api_router.get("/vip/plans")
 async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
-    """Return specialized high-value VIP subscription packages and payment accounts."""
+    """Return all active pricing packages dynamically across 4 categories & payment accounts."""
+    from app.services.payments import get_active_pricing_plans, list_payment_accounts
+
     lang = user.language_code or "my"
     is_my = (lang == "my")
 
-    # Batch O (DECISION backlog item 15): the displayed price/minutes
-    # for every plan are resolved from the SAME sources the payment
-    # path charges from — PLAN_CATALOGUE overlaid with DB PricingPlan
-    # rows, DB winning wherever a row exists — so the Mini App can
-    # never show a price that payment would not charge. (Before, this
-    # list was a third, fully hardcoded copy: an admin price edit in
-    # the DB changed what the bot charged but not what the Mini App
-    # displayed.) The presentation copy below is unchanged; its
-    # numeric fields are overwritten from this resolution at the end.
-    from app.models.schema import PricingPlan
-    from app.services.payments import PLAN_CATALOGUE
+    db_plans = await get_active_pricing_plans(db)
+    await db.commit()  # persist any newly seeded rows cleanly
 
-    _db_by_code = {
-        row.code: row
-        for row in (await db.execute(select(PricingPlan))).scalars().all()
-    }
-    _resolved: dict[str, dict] = {}
-    for _entry in PLAN_CATALOGUE:
-        _row = _db_by_code.get(_entry["code"])
-        _resolved[_entry["code"]] = {
-            "category": _entry["category"],
-            "minutes": int(_row.minutes) if _row is not None else int(_entry["minutes"]),
-            "recap_credits": int(_entry["recap_credits"]),
-            "price": f"{int(_row.price_mmk) if _row is not None else int(_entry['price_mmk']):,}",
-        }
+    plans_out = [_format_plan_presentation(row, is_my) for row in db_plans]
+    cat_codes: dict[str, list[str]] = {"voice": [], "recap": [], "combo": [], "topup": []}
+    for p in plans_out:
+        c = p["category"] if p["category"] in cat_codes else "voice"
+        cat_codes[c].append(p["code"])
 
-    _result = {
-        "plans": [
-            {
-                "id": "MIN_10",
-                "name": "🎙️ Voice Pack — 10 Minutes" if is_my else "🎙️ Voice Pack — 10 Minutes",
-                "category": "voice",
-                "allocation": "10 Voice Minutes" if is_my else "10 Voice Minutes",
-                "minutes": 10,
-                "recap_credits": 0,
-                "price": "8,000",
-                "currency": "MMK",
-                "features": [
-                    "Voice မိနစ် ၁၀" if is_my else "10 Voice Minutes",
-                ],
-                "badge": "Voice Pack 💎",
-            },
-            {
-                "id": "MIN_30",
-                "name": "🎙️ Voice Pack — 30 Minutes" if is_my else "🎙️ Voice Pack — 30 Minutes",
-                "category": "voice",
-                "allocation": "30 Voice Minutes" if is_my else "30 Voice Minutes",
-                "minutes": 30,
-                "recap_credits": 0,
-                "price": "20,000",
-                "currency": "MMK",
-                "features": [
-                    "Voice မိနစ် ၃၀" if is_my else "30 Voice Minutes",
-                ],
-                "badge": "Voice Pack ⭐",
-            },
-            {
-                "id": "MIN_60",
-                "name": "🎙️ Voice Pack — 60 Minutes" if is_my else "🎙️ Voice Pack — 60 Minutes",
-                "category": "voice",
-                "allocation": "60 Voice Minutes" if is_my else "60 Voice Minutes",
-                "minutes": 60,
-                "recap_credits": 0,
-                "price": "38,000",
-                "currency": "MMK",
-                "features": [
-                    "Voice မိနစ် ၆၀" if is_my else "60 Voice Minutes",
-                ],
-                "badge": "Voice Pack 🔥",
-            },
-            {
-                "id": "voice_studio_pro",
-                "name": "🎙️ Voice Pro" if is_my else "🎙️ Voice Pro",
-                "category": "voice",
-                "allocation": "250 Usable Minutes (4 Hours+)" if is_my else "250 Usable Minutes (4 Hours+)",
-                "minutes": 250,
-                "recap_credits": 0,
-                "price": "75,000",
-                "currency": "MMK",
-                "features": [
-                    "VoxCPM Cloud AI မြန်မာအသံ ၁၂ မျိုး (၆ ကျား / ၆ မ) အပြည့်အဝ အသုံးပြုခွင့်" if is_my else "12 VoxCPM Cloud AI Personas (6M / 6F)",
-                    "ကိုယ်ပိုင်အသံ Clone — နမူနာ အသံ ၁၀-၃၀ စက္ကန့် တင်၍ ကိုယ့်အသံနဲ့ ပြောခိုင်းနိုင်ပါတယ်" if is_my else "Custom Voice Clone — upload a 10-30s sample and generate in your own voice",
-                    "TTS အသံ တစ်ရက် ၆၀ မိနစ် အထိ သုံးနိုင်ပါတယ်" if is_my else "Up to 60 TTS minutes per day",
-                    "အရည်အသွေးမြင့် Lossless WAV တိုက်ရိုက်ဒေါင်းလုဒ်" if is_my else "Direct Lossless WAV Audio Downloads",
-                    "တစ်ကြိမ်လျှင် စာလုံးရေ ၅,၀၀၀ အထိ ထုတ်လုပ်နိုင်ခွင့်" if is_my else "Up to 5,000 characters per generation",
-                ],
-                "badge": "Voice Pro",
-            },
-            {
-                "id": "recap_starter",
-                "name": "🎬 Recap Starter" if is_my else "🎬 Recap Starter",
-                "category": "recap",
-                "allocation": "Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "5 Recap Credits (1 credit per 3 minutes)",
-                "minutes": 0,
-                "recap_credits": 5,
-                "price": "20,000",
-                "currency": "MMK",
-                "features": [
-                    "Recap Credit ၅ ခု — ဗီဒီယို ၃ မိနစ်ကို ၁ credit နှုန်း (၁၀ မိနစ်ဆို ၄ credit၊ တစ်ကားချင်း အများဆုံး ၁၀ မိနစ်)" if is_my else "5 Recap Credits — 1 credit per 3 minutes of video (a 10-minute video = 4 credits; max 10 mins/video)",
-                    "🎬 Smart Video Transform (Smart Blur, Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Mirror & Zoom)",
-                    "Watermark လုံးဝမပါ" if is_my else "Zero Watermark",
-                ],
-                "badge": "Recap Starter",
-            },
-            {
-                "id": "recap_studio_pro",
-                "name": "🎬 Recap Pro" if is_my else "🎬 Recap Pro",
-                "category": "recap",
-                "allocation": "Recap Credit ၂၅ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "25 Recap Credits (1 credit per 3 minutes)",
-                "minutes": 0,
-                "recap_credits": 25,
-                "price": "90,000",
-                "currency": "MMK",
-                "features": [
-                    "Recap Credit ၂၅ ခု — ဗီဒီယို ၃ မိနစ်ကို ၁ credit နှုန်း (၁၀ မိနစ်ဆို ၄ credit၊ တစ်ကားချင်း အများဆုံး ၁၀ မိနစ်)" if is_my else "25 Recap Credits — 1 credit per 3 minutes of video (a 10-minute video = 4 credits; max 10 mins/video)",
-                    "🎬 Smart Video Transform (Smart Blur, Mirror & Zoom)" if is_my else "Smart Video Transform (Smart Blur, Mirror & Zoom)",
-                    "ဇာတ်လမ်းစတိုင် အမျိုးမျိုး (ချက်ချင်းစွဲဆောင်၊ ဒရာမာ ပရိုင်း၊ ပေါ့ပါးဟာသ စသဖြင့်) & စာတန်းစတိုင် အမျိုးမျိုး" if is_my else "Multiple narration styles (Instant Hook, Drama Prime, Light Comedy & more) & subtitle styles",
-                    "Watermark လုံးဝမပါ & Channel Logo သီးသန့်ထည့်ခွင့်" if is_my else "Zero Watermark & Custom Channel Logo Branding",
-                    "ရှည်လျားသော ဗီဒီယိုများ အပိုင်းခွဲ ထုတ်နိုင်ခြင်း (Split)" if is_my else "Split long videos into parts",
-                ],
-                "badge": "Recap Pro",
-            },
-            {
-                "id": "combined_starter",
-                "name": "🎙️🎬 Combined Starter" if is_my else "🎙️🎬 Combined Starter",
-                "category": "combined",
-                "allocation": "30 Mins + Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "30 Mins + 5 Recap Credits (1 credit per 3 minutes)",
-                "minutes": 30,
-                "recap_credits": 5,
-                "price": "30,000",
-                "currency": "MMK",
-                "features": [
-                    "Voice မိနစ် ၃၀ + Recap Credit ၅ ခု — နှစ်မျိုးလုံးကို တစ်ပြိုင်တည်း စမ်းသုံးနိုင်သည်" if is_my else "30 Voice Minutes + 5 Recap Credits — try both products in one plan",
-                    "ကိုယ်ပိုင်အသံ Clone — နမူနာ အသံ ၁၀-၃၀ စက္ကန့်" if is_my else "Custom Voice Clone — 10-30s sample",
-                    "🎬 Smart Video Transform & Watermark လုံးဝမပါ" if is_my else "Smart Video Transform & Zero Watermark",
-                ],
-                "badge": "Combined Starter",
-            },
-            {
-                "id": "all_in_one_master",
-                "name": "👑 Master" if is_my else "👑 Master",
-                "category": "combined",
-                "allocation": "500 Mins + Recap Credit ၆၀ ခု (၃ မိနစ်ကို ၁ credit နှုန်း)" if is_my else "500 Mins + 60 Recap Credits (1 credit per 3 minutes)",
-                "minutes": 500,
-                "recap_credits": 60,
-                "price": "180,000",
-                "currency": "MMK",
-                "features": [
-                    "Voice Pro အပြည့်အစုံ (မိနစ် ၅၀၀ - ၈ နာရီကျော် အသံသွင်းခွင့်)" if is_my else "Full Voice Pro (500 Mins - 8+ Hours)",
-                    "Recap Pro အပြည့်အစုံ (Recap Credit ၆၀ ခု)" if is_my else "Full Recap Pro (60 Recap Credits)",
-                    "👑 ကိုယ်ပိုင်အသံ Clone အပြည့်အစုံ (နမူနာ ၁၀-၃၀ စက္ကန့်)" if is_my else "Full Custom Voice Cloning (10-30s sample)",
-                    "🎬 Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)" if is_my else "Smart Video Transform Suite (Blur, Mirror, Zoom & Crop)",
-                    "Admin ထံ တိုက်ရိုက် VIP Support" if is_my else "Direct VIP support from the admin",
-                ],
-                "badge": "Master",
-            },
-        ],
+    pay_accounts = await list_payment_accounts(db, include_inactive=False)
+
+    return {
+        "plans": plans_out,
         "categories": [
-            {"id": "voice", "codes": ["MIN_10", "MIN_30", "MIN_60", "voice_studio_pro"]},
-            {"id": "recap", "codes": ["recap_starter", "recap_studio_pro"]},
-            {"id": "combined", "codes": ["combined_starter", "all_in_one_master"]},
+            {"id": "voice", "codes": cat_codes["voice"]},
+            {"id": "recap", "codes": cat_codes["recap"]},
+            {"id": "combo", "codes": cat_codes["combo"]},
+            {"id": "topup", "codes": cat_codes["topup"]},
         ],
-        "payment_accounts": [
-            {
-                "provider": "KBZPay",
-                "number": getattr(settings, "payment_kpay_number", ""),
-                "name": getattr(settings, "payment_kpay_name", ""),
-                "color": "#0047BA",
-            },
-            {
-                "provider": "WavePay",
-                "number": getattr(settings, "payment_wave_number", ""),
-                "name": getattr(settings, "payment_wave_name", ""),
-                "color": "#FEE600",
-            },
-        ],
+        "payment_accounts": pay_accounts,
         "support_telegram": "@VoiceCloneProAdmin",
     }
-    # Batch O: overwrite the presentation literal's numeric fields
-    # from the catalogue+DB resolution computed above (all 8 plan ids
-    # exist in PLAN_CATALOGUE, so every plan is covered).
-    for _p in _result["plans"]:
-        _r = _resolved.get(_p["id"])
-        if _r is not None:
-            _p["category"] = _r["category"]
-            _p["minutes"] = _r["minutes"]
-            _p["recap_credits"] = _r["recap_credits"]
-            _p["price"] = _r["price"]
-    return _result
 
 
 @api_router.post("/vip/submit-slip")
@@ -12542,6 +12439,7 @@ async def submit_payment_slip(
     package_code: str = Form(...),
     amount_mmk: int = Form(...),
     slip_file: UploadFile = File(...),
+    payment_reference: Optional[str] = Form(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     _gate: User = Depends(require_gate_verified),
@@ -12649,43 +12547,52 @@ async def submit_payment_slip(
     from sqlalchemy.exc import IntegrityError as _IntegrityError
 
     try:
-        # Resolve the plan EXACTLY like the bot flow
-        # (payments.create_payment_request): the DB PricingPlan row wins,
-        # the static catalogue is the fallback. The webapp previously read
-        # the catalogue only, so an admin price edit (which writes the DB
-        # row) made bot slips and webapp slips for the same code disagree
-        # on minutes/price. Unknown codes are rejected instead of silently
-        # defaulting to 250 min.
         from app.models.schema import PricingPlan
         from app.services.payments import get_plan_by_code
+
+        raw_pay_ref = payment_reference if isinstance(payment_reference, str) else ""
+        clean_pay_ref = raw_pay_ref.strip()[:120] or None
+        if clean_pay_ref:
+            dup_ref = (await db.execute(
+                select(PaymentRequest).where(
+                    PaymentRequest.payment_reference == clean_pay_ref,
+                    PaymentRequest.status.notin_([PaymentStatus.REJECTED.value, PaymentStatus.CANCELLED.value]),
+                )
+            )).scalar_one_or_none()
+            if dup_ref is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="ဒီ Payment Reference ကို အသုံးပြုပြီးသား ဖြစ်ပါတယ်။",
+                )
 
         _db_plan = (
             await db.execute(select(PricingPlan).where(PricingPlan.code == package_code))
         ).scalar_one_or_none()
         if _db_plan is not None:
-            minutes = _db_plan.minutes
-            amount_mmk = _db_plan.price_mmk
+            if not _db_plan.is_active:
+                raise HTTPException(status_code=400, detail="ဒီ Package ကို ယာယီ ပိတ်ထားပါတယ်။")
+            minutes = int(_db_plan.minutes or 0)
+            snap_recap_credits = int(getattr(_db_plan, "recap_credits", 0) or 0)
+            amount_mmk = int(_db_plan.price_mmk or 0)
         else:
             _plan = get_plan_by_code(package_code)
             if _plan is None:
                 raise HTTPException(status_code=400, detail="Unknown plan code")
-            minutes = _plan["minutes"]
-            # The amount is plan-derived (deep-hunt #4 A6), exactly like
-            # the bot flow: the client-typed amount_mmk form field is
-            # attacker-controlled, and the stored value is the number the
-            # admin sees in the pending list and the Telegram alert — so
-            # it must be the plan's real price, never what was typed.
-            amount_mmk = _plan["price_mmk"]
+            minutes = int(_plan["minutes"])
+            snap_recap_credits = int(_plan.get("recap_credits", 0))
+            amount_mmk = int(_plan["price_mmk"])
 
         pay_req = PaymentRequest(
             id=str(uuid.uuid4()),
             user_id=user.id,
             package_code=package_code,
             minutes=minutes,
+            recap_credits=snap_recap_credits,
             amount_mmk=amount_mmk,
             slip_url=f"/api/receipts/{clean_name}",
             status=PaymentStatus.PENDING.value,
             slip_fingerprint=slip_fingerprint,
+            payment_reference=clean_pay_ref,
         )
         db.add(pay_req)
         await db.commit()
@@ -13281,11 +13188,30 @@ async def get_admin_audit_log(
     limit: int = 20,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
+    offset: int = 0,
+    action_prefix: str = "",
+    q: str = "",
 ):
-    """Recent admin actions (AuditLog) for the ops panel."""
-    limit = max(1, min(int(limit or 20), 100))
+    """Recent admin actions (AuditLog) for the ops panel (supports filter & search)."""
+    limit = max(1, min(int(limit or 20), 200))
+    offset = max(0, int(offset or 0))
+    stmt = select(AuditLog)
+    ap = (action_prefix or "").strip()
+    if ap:
+        stmt = stmt.where(AuditLog.action.ilike(f"{ap}%"))
+    qq = (q or "").strip()
+    if qq:
+        conds = [
+            AuditLog.action.ilike(f"%{qq}%"),
+            AuditLog.target_type.ilike(f"%{qq}%"),
+            AuditLog.target_id.ilike(f"%{qq}%"),
+            AuditLog.details_json.ilike(f"%{qq}%"),
+        ]
+        if qq.isdigit():
+            conds.append(AuditLog.admin_id == int(qq))
+        stmt = stmt.where(or_(*conds))
     rows = (await db.execute(
-        select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+        stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
     )).scalars().all()
     return [
         {
@@ -13572,26 +13498,12 @@ async def list_admin_users(
     db: AsyncSession = Depends(get_db_session),
     category: str = "",
     search: str = "",
+    filter: str = "",
+    sort: str = "recent",
 ):
-    """Most recently joined users (admin only) — the Users screen landing list.
+    """Most recently joined users (admin only) — supports category, status/flag filters & sorting."""
+    from app.models.schema import WalletGrant
 
-    Search requires a query of 2+ characters; admins also need a way to
-    simply browse who just joined without knowing a name or ID first.
-    The optional ``category`` (FREE|PURCHASED) filters server-side (the
-    Users screen's filter chips page through the whole user base with
-    limit/offset, so filtering must happen here, not over one page);
-    ``total`` reports the filtered row count so the client knows when
-    "Load more" has reached the end.
-
-    The optional ``search`` narrows the browse list with the SAME
-    matching semantics as /admin/users/search (username or first name
-    contains the query, a leading "@" is stripped, a numeric query
-    also matches the exact Telegram ID) and composes with ``category``.
-    Unlike the dedicated search route it never hard-errors: an absent
-    or blank ``search`` is simply "no filter", so a client paging the
-    browse list can pass the box's contents verbatim. (F4, QA cycle
-    2026-11-02: this parameter used to be silently ignored.)
-    """
     limit = max(1, min(int(limit or 30), 100))
     offset = max(0, int(offset or 0))
     stmt = select(User)
@@ -13600,6 +13512,35 @@ async def list_admin_users(
     if cat:
         stmt = stmt.where(User.account_category == cat)
         count_stmt = count_stmt.where(User.account_category == cat)
+    flt = (filter or "").strip().upper()
+    if flt == "BANNED":
+        stmt = stmt.where(User.status == "BLOCKED")
+        count_stmt = count_stmt.where(User.status == "BLOCKED")
+    elif flt == "BOT_BLOCKED":
+        stmt = stmt.where(User.bot_blocked.is_(True))
+        count_stmt = count_stmt.where(User.bot_blocked.is_(True))
+    elif flt == "TEST":
+        stmt = stmt.where(User.is_test_account.is_(True))
+        count_stmt = count_stmt.where(User.is_test_account.is_(True))
+    elif flt == "BYOK":
+        stmt = stmt.where(User.gemini_api_key.is_not(None), User.gemini_api_key != "")
+        count_stmt = count_stmt.where(User.gemini_api_key.is_not(None), User.gemini_api_key != "")
+    elif flt == "EXPIRING_7D":
+        now_utc = datetime.now(timezone.utc)
+        soon_utc = now_utc + timedelta(days=7)
+        exp_sub = (
+            select(WalletGrant.user_id)
+            .where(
+                WalletGrant.status == "ACTIVE",
+                or_(WalletGrant.remaining_voice_seconds > 0, WalletGrant.remaining_recap_seconds > 0),
+                WalletGrant.expires_at.is_not(None),
+                WalletGrant.expires_at >= now_utc,
+                WalletGrant.expires_at <= soon_utc,
+            )
+            .distinct()
+        )
+        stmt = stmt.where(User.id.in_(exp_sub))
+        count_stmt = count_stmt.where(User.id.in_(exp_sub))
     query = (search or "").strip().lstrip("@")
     if query:
         conds = [
@@ -13611,8 +13552,16 @@ async def list_admin_users(
         stmt = stmt.where(or_(*conds))
         count_stmt = count_stmt.where(or_(*conds))
     total = (await db.execute(count_stmt)).scalar() or 0
+    sort_key = (sort or "recent").strip().lower()
+    if sort_key == "balance":
+        stmt = stmt.outerjoin(MinuteBalance, MinuteBalance.user_id == User.id)
+        order_col = func.coalesce(MinuteBalance.purchased_seconds, 0).desc()
+    elif sort_key == "recap":
+        order_col = User.recap_credits.desc()
+    else:
+        order_col = User.created_at.desc()
     rows = (await db.execute(
-        stmt.order_by(User.created_at.desc()).limit(limit).offset(offset)
+        stmt.order_by(order_col, User.id.desc()).limit(limit).offset(offset)
     )).scalars().all()
     out = await _batch_admin_user_rows(db, list(rows))
     return {"users": out, "count": len(out), "limit": limit, "offset": offset, "total": total}
@@ -13803,12 +13752,37 @@ async def get_admin_user_detail(
     payload["recap_ledger_recent"] = [
         {
             "kind": e.source,
-            "delta": int(e.credits or 0) if e.direction == "CREDIT" else -int(e.credits or 0),
+            "delta": round(float(e.credits or 0.0), 2) if e.direction == "CREDIT" else -round(float(e.credits or 0.0), 2),
             "reason": e.note,
             "reference_id": e.reference_id,
             "created_at": e.created_at.isoformat() if e.created_at else None,
         }
         for e in recap_ledger_rows
+    ]
+    from app.services.billing import expire_due_grants_for_user, list_user_grants
+    from app.models.schema import WalletTransaction as _WalletTx
+
+    await expire_due_grants_for_user(db, user_id)
+    payload["wallet_grants"] = await list_user_grants(db, user_id, include_expired=True, limit=25)
+    wtx_rows = (await db.execute(
+        select(_WalletTx)
+        .where(_WalletTx.user_id == user_id)
+        .order_by(_WalletTx.created_at.desc(), _WalletTx.id.desc())
+        .limit(15)
+    )).scalars().all()
+    payload["wallet_transactions_recent"] = [
+        {
+            "id": wt.id,
+            "tx_type": wt.tx_type,
+            "service_type": wt.wallet_kind,
+            "recap_credits_delta": round(float(wt.recap_seconds_delta or 0) / 60.0, 2),
+            "voice_minutes_delta": round(float(wt.voice_seconds_delta or 0) / 60.0, 2),
+            "balance_recap_credits_after": round(float(wt.balance_recap_seconds_after or 0) / 60.0, 2),
+            "balance_voice_minutes_after": round(float(wt.balance_voice_seconds_after or 0) / 60.0, 2),
+            "note": wt.note or "",
+            "created_at": wt.created_at.isoformat() if wt.created_at else None,
+        }
+        for wt in wtx_rows
     ]
 
     # Batch CV: BYOK Gemini key presence — admins need to see whether
@@ -14267,7 +14241,57 @@ async def retry_queued_job(
     _is_recap_retry = (
         job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap"
     )
-    if _is_recap_retry:
+    from app.models.schema import WalletReservation
+    from app.services.billing import (
+        InsufficientRecapCreditsError,
+        InsufficientVoiceMinutesError,
+        reserve_for_job,
+        seconds_to_credits,
+    )
+
+    _existing_res = (
+        await db.execute(select(WalletReservation).where(WalletReservation.job_id == job_id))
+    ).scalar_one_or_none()
+
+    if _existing_res is not None and not settings.is_admin(job.user_id):
+        if _existing_res.status == "RELEASED":
+            try:
+                await reserve_for_job(
+                    db,
+                    job.user_id,
+                    job_id,
+                    job_type=_existing_res.job_type,
+                    billing_mode=_existing_res.billing_mode,
+                    reserve_recap_seconds=int(_existing_res.reserved_recap_seconds or 0),
+                    reserve_voice_seconds=int(_existing_res.reserved_voice_seconds or 0),
+                    note=f"Admin queue retry re-reserve ({job_id})",
+                )
+            except InsufficientRecapCreditsError:
+                await db.rollback()
+                raise HTTPException(
+                    status_code=402,
+                    detail="အသုံးပြုသူရဲ့ Recap Credit မလုံလောက်တာကြောင့် ဒီအလုပ်ကို ပြန်စလို့ မရပါ။",
+                )
+            except (InsufficientVoiceMinutesError, Exception) as exc:
+                await db.rollback()
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"အသုံးပြုသူရဲ့ လက်ကျန် မလုံလောက်တာကြောင့် ပြန်စလို့ မရပါ ({exc})။",
+                )
+        if _is_recap_retry:
+            _state = _load_persisted_recap_state(job)
+            if _state is not None:
+                _state["credit_deducted"] = bool(int(_existing_res.reserved_recap_seconds or 0) > 0)
+                _state["credits_charged"] = seconds_to_credits(int(_existing_res.reserved_recap_seconds or 0))
+                _state["credit_refunded"] = False
+                _state["credits_refunded"] = 0
+                _state["voice_refunded"] = False
+                _state["voice_seconds_refunded"] = 0
+                _state["voice_settled"] = False
+                _state["voice_seconds_settled"] = None
+                _state["stranded_reset_count"] = 0
+                _next_recap_config = json.dumps(_state, ensure_ascii=False)
+    elif _is_recap_retry:
         from app.services.ledger import (
             recap_debit_total_for_job,
             recap_refund_total_for_job,
@@ -14284,9 +14308,7 @@ async def retry_queued_job(
         _debit_total = await recap_debit_total_for_job(db, job_id)
         _refund_total = await recap_refund_total_for_job(db, job_id)
         if _debit_total > 0 and _debit_total - _refund_total <= 0:
-            # Fully refunded: re-charge the original amount in THIS
-            # transaction (same commit as the status flip below).
-            if _owner is None or int(_owner.recap_credits or 0) < _debit_total:
+            if _owner is None or float(_owner.recap_credits or 0) < _debit_total:
                 await db.rollback()
                 raise HTTPException(
                     status_code=402,
@@ -14347,9 +14369,6 @@ async def retry_queued_job(
                 _state["stranded_reset_count"] = 0
                 _next_recap_config = json.dumps(_state, ensure_ascii=False)
         elif _debit_total > 0:
-            # Charged and NOT (fully) refunded: make the persisted
-            # credit state match the ledger truth so the re-dispatched
-            # runner neither re-charges nor refunds a phantom amount.
             _state = _load_persisted_recap_state(job)
             if _state is not None:
                 _state["credit_deducted"] = True
@@ -14464,27 +14483,7 @@ async def cancel_queued_job(
             conflict_status_code=400,
             conflict_detail="Only QUEUED, RUNNING, or WAITING_CHOICE jobs can be cancelled (job state changed concurrently)",
         )
-
-        try:
-            from app.services.ledger import refund_job_seconds, refund_tts_referral_seconds
-            before = (await db.execute(
-                select(MinuteLedgerEvent).where(
-                    MinuteLedgerEvent.user_id == job.user_id,
-                    MinuteLedgerEvent.reference_id == f"REFUND:{job_id}",
-                )
-            )).first()
-            if job.job_type == JobType.TTS.value:
-                await refund_tts_referral_seconds(
-                    db, job.user_id, str(job.id), keep_seconds=0, note="Refund: TTS job cancelled by admin"
-                )
-            else:
-                await refund_job_seconds(db, job.user_id, str(job.id), note="Refund: job cancelled by admin")
-            await db.commit()
-            if not before:
-                refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
-        except Exception as exc:
-            logger.warning(f"Cancel refund failed for job {job_id}: {exc}")
-            refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}
+        refund_info = await _refund_cancelled_non_recap_job(db, job, actor="admin")
 
     db.add(AuditLog(
         admin_id=admin.id,
@@ -14593,6 +14592,10 @@ class AdminSettingsPayload(BaseModel):
     recap_thumbnail_monthly_cap_usd: Optional[float] = None
     recap_thumbnail_model: Optional[str] = None
     recap_thumbnail_prompt_template: Optional[str] = None
+    recap_stale_job_timeout_seconds: Optional[int] = None
+    recap_worker_concurrency: Optional[int] = None
+    ai_prompt_profile: Optional[str] = None
+    usd_to_mmk_rate: Optional[float] = None
 
 
 @api_router.get("/admin/settings")
@@ -14692,6 +14695,8 @@ async def get_admin_settings(
         "recap_on_queue": bool(getattr(settings, "recap_on_queue", False)),
         "recap_stale_job_timeout_seconds": int(getattr(settings, "recap_stale_job_timeout_seconds", 2700) or 2700),
         "recap_worker_concurrency": int(getattr(settings, "recap_worker_concurrency", 1) or 1),
+        "ai_prompt_profile": str(getattr(settings, "ai_prompt_profile", "v2") or "v2"),
+        "usd_to_mmk_rate": float(getattr(settings, "usd_to_mmk_rate", 4500.0) or 4500.0),
     }
 
 
@@ -15115,6 +15120,19 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = c_val
+        elif key == "ai_prompt_profile":
+            prof = str(value).strip().lower()
+            if prof not in ("v1", "v2"):
+                raise HTTPException(status_code=400, detail="AI Prompt Profile must be v1 or v2")
+            cleaned[key] = prof
+        elif key == "usd_to_mmk_rate":
+            try:
+                fx = float(value)
+            except (TypeError, ValueError):
+                fx = -1.0
+            if fx < 500.0 or fx > 50000.0:
+                raise HTTPException(status_code=400, detail="USD to MMK rate must be between 500 and 50,000")
+            cleaned[key] = fx
     return cleaned
 
 
@@ -15126,12 +15144,16 @@ async def update_admin_settings(
 ):
     """Update dynamic platform settings directly from Admin Console."""
     from app.services.dynamic_settings import set_dynamic_setting
+    from app.services.payments import sync_legacy_payment_keys_to_accounts
+
     updates = payload.model_dump(exclude_unset=True)
     # All-or-nothing: validate every field before applying any of them.
     updates = _validate_admin_settings_updates(updates)
     for k, v in updates.items():
         if v is not None:
             await set_dynamic_setting(db, k, v, admin_id=admin.id)
+    if any(k.startswith("payment_kpay_") or k.startswith("payment_wave_") for k in updates):
+        await sync_legacy_payment_keys_to_accounts(db, admin_id=admin.id)
     await db.commit()
     return {"success": True, "message": "ဆက်တင်များ အောင်မြင်စွာ သိမ်းပြီးပါပြီ", "updated": updates}
 
@@ -15288,32 +15310,43 @@ async def get_admin_pricing(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """List editable plan prices (admin only).
+    """List ALL pricing plans (including inactive & top-ups) for admin editing."""
+    from app.services.payments import get_all_pricing_plans, get_plan_by_code
 
-    Mirrors the bot's pricing manager exactly: prices live on PricingPlan
-    rows (seeded defaults) and edits go through the same audited service.
-    Catalogue metadata (category/minutes/credits) is attached for display.
-    """
-    from app.services.payments import get_active_pricing_plans, get_plan_by_code
-
-    plans = await get_active_pricing_plans(db)
+    plans = await get_all_pricing_plans(db)
+    await db.commit()
     out = []
     for p in plans:
         cat = get_plan_by_code(p.code) or {}
         out.append({
             "code": p.code,
-            "category": cat.get("category", "voice"),
-            "minutes": p.minutes,
-            "recap_credits": cat.get("recap_credits", 0),
-            "price_mmk": p.price_mmk,
+            "name": getattr(p, "name", None) or cat.get("name") or p.code,
+            "category": getattr(p, "category", None) or cat.get("category", "voice"),
+            "sub_type": getattr(p, "sub_type", None) or cat.get("sub_type", ""),
+            "minutes": int(p.minutes or 0),
+            "recap_credits": int(
+                getattr(p, "recap_credits", None)
+                if getattr(p, "recap_credits", None) is not None
+                else cat.get("recap_credits", 0)
+            ),
+            "price_mmk": int(p.price_mmk or 0),
+            "validity_days": int(getattr(p, "validity_days", 30) if getattr(p, "validity_days", None) is not None else 30),
             "is_active": bool(p.is_active),
-            "sort_order": p.sort_order,
+            "is_topup": bool(getattr(p, "is_topup", False) or cat.get("is_topup")),
+            "badge": getattr(p, "badge", None) or cat.get("badge") or "",
+            "sort_order": int(p.sort_order or 0),
         })
     return {"plans": out, "count": len(out)}
 
 
 class AdminPricingUpdateRequest(BaseModel):
-    price_mmk: int
+    price_mmk: Optional[int] = None
+    minutes: Optional[int] = None
+    recap_credits: Optional[int] = None
+    validity_days: Optional[int] = None
+    is_active: Optional[bool] = None
+    name: Optional[str] = None
+    badge: Optional[str] = None
 
 
 @api_router.post("/admin/pricing/{code}")
@@ -15323,30 +15356,131 @@ async def update_admin_pricing(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Update one plan's price (admin only) via the audited pricing service.
+    """Update plan price, minutes, recap_credits, validity_days, name, or active state (admin only)."""
+    from app.services.payments import update_pricing_plan_config
 
-    Bounds mirror the bot's price editor: 100 – 10,000,000 MMK.
-    """
-    from app.services.payments import update_pricing_plan_price
+    if req.price_mmk is not None:
+        price = int(req.price_mmk)
+        if price < 100 or price > 10_000_000:
+            raise HTTPException(
+                status_code=400,
+                detail="Price must be between 100 and 10,000,000 MMK",
+            )
+    if req.minutes is not None and (int(req.minutes) < 0 or int(req.minutes) > 100_000):
+        raise HTTPException(status_code=400, detail="Minutes must be between 0 and 100,000")
+    if req.recap_credits is not None and (int(req.recap_credits) < 0 or int(req.recap_credits) > 100_000):
+        raise HTTPException(status_code=400, detail="Recap credits must be between 0 and 100,000")
+    if req.validity_days is not None and (int(req.validity_days) < 0 or int(req.validity_days) > 3650):
+        raise HTTPException(status_code=400, detail="Validity days must be between 0 and 3650")
 
-    price = int(req.price_mmk or 0)
-    if price < 100 or price > 10_000_000:
-        raise HTTPException(
-            status_code=400,
-            detail="Price must be between 100 and 10,000,000 MMK",
-        )
-    ok, plan, _msg = await update_pricing_plan_price(
-        db, code, price, admin_id=admin.id
+    ok, plan, msg = await update_pricing_plan_config(
+        db,
+        code,
+        price_mmk=int(req.price_mmk) if req.price_mmk is not None else None,
+        minutes=int(req.minutes) if req.minutes is not None else None,
+        recap_credits=int(req.recap_credits) if req.recap_credits is not None else None,
+        validity_days=int(req.validity_days) if req.validity_days is not None else None,
+        is_active=req.is_active,
+        name=req.name,
+        badge=req.badge,
+        admin_id=admin.id,
     )
     if not ok or plan is None:
-        raise HTTPException(status_code=404, detail="Pricing plan not found")
+        is_nf = (msg or "").upper() == "PLAN_NOT_FOUND" or "not found" in (msg or "").lower()
+        raise HTTPException(status_code=404 if is_nf else 400, detail=msg or "Pricing plan not found")
     await db.commit()
     return {
         "success": True,
         "code": plan.code,
-        "price_mmk": plan.price_mmk,
+        "name": getattr(plan, "name", plan.code),
+        "price_mmk": int(plan.price_mmk),
+        "minutes": int(plan.minutes),
+        "recap_credits": int(getattr(plan, "recap_credits", 0) or 0),
+        "validity_days": int(getattr(plan, "validity_days", 30) if getattr(plan, "validity_days", None) is not None else 30),
+        "is_active": bool(plan.is_active),
         "message": f"ဈေးနှုန်း ပြင်ပြီးပါပြီ: {plan.code} = {plan.price_mmk:,} MMK",
     }
+
+
+class AdminPricingCreateRequest(BaseModel):
+    code: str
+    name: str
+    category: str = "voice"  # voice | recap | combo | topup
+    sub_type: str = ""
+    minutes: int = 0
+    recap_credits: int = 0
+    price_mmk: int
+    validity_days: int = 30
+    is_topup: bool = False
+    is_active: bool = True
+    badge: str = ""
+    sort_order: int = 999
+
+
+@api_router.post("/admin/pricing")
+async def create_admin_pricing_plan(
+    req: AdminPricingCreateRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Create a new custom or promotional pricing package (admin only)."""
+    from app.models.schema import PricingPlan as _PricingPlan
+
+    code = re.sub(r"[^a-z0-9_]+", "_", (req.code or "").strip().lower()).strip("_")[:48]
+    if not code or len(code) < 3:
+        raise HTTPException(status_code=400, detail="Plan code must be at least 3 alphanumeric characters")
+    cat = (req.category or "voice").strip().lower()
+    if cat not in ("voice", "recap", "combo", "topup"):
+        raise HTTPException(status_code=400, detail="Category must be voice, recap, combo, or topup")
+    if req.price_mmk < 100 or req.price_mmk > 10_000_000:
+        raise HTTPException(status_code=400, detail="Price must be between 100 and 10,000,000 MMK")
+    if req.minutes < 0 or req.minutes > 100_000 or req.recap_credits < 0 or req.recap_credits > 100_000:
+        raise HTTPException(status_code=400, detail="Minutes and Recap Credits must be between 0 and 100,000")
+    if req.minutes == 0 and req.recap_credits == 0:
+        raise HTTPException(status_code=400, detail="Minutes or Recap Credits must be > 0")
+    if req.validity_days < 0 or req.validity_days > 3650:
+        raise HTTPException(status_code=400, detail="Validity days must be between 0 and 3650")
+
+    exists = (await db.execute(select(_PricingPlan).where(_PricingPlan.code == code))).scalar_one_or_none()
+    if exists is not None:
+        raise HTTPException(status_code=409, detail=f"Plan code '{code}' already exists")
+
+    is_topup = bool(req.is_topup or cat == "topup")
+    sub_type = (req.sub_type or "").strip().lower()
+    if is_topup and sub_type not in ("voice", "recap"):
+        sub_type = "voice" if req.minutes > 0 and req.recap_credits == 0 else "recap"
+
+    plan = _PricingPlan(
+        code=code,
+        name=(req.name or code).strip()[:80],
+        category=cat,
+        sub_type=sub_type or None,
+        minutes=int(req.minutes),
+        recap_credits=int(req.recap_credits),
+        price_mmk=int(req.price_mmk),
+        validity_days=int(req.validity_days),
+        is_topup=is_topup,
+        is_active=bool(req.is_active),
+        badge=(req.badge or "").strip()[:32] or None,
+        sort_order=int(req.sort_order or 999),
+    )
+    db.add(plan)
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="pricing.create_plan",
+        target_type="pricing_plan",
+        target_id=code,
+        details_json=json.dumps({
+            "name": plan.name,
+            "category": cat,
+            "minutes": plan.minutes,
+            "recap_credits": plan.recap_credits,
+            "price_mmk": plan.price_mmk,
+            "validity_days": plan.validity_days,
+        }),
+    ))
+    await db.commit()
+    return {"success": True, "code": plan.code, "message": f"Package အသစ် '{plan.name}' ဖန်တီးပြီးပါပြီ"}
 
 
 @api_router.get("/admin/pending-slips")
@@ -15354,7 +15488,9 @@ async def get_pending_payment_slips(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """List all pending payment requests awaiting approval."""
+    """List all pending payment requests awaiting approval (with full metadata for review/edit)."""
+    from app.services.payments import get_plan_by_code, package_recap_credits
+
     stmt = (
         select(PaymentRequest, User)
         .join(User, PaymentRequest.user_id == User.id)
@@ -15366,18 +15502,104 @@ async def get_pending_payment_slips(
 
     slips = []
     for req, u in rows:
+        plan = get_plan_by_code(req.package_code) or {}
+        raw_rc = getattr(req, "recap_credits", None)
+        eff_rc = int(raw_rc) if (raw_rc is not None and int(raw_rc) > 0) else int(package_recap_credits(req.package_code))
+        vdays = int(getattr(req, "validity_days", 30) if getattr(req, "validity_days", None) is not None else 30)
         slips.append({
             "id": req.id,
             "user_id": u.id,
             "user_name": u.first_name or f"User {u.id}",
             "username": u.username,
             "package_code": req.package_code,
+            "package_name": plan.get("name") or req.package_code,
             "amount_mmk": req.amount_mmk,
-            "minutes": req.minutes,
+            "minutes": int(req.minutes or 0),
+            "recap_credits": eff_rc,
+            "validity_days": vdays,
+            "payment_reference": getattr(req, "payment_reference", None) or "",
+            "review_claimed_by": getattr(req, "review_claimed_by", None),
             "slip_url": req.slip_url,
             "created_at": req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "",
         })
     return slips
+
+
+class EditApproveSlipRequest(BaseModel):
+    request_id: str
+    corrected_minutes: int = 0
+    corrected_recap_credits: Optional[int] = None
+    validity_days: Optional[int] = None
+
+
+@api_router.post("/admin/edit-approve-slip")
+async def edit_and_approve_payment_slip(
+    req: EditApproveSlipRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Edit minutes / recap_credits / validity_days and approve a pending slip directly from Mini App."""
+    from app.services.payment_review import claim_payment_review, apply_edited_approval, release_payment_claim
+
+    if req.validity_days is not None and not (0 <= int(req.validity_days) <= 3650):
+        raise HTTPException(status_code=400, detail="Validity days must be between 0 and 3650")
+
+    claimed, p_claimed, claim_status = await claim_payment_review(db, req.request_id, admin.id)
+    if not claimed:
+        if claim_status == "CLAIMED_BY_OTHER" and p_claimed is not None:
+            raise HTTPException(status_code=409, detail=f"ဒီပြေစာကို Admin {p_claimed.review_claimed_by} က ပြင်ဆင်နေဆဲဖြစ်ပါသည်")
+        raise HTTPException(status_code=400, detail=f"ပြေစာမတွေ့ပါ သို့မဟုတ် အခြေအနေပြောင်းလဲပြီးဖြစ်ပါသည် ({claim_status})")
+
+    if req.validity_days is not None and p_claimed is not None:
+        p_claimed.validity_days = int(req.validity_days)
+        await db.flush()
+
+    ok, p_req, status_msg = await apply_edited_approval(
+        db,
+        payment_id=req.request_id,
+        admin_id=admin.id,
+        corrected_minutes=int(req.corrected_minutes),
+        corrected_recap_credits=int(req.corrected_recap_credits) if req.corrected_recap_credits is not None else None,
+    )
+    if not ok or p_req is None:
+        await release_payment_claim(db, req.request_id, admin.id)
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Edit-Approve မအောင်မြင်ပါ: {status_msg}")
+
+    await db.commit()
+    eff_rc = int(getattr(p_req, "edited_recap_credits", None) if getattr(p_req, "edited_recap_credits", None) is not None else getattr(p_req, "recap_credits", 0) or 0)
+
+    if settings.bot_token:
+        try:
+            from aiogram import Bot
+            bot = Bot(token=settings.bot_token)
+            try:
+                vdays = int(getattr(p_req, "validity_days", 30) if getattr(p_req, "validity_days", None) is not None else 30)
+                exp_note = f" (သက်တမ်း {vdays} ရက်)" if vdays > 0 else " (သက်တမ်းမကုန်)"
+                await bot.send_message(
+                    chat_id=p_req.user_id,
+                    text=(
+                        f"✅ <b>ငွေပေးချေမှု အတည်ပြုပြီးပါပြီ (Adjusted)</b>\n\n"
+                        f"• Payment ID: <code>{p_req.id}</code>\n"
+                        f"• Voice Clone: <b>+{p_req.minutes} မိနစ်</b>\n"
+                        f"• Recap Credits: <b>+{eff_rc} Credits</b>{exp_note}\n\n"
+                        f"Mini App တွင် ချက်ချင်း အသုံးပြုနိုင်ပါပြီ။"
+                    ),
+                    parse_mode="HTML",
+                )
+            finally:
+                await bot.session.close()
+        except Exception as exc:
+            logger.warning("Failed to notify user %s after edit-approve: %s", p_req.user_id, exc)
+
+    return {
+        "success": True,
+        "id": p_req.id,
+        "minutes": int(p_req.minutes or 0),
+        "recap_credits": eff_rc,
+        "validity_days": int(getattr(p_req, "validity_days", 30) if getattr(p_req, "validity_days", None) is not None else 30),
+        "message": f"ပြင်ဆင်အတည်ပြုပြီးပါပြီ (+{p_req.minutes}m, +{eff_rc} Recap Credits)",
+    }
 
 
 class ApproveSlipRequest(BaseModel):
@@ -15418,9 +15640,11 @@ async def approve_payment_slip(
     await db.commit()
 
     _plan = _get_plan(p_req.package_code)
-    recap_added = _plan["recap_credits"] if _plan else 0
-    # Batch AJ M4: an edited approval grants the CORRECTED recap
-    # credits — report what was actually granted.
+    recap_added = (
+        getattr(p_req, "recap_credits", None)
+        if getattr(p_req, "recap_credits", None) is not None
+        else (_plan["recap_credits"] if _plan else 0)
+    )
     if getattr(p_req, "edited_recap_credits", None) is not None:
         recap_added = p_req.edited_recap_credits
     target_user = await db.get(User, p_req.user_id)
@@ -15546,18 +15770,11 @@ async def reject_payment_slip(
 class AdjustUserRequest(BaseModel):
     user_id: int
     account_category: Optional[str] = None
-    # Sanity ceilings (hunt #4 B4): these were unbounded ints, so a
-    # huge value overflowed the 32-bit Integer balance columns and
-    # 500'd the adjust. The caps sit far above any legitimate manual
-    # adjustment (±100k minutes ≈ 69 days of voice) while keeping
-    # every derived seconds total comfortably inside Integer range.
-    add_minutes: int = Field(0, ge=-100_000, le=100_000)
+    add_minutes: float = Field(0.0, ge=-100_000.0, le=100_000.0)
     add_seconds: int = Field(0, ge=-6_000_000, le=6_000_000)
-    add_recap_credits: int = Field(0, ge=-100_000, le=100_000)
+    add_recap_credits: float = Field(0.0, ge=-100_000.0, le=100_000.0)
+    validity_days: Optional[int] = Field(30, ge=0, le=3650)
     reason: str = ""
-    # Batch AJ M5: the Mini App sends one key per adjust-dialog intent;
-    # a double-tap / client retry replays the SAME key and must not
-    # apply the adjustment twice. None = legacy client (no dedupe).
     idempotency_key: Optional[str] = None
 
 
@@ -15567,14 +15784,16 @@ async def adjust_user_status(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Admin manually modifies user tier and balances — audited.
+    """Admin manually modifies user tier and decimal/second balances — audited."""
+    from app.services.billing import (
+        append_wallet_transaction,
+        credits_to_seconds,
+        get_recap_available_seconds,
+        seconds_to_credits,
+        sync_user_recap_balance,
+    )
+    from app.services.ledger import get_minute_balance, record_recap_credit_event
 
-    Production hardening (2026-10-31): every adjustment now REQUIRES a
-    reason and goes through the same audited ledger path the bot admin
-    uses (admin_adjust_balance — MinuteLedgerEvent + AuditLog +
-    negative-balance protection), instead of silently mutating fields.
-    Negative minute/second deltas are supported (clawbacks).
-    """
     target_user = await db.get(User, req.user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -15583,8 +15802,8 @@ async def adjust_user_status(
         req.account_category in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value)
         and req.account_category != target_user.account_category
     )
-    seconds_delta = int(req.add_minutes or 0) * 60 + int(req.add_seconds or 0)
-    credits_delta = int(req.add_recap_credits or 0)
+    seconds_delta = int(round(float(req.add_minutes or 0.0) * 60)) + int(req.add_seconds or 0)
+    credits_delta = round(float(req.add_recap_credits or 0.0), 4)
     if not category_change and seconds_delta == 0 and credits_delta == 0:
         raise HTTPException(status_code=400, detail="Nothing to adjust")
     reason = (req.reason or "").strip()
@@ -15608,26 +15827,9 @@ async def adjust_user_status(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
-    # Demote durability (owner hit this 2026-11-01: "Free ပြန်ချ Crd
-    # နှုတ်တာမှာ VIP ကကျန်ခဲ့တယ်"): account_category is entitlement-derived
-    # in the ledger — consume_seconds re-asserts PURCHASED on EVERY job
-    # while purchased_seconds > 0, and a PURCHASE-source refund does the
-    # same. Setting the field alone therefore does not stick: a demoted
-    # user who still holds purchased seconds silently re-promotes to
-    # VIP on their next job. Admin intent must win: on a PURCHASED ->
-    # FREE change, drain the purchased bucket to zero through the same
-    # audited ledger path (which itself flips the category to FREE at
-    # exactly zero) BEFORE the category assignment below, so no
-    # entitlement fuel remains. Ordering: this runs AFTER the
-    # same-request seconds delta, so the zeroing targets the post-delta
-    # balance — an explicit delta keeps its existing guard behaviour
-    # (an over-large debit still 400s as before), and a same-request
-    # credit is drained too, leaving the demote absolute. A zero
-    # outstanding balance needs no ledger call (admin_adjust_balance
-    # rejects non-positive seconds).
     purchased_seconds_zeroed = 0
     if category_change and req.account_category == AccountCategory.FREE.value:
-        from app.services.ledger import admin_adjust_balance, get_minute_balance
+        from app.services.ledger import admin_adjust_balance
         from app.models.enums import LedgerDirection, LedgerSource
         balance_now = await get_minute_balance(db, target_user.id)
         outstanding = int(balance_now.purchased_seconds or 0)
@@ -15650,17 +15852,9 @@ async def adjust_user_status(
     if category_change:
         target_user.account_category = req.account_category
 
-    recap_credits_applied = 0
+    recap_credits_applied: float = 0.0
+    recap_sec_applied: int = 0
     if credits_delta != 0:
-        # Batch AJ M5: recap adjustments previously moved the balance
-        # with NO recap-ledger event (admin adjusts were invisible in
-        # the recap ledger), and the floor clamp silently applied less
-        # than requested while the response/audit reported the FULL
-        # delta. Now: dedupe by the client's idempotency key, record
-        # the event with the ACTUALLY-applied (floor-clamped) delta,
-        # and report that same applied delta.
-        from app.services.ledger import record_recap_credit_event
-
         adj_ref = (
             f"ADMINADJ:{req.idempotency_key}" if req.idempotency_key
             else f"ADMINADJ:{uuid.uuid4().hex}"
@@ -15672,35 +15866,57 @@ async def adjust_user_status(
         )).scalars().first()
         if prior_event is not None:
             recap_credits_applied = (
-                int(prior_event.credits) if prior_event.direction == "CREDIT"
-                else -int(prior_event.credits)
+                float(prior_event.credits) if prior_event.direction == "CREDIT"
+                else -float(prior_event.credits)
             )
         else:
-            credits_before = int(target_user.recap_credits or 0)
-            # Atomic floor-guarded update (hunt F5): same max(0, …)
-            # semantics as before, but as a single conditional UPDATE so a
-            # concurrent charge/refund can no longer be overwritten by a
-            # stale read-modify-write.
-            await db.execute(
-                update(User)
-                .where(User.id == target_user.id)
-                .values(
-                    recap_credits=case(
-                        (User.recap_credits + credits_delta < 0, 0),
-                        else_=User.recap_credits + credits_delta,
-                    )
-                )
-            )
-            await db.refresh(target_user)
-            recap_credits_applied = int(target_user.recap_credits or 0) - credits_before
-            if recap_credits_applied != 0:
+            locked_u = (await db.execute(
+                select(User).where(User.id == target_user.id).with_for_update()
+            )).scalar_one_or_none() or target_user
+            before_sec = get_recap_available_seconds(locked_u)
+            delta_sec = credits_to_seconds(abs(credits_delta)) * (1 if credits_delta > 0 else -1)
+            new_sec = max(0, before_sec + delta_sec)
+            recap_sec_applied = new_sec - before_sec
+            recap_credits_applied = seconds_to_credits(abs(recap_sec_applied)) * (1 if recap_sec_applied >= 0 else -1)
+            sync_user_recap_balance(locked_u, new_sec)
+            target_user = locked_u
+            if recap_sec_applied != 0:
                 await record_recap_credit_event(
                     db,
                     user_id=target_user.id,
-                    direction="CREDIT" if recap_credits_applied > 0 else "DEBIT",
+                    direction="CREDIT" if recap_sec_applied > 0 else "DEBIT",
                     credits=abs(recap_credits_applied),
+                    seconds=abs(recap_sec_applied),
                     reference_id=adj_ref,
+                    note=f"Admin adjust ({admin.id}): {reason}",
                 )
+                bal_end = await get_minute_balance(db, target_user.id)
+                await append_wallet_transaction(
+                    db,
+                    user=target_user,
+                    balance=bal_end,
+                    tx_type="ADMIN_ADJUST",
+                    wallet_kind="RECAP",
+                    recap_seconds_delta=recap_sec_applied,
+                    voice_seconds_delta=0,
+                    reference_id=adj_ref,
+                    note=f"Admin {admin.id}: {reason}",
+                )
+
+    if seconds_delta > 0 or recap_sec_applied > 0:
+        from app.services.billing import create_wallet_grant
+        _v_days = int(req.validity_days) if req.validity_days is not None else 30
+        await create_wallet_grant(
+            db,
+            target_user.id,
+            source_type="ADMIN_GRANT",
+            voice_seconds=max(0, seconds_delta),
+            recap_seconds=max(0, recap_sec_applied),
+            validity_days=_v_days if _v_days > 0 else None,
+            package_code="admin_grant",
+            package_name=f"Admin Grant ({_v_days}d)" if _v_days > 0 else "Admin Grant (No Expiry)",
+            note=f"Admin {admin.id}: {reason}",
+        )
 
     db.add(AuditLog(
         admin_id=admin.id,
@@ -15726,8 +15942,717 @@ async def adjust_user_status(
     }
 
 
+# ── 11. Dual Wallet, Transaction History, Pre-Job Estimators & Business Analytics ──
+
+class RecapEstimateRequest(BaseModel):
+    duration_seconds: Optional[float] = None
+    url: Optional[str] = None
+    tts_engine: str = "gemini"
+    split_video: bool = False
+
+
+class VoiceEstimateRequest(BaseModel):
+    text: str = ""
+    speed_preset: str = DEFAULT_SPEED
+
+
+class AdminRefundJobRequest(BaseModel):
+    reason: str = "Admin refund"
+
+
+@api_router.get("/wallet/summary")
+async def get_wallet_summary(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return user's 4 live dual-wallet balances (Available + Reserved for Recap & Voice)."""
+    from app.services.billing import get_wallet_snapshot
+
+    snap = await get_wallet_snapshot(db, user.id)
+    try:
+        await db.commit()
+    except Exception:
+        pass
+    return {"success": True, **snap}
+
+
+@api_router.get("/wallet/transactions")
+async def get_wallet_transactions(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    wallet_kind: Optional[str] = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return chronological wallet transaction ledger for the authenticated user."""
+    from app.models.schema import WalletTransaction
+
+    stmt = select(WalletTransaction).where(WalletTransaction.user_id == user.id)
+    if wallet_kind and wallet_kind.upper() in ("RECAP", "VOICE", "COMBO"):
+        stmt = stmt.where(WalletTransaction.wallet_kind == wallet_kind.upper())
+    rows = (
+        await db.execute(
+            stmt.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+    out = []
+    for tx in rows:
+        out.append({
+            "id": tx.id,
+            "tx_type": tx.tx_type,
+            "wallet_kind": tx.wallet_kind,
+            "recap_seconds_delta": int(tx.recap_seconds_delta or 0),
+            "recap_credits_delta": round(int(tx.recap_seconds_delta or 0) / 60.0, 2),
+            "voice_seconds_delta": int(tx.voice_seconds_delta or 0),
+            "voice_minutes_delta": round(int(tx.voice_seconds_delta or 0) / 60.0, 2),
+            "balance_recap_credits_after": round(int(tx.balance_recap_seconds_after or 0) / 60.0, 2),
+            "reserved_recap_credits_after": round(int(tx.reserved_recap_seconds_after or 0) / 60.0, 2),
+            "balance_voice_minutes_after": round(int(tx.balance_voice_seconds_after or 0) / 60.0, 2),
+            "reserved_voice_minutes_after": round(int(tx.reserved_voice_seconds_after or 0) / 60.0, 2),
+            "reference_id": tx.reference_id,
+            "note": tx.note or "",
+            "created_at": tx.created_at.isoformat() if tx.created_at else "",
+        })
+    return {"transactions": out, "count": len(out)}
+
+
+@api_router.get("/vip/orders")
+async def get_user_vip_orders(
+    limit: int = Query(30, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return current user's package purchase / top-up order history."""
+    from app.services.payments import get_plan_by_code
+
+    rows = (
+        await db.execute(
+            select(PaymentRequest)
+            .where(PaymentRequest.user_id == user.id)
+            .order_by(PaymentRequest.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    out = []
+    for pr in rows:
+        plan = get_plan_by_code(pr.package_code) or {}
+        rc = (
+            getattr(pr, "edited_recap_credits", None)
+            if getattr(pr, "edited_recap_credits", None) is not None
+            else (getattr(pr, "recap_credits", None) if getattr(pr, "recap_credits", None) is not None else plan.get("recap_credits", 0))
+        )
+        out.append({
+            "id": pr.id,
+            "package_code": pr.package_code,
+            "package_name": plan.get("name") or pr.package_code,
+            "category": plan.get("category") or "voice",
+            "minutes": int(pr.minutes or 0),
+            "recap_credits": int(rc or 0),
+            "amount_mmk": int(pr.amount_mmk or 0),
+            "status": pr.status,
+            "payment_reference": getattr(pr, "payment_reference", None),
+            "rejection_reason": pr.rejection_reason,
+            "created_at": pr.created_at.isoformat() if pr.created_at else "",
+            "reviewed_at": pr.reviewed_at.isoformat() if pr.reviewed_at else None,
+        })
+    return {"orders": out, "count": len(out)}
+
+
+@api_router.post("/recap/estimate")
+async def estimate_recap_cost(
+    req: RecapEstimateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Compute pre-job estimated Recap Credits & Voice Clone Minutes vs user's live wallets."""
+    from app.services.billing import estimate_job_requirements, get_wallet_snapshot
+
+    is_admin_user = settings.is_admin(user.id)
+    dur = float(req.duration_seconds or 0.0)
+    if dur <= 0 and req.url and not req.url.startswith(("http://", "https://")) and os.path.isfile(req.url):
+        try:
+            from app.services.recap_engine.core import find_ffprobe, probe_duration
+            dur = float(probe_duration(find_ffprobe(), Path(req.url)) or 0.0)
+        except Exception:
+            dur = 0.0
+
+    est = estimate_job_requirements(
+        job_type=JobType.RECAP.value,
+        tts_engine=req.tts_engine,
+        duration_seconds=dur if dur > 0 else None,
+        is_admin=is_admin_user,
+    )
+    snap = await get_wallet_snapshot(db, user.id)
+    short_recap = max(0, est["estimated_recap_seconds"] - snap["available_recap_seconds"]) if not is_admin_user else 0
+    short_voice = max(0, est["estimated_voice_seconds"] - snap["available_voice_seconds"]) if not is_admin_user else 0
+    return {
+        **est,
+        "duration_seconds": dur,
+        "can_afford": bool(is_admin_user or (short_recap == 0 and short_voice == 0)),
+        "shortfall_recap_credits": round(short_recap / 60.0, 2),
+        "shortfall_voice_minutes": round(short_voice / 60.0, 2),
+        "wallet": snap,
+    }
+
+
+@api_router.post("/voices/estimate")
+async def estimate_voice_cost(
+    req: VoiceEstimateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Compute pre-job estimated Voice Clone Minutes vs user's live voice wallet."""
+    from app.services.billing import estimate_job_requirements, get_wallet_snapshot
+
+    is_admin_user = settings.is_admin(user.id)
+    est = estimate_job_requirements(
+        job_type=JobType.VOICE_CLONE.value,
+        tts_engine="voxcpm",
+        text=req.text,
+        speed_preset=req.speed_preset,
+        is_admin=is_admin_user,
+    )
+    snap = await get_wallet_snapshot(db, user.id)
+    short_voice = max(0, est["estimated_voice_seconds"] - snap["available_voice_seconds"]) if not is_admin_user else 0
+    return {
+        **est,
+        "char_count": len((req.text or "").strip()),
+        "can_afford": bool(is_admin_user or short_voice == 0),
+        "shortfall_voice_minutes": round(short_voice / 60.0, 2),
+        "wallet": snap,
+    }
+
+
+@api_router.get("/admin/orders")
+async def get_admin_orders(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    search: str = Query("", max_length=80),
+    days: int = Query(0, ge=0, le=3650),
+    limit: int = Query(100, ge=1, le=500),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Admin purchase & top-up order history across all statuses (with search & period filter)."""
+    from app.services.payments import get_plan_by_code
+
+    stmt = select(PaymentRequest, User).join(User, PaymentRequest.user_id == User.id)
+    if status_filter and status_filter.upper() in ("PENDING", "APPROVED", "REJECTED", "CANCELLED"):
+        stmt = stmt.where(PaymentRequest.status == status_filter.upper())
+    if days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        stmt = stmt.where(PaymentRequest.created_at >= cutoff)
+    q = (search or "").strip().lstrip("@")
+    if q:
+        conds = [
+            PaymentRequest.id.ilike(f"%{q}%"),
+            PaymentRequest.package_code.ilike(f"%{q}%"),
+            PaymentRequest.payment_reference.ilike(f"%{q}%"),
+            User.username.ilike(f"%{q}%"),
+            User.first_name.ilike(f"%{q}%"),
+        ]
+        if q.isdigit():
+            conds.append(User.id == int(q))
+        stmt = stmt.where(or_(*conds))
+    rows = (await db.execute(stmt.order_by(PaymentRequest.created_at.desc()).limit(limit))).all()
+    orders = []
+    for pr, u in rows:
+        plan = get_plan_by_code(pr.package_code) or {}
+        rc = (
+            getattr(pr, "edited_recap_credits", None)
+            if getattr(pr, "edited_recap_credits", None) is not None
+            else (getattr(pr, "recap_credits", None) if getattr(pr, "recap_credits", None) is not None else plan.get("recap_credits", 0))
+        )
+        orders.append({
+            "id": pr.id,
+            "user_id": u.id,
+            "user_name": u.first_name or f"User {u.id}",
+            "username": u.username,
+            "package_code": pr.package_code,
+            "package_name": plan.get("name") or pr.package_code,
+            "category": plan.get("category") or "voice",
+            "minutes": int(pr.minutes or 0),
+            "recap_credits": int(rc or 0),
+            "validity_days": int(getattr(pr, "validity_days", 30) if getattr(pr, "validity_days", None) is not None else 30),
+            "amount_mmk": int(pr.amount_mmk or 0),
+            "status": pr.status,
+            "slip_url": pr.slip_url,
+            "payment_reference": getattr(pr, "payment_reference", None),
+            "rejection_reason": pr.rejection_reason,
+            "reviewed_by": pr.reviewed_by,
+            "created_at": pr.created_at.isoformat() if pr.created_at else "",
+            "reviewed_at": pr.reviewed_at.isoformat() if pr.reviewed_at else None,
+        })
+    return {"orders": orders, "count": len(orders)}
+
+
+@api_router.get("/admin/orders/export")
+async def export_admin_orders_csv(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    search: str = Query("", max_length=80),
+    days: int = Query(30, ge=0, le=3650),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Export filtered payment orders as UTF-8 BOM CSV for Excel/accounting reconciliation."""
+    import csv
+    import io
+    from fastapi import Response
+
+    data = await get_admin_orders(
+        status_filter=status_filter, search=search, days=days, limit=500, admin=admin, db=db
+    )
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Order ID", "Created At", "Status", "User ID", "Username", "Name",
+        "Package Code", "Package Name", "Amount (MMK)", "Voice Mins",
+        "Recap Credits", "Validity Days", "Payment Ref", "Reviewed By", "Rejection Reason",
+    ])
+    for o in data["orders"]:
+        writer.writerow([
+            o["id"], o["created_at"], o["status"], o["user_id"], o.get("username") or "",
+            o["user_name"], o["package_code"], o["package_name"], o["amount_mmk"],
+            o["minutes"], o["recap_credits"], o["validity_days"], o.get("payment_reference") or "",
+            o.get("reviewed_by") or "", o.get("rejection_reason") or "",
+        ])
+    fname = f"vcp_orders_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.csv"
+    return Response(
+        content=buf.getvalue().encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@api_router.post("/admin/refunds/job/{job_id}")
+async def admin_refund_job_endpoint(
+    job_id: str,
+    req: AdminRefundJobRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Issue a safe idempotent admin refund for a settled or held job."""
+    from app.services.billing import BillingError, admin_refund_settled_job
+
+    reason = (req.reason or "").strip() or "Admin manual refund"
+    try:
+        out = await admin_refund_settled_job(db, admin.id, job_id, reason=reason)
+        await db.commit()
+    except BillingError as exc:
+        await db.rollback()
+        msg = str(exc)
+        raise HTTPException(status_code=404 if "not found" in msg.lower() else 400, detail=msg)
+    return {
+        **out,
+        "refunded_recap_credits": round(int(out["refunded_recap_seconds"] or 0) / 60.0, 2),
+        "refunded_voice_minutes": round(int(out["refunded_voice_seconds"] or 0) / 60.0, 2),
+        "message": f"Job {job_id} အတွက် Credit/Minute ပြန်အမ်းပြီးပါပြီ",
+    }
+
+
+@api_router.get("/admin/refunds")
+async def get_admin_refunds(
+    limit: int = Query(50, ge=1, le=200),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List recent refund transactions for admin review."""
+    from app.models.schema import WalletTransaction
+
+    rows = (
+        await db.execute(
+            select(WalletTransaction, User)
+            .join(User, WalletTransaction.user_id == User.id)
+            .where(WalletTransaction.tx_type == "REFUND")
+            .order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    refunds = []
+    for tx, u in rows:
+        refunds.append({
+            "id": tx.id,
+            "user_id": u.id,
+            "user_name": u.first_name or f"User {u.id}",
+            "wallet_kind": tx.wallet_kind,
+            "recap_credits_refunded": round(int(tx.recap_seconds_delta or 0) / 60.0, 2),
+            "voice_minutes_refunded": round(int(tx.voice_seconds_delta or 0) / 60.0, 2),
+            "reference_id": tx.reference_id,
+            "note": tx.note or "",
+            "created_at": tx.created_at.isoformat() if tx.created_at else "",
+        })
+    return {"refunds": refunds, "count": len(refunds)}
+
+
+def _scan_storage_bytes(root: Path) -> int:
+    total = 0
+    for sub in ("outputs", "recap_output"):
+        d = root / sub
+        if not d.exists():
+            continue
+        try:
+            for p in d.rglob("*"):
+                if p.is_file():
+                    total += int(p.stat().st_size)
+        except Exception:
+            pass
+    return total
+
+
+@api_router.get("/admin/analytics")
+async def get_admin_analytics(
+    days: int = Query(30, ge=0, le=3650),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Real database-aggregated revenue, package sales, usage & cost monitoring."""
+    from collections import defaultdict
+    from app.models.schema import JobCostTelemetry, WalletTransaction
+    from app.services.payments import get_plan_by_code
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days > 0 else None
+
+    # 1. Revenue & Package Sales
+    pr_stmt = select(PaymentRequest)
+    if cutoff is not None:
+        pr_stmt = pr_stmt.where(PaymentRequest.created_at >= cutoff)
+    all_orders = (await db.execute(pr_stmt)).scalars().all()
+
+    total_revenue_mmk = 0
+    approved_orders = 0
+    pending_orders = 0
+    rejected_orders = 0
+    total_recap_sold = 0
+    total_voice_mins_sold = 0
+    paying_users: set[int] = set()
+    by_package: dict[str, dict[str, Any]] = {}
+    by_category_mmk: dict[str, int] = defaultdict(int)
+    daily_revenue: dict[str, dict[str, Any]] = {}
+
+    for pr in all_orders:
+        if pr.status == PaymentStatus.PENDING.value:
+            pending_orders += 1
+        elif pr.status == PaymentStatus.REJECTED.value:
+            rejected_orders += 1
+        elif pr.status == PaymentStatus.APPROVED.value:
+            approved_orders += 1
+            amt = int(pr.amount_mmk or 0)
+            mins = int(pr.minutes or 0)
+            plan = get_plan_by_code(pr.package_code) or {}
+            rc_val = (
+                getattr(pr, "edited_recap_credits", None)
+                if getattr(pr, "edited_recap_credits", None) is not None
+                else (getattr(pr, "recap_credits", None) if getattr(pr, "recap_credits", None) is not None else plan.get("recap_credits", 0))
+            )
+            rc = int(rc_val or 0)
+            total_revenue_mmk += amt
+            total_voice_mins_sold += mins
+            total_recap_sold += rc
+            paying_users.add(pr.user_id)
+            cat_key = "topup" if plan.get("is_topup") else str(plan.get("category") or "voice")
+            by_category_mmk[cat_key] += amt
+
+            pkg = by_package.setdefault(
+                pr.package_code,
+                {
+                    "package_code": pr.package_code,
+                    "name": plan.get("name") or pr.package_code,
+                    "category": cat_key,
+                    "orders": 0,
+                    "revenue_mmk": 0,
+                    "minutes_sold": 0,
+                    "recap_credits_sold": 0,
+                },
+            )
+            pkg["orders"] += 1
+            pkg["revenue_mmk"] += amt
+            pkg["minutes_sold"] += mins
+            pkg["recap_credits_sold"] += rc
+
+            day_dt = pr.reviewed_at or pr.created_at
+            day_key = day_dt.strftime("%Y-%m-%d") if day_dt else "unknown"
+            d_bucket = daily_revenue.setdefault(day_key, {"date": day_key, "orders": 0, "revenue_mmk": 0})
+            d_bucket["orders"] += 1
+            d_bucket["revenue_mmk"] += amt
+
+    package_sales = sorted(
+        by_package.values(), key=lambda x: (-int(x["orders"]), -int(x["revenue_mmk"]))
+    )
+
+    # 2. Usage & Jobs Summary
+    job_stmt = select(Job)
+    if cutoff is not None:
+        job_stmt = job_stmt.where(Job.created_at >= cutoff)
+    all_jobs = (await db.execute(job_stmt)).scalars().all()
+
+    total_jobs = len(all_jobs)
+    success_jobs = 0
+    failed_jobs = 0
+    cancelled_jobs = 0
+    active_users: set[int] = set()
+    total_recap_cr_used = 0.0
+    total_voice_sec_used = 0
+    total_output_sec = 0
+    jobs_by_type: dict[str, int] = defaultdict(int)
+    for j in all_jobs:
+        active_users.add(j.user_id)
+        jobs_by_type[str(j.job_type or "UNKNOWN")] += 1
+        if j.status == JobStatus.SUCCESS.value:
+            success_jobs += 1
+            total_recap_cr_used += float(getattr(j, "recap_credits_charged", 0.0) or 0.0)
+            total_voice_sec_used += int(getattr(j, "voice_audio_seconds", 0) or j.seconds_consumed or 0)
+            total_output_sec += int(getattr(j, "output_duration_seconds", 0) or j.seconds_consumed or 0)
+        elif j.status == JobStatus.FAILED.value:
+            failed_jobs += 1
+        elif j.status == JobStatus.CANCELLED.value:
+            cancelled_jobs += 1
+
+    # 3. Refunds Summary
+    ref_stmt = select(WalletTransaction).where(WalletTransaction.tx_type == "REFUND")
+    if cutoff is not None:
+        ref_stmt = ref_stmt.where(WalletTransaction.created_at >= cutoff)
+    ref_rows = (await db.execute(ref_stmt)).scalars().all()
+    refunded_recap_cr = round(sum(max(0, int(r.recap_seconds_delta or 0)) for r in ref_rows) / 60.0, 2)
+    refunded_voice_min = round(sum(max(0, int(r.voice_seconds_delta or 0)) for r in ref_rows) / 60.0, 2)
+
+    # 3b. Expiration Summary (active grants, expiring within 7 days, expired in window)
+    from app.models.schema import WalletGrant as _WalletGrant
+    from app.services.billing import _as_utc as _wg_as_utc
+
+    _now_utc = datetime.now(timezone.utc)
+    _in_7d = _now_utc + timedelta(days=7)
+    _all_active_grants = (
+        await db.execute(select(_WalletGrant).where(_WalletGrant.status == "ACTIVE"))
+    ).scalars().all()
+    expiring_7d_count = 0
+    expiring_7d_recap_sec = 0
+    expiring_7d_voice_sec = 0
+    for _g in _all_active_grants:
+        _exp = _wg_as_utc(_g.expires_at)
+        if _exp is not None and _now_utc < _exp <= _in_7d:
+            _rv = int(_g.remaining_voice_seconds or 0)
+            _rr = int(_g.remaining_recap_seconds or 0)
+            if (_rv + _rr) > 0:
+                expiring_7d_count += 1
+                expiring_7d_voice_sec += _rv
+                expiring_7d_recap_sec += _rr
+
+    exp_tx_stmt = select(WalletTransaction).where(WalletTransaction.tx_type == "EXPIRE")
+    if cutoff is not None:
+        exp_tx_stmt = exp_tx_stmt.where(WalletTransaction.created_at >= cutoff)
+    exp_tx_rows = (await db.execute(exp_tx_stmt)).scalars().all()
+    expired_recap_cr = round(sum(abs(int(r.recap_seconds_delta or 0)) for r in exp_tx_rows) / 60.0, 2)
+    expired_voice_min = round(sum(abs(int(r.voice_seconds_delta or 0)) for r in exp_tx_rows) / 60.0, 2)
+
+    # 4. Cost Telemetry & Storage (strictly measured/configured, zero mock data)
+    cost_stmt = select(JobCostTelemetry)
+    if cutoff is not None:
+        cost_stmt = cost_stmt.where(JobCostTelemetry.created_at >= cutoff)
+    cost_rows = (await db.execute(cost_stmt)).scalars().all()
+
+    gemini_text_usd = 0.0
+    gemini_tts_usd = 0.0
+    gpu_usd = 0.0
+    bandwidth_usd = 0.0
+    gemini_in_tok = 0
+    gemini_out_tok = 0
+    gemini_requests = 0
+    gpu_runtime_sec = 0.0
+    bandwidth_bytes = 0
+    basis_counts: dict[str, int] = defaultdict(int)
+
+    for ev in cost_rows:
+        usd = float(ev.estimated_cost_usd or 0.0)
+        prov = str(ev.provider or "").lower()
+        basis_counts[str(ev.cost_basis or "estimated")] += 1
+        if prov == "gemini_text":
+            gemini_text_usd += usd
+            gemini_in_tok += int(ev.input_tokens or 0)
+            gemini_out_tok += int(ev.output_tokens or 0)
+            gemini_requests += int(ev.requests_count or 0)
+        elif prov == "gemini_tts":
+            gemini_tts_usd += usd
+        elif prov in ("voxcpm", "runpod", "gpu"):
+            gpu_usd += usd
+            gpu_runtime_sec += float(ev.runtime_seconds or 0.0)
+        elif prov == "bandwidth":
+            bandwidth_usd += usd
+            bandwidth_bytes += int(ev.bytes_transferred or 0)
+
+    storage_bytes = await asyncio.to_thread(_scan_storage_bytes, settings.storage_root)
+    storage_gb = storage_bytes / float(1024 ** 3)
+    storage_usd = storage_gb * float(settings.storage_cost_per_gb_month_usd)
+
+    _dyn_fx = await get_dynamic_setting(db, "usd_to_mmk_rate", default=getattr(settings, "usd_to_mmk_rate", 4500.0))
+    usd_to_mmk = float(_dyn_fx or getattr(settings, "usd_to_mmk_rate", 4500.0) or 4500.0)
+    total_cost_usd = gemini_text_usd + gemini_tts_usd + gpu_usd + bandwidth_usd + storage_usd
+    total_cost_mmk = round(total_cost_usd * usd_to_mmk)
+    est_gross_profit_mmk = total_revenue_mmk - total_cost_mmk
+    arpu_mmk = round(total_revenue_mmk / len(paying_users), 2) if paying_users else 0.0
+    avg_cost_job_usd = (total_cost_usd / total_jobs) if total_jobs > 0 else 0.0
+    avg_cost_job_mmk = round(avg_cost_job_usd * usd_to_mmk, 2)
+
+    return {
+        "window_days": days,
+        "revenue": {
+            "total_approved_mmk": total_revenue_mmk,
+            "approved_orders": approved_orders,
+            "pending_orders": pending_orders,
+            "rejected_orders": rejected_orders,
+            "total_recap_credits_sold": total_recap_sold,
+            "total_voice_minutes_sold": total_voice_mins_sold,
+            "paying_users_count": len(paying_users),
+            "by_category_mmk": dict(by_category_mmk),
+            "top_package": package_sales[0] if package_sales else None,
+            "package_sales": package_sales,
+            "daily": sorted(daily_revenue.values(), key=lambda x: x["date"]),
+        },
+        "usage": {
+            "total_jobs": total_jobs,
+            "success_jobs": success_jobs,
+            "failed_jobs": failed_jobs,
+            "cancelled_jobs": cancelled_jobs,
+            "active_users_count": len(active_users),
+            "total_recap_credits_consumed": round(total_recap_cr_used, 2),
+            "total_voice_minutes_consumed": round(total_voice_sec_used / 60.0, 2),
+            "total_output_minutes": round(total_output_sec / 60.0, 2),
+            "by_job_type": dict(jobs_by_type),
+            "refund_events_count": len(ref_rows),
+            "refunded_recap_credits": refunded_recap_cr,
+            "refunded_voice_minutes": refunded_voice_min,
+        },
+        "expiration": {
+            "active_grants_count": len(_all_active_grants),
+            "expiring_7d_count": expiring_7d_count,
+            "expiring_7d_recap_credits": round(expiring_7d_recap_sec / 60.0, 2),
+            "expiring_7d_voice_minutes": round(expiring_7d_voice_sec / 60.0, 2),
+            "expired_events_count": len(exp_tx_rows),
+            "expired_recap_credits": expired_recap_cr,
+            "expired_voice_minutes": expired_voice_min,
+        },
+        "costs": {
+            "usd_to_mmk_rate": usd_to_mmk,
+            "gemini_text_usd": round(gemini_text_usd, 6),
+            "gemini_tts_usd": round(gemini_tts_usd, 6),
+            "gpu_usd": round(gpu_usd, 6),
+            "bandwidth_usd": round(bandwidth_usd, 6),
+            "storage_usd": round(storage_usd, 6),
+            "total_cost_usd": round(total_cost_usd, 4),
+            "total_cost_mmk": total_cost_mmk,
+            "estimated_gross_profit_mmk": est_gross_profit_mmk,
+            "arpu_mmk": arpu_mmk,
+            "avg_cost_per_job_usd": round(avg_cost_job_usd, 5),
+            "avg_cost_per_job_mmk": avg_cost_job_mmk,
+            "telemetry_summary": {
+                "gemini_requests": gemini_requests,
+                "gemini_input_tokens": gemini_in_tok,
+                "gemini_output_tokens": gemini_out_tok,
+                "gpu_runtime_seconds": round(gpu_runtime_sec, 1),
+                "storage_gb": round(storage_gb, 4),
+                "bandwidth_gb": round(bandwidth_bytes / float(1024 ** 3), 4),
+                "basis_counts": dict(basis_counts),
+            },
+            "configured_rates": {
+                "gpu_provider_mode": getattr(settings, "gpu_provider_mode", "hf_spaces"),
+                "gpu_hourly_cost_usd": float(getattr(settings, "gpu_hourly_cost_usd", 0.0)),
+                "runpod_gpu_cost_per_hour_usd": float(getattr(settings, "runpod_gpu_cost_per_hour_usd", 0.34)),
+                "gemini_input_cost_per_1m_usd": float(getattr(settings, "gemini_input_cost_per_1m_usd", 0.15)),
+                "gemini_output_cost_per_1m_usd": float(getattr(settings, "gemini_output_cost_per_1m_usd", 0.60)),
+                "gemini_tts_cost_per_min_usd": float(getattr(settings, "gemini_tts_cost_per_min_usd", 0.015)),
+                "storage_cost_per_gb_month_usd": float(getattr(settings, "storage_cost_per_gb_month_usd", 0.023)),
+                "bandwidth_cost_per_gb_usd": float(getattr(settings, "bandwidth_cost_per_gb_usd", 0.09)),
+            },
+        },
+    }
+
+
 class BroadcastRequest(BaseModel):
     message: str
+    audience: str = "all"  # all | vip | free | expiring_7d | active_7d | active_30d
+    test_only: bool = False
+
+
+async def _resolve_broadcast_target_ids(db: AsyncSession, audience: str) -> list[int]:
+    from app.models.schema import WalletGrant
+
+    aud = (audience or "all").strip().lower()
+    stmt = select(User.id).where(User.status == "ACTIVE", User.bot_blocked.is_not(True))
+    now_utc = datetime.now(timezone.utc)
+    if aud == "vip":
+        stmt = stmt.where(User.account_category == AccountCategory.PURCHASED.value)
+    elif aud == "free":
+        stmt = stmt.where(User.account_category == AccountCategory.FREE.value)
+    elif aud == "expiring_7d":
+        soon_utc = now_utc + timedelta(days=7)
+        exp_sub = (
+            select(WalletGrant.user_id)
+            .where(
+                WalletGrant.status == "ACTIVE",
+                or_(WalletGrant.remaining_voice_seconds > 0, WalletGrant.remaining_recap_seconds > 0),
+                WalletGrant.expires_at.is_not(None),
+                WalletGrant.expires_at >= now_utc,
+                WalletGrant.expires_at <= soon_utc,
+            )
+            .distinct()
+        )
+        stmt = stmt.where(User.id.in_(exp_sub))
+    elif aud in ("active_7d", "active_30d"):
+        days_back = 7 if aud == "active_7d" else 30
+        cutoff = now_utc - timedelta(days=days_back)
+        act_sub = select(Job.user_id).where(Job.created_at >= cutoff).distinct()
+        stmt = stmt.where(User.id.in_(act_sub))
+    return list((await db.execute(stmt)).scalars().all())
+
+
+@api_router.get("/admin/broadcast/preview")
+async def preview_admin_broadcast(
+    audience: str = Query("all"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return live targeted recipient count for a broadcast audience segment."""
+    ids = await _resolve_broadcast_target_ids(db, audience)
+    valid_ids = [uid for uid in ids if len(str(uid)) >= 8]
+    return {
+        "audience": (audience or "all").strip().lower(),
+        "targeted": len(ids),
+        "deliverable": len(valid_ids),
+    }
+
+
+@api_router.get("/admin/broadcast/history")
+async def get_admin_broadcast_history(
+    limit: int = Query(20, ge=1, le=50),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Recent BroadcastCampaign history for the Admin Broadcast screen."""
+    from app.models.schema import BroadcastCampaign
+
+    rows = (await db.execute(
+        select(BroadcastCampaign)
+        .order_by(BroadcastCampaign.created_at.desc(), BroadcastCampaign.id.desc())
+        .limit(limit)
+    )).scalars().all()
+    return {
+        "campaigns": [
+            {
+                "id": c.id,
+                "admin_id": c.admin_id,
+                "status": c.status,
+                "snippet": (c.message_text or "")[:140],
+                "total_recipients": int(c.total_recipients or 0),
+                "sent_count": int(c.sent_count or 0),
+                "failed_count": int(c.failed_count or 0),
+                "skipped_count": int(c.skipped_count or 0),
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "finished_at": c.finished_at.isoformat() if c.finished_at else None,
+            }
+            for c in rows
+        ]
+    }
 
 
 @api_router.post("/admin/broadcast")
@@ -15736,7 +16661,7 @@ async def send_admin_broadcast(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Trigger a broadcast message delivery to all registered bot users with comprehensive telemetry."""
+    """Trigger a broadcast message delivery (supports audience segments & self test_only preview)."""
     text = req.message.strip()
     if not text or len(text) < 4:
         raise HTTPException(
@@ -15744,24 +16669,35 @@ async def send_admin_broadcast(
             detail="Broadcast message is too short. Minimum 4 characters required to prevent accidental sends.",
         )
     if len(text) > 4096:
-        # Telegram rejects message text over 4096 chars; without this
-        # check every per-user send failed silently and the campaign
-        # "completed" with 0 delivered (hunt #3 B2). Reject up front,
-        # before any delivery is attempted.
         raise HTTPException(
             status_code=400,
             detail="Broadcast စာသား ရှည်လွန်းပါတယ် — Telegram ကန့်သတ်ချက် (အက္ခရာ 4096 လုံး) ထက် ကျော်နေပါတယ်။ တိုအောင် ပြင်ပြီး ပြန်စမ်းကြည့်ပါ။",
         )
 
+    if req.test_only:
+        if not settings.bot_token:
+            raise HTTPException(status_code=503, detail="Bot token မရှိသေးသောကြောင့် Test DM ပို့၍ မရပါ။")
+        from aiogram import Bot
+
+        bot = Bot(token=settings.bot_token)
+        try:
+            await bot.send_message(chat_id=admin.id, text=f"[TEST PREVIEW]\n\n{text}")
+        finally:
+            await bot.session.close()
+        return {
+            "success": True,
+            "test_only": True,
+            "sent_count": 1,
+            "failed_count": 0,
+            "message": f"Test Preview ကို Admin ({admin.id}) DM ထဲသို့ ပို့ပြီးပါပြီ",
+        }
+
     # 1. Total users in database
     total_db_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
 
-    # 2. Targeted active users (bot_blocked users are send-suppressed
-    # via their flag only — they are not admin-banned; hunt B1)
-    stmt = select(User.id).where(User.status == "ACTIVE", User.bot_blocked.is_not(True))
-    res = await db.execute(stmt)
-    user_ids = res.scalars().all()
-    db_blocked_count = total_db_users - len(user_ids)
+    # 2. Targeted active users filtered by audience segment
+    user_ids = await _resolve_broadcast_target_ids(db, req.audience)
+    db_blocked_count = max(0, total_db_users - len(user_ids))
 
     # Deliver via Telegram Bot. Batch AJ M2: with no bot token the
     # endpoint previously fell through to a {"success": True,
@@ -15923,3 +16859,439 @@ async def send_admin_broadcast(
         status_code=503,
         detail="Bot token မရှိသေးသောကြောင့် Broadcast ပို့၍ မရပါ။",
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ADMIN POWER TOOLS — Dynamic Multi-Bank Accounts, Grant Ops & Ops Queues
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class AdminPaymentAccountPayload(BaseModel):
+    id: Optional[str] = None
+    provider: str
+    account_type: str = "bank"  # mobile_wallet | bank | crypto | other
+    number: str
+    name: str = ""
+    bank_branch: str = ""
+    note: str = ""
+    color: str = "#0047BA"
+    qr_url: str = ""
+    is_active: bool = True
+    sort_order: Optional[int] = None
+
+
+class AdminPaymentAccountsBulkPayload(BaseModel):
+    accounts: Optional[List[AdminPaymentAccountPayload]] = None
+    account: Optional[AdminPaymentAccountPayload] = None
+
+
+@api_router.get("/admin/payment-accounts")
+async def get_admin_payment_accounts(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List ALL payment & bank accounts (active + inactive) plus preset Myanmar bank templates."""
+    from app.services.payments import PAYMENT_ACCOUNT_PRESETS, list_payment_accounts
+
+    accounts = await list_payment_accounts(db, include_inactive=True)
+    return {"accounts": accounts, "presets": PAYMENT_ACCOUNT_PRESETS, "count": len(accounts)}
+
+
+@api_router.post("/admin/payment-accounts")
+async def upsert_admin_payment_accounts(
+    payload: AdminPaymentAccountsBulkPayload,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Add/update a single bank/wallet account OR save an ordered list of accounts."""
+    from app.services.payments import list_payment_accounts, save_payment_accounts
+
+    try:
+        if payload.accounts is not None:
+            raw_list = [a.model_dump() for a in payload.accounts]
+        elif payload.account is not None:
+            existing = await list_payment_accounts(db, include_inactive=True)
+            acc_dict = payload.account.model_dump()
+            acc_id = (acc_dict.get("id") or "").strip()
+            replaced = False
+            if acc_id:
+                for i, cur in enumerate(existing):
+                    if cur.get("id") == acc_id:
+                        if acc_dict.get("sort_order") is None:
+                            acc_dict["sort_order"] = cur.get("sort_order", (i + 1) * 10)
+                        if not acc_dict.get("qr_url") and cur.get("qr_url"):
+                            acc_dict["qr_url"] = cur["qr_url"]
+                        existing[i] = acc_dict
+                        replaced = True
+                        break
+            if not replaced:
+                if acc_dict.get("sort_order") is None:
+                    max_ord = max((int(a.get("sort_order", 0)) for a in existing), default=0)
+                    acc_dict["sort_order"] = max_ord + 10
+                existing.append(acc_dict)
+            raw_list = existing
+        else:
+            raise HTTPException(status_code=400, detail="Provide 'account' or 'accounts'")
+
+        saved = await save_payment_accounts(db, raw_list, admin_id=admin.id)
+        db.add(AuditLog(
+            admin_id=admin.id,
+            action="settings.payment_accounts_update",
+            target_type="bot_setting",
+            target_id="payment_accounts_json",
+            details_json=json.dumps({"count": len(saved), "active": sum(1 for a in saved if a.get("is_active"))}),
+        ))
+        await db.commit()
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    return {"success": True, "accounts": saved, "message": "ငွေလွှဲ Bank / Wallet အကောင့်များ သိမ်းပြီးပါပြီ"}
+
+
+@api_router.delete("/admin/payment-accounts/{account_id}")
+async def delete_admin_payment_account(
+    account_id: str,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Remove a bank/wallet payment account (always keeps at least 1 active account)."""
+    from app.services.payments import list_payment_accounts, save_payment_accounts
+
+    existing = await list_payment_accounts(db, include_inactive=True)
+    remaining = [a for a in existing if a.get("id") != account_id]
+    if len(remaining) == len(existing):
+        raise HTTPException(status_code=404, detail="Payment account not found")
+    try:
+        saved = await save_payment_accounts(db, remaining, admin_id=admin.id)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="settings.payment_account_delete",
+        target_type="bot_setting",
+        target_id=account_id,
+        details_json=json.dumps({"remaining": len(saved)}),
+    ))
+    await db.commit()
+    return {"success": True, "accounts": saved, "message": "အကောင့် ဖျက်ပြီးပါပြီ"}
+
+
+@api_router.post("/admin/payment-accounts/{account_id}/qr")
+async def upload_payment_account_qr(
+    account_id: str,
+    file: UploadFile = File(...),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Upload a QR code image (PNG/JPEG/WebP, <= 3 MB) for a payment/bank account."""
+    from app.services.payments import list_payment_accounts, save_payment_accounts
+
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]+", "", account_id)[:40]
+    if not safe_id:
+        raise HTTPException(status_code=400, detail="Invalid account id")
+    existing = await list_payment_accounts(db, include_inactive=True)
+    target = next((a for a in existing if a.get("id") == safe_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Payment account not found")
+
+    raw = await file.read()
+    if not raw or len(raw) > 3 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="QR ပုံသည် 3 MB ထက် မကြီးရပါ")
+
+    ext = None
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        ext = ".png"
+    elif raw[:3] == b"\xff\xd8\xff":
+        ext = ".jpg"
+    elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        ext = ".webp"
+    if not ext:
+        raise HTTPException(status_code=400, detail="PNG, JPG, သို့မဟုတ် WebP ပုံသာ တင်နိုင်ပါသည်")
+
+    qr_dir = Path(settings.storage_root) / "payment_qr"
+    qr_dir.mkdir(parents=True, exist_ok=True)
+    for old_ext in (".png", ".jpg", ".webp"):
+        (qr_dir / f"{safe_id}{old_ext}").unlink(missing_ok=True)
+    dest = qr_dir / f"{safe_id}{ext}"
+    dest.write_bytes(raw)
+    qr_url = f"/api/payment-qr/{safe_id}?v={int(time.time())}"
+    target["qr_url"] = qr_url
+    saved = await save_payment_accounts(db, existing, admin_id=admin.id)
+    await db.commit()
+    return {"success": True, "qr_url": qr_url, "accounts": saved}
+
+
+@api_router.get("/payment-qr/{account_id}")
+async def serve_payment_account_qr(account_id: str):
+    """Serve an uploaded bank/wallet QR image for users inside the payment drawer."""
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]+", "", account_id)[:40]
+    if not safe_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    qr_dir = Path(settings.storage_root) / "payment_qr"
+    for ext, mime in ((".png", "image/png"), (".jpg", "image/jpeg"), (".webp", "image/webp")):
+        cand = qr_dir / f"{safe_id}{ext}"
+        if cand.is_file():
+            return FileResponse(cand, media_type=mime, headers={"Cache-Control": "public, max-age=3600"})
+    raise HTTPException(status_code=404, detail="QR image not found")
+
+
+@api_router.get("/admin/expiring-grants")
+async def get_admin_expiring_grants(
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(100, ge=1, le=200),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Global watchlist of active paid WalletGrant lots expiring within N days."""
+    from app.models.schema import WalletGrant
+
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc + timedelta(days=days)
+    stmt = (
+        select(WalletGrant, User)
+        .join(User, WalletGrant.user_id == User.id)
+        .where(
+            WalletGrant.status == "ACTIVE",
+            or_(WalletGrant.remaining_voice_seconds > 0, WalletGrant.remaining_recap_seconds > 0),
+            WalletGrant.expires_at.is_not(None),
+            WalletGrant.expires_at <= cutoff,
+        )
+        .order_by(WalletGrant.expires_at.asc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    items = []
+    for g, u in rows:
+        exp = g.expires_at
+        if exp is not None and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        rem_secs = max(0.0, (exp - now_utc).total_seconds()) if exp else 0.0
+        items.append({
+            "grant_id": g.id,
+            "user_id": u.id,
+            "user_name": u.first_name or f"User {u.id}",
+            "username": u.username,
+            "source_type": g.source_type,
+            "package_code": g.package_code or "",
+            "package_name": g.package_name or g.package_code or g.source_type,
+            "remaining_voice_minutes": round(int(g.remaining_voice_seconds or 0) / 60.0, 2),
+            "remaining_recap_credits": round(int(g.remaining_recap_seconds or 0) / 60.0, 2),
+            "initial_voice_minutes": round(int(g.initial_voice_seconds or 0) / 60.0, 2),
+            "initial_recap_credits": round(int(g.initial_recap_seconds or 0) / 60.0, 2),
+            "expires_at": exp.isoformat() if exp else None,
+            "days_left": round(rem_secs / 86400.0, 1),
+            "is_past_due": bool(exp and exp <= now_utc),
+        })
+    return {"days": days, "count": len(items), "grants": items}
+
+
+class AdminExtendGrantRequest(BaseModel):
+    add_days: int = 7
+    reason: str = ""
+    notify_user: bool = False
+
+
+@api_router.post("/admin/grants/{grant_id}/extend")
+async def extend_admin_wallet_grant(
+    grant_id: int,
+    req: AdminExtendGrantRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Extend an active WalletGrant's expiry date by N days."""
+    from app.models.schema import WalletGrant
+
+    if req.add_days < 1 or req.add_days > 365:
+        raise HTTPException(status_code=400, detail="add_days must be between 1 and 365")
+    grant = await db.get(WalletGrant, int(grant_id))
+    if grant is None:
+        raise HTTPException(status_code=404, detail="Wallet grant not found")
+    if grant.status != "ACTIVE":
+        raise HTTPException(status_code=400, detail=f"Cannot extend grant with status {grant.status}")
+
+    now_utc = datetime.now(timezone.utc)
+    base_exp = grant.expires_at
+    if base_exp is not None and base_exp.tzinfo is None:
+        base_exp = base_exp.replace(tzinfo=timezone.utc)
+    if base_exp is None or base_exp < now_utc:
+        base_exp = now_utc
+    new_exp = base_exp + timedelta(days=int(req.add_days))
+    old_exp_iso = grant.expires_at.isoformat() if grant.expires_at else None
+    grant.expires_at = new_exp
+    grant.reminded_3d_at = None
+    grant.reminded_24h_at = None
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="grant.extend",
+        target_type="wallet_grant",
+        target_id=str(grant.id),
+        details_json=json.dumps({
+            "user_id": grant.user_id,
+            "source_type": grant.source_type,
+            "add_days": int(req.add_days),
+            "old_expires_at": old_exp_iso,
+            "new_expires_at": new_exp.isoformat(),
+            "reason": (req.reason or "").strip()[:200],
+        }),
+    ))
+    await db.commit()
+
+    if req.notify_user and settings.bot_token:
+        try:
+            from aiogram import Bot
+
+            bot = Bot(token=settings.bot_token)
+            try:
+                rem_parts = []
+                if int(grant.remaining_recap_seconds or 0) > 0:
+                    rem_parts.append(f"{round(int(grant.remaining_recap_seconds) / 60.0, 2)} Recap Credits")
+                if int(grant.remaining_voice_seconds or 0) > 0:
+                    rem_parts.append(f"{round(int(grant.remaining_voice_seconds) / 60.0, 2)} Voice Mins")
+                bal_str = " + ".join(rem_parts) or "Active Package"
+                await bot.send_message(
+                    chat_id=grant.user_id,
+                    text=(
+                        f"🎁 <b>Package သက်တမ်း တိုးပေးပြီးပါပြီ!</b>\n\n"
+                        f"• လက်ကျန်: <b>{bal_str}</b>\n"
+                        f"• ထပ်တိုးသက်တမ်း: <b>+{int(req.add_days)} ရက်</b>\n"
+                        f"• သက်တမ်းကုန်မည့်ရက်အသစ်: <code>{new_exp.strftime('%Y-%m-%d')}</code>"
+                    ),
+                    parse_mode="HTML",
+                )
+            finally:
+                await bot.session.close()
+        except Exception as exc:
+            logger.warning("Failed to send grant extend DM to %s: %s", grant.user_id, exc)
+
+    return {
+        "success": True,
+        "grant_id": grant.id,
+        "new_expires_at": new_exp.isoformat(),
+        "message": f"သက်တမ်း +{int(req.add_days)} ရက် တိုးပေးပြီးပါပြီ ({new_exp.strftime('%Y-%m-%d')})",
+    }
+
+
+class AdminRevokeGrantRequest(BaseModel):
+    reason: str = "Admin revoked grant"
+
+
+@api_router.post("/admin/grants/{grant_id}/revoke")
+async def revoke_admin_wallet_grant(
+    grant_id: int,
+    req: AdminRevokeGrantRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Revoke an active WalletGrant and deduct its unused voice/recap seconds safely."""
+    from app.models.schema import WalletGrant
+    from app.services.billing import _sync_vip_tier_after_expiry, _wallet_kind_for, append_wallet_transaction
+    from app.services.ledger import get_minute_balance
+
+    grant = await db.get(WalletGrant, int(grant_id))
+    if grant is None:
+        raise HTTPException(status_code=404, detail="Wallet grant not found")
+    if grant.status != "ACTIVE":
+        raise HTTPException(status_code=400, detail=f"Grant is already {grant.status}")
+
+    user = await db.get(User, grant.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    bal = await get_minute_balance(db, user.id)
+
+    rem_v = max(0, int(grant.remaining_voice_seconds or 0))
+    rem_r = max(0, int(grant.remaining_recap_seconds or 0))
+    grant.remaining_voice_seconds = 0
+    grant.remaining_recap_seconds = 0
+    grant.status = "REVOKED"
+    grant.expired_at = utc_now()
+
+    ded_v = 0
+    ded_r = 0
+    if rem_v > 0:
+        cur_v = max(0, int(bal.purchased_seconds or 0))
+        ded_v = min(cur_v, rem_v)
+        bal.purchased_seconds = max(0, cur_v - ded_v)
+    if rem_r > 0:
+        cur_r = max(0, int(round(float(user.recap_credits or 0.0) * 60.0)))
+        ded_r = min(cur_r, rem_r)
+        user.recap_credits = round(max(0.0, (cur_r - ded_r) / 60.0), 4)
+
+    await _sync_vip_tier_after_expiry(db, user, bal)
+    await append_wallet_transaction(
+        db,
+        user=user,
+        balance=bal,
+        tx_type="ADMIN_ADJUST",
+        wallet_kind=_wallet_kind_for(ded_r, ded_v),
+        recap_seconds_delta=-ded_r,
+        voice_seconds_delta=-ded_v,
+        reference_id=f"REVOKE:{grant.id}",
+        note=(req.reason or "Admin revoked grant").strip()[:200],
+    )
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="grant.revoke",
+        target_type="wallet_grant",
+        target_id=str(grant.id),
+        details_json=json.dumps({
+            "user_id": user.id,
+            "source_type": grant.source_type,
+            "revoked_voice_minutes": round(ded_v / 60.0, 2),
+            "revoked_recap_credits": round(ded_r / 60.0, 2),
+            "reason": (req.reason or "").strip()[:200],
+        }),
+    ))
+    await db.commit()
+    return {
+        "success": True,
+        "grant_id": grant.id,
+        "revoked_voice_minutes": round(ded_v / 60.0, 2),
+        "revoked_recap_credits": round(ded_r / 60.0, 2),
+        "message": "Grant ကို ရုပ်သိမ်းပြီးပါပြီ",
+    }
+
+
+@api_router.get("/admin/ops-queues")
+async def get_admin_ops_queues(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Operational queues summary: pending Custom Voice Requests & pending Group AI Escalations."""
+    from app.models.schema import CustomVoiceRequest, GroupAiEscalation
+
+    cv_rows = (await db.execute(
+        select(CustomVoiceRequest)
+        .where(CustomVoiceRequest.status == "PENDING")
+        .order_by(CustomVoiceRequest.created_at.desc())
+        .limit(20)
+    )).scalars().all()
+    esc_rows = (await db.execute(
+        select(GroupAiEscalation)
+        .where(GroupAiEscalation.status == "PENDING")
+        .order_by(GroupAiEscalation.created_at.desc())
+        .limit(20)
+    )).scalars().all()
+    return {
+        "custom_voice_pending_count": len(cv_rows),
+        "custom_voice_requests": [
+            {
+                "id": r.id,
+                "user_id": r.user_id,
+                "name": getattr(r, "requested_name", None) or getattr(r, "name", "") or f"Voice #{r.id}",
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in cv_rows
+        ],
+        "group_ai_escalations_pending_count": len(esc_rows),
+        "group_ai_escalations": [
+            {
+                "id": e.id,
+                "author_name": getattr(e, "author_name", "") or "",
+                "question": (getattr(e, "question_text", "") or "")[:140],
+                "draft_reply": (getattr(e, "draft_reply", "") or "")[:140],
+                "status": e.status,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in esc_rows
+        ],
+    }

@@ -314,10 +314,12 @@ async def test_create_voice_clone_job_normalizes_speed_preset(db_session, tmp_pa
     await db_session.flush()
 
     monkeypatch.setattr(queue_mod, "grant_monthly_free_allowance", AsyncMock(return_value=None))
-    monkeypatch.setattr(
-        queue_mod, "get_minute_balance",
-        AsyncMock(return_value=SimpleNamespace(total_usable_seconds=600, clone_spendable_seconds=600)),
-    )
+    from app.services.ledger import get_minute_balance
+    b1 = await get_minute_balance(db_session, user.id)
+    b1.purchased_seconds = 600
+    b2 = await get_minute_balance(db_session, user2.id)
+    b2.purchased_seconds = 600
+    await db_session.flush()
 
     job_fast, reason = await create_voice_clone_job(
         db_session, user.id, text="မင်္ဂလာပါ", model_id=model.id, speed_preset="fast",

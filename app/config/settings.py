@@ -381,6 +381,17 @@ class Settings(BaseSettings):
     watermark_size: int = Field(default=16, alias="WATERMARK_SIZE")
 
 
+    # Monetization & Cost Monitoring Benchmarks (all optional; actual vs estimated shown in Admin Analytics)
+    usd_to_mmk_rate: float = Field(default=4500.0, alias="USD_TO_MMK_RATE")
+    gemini_input_cost_per_1m_usd: float = Field(default=0.15, alias="GEMINI_INPUT_COST_PER_1M_USD")
+    gemini_output_cost_per_1m_usd: float = Field(default=0.60, alias="GEMINI_OUTPUT_COST_PER_1M_USD")
+    gemini_tts_cost_per_min_usd: float = Field(default=0.015, alias="GEMINI_TTS_COST_PER_MIN_USD")
+    gpu_provider_mode: str = Field(default="hf_spaces", alias="GPU_PROVIDER_MODE")  # hf_spaces | runpod | local_vps
+    gpu_hourly_cost_usd: float = Field(default=0.0, alias="GPU_HOURLY_COST_USD")
+    runpod_gpu_cost_per_hour_usd: float = Field(default=0.39, alias="RUNPOD_GPU_COST_PER_HOUR_USD")
+    storage_cost_per_gb_month_usd: float = Field(default=0.15, alias="STORAGE_COST_PER_GB_MONTH_USD")
+    bandwidth_cost_per_gb_usd: float = Field(default=0.09, alias="BANDWIDTH_COST_PER_GB_USD")
+
     @property
     def admin_ids(self) -> set[int]:
         return _parse_ids(self.admin_ids_raw)

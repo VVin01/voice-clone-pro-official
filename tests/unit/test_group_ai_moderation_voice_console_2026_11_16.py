@@ -545,9 +545,9 @@ async def test_knowledge_sheet_hard_cap_8000(monkeypatch):
 
 
 def test_guardrail_precedence_in_prompt():
-    """System guardrails (Burmese-only, zero emoji, payment deferral, credits never expire) remain pinned."""
-    # Even if custom sheet makes false claims, pinned guardrails in SYSTEM_INSTRUCTIONS win
-    custom_sheet = "Credits expire after 30 days."
+    """System guardrails (Burmese-only, zero emoji, payment deferral, 30-day validity + grandfather) remain pinned."""
+    # Even if custom sheet carries stale "never expires" text, pinned guardrails in SYSTEM_INSTRUCTIONS win
+    custom_sheet = "Credits never expire."
     prompt = gai.build_prompt(
         author_name="Aung",
         text="အသံသွင်းခွင့် သက်တမ်းရှိလား",
@@ -555,8 +555,9 @@ def test_guardrail_precedence_in_prompt():
         is_reply_to_bot=False,
         fact_sheet=custom_sheet,
     )
-    assert "Credits expire after 30 days." in prompt
-    assert "Purchased minutes/credits NEVER expire" in gai.SYSTEM_INSTRUCTIONS
+    assert "Credits never expire." in prompt
+    assert "၃၀ ရက် (30 Days)" in gai.SYSTEM_INSTRUCTIONS
+    assert "Grandfathered" in gai.SYSTEM_INSTRUCTIONS
     assert "မြန်မာဘာသာ သက်သက်" in gai.SYSTEM_INSTRUCTIONS
     assert "Emoji လုံးဝ မပါရ" in gai.SYSTEM_INSTRUCTIONS
 

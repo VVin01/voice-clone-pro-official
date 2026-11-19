@@ -415,8 +415,11 @@ def test_tts_prefill_logic_pins():
     body = body[: body.index("\n}\n") + 3]
     assert '!== "")' in body
     assert body.index("ttsSampleSettled = true;") < body.index("input.value =")
-    # Both TTS entry paths carry the hook (BI-4 discipline).
-    assert APP_JS.count("window.maybePrefillTtsSample()") == 2
+    # Unified tab router: setupTabs() delegates to switchTab(), which carries
+    # the TTS prefill hook once for both nav-bar clicks and programmatic jumps.
+    assert APP_JS.count("window.maybePrefillTtsSample()") >= 1
+    setup_slice = APP_JS[APP_JS.index("function setupTabs()"):APP_JS.index("function setupTabs()") + 420]
+    assert "switchTab(targetTab)" in setup_slice
     # Real edits / sample chips / clear settle the prefill.
     assert APP_JS.count("ttsSampleSettled = true;") >= 4
 

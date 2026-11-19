@@ -396,10 +396,10 @@ async def test_buy_menu_header_free_vs_vip(db_session):
         assert "Top Up a Plan" in vip_text
         # The Free->VIP pitch is a dead end for a VIP; it must not show.
         assert "Buying moves you from Free to VIP" not in vip_text
-        # All 8 catalogue buttons remain available as top-ups.
+        # All 22 official catalogue buttons remain available cleanly.
         kb = cb_vip.message.edit_text.call_args[1]["reply_markup"]
         buy_cbs = [c for c in _callbacks(kb) if c.startswith("buy_pkg:")]
-        assert len(buy_cbs) == 8
+        assert len(buy_cbs) == 22
 
 
 @pytest.mark.asyncio

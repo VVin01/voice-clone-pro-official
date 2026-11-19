@@ -150,6 +150,7 @@ PAYLOAD_KEYS = [
     # settings ride the ddConfigExtras() spread after sub_lines.
     "burn_subtitles", "sub_bottom_margin", "sub_y", "sub_x", "sub_w", "sub_style",
     "sub_font_size", "sub_font", "sub_lines", "include_logo", "logo_pos",
+    "logo_scale", "logo_opacity",
     "duration_seconds", "script_review", "source_language",
     "render_quality", "tts_engine", "gemini_voice",
     # Batch BV deliberate pin update: the own-voice sample handle

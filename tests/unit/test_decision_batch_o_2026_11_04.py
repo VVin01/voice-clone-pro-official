@@ -560,30 +560,28 @@ class _StubUser:
 
 @pytest.mark.asyncio
 async def test_vip_plans_db_price_wins_and_catalogue_fills(tmp_path, monkeypatch):
+    from app.services.payments import PLAN_CATALOGUE
+
     _engine, maker = await _open_store(tmp_path, monkeypatch)
     async with maker() as session:
         session.add(PricingPlan(
-            code="MIN_30", minutes=31, price_mmk=99999,
-            is_active=True, sort_order=2,
+            code="voice_starter", category="voice", minutes=25, recap_credits=0,
+            price_mmk=99999, is_active=True, sort_order=2,
         ))
         await session.commit()
     async with maker() as session:
         result = await api_mod.get_vip_plans(_StubUser(), session)
     plans = {p["id"]: p for p in result["plans"]}
-    assert set(plans) == {
-        "MIN_10", "MIN_30", "MIN_60", "voice_studio_pro",
-        "recap_starter", "recap_studio_pro", "combined_starter",
-        "all_in_one_master",
-    }
+    assert set(plans) == {p["code"] for p in PLAN_CATALOGUE}
     # DB row wins over the catalogue for the seeded plan.
-    assert plans["MIN_30"]["price"] == "99,999"
-    assert plans["MIN_30"]["minutes"] == 31
-    # No DB row: catalogue values, formatted exactly as before.
-    assert plans["MIN_10"]["price"] == "8,000"
-    assert plans["recap_starter"]["price"] == "20,000"
-    assert plans["recap_starter"]["recap_credits"] == 5
-    assert plans["all_in_one_master"]["price"] == "180,000"
-    assert plans["voice_studio_pro"]["minutes"] == 250
+    assert plans["voice_starter"]["price"] == "99,999"
+    assert plans["voice_starter"]["minutes"] == 25
+    # Official catalogue defaults resolve accurately for the remaining rows.
+    assert plans["voice_mini"]["price"] == "3,000"
+    assert plans["recap_starter"]["price"] == "10,000"
+    assert plans["recap_starter"]["recap_credits"] == 30
+    assert plans["combo_business"]["price"] == "108,000"
+    assert plans["voice_business"]["minutes"] == 220
 
 
 # ── (6) broadcast report cosmetics ──────────────────────────────────

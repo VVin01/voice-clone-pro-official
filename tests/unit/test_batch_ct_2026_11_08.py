@@ -33,17 +33,10 @@ def test_ct_no_stale_per_movie_claims_anywhere():
 
 
 def test_ct_alloc_strings_state_credits_and_tiered_rate():
-    for new in [
-        "Recap Credit ၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)",
-        "Recap Credit ၂၅ ခု (၃ မိနစ်ကို ၁ Credit နှုန်း)",
-        "မိနစ် ၃၀ + Recap Credit ၅ ခု",
-        "မိနစ် ၅၀၀ + Recap Credit ၆၀ ခု",
-        "5 Recap Credits (1 credit per 3 min)",
-        "25 Recap Credits (1 credit per 3 min)",
-        "30 minutes + 5 Recap Credits",
-        "500 minutes + 60 Recap Credits",
-    ]:
-        assert new in I18N, new
+    # Official 1 Credit = 1 Min Final Output model copies (API & UI).
+    api_py = (ROOT / "app/webapp/api.py").read_text(encoding="utf-8")
+    assert "1 Recap Credit = 1 Minute Final Recap Output" in api_py
+    assert "1 Recap Credit = Final Output 1 မိနစ်" in api_py
 
 
 def test_ct_bot_recap_button_says_credits_not_videos():
@@ -55,10 +48,11 @@ def test_ct_bot_recap_button_says_credits_not_videos():
 
 
 def test_ct_price_spans_carry_plan_codes():
-    for code in ["MIN_10", "voice_studio_pro", "recap_starter",
-                 "recap_studio_pro", "combined_starter", "all_in_one_master"]:
-        assert f'data-price-for="{code}"' in INDEX, code
-    assert INDEX.count("data-price-for=") == 6
+    # Official storefront renders all 22 DB-driven plans dynamically across 4 category grids.
+    for eid in ("vip-sub-plans", "vip-grid-voice", "vip-grid-recap", "vip-grid-combo", "vip-grid-topup"):
+        assert f'id="{eid}"' in INDEX
+    for fn in ("syncPlanPrices", "switchPlanCategory"):
+        assert fn in APPJS
 
 
 def test_ct_appjs_syncs_prices_from_api():

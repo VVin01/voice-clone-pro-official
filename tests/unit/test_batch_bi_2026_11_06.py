@@ -458,10 +458,16 @@ def test_setup_tabs_handler_has_tts_quota_hook():
     handler = APP_JS.split("function setupTabs()", 1)[1].split(
         "async function loadUserProfile", 1
     )[0]
-    # The handler still does its own pane switching (no delegation).
-    assert "loadUserHistory();" in handler  # the history hook pattern
-    assert 'if (targetTab === "tab-tts" && typeof window.refreshTtsQuota === "function") {' in handler
-    assert "window.refreshTtsQuota();" in handler
+    # 2026-11-19 refactor: setupTabs() now delegates to switchTab(targetTab),
+    # eliminating the duplicated handler so every switchTab hook (history,
+    # TTS quota, admin lifecycle, prefill) fires consistently from both paths.
+    assert "switchTab(targetTab);" in handler
+    body = APP_JS.split("function switchTab(tabId)", 1)[1].split(
+        "window.switchTab = switchTab;", 1
+    )[0]
+    assert "loadUserHistory();" in body
+    assert 'if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {' in body
+    assert "window.refreshTtsQuota();" in body
 
 
 def test_switch_tab_retains_tts_quota_hook():

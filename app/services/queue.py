@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import logging
+import math
+import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import Job, User, VoiceModel, utc_now
+from app.services.billing import (
+    BILLING_MODE_ADMIN_FREE,
+    BILLING_MODE_VOICE_ONLY,
+    BillingError,
+    reserve_for_job,
+)
 from app.services.ledger import get_minute_balance, get_or_create_user, grant_monthly_free_allowance
 from app.services.models import get_authorized_model
 from app.services.speed import (
@@ -294,7 +302,8 @@ async def create_voice_clone_job(
     if source_audio_path and not Path(source_audio_path).is_file():
         return None, "AUDIO_FILE_NOT_FOUND"
 
-    # 4. Check balance (admins have unlimited access and do not require balance)
+    # 4. Check balance & reserve (admins have unlimited access and do not require balance)
+    estimated_seconds = 0
     if not is_admin:
         await grant_monthly_free_allowance(session, user_id)
         balance = await get_minute_balance(session, user_id)
@@ -303,18 +312,8 @@ async def create_voice_clone_job(
         if balance.clone_spendable_seconds <= 0:
             return None, "INSUFFICIENT_BALANCE"
 
-        # Pre-check (hunt F6): the balance is only charged AFTER
-        # generation, by the real duration (worker stage 4). A job
-        # whose text plainly cannot fit the balance therefore burned a
-        # full GPU generation, produced unusable output, and failed
-        # with nothing delivered. Reject those up front with the same
-        # mapped insufficient-balance detail. The estimate uses the
-        # production-measured speaking rate scaled by the job's speed
-        # preset plus a safety margin (see estimate_voice_job_seconds),
-        # so the jobs stopped here are the ones that would actually
-        # have failed at charge time.
         if valid_text:
-            estimated_seconds = estimate_voice_job_seconds(valid_text, speed_preset)
+            estimated_seconds = max(1, int(math.ceil(estimate_voice_job_seconds(valid_text, speed_preset))))
             if estimated_seconds > balance.clone_spendable_seconds:
                 logger.info(
                     "Voice job pre-check rejected for user %s: ~%ss estimated vs %ss clone-spendable",
@@ -324,7 +323,6 @@ async def create_voice_clone_job(
                 )
                 return None, "INSUFFICIENT_BALANCE"
 
-    import uuid
     if not edge_voice:
         if preset_voice:
             from app.services.curated_voices import get_curated_voice
@@ -334,8 +332,24 @@ async def create_voice_clone_job(
         if not edge_voice:
             edge_voice = "my-MM-NilarNeural" if gender_preset in ("m2f", "f2f") else "my-MM-ThihaNeural"
 
+    job_id = str(uuid.uuid4())
+    try:
+        await reserve_for_job(
+            session,
+            user_id=user_id,
+            job_id=job_id,
+            job_type=JobType.VOICE_CLONE.value,
+            billing_mode=BILLING_MODE_ADMIN_FREE if is_admin else BILLING_MODE_VOICE_ONLY,
+            reserve_recap_seconds=0,
+            reserve_voice_seconds=0 if is_admin else estimated_seconds,
+            note=f"Voice clone job reserve ({estimated_seconds}s)",
+        )
+    except BillingError as exc:
+        logger.info("Voice job reserve rejected for user %s: %s", user_id, exc)
+        return None, "INSUFFICIENT_BALANCE"
+
     job = Job(
-        id=str(uuid.uuid4()),
+        id=job_id,
         user_id=user_id,
         chat_id=chat_id or user_id,
         status_message_id=status_message_id,
@@ -349,11 +363,12 @@ async def create_voice_clone_job(
         model_id=model_id,
         gender_preset=gender_preset,
         speed_preset=speed_preset,
+        seconds_estimated=estimated_seconds,
     )
     session.add(job)
     await session.flush()
 
-    logger.info("Created voice clone job %s for user %s (engine=%s, model=%s, source_audio=%s)", job.id, user_id, actual_engine, model.name, bool(source_audio_path))
+    logger.info("Created voice clone job %s for user %s (engine=%s, model=%s, est=%ss, source_audio=%s)", job.id, user_id, actual_engine, model.name, estimated_seconds, bool(source_audio_path))
     return job, "QUEUED"
 
 

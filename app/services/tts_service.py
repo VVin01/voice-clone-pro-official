@@ -65,6 +65,12 @@ TTS_DEFAULT_SPEED = DEFAULT_SPEED
 EDGE_TTS_VOICES = {
     "thiha": "my-MM-ThihaNeural",
     "nilar": "my-MM-NilarNeural",
+    "andrew": "en-US-AndrewMultilingualNeural",
+    "brian": "en-US-BrianMultilingualNeural",
+    "remy": "fr-FR-RemyMultilingualNeural",
+    "ava": "en-US-AvaMultilingualNeural",
+    "emma": "en-US-EmmaMultilingualNeural",
+    "vivienne": "fr-FR-VivienneMultilingualNeural",
 }
 # Gemini charges one API call per generate_channel99_voice call (the
 # recap engine calls it per segment), so long TTS text is chunked at

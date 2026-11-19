@@ -259,15 +259,14 @@ def _read(rel: str) -> str:
 
 def test_per_part_wiring_contracts():
     api_py = _read("app/webapp/api.py")
-    # Submit: estimate + balance pre-check before deduction/queueing.
+    # Submit: estimate + reservation hold before execution; completion settles actual measured output seconds.
     assert "_recap_estimate_part_count(" in api_py
-    assert "_recap_segment_balance_ok(" in api_py
-    # Worker: exact charge after segmentation, via the shared target.
-    assert "_top_up_recap_segment_charge(user_id, entry, total_parts)" in api_py
+    assert "reserve_for_job(" in api_py
+    assert "settle_job_reservation(" in api_py
     assert "_recap_segment_target_seconds(" in api_py
     assert "split_source_into_segments" in api_py
-    # Refunds route through the job-charge helper (full amount).
-    assert api_py.count("_refund_recap_job_charge(user_id, entry)") == 2
+    # Refunds route through the job-charge helper (full reserve/settled refund).
+    assert api_py.count("_refund_recap_job_charge(user_id, entry)") >= 2
     # Status + history expose parts count and credits used.
     assert '"credits_charged"' in api_py
     assert '"parts_count"' in api_py
@@ -277,19 +276,16 @@ def test_miniapp_split_cost_hint_contracts():
     app_js = _read("app/webapp/static/js/app.js")
     html = _read("app/webapp/static/index.html")
     i18n_js = _read("app/webapp/static/js/i18n.js")
-    # Estimate + hint logic in the client, mirroring the server math.
+    # Estimate + hint logic in the client, using second-level 1 Credit = 1 Min Final Output math.
     assert "function estimateRecapSegmentParts(" in app_js
     assert "function updateRecapSplitCostHint()" in app_js
-    assert 'tf("recap_split_cost_estimate"' in app_js
+    assert "Math.round((effSec / 60) * 100) / 100" in app_js
     assert 'id="recap-split-cost-hint"' in html
-    # Result + history show parts count and credits used.
     assert 'tf("recap_segmented_cost"' in app_js
     assert "data.parts_count" in app_js
-    # i18n keys exist in BOTH language dicts.
     for key in (
         "recap_split_cost_estimate",
         "recap_split_cost_low_balance",
         "recap_segmented_cost",
     ):
         assert i18n_js.count(f"{key}:") == 2, key
-        assert "{parts}" in i18n_js and "{credits}" in i18n_js

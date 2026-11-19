@@ -398,7 +398,7 @@ const state = {
     user: null,
     models: [],
     curatedVoices: [],
-    voxcpmSubMode: "curated",       // "curated" | "custom"
+    voxcpmSubMode: "custom",        // "custom" (primary) | "curated" (12 built-in personas)
     selectedPersona: "komin",
     selectedModelSlug: "voxcpm-cloud-ai",
     selectedReferenceFile: null,
@@ -426,6 +426,8 @@ const state = {
     recapBlurAutoDetect: true,
     recapLogo: true,
     recapLogoPos: "top-right",
+    recapLogoScale: 0.16,
+    recapLogoOpacity: 0.70,
     // Custom channel logo (paid-only, owner decision 2026-11-02):
     // canUse/has come from /api/user/me; logoUrl (signed preview URL)
     // comes from GET /api/user/logo.
@@ -2065,6 +2067,8 @@ function collectAccountPrefs() {
         recapSubStyle: state.recapSubStyle,
         recapSubFont: state.recapSubFont,
         recapLogoPos: state.recapLogoPos,
+        recapLogoScale: state.recapLogoScale || 0.16,
+        recapLogoOpacity: state.recapLogoOpacity || 0.70,
         recapSourceLanguage: state.recapSourceLanguage,
         recapRenderQuality: state.recapRenderQuality,
         recapTtsEngine: state.recapTtsEngine,
@@ -3186,15 +3190,22 @@ window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} tr
 
 function syncTabAdminLifecycle(tabId) {
     if (tabId === "tab-admin") {
+        if (!window._adminProRequested && state.user && state.user.is_admin) {
+            window._adminProRequested = true;
+            const s = document.createElement("script");
+            s.src = "/static/js/admin_pro.js?v=20261119_p1";
+            s.defer = true;
+            document.head.appendChild(s);
+        }
         loadAdminData();
-        loadAdminQueue();
-        loadAdminSettings();
+        if (admCurrentSection === "jobs") loadAdminQueue();
+        if (admCurrentSection === "settings") { loadAdminSettings(); loadAdminPricing(); }
         if (window.adminQueueInterval) clearInterval(window.adminQueueInterval);
         window.adminQueueInterval = setInterval(() => {
-            if (document.hidden) return; // audit fix: no re-fetch/re-render while hidden
+            if (document.hidden) return;
             const adminPane = document.getElementById("tab-admin");
             if (adminPane && adminPane.classList.contains("active")) {
-                loadAdminQueue(true);
+                if (admCurrentSection === "jobs") loadAdminQueue(true);
             } else {
                 clearInterval(window.adminQueueInterval);
             }
@@ -3286,64 +3297,12 @@ async function toggleLanguage() {
 
 // ── Navigation (Tabs) ───────────────────────────────────────────────────────
 function setupTabs() {
-    const navButtons = document.querySelectorAll(".nav-item");
-    navButtons.forEach(btn => {
+    document.querySelectorAll(".nav-item").forEach(btn => {
         btn.addEventListener("click", () => {
             const targetTab = btn.getAttribute("data-tab");
             haptic("light");
-            pauseInactiveTabMedia(targetTab);
-
-            navButtons.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            const topHistBtn = document.getElementById("btn-top-history");
-            if (topHistBtn) topHistBtn.classList.toggle("active", targetTab === "tab-history");
-
-            document.querySelectorAll(".tab-pane").forEach(pane => {
-                pane.classList.remove("active");
-            });
-            const activePane = document.getElementById(targetTab);
-            if (activePane) activePane.classList.add("active");
-            markPaneEnter(activePane);
-            // Tab switches start at the top of the new pane (premium polish).
-            window.scrollTo({ top: 0, behavior: "auto" });
-            refreshStickyCtas();
-            moveNavPill();
-            // Batch CZ: the dock handler duplicates switchTab's pane
-            // switching — switchTab repaints the sliding capsule pills
-            // here, but this handler never did, so the .active speed
-            // segment (white text, flex-grow 2.4) stayed white-on-white
-            // until a segment tap. Mirror the hook, plus an rAF repeat
-            // as a webview-layout safety net (idempotent, cheap).
-            moveSpeedPills();
-            moveSegPills();
+            switchTab(targetTab);
             requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
-
-            if (targetTab === "tab-history") {
-                loadUserHistory();
-            }
-            if (targetTab === "tab-vip" && typeof refreshPlanPrices === "function") {
-                refreshPlanPrices();
-            }
-
-            // Batch BI (BI-4): the TTS balance line must paint fresh
-            // on nav entry. This hand-rolled handler duplicates
-            // switchTab's pane switching but never carried the hook —
-            // the AW-era refreshTtsQuota call lived only inside
-            // switchTab, which the dock never calls — so tapping the
-            // TTS nav button never ran the quota loader at all and
-            // the line sat on its placeholder (the real root cause
-            // behind the BB/BH "stuck line" reports).
-            if (targetTab === "tab-tts" && typeof window.refreshTtsQuota === "function") {
-                window.refreshTtsQuota();
-            }
-            // Batch BZ: the prefill hook rides this entry path too
-            // (the BI-4 lesson — both TTS entry paths stay in step).
-            if (targetTab === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
-                window.maybePrefillTtsSample();
-            }
-
-            syncTabAdminLifecycle(targetTab);
-            syncTelegramBackButton();
         });
     });
 }
@@ -3365,6 +3324,17 @@ async function loadUserProfile() {
         const data = await res.json();
         state.user = data;
         paintPlanHowText();
+        const expPill = document.getElementById("home-expiry-pill");
+        if (expPill) {
+            if (data.earliest_days_left != null && data.earliest_expires_at) {
+                expPill.innerText = "⏳ " + tf("vip_grant_days_left", { d: data.earliest_days_left });
+                expPill.classList.remove("hidden");
+                expPill.classList.toggle("exp-soon", !!data.expiring_soon);
+            } else {
+                expPill.classList.add("hidden");
+                expPill.classList.remove("exp-soon");
+            }
+        }
         // Custom logo (paid-only): profile flags drive the settings
         // UI; the signed thumbnail URL comes from the logo endpoint.
         state.logoCanUse = !!data.can_use_logo;
@@ -4371,12 +4341,20 @@ function readCachedUserProfile() {
     } catch (e) { return null; }
 }
 
+function _fmtCreditNum(v) {
+    const n = Number(v || 0);
+    if (!Number.isFinite(n)) return "0";
+    return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+}
+
 /** Format VIP current-plan balance stats via i18n so Burmese/EN units match Home cards. */
 function paintVipPlanBalances(data) {
     if (!data) return;
     const balMin = document.getElementById("profile-balance-min");
     const balCredits = document.getElementById("profile-balance-credits");
     const balTts = document.getElementById("vip-wallet-tts-val");
+    const resVoice = document.getElementById("vip-res-voice");
+    const resCr = document.getElementById("vip-res-credits");
     const fmt = typeof tf === "function" ? tf : null;
     if (balMin) {
         balMin.innerText = data.is_admin
@@ -4384,9 +4362,18 @@ function paintVipPlanBalances(data) {
             : (fmt ? fmt("home_free_value_min", { min: data.balance_minutes ?? 0 }) : `${data.balance_minutes ?? 0} mins`);
     }
     if (balCredits) {
+        const cr = _fmtCreditNum(data.available_recap_credits ?? data.recap_credits ?? 0);
         balCredits.innerText = data.is_admin
             ? (typeof t === "function" ? t("unlimited") : "Unlimited")
-            : (fmt ? fmt("home_free_value_credits", { count: data.recap_credits || 0 }) : `${data.recap_credits || 0} credits`);
+            : (fmt ? fmt("home_free_value_credits", { count: cr }) : `${cr} credits`);
+    }
+    if (resVoice) {
+        const rv = _fmtCreditNum(data.reserved_voice_minutes ?? 0);
+        resVoice.innerText = data.is_admin ? "" : `Reserved: ${rv}m`;
+    }
+    if (resCr) {
+        const rr = _fmtCreditNum(data.reserved_recap_credits ?? 0);
+        resCr.innerText = data.is_admin ? "" : `Reserved: ${rr} Cr`;
     }
     if (balTts) {
         const rem = data.tts_today_remaining_seconds;
@@ -4412,7 +4399,7 @@ function paintCachedUserHeader(data) {
         vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 VIP" : "FREE");
     }
     if (voiceBalChip) voiceBalChip.innerText = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
-    if (recapBalChip) recapBalChip.innerText = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits || 0}c`;
+    if (recapBalChip) recapBalChip.innerText = data.is_admin ? "🎬 ∞" : `🎬 ${_fmtCreditNum(data.available_recap_credits ?? data.recap_credits)}c`;
     if (catTag) {
         catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
         catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
@@ -4547,21 +4534,16 @@ function syncRecapEngineAreas() {
     const gv = document.getElementById("recap-gemini-voice-wrap");
     if (gv) gv.classList.toggle("hidden", eng !== "gemini");
     const pa = document.getElementById("recap-persona-area");
-    if (pa) pa.classList.toggle("hidden", eng === "gemini");
-    // Batch BV: the own-voice card exists only on the clone engine —
-    // on Gemini/Edge an uploaded sample could never narrate, so the
-    // card (and its selection) does not apply there.
+    if (pa) pa.classList.toggle("hidden", eng === "gemini" || eng === "none");
     const ow = document.getElementById("recap-own-voice-wrap");
     if (ow) ow.classList.toggle("hidden", eng !== "voxcpm");
-    // Batch BX: on the Edge engine the persona grid is a base-voice
-    // picker, not a clone — say so honestly above the grid.
     const note = document.getElementById("recap-persona-engine-note");
     if (note) note.classList.toggle("hidden", eng !== "edge");
     const billingHint = document.getElementById("recap-engine-billing-hint");
     if (billingHint) {
-        const hintKey = eng === "edge"
-            ? "recap_engine_hint_edge"
-            : (eng === "gemini" ? "recap_engine_hint_gemini" : "recap_engine_hint_voxcpm");
+        const hintKey = eng === "none"
+            ? "recap_engine_hint_none"
+            : (eng === "edge" ? "recap_engine_hint_edge" : (eng === "gemini" ? "recap_engine_hint_gemini" : "recap_engine_hint_voxcpm"));
         billingHint.setAttribute("data-i18n", hintKey);
         billingHint.textContent = t(hintKey);
     }
@@ -4902,6 +4884,17 @@ async function handleVoiceGenerate() {
         }), 'warning');
         return;
     }
+
+    if (!state._voiceCostConfirmed && !state.user?.is_admin) {
+        const estMin = Math.max(0.1, Math.round((((text.length / (17.6 * 1.12)) * 1.15) / 60) * 100) / 100);
+        studioSubmitFailure("voice");
+        showStudioConfirm(tf("voice_cost_confirm", { min: estMin }), () => {
+            state._voiceCostConfirmed = true;
+            handleVoiceGenerate();
+        });
+        return;
+    }
+    state._voiceCostConfirmed = false;
 
     haptic("heavy");
     const progressBox = document.getElementById("voice-progress-box");
@@ -5336,78 +5329,38 @@ function formatRecapQuoteDuration(durationSec) {
 }
 
 function updateRecapSplitCostHint() {
-    // Batch CI: the duration-cap gate repaints from the same hub —
-    // both duration-learn points (upload completion, link extract),
-    // the info-card clear, profile load and the pickers all pass
-    // through here, so the gate can never sit stale.
     updateRecapDurationGate();
-    // Batch CB: the Step-4 ETA refresh rides the same hub — every
-    // duration/quality/language change that repaints the quote also
-    // re-asks for the shape's time range (it no-ops when unchanged).
     refreshRecapStep4Eta();
     const hint = document.getElementById("recap-split-cost-hint");
     if (!hint) return;
     const toggle = document.getElementById("recap-split-toggle");
-    const dur = state.recapSourceDuration || 0;
-    // The per-part estimate applies only to the segmented path: split
-    // on, source over the per-job cap, VIP, non-admin (admins are
-    // exempt and never charged). Splitting a ≤cap video afterwards
-    // stays inside its single credit, so no estimate is shown there.
-    const show = !!(toggle && toggle.checked && dur > recapNormalMaxSeconds()
-        && state.user?.is_vip && !state.user?.is_admin);
-    // Batch K: while a segmented estimate is known, the start CTA
-    // carries the estimated total instead of the static "(1 Credit)";
-    // otherwise it falls back to the plain label. Display-only — the
-    // submit/charging path never reads the CTA text.
+    const dur = Number(state.recapSourceDuration || 0);
+    const segmented = !!(toggle && toggle.checked && dur > recapNormalMaxSeconds() && state.user?.is_vip && !state.user?.is_admin);
+    const maxAllowed = recapNormalMaxSeconds();
+    const effSec = dur > 0 ? (segmented ? dur : Math.min(dur, maxAllowed || dur)) : 60;
+    const estCredits = dur > 0 ? Math.max(0.05, Math.round((effSec / 60) * 100) / 100) : 1;
     const ctaText = document.querySelector("#btn-start-recap .btn-text");
-    // Batch AO: while tiered pricing is armed (server switch, mirrored
-    // on /user/me) the per-part estimate is replaced wholesale by the
-    // duration-band quote: ceil(duration / 180) over the probed
-    // duration — the same formula and the same duration the server
-    // charges from, and the submit response's credits_total confirms
-    // the identical number after submit. Shown whenever a duration
-    // is known, for every non-admin (band 1 at ≤3 min, the free
-    // lane's ≤2 min included, so free users see "→ 1 Credit").
-    if (state.user?.tiered_pricing_enabled && dur > 0 && !state.user?.is_admin) {
-        const band = Math.max(1, Math.ceil(dur / 180));
-        // Batch BE: Max render quality adds +1 credit on top of the
-        // band — the quote shows the breakdown (band + surcharge +
-        // total), mirroring the server's submit-time computation
-        // from the same clamped quality selection.
-        const surcharge = state.recapRenderQuality === "max" ? 1 : 0;
-        const total = band + surcharge;
-        if (ctaText) ctaText.textContent = total > 1
-            ? tf("btn_start_recap_credits", { credits: total })
-            : t("btn_start_recap");
-        let text = surcharge
-            ? tf("recap_tiered_cost_estimate_max", { duration: formatRecapQuoteDuration(dur), credits: band, total })
-            : tf("recap_tiered_cost_estimate", { duration: formatRecapQuoteDuration(dur), credits: total });
-        const lowBalance = (state.user?.recap_credits ?? 0) < total;
-        if (lowBalance) text += " " + t("recap_split_cost_low_balance");
-        hint.textContent = text;
-        hint.style.color = lowBalance ? "#f87171" : "";
-        hint.classList.remove("hidden");
-        setRecapStep4Quote(total, surcharge ? tf("recap_step4_quote_breakdown", { credits: band }) : null);
+    if (state.user?.is_admin) {
+        hint.classList.add("hidden");
+        if (ctaText) ctaText.textContent = t("btn_start_recap");
+        setRecapStep4Quote(0);
         return;
     }
-    if (!show) {
+    if (dur > 0) {
+        if (ctaText) ctaText.textContent = tf("btn_start_recap_credits", { credits: _fmtCreditNum(estCredits) });
+        const avail = Number(state.user?.available_recap_credits ?? state.user?.recap_credits ?? 0);
+        let msg = `${formatRecapQuoteDuration(dur)} ≈ ${_fmtCreditNum(estCredits)} Credit (1 Credit = 1 Min Output)`;
+        if (avail < estCredits) msg += " " + t("recap_split_cost_low_balance");
+        hint.textContent = msg;
+        hint.style.color = avail < estCredits ? "#f87171" : "";
+        hint.classList.remove("hidden");
+        setRecapStep4Quote(estCredits);
+    } else {
         hint.classList.add("hidden");
         hint.textContent = "";
         if (ctaText) ctaText.textContent = t("btn_start_recap");
         setRecapStep4Quote(1);
-        return;
     }
-    const est = estimateRecapSegmentParts(dur, state.recapSplitMinutes || 3);
-    if (ctaText) ctaText.textContent = est > 1
-        ? tf("btn_start_recap_credits", { credits: est })
-        : t("btn_start_recap");
-    let text = tf("recap_split_cost_estimate", { parts: est, credits: est });
-    const lowBalance = (state.user?.recap_credits ?? 0) < est;
-    if (lowBalance) text += " " + t("recap_split_cost_low_balance");
-    hint.textContent = text;
-    hint.style.color = lowBalance ? "#f87171" : "";
-    hint.classList.remove("hidden");
-    setRecapStep4Quote(est);
 }
 
 // Batch K: setLanguage's static sweep resets the CTA label — this
@@ -5640,7 +5593,9 @@ function refreshRecapStep4Choices() {
         || document.querySelector("#recap-top-voices .voice-card.active .v-name");
     if (voiceEl) {
         let voiceLine = "";
-        if (state.recapTtsEngine === "gemini") {
+        if (state.recapTtsEngine === "none") {
+            voiceLine = t("recap_engine_none");
+        } else if (state.recapTtsEngine === "gemini") {
             const gKey = typeof resolveGeminiPreviewVoice === "function"
                 ? resolveGeminiPreviewVoice() : (state.recapGeminiVoice || "Charon");
             const gRaw = t("gem_voice_" + String(gKey).toLowerCase());
@@ -5697,18 +5652,18 @@ function paintRecapDualQuote(creditsCost) {
     const u = state.user;
     const isAdmin = !!(u && u.is_admin);
     const eng = state.recapTtsEngine || "voxcpm";
-    const cost = Math.max(1, parseInt(creditsCost, 10) || 1);
+    const cost = Math.max(0.01, Math.round((Number(creditsCost) || 1) * 100) / 100);
 
     const creditMathEl = document.getElementById("recap-step4-credit-math");
     const surchargeTag = document.getElementById("recap-quality-max-surcharge-tag");
-    if (surchargeTag) surchargeTag.classList.toggle("hidden", isAdmin);
+    if (surchargeTag) surchargeTag.classList.add("hidden");
     if (creditMathEl) {
         if (isAdmin) {
             creditMathEl.textContent = t("recap_step4_credit_admin");
             creditMathEl.classList.remove("hidden");
         } else if (u && typeof u.recap_credits === "number") {
-            const before = u.recap_credits;
-            const after = Math.max(0, before - cost);
+            const before = Math.round(Number(u.available_recap_credits ?? u.recap_credits) * 100) / 100;
+            const after = Math.max(0, Math.round((before - cost) * 100) / 100);
             creditMathEl.textContent = tf("recap_step4_credit_math", { before, cost, after });
             creditMathEl.style.color = before < cost ? "#f87171" : "";
             creditMathEl.classList.remove("hidden");
@@ -5738,12 +5693,12 @@ function paintRecapDualQuote(creditsCost) {
     if (eng === "voxcpm") {
         if (creditOnlyEl) creditOnlyEl.classList.add("hidden");
         if (voicePanel) voicePanel.classList.remove("hidden");
-        const estMin = Math.max(0.1, Math.round((estSec / 60) * 10) / 10);
+        const estMin = Math.max(0.1, Math.round((estSec / 60) * 100) / 100);
         if (voiceEstEl) voiceEstEl.textContent = tf("recap_step4_voice_value", { min: estMin });
         if (voiceMathEl) {
             if (hasBalKnown) {
-                const beforeMin = Math.round((availSec / 60) * 10) / 10;
-                const afterMin = Math.max(0, Math.round(((availSec - estSec) / 60) * 10) / 10);
+                const beforeMin = Math.round((availSec / 60) * 100) / 100;
+                const afterMin = Math.max(0, Math.round(((availSec - estSec) / 60) * 100) / 100);
                 voiceMathEl.textContent = tf("recap_step4_voice_math", {
                     before: beforeMin,
                     est: estMin,
@@ -5763,8 +5718,8 @@ function paintRecapDualQuote(creditsCost) {
                 const reqSec = srv ? srv.required_seconds : estSec;
                 const avSec = srv ? srv.available_seconds : availSec;
                 insufDesc.textContent = tf("recap_insuf_min_desc", {
-                    req: Math.max(0.1, Math.round((reqSec / 60) * 10) / 10),
-                    avail: Math.max(0, Math.round((avSec / 60) * 10) / 10),
+                    req: Math.max(0.1, Math.round((reqSec / 60) * 100) / 100),
+                    avail: Math.max(0, Math.round((avSec / 60) * 100) / 100),
                 });
             }
         }
@@ -5772,7 +5727,7 @@ function paintRecapDualQuote(creditsCost) {
         if (voicePanel) voicePanel.classList.add("hidden");
         if (insufBox) insufBox.classList.add("hidden");
         if (creditOnlyEl) {
-            const engLabel = eng === "edge" ? "Edge TTS" : "Gemini AI";
+            const engLabel = eng === "none" ? "No Voice" : (eng === "edge" ? "Edge TTS" : "Gemini AI");
             creditOnlyEl.textContent = tf("recap_step4_voice_credit_only_badge", { engine: engLabel });
             creditOnlyEl.classList.remove("hidden");
         }
@@ -5790,15 +5745,15 @@ window.switchRecapTtsEngine = function(engine) {
     syncRecapEngineAreas();
     refreshRecapStep4Choices();
     updateRecapSplitCostHint();
-    const engLabel = next === "edge" ? "Edge TTS" : (next === "gemini" ? "Gemini AI" : "Persona Voice");
+    const engLabel = next === "none" ? "No Voice" : (next === "edge" ? "Edge TTS" : (next === "gemini" ? "Gemini AI" : "Persona Voice"));
     showStudioToast(tf("recap_fallback_switched_toast", { engine: engLabel }), "success");
 };
 
 function setRecapStep4Quote(credits, breakdownText) {
-    const cost = Math.max(1, parseInt(credits, 10) || 1);
-    state._lastStep4QuoteCredits = cost;
+    const cost = Math.max(0, Math.round((Number(credits) || 0) * 100) / 100);
+    state._lastStep4QuoteCredits = cost || 1;
     const el = document.getElementById("recap-step4-quote-credits");
-    if (el) el.textContent = String(cost);
+    if (el) el.textContent = _fmtCreditNum(cost);
     // Batch BE: the optional breakdown line under the Step-4 total
     // (band + Max surcharge) — shown only when a breakdown applies.
     const bd = document.getElementById("recap-step4-quote-breakdown");
@@ -6785,6 +6740,8 @@ function setupRecapVisualEditor() {
             ...ddConfigExtras(),
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",
+            logo_scale: Number(state.recapLogoScale || 0.16),
+            logo_opacity: Number(state.recapLogoOpacity || 0.70),
         };
     }
     // Batch DD: with a blur-box list present, the legacy
@@ -9219,7 +9176,13 @@ function setupRecapVisualEditor() {
     refreshRecapStep2Summary();
     ddFitPreviewFrame();
 
-    // 12. Logo Position Picker
+    // 12. Logo Position, Size & Opacity
+    const applyLogoPreviewStyle = () => {
+        if (!previewLogo) return;
+        const pct = Math.round((state.recapLogoScale || 0.16) * 100);
+        previewLogo.style.width = `${Math.max(4, Math.min(40, pct))}%`;
+        previewLogo.style.opacity = String(Math.max(0.1, Math.min(1, state.recapLogoOpacity || 0.7)));
+    };
     const logoPosBtns = document.querySelectorAll("#recap-logo-pos-picker .pill-btn");
     logoPosBtns.forEach(btn => {
         btn.addEventListener("click", () => {
@@ -9229,9 +9192,34 @@ function setupRecapVisualEditor() {
             state.recapLogoPos = btn.getAttribute("data-pos") || "top-right";
             if (previewLogo) {
                 previewLogo.className = `preview-logo-watermark ${state.recapLogoPos}`;
+                applyLogoPreviewStyle();
             }
+            scheduleRecapCompositeRefresh();
         });
     });
+    const slLogoScale = document.getElementById("slider-logo-scale");
+    const slLogoOp = document.getElementById("slider-logo-opacity");
+    if (slLogoScale) {
+        slLogoScale.addEventListener("input", () => {
+            const v = Math.max(4, Math.min(40, parseInt(slLogoScale.value, 10) || 16));
+            state.recapLogoScale = +(v / 100).toFixed(2);
+            const lbl = document.getElementById("val-logo-scale");
+            if (lbl) lbl.innerText = `${v}%`;
+            applyLogoPreviewStyle();
+            scheduleRecapCompositeRefresh();
+        });
+    }
+    if (slLogoOp) {
+        slLogoOp.addEventListener("input", () => {
+            const v = Math.max(10, Math.min(100, parseInt(slLogoOp.value, 10) || 70));
+            state.recapLogoOpacity = +(v / 100).toFixed(2);
+            const lbl = document.getElementById("val-logo-opacity");
+            if (lbl) lbl.innerText = `${v}%`;
+            applyLogoPreviewStyle();
+            scheduleRecapCompositeRefresh();
+        });
+    }
+    applyLogoPreviewStyle();
 
     // 12b. Custom Logo Upload / Remove (paid-only — the server
     // enforces the tier gate; these handlers only wire the controls
@@ -9609,7 +9597,7 @@ function setupRecapVisualEditor() {
         recapLogoPos: ["top-right", "top-left", "bottom-right", "bottom-left", "top-center"],
         recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja", "hi", "my", "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"],
         recapRenderQuality: ["standard", "high", "max"],
-        recapTtsEngine: ["voxcpm", "gemini", "edge"],
+        recapTtsEngine: ["voxcpm", "gemini", "edge", "none"],
         recapSubRenderMode: ["png", "timeline", "ass", "karaoke", "soft"],
         recapSubEffect: ["none", "fade", "pop", "karaoke"],
     };
@@ -9811,7 +9799,7 @@ function setupRecapVisualEditor() {
         const gv = document.getElementById("recap-gemini-voice-wrap");
         if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
         const pa = document.getElementById("recap-persona-area");
-        if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini");
+        if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini" || state.recapTtsEngine === "none");
         if (geminiVoiceSel) geminiVoiceSel.value = state.recapGeminiVoice || "";
         document.querySelectorAll("#story-style-picker-quick .style-select-pill").forEach(p => {
             p.classList.toggle("active", p.getAttribute("data-story") === state.recapStoryStyle);
@@ -10139,19 +10127,18 @@ async function handleStartRecap() {
     // total is never a surprise (the same estimate as the split-cost
     // hint by the toggle). One-shot flag: the confirm's callback
     // re-enters this function and proceeds.
-    const splitToggleEl = document.getElementById("recap-split-toggle");
-    if (!state._splitCostConfirmed
-        && splitToggleEl && splitToggleEl.checked
-        && state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
-        && state.user?.is_vip && !state.user?.is_admin) {
-        const est = estimateRecapSegmentParts(state.recapSourceDuration, state.recapSplitMinutes || 3);
-        showStudioConfirm(tf("recap_split_cost_estimate", { parts: est, credits: est }), () => {
-            state._splitCostConfirmed = true;
+    if (!state._recapCostConfirmed && !state.user?.is_admin) {
+        const estCr = _fmtCreditNum(state._lastStep4QuoteCredits || 1);
+        const voiceNote = (state.recapTtsEngine === "voxcpm")
+            ? ` + ~${_fmtCreditNum(Math.max(0.1, Math.round((getRecapEstVoiceSeconds() / 60) * 100) / 100))}m Voice`
+            : "";
+        showStudioConfirm(tf("recap_cost_confirm", { credits: estCr, voiceNote }), () => {
+            state._recapCostConfirmed = true;
             handleStartRecap();
         });
         return;
     }
-    state._splitCostConfirmed = false;
+    state._recapCostConfirmed = false;
 
     if (btn) btn.disabled = true;
 
@@ -10250,6 +10237,8 @@ async function handleStartRecap() {
             sub_lines: state.recapLines || 1,
             include_logo: state.recapLogo !== false,
             logo_pos: state.recapLogoPos || "top-right",
+            logo_scale: Number(state.recapLogoScale || 0.16),
+            logo_opacity: Number(state.recapLogoOpacity || 0.70),
             // Batch DD: protection level, free style controls,
             // custom font handle and the blur-box list.
             ...ddConfigExtras(),
@@ -11463,36 +11452,91 @@ function setupDownloader() {
     }
 }
 
+function switchVipSubView(view) {
+    haptic("selection");
+    const v = view === "wallet" ? "wallet" : "plans";
+    document.getElementById("vip-subbtn-plans")?.classList.toggle("active", v === "plans");
+    document.getElementById("vip-subbtn-wallet")?.classList.toggle("active", v === "wallet");
+    document.getElementById("vip-sub-plans")?.classList.toggle("hidden", v !== "plans");
+    document.getElementById("vip-sub-wallet")?.classList.toggle("hidden", v !== "wallet");
+    if (v === "wallet") loadVipWalletHistory(true);
+}
+window.switchVipSubView = switchVipSubView;
+
 // ── Plan Category Tabs (one category at a time — no long scroll) ──────────
 function switchPlanCategory(cat) {
     haptic("selection");
+    const target = cat === "combined" ? "combo" : cat;
     document.querySelectorAll(".plan-tab-btn").forEach(btn => {
-        btn.classList.toggle("active", btn.getAttribute("data-plan-cat") === cat);
+        btn.classList.toggle("active", btn.getAttribute("data-plan-cat") === target);
     });
-    ["voice", "recap", "combined"].forEach(name => {
+    ["voice", "recap", "combo", "topup"].forEach(name => {
         const panel = document.getElementById(`plan-panel-${name}`);
-        if (panel) panel.classList.toggle("hidden", name !== cat);
+        if (panel) panel.classList.toggle("hidden", name !== target);
     });
 }
 
 // ── Payment Drawer & Slip Submission ───────────────────────────────────────
-let activePackageCode = "voice_studio_pro";
-let activeAmount = 25000;
-
-// Batch CT: plan prices of record come from /api/vip/plans (the
-// DB-backed resolution), never from the static card literals — an
-// admin price edit must reach the buy cards and this drawer without
-// a redeploy. The inline amounts remain only as offline fallbacks.
+let activePackageCode = "voice_creator";
+let activeAmount = 10000;
 let planPriceByCode = {};
+let _vipPlansCache = [];
+
+function renderDynamicVipPlans(data) {
+    const plans = (data && data.plans) || [];
+    _vipPlansCache = plans;
+    const buckets = { voice: [], recap: [], combo: [], topup: [] };
+    plans.forEach(p => {
+        const c = p.is_topup ? "topup" : (p.category === "combined" ? "combo" : (p.category || "voice"));
+        (buckets[c] || buckets.voice).push(p);
+    });
+    Object.keys(buckets).forEach(cat => {
+        const grid = document.getElementById(`vip-grid-${cat}`);
+        if (!grid) return;
+        const list = buckets[cat];
+        if (!list.length) { grid.innerHTML = `<p class="text-muted text-sm">${escapeHtml(t("admin_empty"))}</p>`; return; }
+        grid.innerHTML = list.map(p => {
+            const code = escapeHtml(p.code || p.id);
+            const name = escapeHtml(p.name || code);
+            const alloc = escapeHtml(p.allocation || "");
+            const priceMm = Number(p.price_mmk || parseInt(String(p.price || "0").replace(/[^0-9]/g, ""), 10) || 0);
+            const badgeHtml = p.badge
+                ? `<span class="vcp-plan-badge ${p.badge_key === "best_value" ? "vcp-badge-best" : ""}">${escapeHtml(p.badge)}</span>`
+                : "";
+            const feats = (Array.isArray(p.features) ? p.features.slice(0, 3) : [])
+                .map(f => `<li>✓ ${escapeHtml(f)}</li>`).join("");
+            const btnCls = (p.badge_key === "popular" || p.badge_key === "best_value")
+                ? "btn gold-gradient-btn vcp-btn vcp-btn--gold mt-3"
+                : "btn secondary-gold-btn vcp-btn mt-3";
+            const valBadge = p.validity_label
+                ? `<div class="vcp-plan-validity">⏳ ${escapeHtml(p.validity_label)}</div>`
+                : "";
+            return `
+                <div class="card glass vcp-card pricing-card ${p.badge_key === "best_value" ? "vcp-card--gold" : ""}" id="card-plan-${code}">
+                    ${badgeHtml}
+                    <div class="plan-name">${name}</div>
+                    <div class="plan-allocation">${alloc}</div>
+                    ${valBadge}
+                    <div class="plan-price">
+                        <span class="price-val" data-price-for="${code}">${priceMm.toLocaleString("en-US")}</span>
+                        <span class="currency">MMK</span>
+                    </div>
+                    ${feats ? `<ul class="vcp-features-mini">${feats}</ul>` : ""}
+                    <button type="button" class="${btnCls}" onclick="openPaymentDrawer('${code}', ${priceMm}, '${escapeHtml(String(p.name || code)).replace(/'/g, "\\'")}')">💳 ${priceMm.toLocaleString("en-US")} MMK</button>
+                </div>`;
+        }).join("");
+    });
+}
 
 function syncPlanPrices(data) {
     const plans = (data && data.plans) || [];
     plans.forEach(p => {
-        const numeric = parseInt(String(p.price || "").replace(/[^0-9]/g, ""), 10);
-        if (p.id && Number.isFinite(numeric) && numeric > 0) {
-            planPriceByCode[p.id] = numeric;
+        const numeric = Number(p.price_mmk || parseInt(String(p.price || "").replace(/[^0-9]/g, ""), 10));
+        if ((p.id || p.code) && Number.isFinite(numeric) && numeric > 0) {
+            planPriceByCode[p.id || p.code] = numeric;
         }
     });
+    renderDynamicVipPlans(data);
     document.querySelectorAll("[data-price-for]").forEach(el => {
         const v = planPriceByCode[el.getAttribute("data-price-for")];
         if (v) el.innerText = v.toLocaleString("en-US");
@@ -11502,39 +11546,146 @@ function syncPlanPrices(data) {
 async function refreshPlanPrices() {
     try {
         const res = await fetchWithTimeout("/api/vip/plans", { headers: getAuthHeaders() });
-        if (res.ok) syncPlanPrices(await res.json());
-    } catch (err) {
-        // Static fallback prices stay — the server still re-resolves
-        // the real price at slip submit.
-    }
+        if (res.ok) {
+            const data = await res.json();
+            syncPlanPrices(data);
+            if (Array.isArray(data.payment_accounts)) paintPaymentAccountNames(data.payment_accounts);
+        }
+    } catch (err) {}
 }
+
+let _vipOrdersLoaded = false;
+function renderGrantsRowsHtml(grants) {
+    const list = Array.isArray(grants) ? grants : [];
+    if (!list.length) return `<p class="text-muted text-xs">${escapeHtml(t("vip_grants_empty"))}</p>`;
+    return list.map(g => {
+        const rem = [];
+        if (g.remaining_voice_minutes > 0 || g.initial_voice_minutes > 0) rem.push(`🎙️ ${_fmtCreditNum(g.remaining_voice_minutes)}m`);
+        if (g.remaining_recap_credits > 0 || g.initial_recap_credits > 0) rem.push(`🎬 ${_fmtCreditNum(g.remaining_recap_credits)} Cr`);
+        let expTxt = g.never_expires ? t("vip_grant_legacy")
+            : (g.status === "EXPIRED" ? t("vip_grant_expired")
+            : `${(g.expires_at || "").slice(0, 10)} (${tf("vip_grant_days_left", { d: g.days_left ?? 0 })})`);
+        const cls = g.expiring_soon ? "vcp-grant-exp-soon" : "text-muted";
+        return `<div class="vcp-grant-row"><div><b>${escapeHtml(g.package_name || g.package_code || g.source_type)}</b><br><span class="text-xs ${cls}">${escapeHtml(expTxt)}</span></div><div style="text-align:right"><b>${escapeHtml(rem.join(" · ") || "0")}</b><br><span class="badge-status ${String(g.status || "").toLowerCase()}">${escapeHtml(g.status)}</span></div></div>`;
+    }).join("");
+}
+async function loadVipWalletHistory(force) {
+    if (_vipOrdersLoaded && !force) return;
+    _vipOrdersLoaded = true;
+    const gEl = document.getElementById("vip-grants-list");
+    if (gEl) {
+        try {
+            const rw = await fetchWithTimeout("/api/wallet/summary", { headers: getAuthHeaders() });
+            if (rw.ok) {
+                const wd = await rw.json();
+                gEl.innerHTML = renderGrantsRowsHtml(wd.grants || []);
+            }
+        } catch (e) { gEl.innerHTML = `<p class="text-muted text-xs">—</p>`; }
+    }
+    const ordEl = document.getElementById("vip-orders-list");
+    if (ordEl) {
+        try {
+            const r = await fetchWithTimeout("/api/vip/orders", { headers: getAuthHeaders() });
+            if (r.ok) {
+                const d = await r.json();
+                const list = d.orders || [];
+                ordEl.innerHTML = list.length ? list.map(o => `
+                    <div class="vcp-tx-row">
+                        <div><b>${escapeHtml(o.package_name || o.package_code)}</b><br><span class="text-xs text-muted">${admFmtDate(o.created_at)} • ${(o.amount_mmk || 0).toLocaleString()} MMK</span></div>
+                        <span class="badge-status ${String(o.status || "").toLowerCase()}">${escapeHtml(o.status)}</span>
+                    </div>`).join("") : `<p class="text-muted text-xs">${escapeHtml(t("admin_empty"))}</p>`;
+            }
+        } catch (e) { ordEl.innerHTML = `<p class="text-muted text-xs">—</p>`; }
+    }
+    loadVipWalletTx("");
+}
+window.loadVipWalletHistory = loadVipWalletHistory;
+
+async function loadVipWalletTx(kind) {
+    document.querySelectorAll("#vip-sub-wallet [data-tx-kind]").forEach(b => {
+        b.classList.toggle("active", b.getAttribute("data-tx-kind") === (kind || ""));
+    });
+    const txEl = document.getElementById("vip-tx-list");
+    if (!txEl) return;
+    try {
+        const qs = kind ? `?wallet_kind=${encodeURIComponent(kind)}` : "";
+        const r = await fetchWithTimeout("/api/wallet/transactions" + qs, { headers: getAuthHeaders() });
+        if (!r.ok) return;
+        const d = await r.json();
+        const rows = d.transactions || [];
+        txEl.innerHTML = rows.length ? rows.map(tx => {
+            const parts = [];
+            if (tx.recap_credits_delta) parts.push(`${tx.recap_credits_delta > 0 ? "+" : ""}${_fmtCreditNum(tx.recap_credits_delta)} Cr`);
+            if (tx.voice_minutes_delta) parts.push(`${tx.voice_minutes_delta > 0 ? "+" : ""}${_fmtCreditNum(tx.voice_minutes_delta)}m`);
+            return `<div class="vcp-tx-row">
+                <div><b>${escapeHtml(tx.tx_type)}</b> (${escapeHtml(tx.wallet_kind)})<br><span class="text-xs text-muted">${escapeHtml(tx.note || tx.reference_id || "")} • ${admFmtDate(tx.created_at)}</span></div>
+                <div style="text-align:right"><b>${escapeHtml(parts.join(" · ") || "0")}</b><br><span class="text-xs text-muted">Recap ${_fmtCreditNum(tx.balance_recap_credits_after)} | Voice ${_fmtCreditNum(tx.balance_voice_minutes_after)}m</span></div>
+            </div>`;
+        }).join("") : `<p class="text-muted text-xs">${escapeHtml(t("admin_empty"))}</p>`;
+    } catch (e) { txEl.innerHTML = `<p class="text-muted text-xs">—</p>`; }
+}
+window.loadVipWalletTx = loadVipWalletTx;
 
 function paintPaymentAccountNames(accounts) {
     const list = Array.isArray(accounts) ? accounts : [];
     const prefix = t("pay_account_name_prefix");
+    const extraBox = document.getElementById("extra-payment-accounts");
     if (list.length) {
+        let seenK = false, seenW = false;
+        const extras = [];
+        const _setQr = (card, qr) => {
+            if (!card) return;
+            const old = card.querySelector(".pay-qr-btn");
+            if (old) old.remove();
+            if (!qr) return;
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "mini-copy-btn pay-qr-btn";
+            b.style.marginTop = "6px";
+            b.textContent = "📷 QR";
+            b.onclick = () => { if (typeof openSlipModal === "function") openSlipModal(qr); else window.open(qr, "_blank"); };
+            card.appendChild(b);
+        };
         list.forEach(acc => {
             const prov = (acc.provider || "").toLowerCase();
-            if (prov.includes("kbz") || prov.includes("kpay")) {
+            if (!seenK && (acc.id === "kpay_primary" || prov.includes("kbzpay") || prov.includes("kpay"))) {
+                seenK = true;
                 state.kpayNumber = acc.number || "";
                 const elNum = document.getElementById("kpay-num");
                 const elName = document.getElementById("kpay-name");
+                const card = elNum ? elNum.closest(".pay-method") : null;
+                if (card) card.classList.remove("hidden");
                 if (elNum) elNum.innerText = acc.number || "—";
-                if (elName) {
-                    elName.dataset.accountOwner = acc.name || "";
-                    elName.innerText = acc.name ? `${prefix} ${acc.name}` : "—";
-                }
-            } else if (prov.includes("wave")) {
+                if (elName) { elName.dataset.accountOwner = acc.name || ""; elName.innerText = acc.name ? `${prefix} ${acc.name}` : "—"; }
+                _setQr(card, acc.qr_url || "");
+            } else if (!seenW && (acc.id === "wave_primary" || prov.includes("wave"))) {
+                seenW = true;
                 state.waveNumber = acc.number || "";
                 const elNum = document.getElementById("wave-num");
                 const elName = document.getElementById("wave-name");
+                const card = elNum ? elNum.closest(".pay-method") : null;
+                if (card) card.classList.remove("hidden");
                 if (elNum) elNum.innerText = acc.number || "—";
-                if (elName) {
-                    elName.dataset.accountOwner = acc.name || "";
-                    elName.innerText = acc.name ? `${prefix} ${acc.name}` : "—";
-                }
+                if (elName) { elName.dataset.accountOwner = acc.name || ""; elName.innerText = acc.name ? `${prefix} ${acc.name}` : "—"; }
+                _setQr(card, acc.qr_url || "");
+            } else {
+                extras.push(acc);
             }
         });
+        const kCard = document.getElementById("kpay-num")?.closest(".pay-method");
+        const wCard = document.getElementById("wave-num")?.closest(".pay-method");
+        if (kCard) kCard.classList.toggle("hidden", !seenK && extras.length > 0);
+        if (wCard) wCard.classList.toggle("hidden", !seenW && extras.length > 0);
+        if (extraBox) {
+            const copyLbl = escapeHtml(t("copy_btn") || "Copy");
+            extraBox.innerHTML = extras.map(acc => {
+                const col = /^#[0-9a-fA-F]{3,6}$/.test(acc.color || "") ? acc.color : "#0047BA";
+                const ic = acc.account_type === "bank" ? "🏦" : (acc.account_type === "crypto" ? "🪙" : "💳");
+                const sub = [acc.name ? `${prefix} ${acc.name}` : "", acc.bank_branch || "", acc.note || ""].filter(Boolean).join(" · ");
+                const qrBtn = acc.qr_url ? `<button type="button" class="mini-copy-btn pay-qr-btn" style="margin-top:6px" onclick="typeof openSlipModal==='function'?openSlipModal('${escapeHtml(acc.qr_url)}'):window.open('${escapeHtml(acc.qr_url)}','_blank')">📷 QR</button>` : "";
+                return `<div class="pay-method vcp-pay-method" style="border-left:4px solid ${col};margin-top:8px"><div class="pay-title">${ic} ${escapeHtml(acc.provider || "")}</div><div class="pay-account"><span class="acc-num">${escapeHtml(acc.number || "—")}</span><button type="button" class="mini-copy-btn" onclick="copyAccount('')">${copyLbl}</button></div><span class="acc-name">${escapeHtml(sub || "—")}</span>${qrBtn}</div>`;
+            }).join("");
+        }
         return;
     }
     ["kpay-name", "wave-name"].forEach(id => {
@@ -12626,6 +12777,8 @@ async function submitPaymentSlip() {
         formData.append("package_code", activePackageCode);
         formData.append("amount_mmk", activeAmount);
         formData.append("slip_file", file);
+        const payRefEl = document.getElementById("slip-pay-ref");
+        if (payRefEl && payRefEl.value.trim()) formData.append("payment_reference", payRefEl.value.trim());
 
         const res = await fetchWithTimeout("/api/vip/submit-slip", {
             method: "POST",
@@ -12636,16 +12789,13 @@ async function submitPaymentSlip() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Submission failed");
 
-        // R40 item 6 / deck A10: the confirmation must carry the
-        // request ID + pending status — the API's message already
-        // includes both ("တောင်းဆိုမှု နံပါတ်: #… — Admin မှ
-        // စစ်ဆေးပြီးပါက Bot မှ အသိပေးပါမည်"); the old static toast
-        // showed neither, so buyers had no reference at all.
         showStudioToast(data.message || t("toast_success_slip"), 'success', 7000);
         closePaymentDrawer();
         if (fileInput) fileInput.value = "";
+        if (payRefEl) payRefEl.value = "";
         const previewBox = document.getElementById("slip-preview-box");
         if (previewBox) previewBox.classList.add("hidden");
+        loadVipWalletHistory(true);
     } catch (e) {
         showErrorToast(e, 'generic');
     } finally {
@@ -12726,8 +12876,15 @@ function showAdminSection(name) {
     window.scrollTo({ top: 0, behavior: "smooth" });
 
     // Lazy-load each screen the first time it is opened.
-    if (name === "overview" && !admStageTimingsData) loadAdminStageTimings(false);
-    if (name === "payments" && !admLoadedSections.payments) { loadAdminData(); admLoadedSections.payments = true; }
+    if (name === "overview") {
+        if (!admStageTimingsData) loadAdminStageTimings(false);
+        loadAdminAnalytics(30);
+    }
+    if (name === "payments") {
+        if (!admLoadedSections.payments) { loadAdminData(); admLoadedSections.payments = true; }
+        loadAdminOrders("");
+        loadAdminRefunds();
+    }
     if (name === "jobs") {
         loadAdminQueue();
         if (typeof loadAdminFleetStatus === "function") loadAdminFleetStatus();
@@ -13081,6 +13238,7 @@ async function loadAdminData() {
     };
     // B0: cached stage timings card on Overview (parallel, non-blocking).
     loadAdminStageTimings(false);
+    loadAdminAnalytics(30);
     try {
         const resStats = await fetchWithTimeout("/api/admin/overview", { headers: getAuthHeaders() });
         if (resStats.ok) {
@@ -13123,9 +13281,12 @@ function renderAdminSlips(slips) {
     window._lastAdminSlips.forEach(s => {
         const item = document.createElement("div");
         item.className = "slip-item-card";
+        const slipThumb = s.slip_url
+            ? `<img src="${escapeHtml(s.slip_url)}" class="slip-thumb" onclick="openSlipModal('${escapeHtml(s.slip_url)}')" title="${escapeHtml(t("adm_slip_img_title"))}">`
+            : `<div class="slip-thumb" style="display:flex;align-items:center;justify-content:center;font-size:20px;opacity:.75;">🧾</div>`;
         item.innerHTML = `
             <div class="slip-item-row">
-                <img src="${s.slip_url}" class="slip-thumb" onclick="openSlipModal('${s.slip_url}')" title="${escapeHtml(t("adm_slip_img_title"))}">
+                ${slipThumb}
                 <div class="slip-info">
                     <div class="slip-user adm-tap" onclick="openAdminUserDetail(${s.user_id})">${escapeHtml(s.user_name)}${s.username ? ` (@${escapeHtml(s.username)})` : ` (ID: ${s.user_id})`}</div>
                     <div class="slip-amount">${(s.amount_mmk || 0).toLocaleString()} MMK • ${escapeHtml(s.package_code)}</div>
@@ -13735,6 +13896,8 @@ function renderAdminDetailExtras(u) {
         row(t("admin_bal_purchased"), admFmtSecs(bb.purchased_seconds)) +
         row(t("admin_bal_consumed"), admFmtSecs(bb.consumed_seconds)) +
         row(t("admin_custom_voices"), String(u.custom_voices_count ?? 0));
+    const gEl = document.getElementById("adm-detail-grants");
+    if (gEl) gEl.innerHTML = `<div class="text-xs font-bold mt-2">${escapeHtml(t("adm_grants_lbl"))}</div>${renderGrantsRowsHtml(u.wallet_grants || [])}`;
     const tt = u.tts_today || {};
     const ttsEl = document.getElementById("adm-detail-tts");
     if (ttsEl) {
@@ -13921,9 +14084,9 @@ window.adminAdjustPreset = adminAdjustPreset;
 async function adminApplyAdjust() {
     const uid = admCurrentUserId;
     if (!uid) { showStudioToast(t("admin_no_user"), "warning"); return; }
-    const minutes = parseInt(document.getElementById("adm-adj-minutes")?.value || "0", 10) || 0;
+    const minutes = parseFloat(document.getElementById("adm-adj-minutes")?.value || "0") || 0;
     const seconds = parseInt(document.getElementById("adm-adj-seconds")?.value || "0", 10) || 0;
-    const credits = parseInt(document.getElementById("adm-adj-credits")?.value || "0", 10) || 0;
+    const credits = parseFloat(document.getElementById("adm-adj-credits")?.value || "0") || 0;
     const tier = document.getElementById("adm-adj-tier")?.value || "";
     if (!tier && minutes === 0 && seconds === 0 && credits === 0) {
         showStudioToast(t("admin_nothing_to_adjust"), "warning");
@@ -13940,7 +14103,9 @@ async function adminApplyAdjust() {
         const applyBtn = document.getElementById("adm-adjust-apply-btn");
         if (applyBtn) applyBtn.disabled = true;
         try {
-            const payload = { user_id: uid, add_minutes: minutes, add_seconds: seconds, add_recap_credits: credits, reason };
+            const vdaysEl = document.getElementById("adm-adj-vdays");
+            const validity_days = vdaysEl ? (parseInt(vdaysEl.value || "30", 10) || 0) : 30;
+            const payload = { user_id: uid, add_minutes: minutes, add_seconds: seconds, add_recap_credits: credits, validity_days, reason };
             if (!_admAdjustIdemKey) _admAdjustIdemKey = _newAdjustIdemKey();
             payload.idempotency_key = _admAdjustIdemKey;
             if (tier) payload.account_category = tier;
@@ -14207,6 +14372,9 @@ function renderAdminQueueData(data) {
             actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>`;
         } else if (statusLower === "queued" || statusLower === "running") {
             actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ ${t("admin_cancel_job")}</button>`;
+        }
+        if (statusLower === "success" || statusLower === "failed") {
+            actionsHtml += `<button class="queue-act-btn" onclick="adminManualRefundJob('${escapeHtml(j.id)}')">↩️</button>`;
         }
         if (j.is_expired) {
             actionsHtml += `<span class="badge-expired text-xs">⌛ ${t("admin_expired")}</span>`;
@@ -14843,26 +15011,34 @@ async function loadAdminAudit() {
 }
 window.loadAdminAudit = loadAdminAudit;
 
-// ── Pricing ──────────────────────────────────────────────────────────
+// ── Pricing, Analytics, Orders & Refunds ─────────────────────────────
+let _admPricingFilter = "all";
+function filterAdminPricing(cat) {
+    _admPricingFilter = cat || "all";
+    document.querySelectorAll("#adm-pricing-cat-btns [data-pcat]").forEach(b => {
+        b.classList.toggle("active", b.getAttribute("data-pcat") === _admPricingFilter);
+    });
+    if (Array.isArray(window._lastAdminPricingPlans)) renderAdminPricingList(window._lastAdminPricingPlans);
+}
+window.filterAdminPricing = filterAdminPricing;
 
 function renderAdminPricingList(plans) {
     const box = document.getElementById("admin-pricing-list");
     if (!box) return;
     if (!Array.isArray(plans) || !plans.length) { admStateEmpty(box, "admin_empty"); return; }
     window._lastAdminPricingPlans = plans;
-    box.innerHTML = plans.map(p => {
+    const filtered = _admPricingFilter === "all" ? plans : plans.filter(p => {
+        const g = p.is_topup ? "topup" : String(p.category || "voice").toLowerCase();
+        return g === _admPricingFilter;
+    });
+    if (!filtered.length) { admStateEmpty(box, "admin_empty"); return; }
+    box.innerHTML = filtered.map(p => {
         const code = String(p.code || "");
-        const titleKey = `admin_plan_name_${code}`;
-        const rawTitle = t(titleKey);
-        const titleText = (rawTitle && rawTitle !== titleKey) ? rawTitle : code;
-        const catKey = `admin_plan_cat_${String(p.category || "").toLowerCase()}`;
-        const rawCat = t(catKey);
-        const catText = (rawCat && rawCat !== catKey) ? rawCat : (p.category || "");
-        const alloc = p.recap_credits > 0 && p.minutes > 0
-            ? tf("admin_plan_spec_combo", { min: p.minutes, cr: p.recap_credits })
-            : (p.recap_credits > 0
-                ? tf("admin_plan_spec_cr", { cr: p.recap_credits })
-                : tf("admin_plan_spec_min", { min: p.minutes }));
+        const nKey = `admin_plan_name_${code}`;
+        const titleText = (t(nKey) !== nKey) ? t(nKey) : (p.name || code);
+        const catGroup = p.is_topup ? "topup" : String(p.category || "voice").toLowerCase();
+        const catKey = `adm_plan_cat_${catGroup}`;
+        const catText = (t(catKey) !== catKey) ? t(catKey) : catGroup;
         const safeCode = escapeHtml(code);
         return `
         <div class="adm-price-row adm-price-card">
@@ -14872,8 +15048,13 @@ function renderAdminPricingList(plans) {
                     <span class="adm-price-cat-badge">${escapeHtml(catText)}</span>
                 </div>
                 <div class="adm-price-meta">
-                    <span class="adm-price-alloc">${escapeHtml(alloc)}</span>
-                    <span class="adm-price-code">${escapeHtml(t("admin_plan_code_prefix"))}: ${safeCode}</span>
+                    <span class="adm-price-code">${safeCode}</span>
+                </div>
+                <div class="adm-price-specs">
+                    <label class="text-xs">Min <input type="number" class="studio-input" id="adm-min-${safeCode}" value="${p.minutes || 0}" min="0"></label>
+                    <label class="text-xs">Cr <input type="number" class="studio-input" id="adm-cr-${safeCode}" value="${p.recap_credits || 0}" min="0"></label>
+                    <label class="text-xs">Days <input type="number" class="studio-input" id="adm-vdays-${safeCode}" value="${p.validity_days ?? 30}" min="0" max="3650"></label>
+                    <label class="text-xs"><input type="checkbox" id="adm-act-${safeCode}" ${p.is_active ? "checked" : ""}> ${escapeHtml(t("adm_plan_active_lbl"))}</label>
                 </div>
             </div>
             <div class="adm-price-controls">
@@ -14903,26 +15084,137 @@ async function loadAdminPricing() {
 window.loadAdminPricing = loadAdminPricing;
 
 async function adminSavePrice(code) {
-    const input = document.getElementById("adm-price-" + code);
-    const price = parseInt(input?.value || "0", 10) || 0;
+    const price = parseInt(document.getElementById("adm-price-" + code)?.value || "0", 10) || 0;
+    const minutes = parseInt(document.getElementById("adm-min-" + code)?.value || "0", 10) || 0;
+    const recap_credits = parseInt(document.getElementById("adm-cr-" + code)?.value || "0", 10) || 0;
+    const validity_days = parseInt(document.getElementById("adm-vdays-" + code)?.value || "30", 10) || 0;
+    const is_active = !!(document.getElementById("adm-act-" + code)?.checked);
     showStudioConfirm(tf("admin_confirm_price", { code, price: price.toLocaleString() }), async () => {
         haptic("medium");
         try {
             const res = await fetch(`/api/admin/pricing/${encodeURIComponent(code)}`, {
                 method: "POST",
                 headers: getAuthHeaders(),
-                body: JSON.stringify({ price_mmk: price }),
+                body: JSON.stringify({ price_mmk: price, minutes, recap_credits, validity_days, is_active }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || "Failed");
             showStudioToast(data.message, "success");
             loadAdminPricing();
+            if (typeof refreshPlanPrices === "function") refreshPlanPrices();
         } catch (e) {
             showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
         }
     });
 }
 window.adminSavePrice = adminSavePrice;
+
+function openAdminPricingShortcut() {
+    showAdminSection("settings");
+    const acc = document.getElementById("adm-acc-pricing");
+    if (acc) {
+        acc.open = true;
+        setTimeout(() => acc.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+    }
+}
+window.openAdminPricingShortcut = openAdminPricingShortcut;
+
+async function loadAdminAnalytics(days = 30) {
+    document.querySelectorAll("#adm-analytics-window-btns [data-days]").forEach(b => {
+        b.classList.toggle("active", Number(b.getAttribute("data-days")) === Number(days));
+    });
+    const body = document.getElementById("adm-analytics-body");
+    if (!body || !state.user?.is_admin) return;
+    try {
+        const res = await fetchWithTimeout(`/api/admin/analytics?days=${encodeURIComponent(days)}`, { headers: getAuthHeaders() });
+        if (!res.ok) { admStateError(body, `loadAdminAnalytics(${days})`); return; }
+        const d = await res.json();
+        const rev = d.revenue || {}, usg = d.usage || {}, c = d.costs || {}, tel = c.telemetry_summary || {}, exp = d.expiration || {};
+        const top = rev.top_package;
+        const topPkgsHtml = (rev.package_sales || []).slice(0, 4).map(p =>
+            `<div class="adm-cost-row"><span>${escapeHtml(p.name)} (${p.orders}x)</span><b>${(p.revenue_mmk || 0).toLocaleString()} MMK</b></div>`
+        ).join("");
+        body.innerHTML = `
+            <div class="adm-analytics-grid">
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(tf("adm_rev_lbl", { n: rev.approved_orders || 0 }))}</span><span class="stat-num text-gold">${(rev.total_approved_mmk || 0).toLocaleString()} Ks</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_profit_lbl"))}</span><span class="stat-num ${(c.estimated_gross_profit_mmk || 0) >= 0 ? "text-green" : "text-danger"}">${(c.estimated_gross_profit_mmk || 0).toLocaleString()} Ks</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_cost_lbl"))}</span><span class="stat-num">$${(c.total_cost_usd || 0).toFixed(3)} (${(c.total_cost_mmk || 0).toLocaleString()} Ks)</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_arpu_lbl"))}</span><span class="stat-num" style="font-size:13px;">${(c.arpu_mmk || 0).toLocaleString()} / ${(c.avg_cost_job_mmk ?? c.avg_cost_per_job_mmk ?? 0).toLocaleString()} Ks</span></div>
+            </div>
+            <div class="mt-2 text-xs text-muted">Jobs: ${usg.total_jobs || 0} (✓${usg.success_jobs || 0} / ✗${usg.failed_jobs || 0}) • ${_fmtCreditNum(usg.total_recap_credits_consumed || 0)} Cr, ${_fmtCreditNum(usg.total_voice_minutes_consumed || 0)}m • Refunds: ${_fmtCreditNum(usg.refunded_recap_credits || 0)} Cr</div>
+            <div class="adm-cost-row mt-2"><span>${escapeHtml(t("adm_exp_lbl"))} (≤7d: <b>${exp.expiring_7d_count || 0}</b> lots)</span><b>-${_fmtCreditNum(exp.expired_recap_credits || 0)} Cr · -${_fmtCreditNum(exp.expired_voice_minutes || 0)}m</b></div>
+            ${top ? `<div class="mt-2"><div class="text-xs font-bold">${escapeHtml(t("adm_top_pkg_lbl"))}</div>${topPkgsHtml}</div>` : ""}
+            <div class="mt-2">
+                <div class="text-xs font-bold">${escapeHtml(t("adm_infra_lbl"))}</div>
+                <div class="adm-cost-row"><span>Gemini Text (${(tel.gemini_input_tokens || 0) + (tel.gemini_output_tokens || 0)} tok)</span><b>$${(c.gemini_text_usd || 0).toFixed(4)}</b></div>
+                <div class="adm-cost-row"><span>Gemini TTS</span><b>$${(c.gemini_tts_usd || 0).toFixed(4)}</b></div>
+                <div class="adm-cost-row"><span>GPU / VoxCPM (${Math.round(tel.gpu_runtime_seconds || 0)}s)</span><b>$${(c.gpu_usd || 0).toFixed(4)}</b></div>
+                <div class="adm-cost-row"><span>Storage (${(tel.storage_gb || 0).toFixed(3)} GB) + BW</span><b>$${((c.storage_usd || 0) + (c.bandwidth_usd || 0)).toFixed(4)}</b></div>
+            </div>`;
+    } catch (e) { admStateError(body, `loadAdminAnalytics(${days})`); }
+}
+window.loadAdminAnalytics = loadAdminAnalytics;
+
+async function loadAdminOrders(status = "") {
+    document.querySelectorAll("#adm-screen-payments [data-ord-st]").forEach(b => {
+        b.classList.toggle("active", (b.getAttribute("data-ord-st") || "") === status);
+    });
+    const el = document.getElementById("adm-orders-list");
+    if (!el || !state.user?.is_admin) return;
+    try {
+        const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+        const r = await fetchWithTimeout("/api/admin/orders" + qs, { headers: getAuthHeaders() });
+        if (!r.ok) { admStateError(el, `loadAdminOrders('${status}')`); return; }
+        const d = await r.json();
+        const rows = d.orders || [];
+        el.innerHTML = rows.length ? rows.slice(0, 30).map(o => `
+            <div class="vcp-tx-row">
+                <div><b>${escapeHtml(o.user_name)}</b> • ${escapeHtml(o.package_name || o.package_code)}<br><span class="text-xs text-muted">${(o.amount_mmk || 0).toLocaleString()} MMK • ${admFmtDate(o.created_at)}</span></div>
+                <span class="badge-status ${String(o.status || "").toLowerCase()}">${escapeHtml(o.status)}</span>
+            </div>`).join("") : `<p class="text-muted text-xs">${escapeHtml(t("admin_empty"))}</p>`;
+    } catch (e) { admStateError(el, `loadAdminOrders('${status}')`); }
+}
+window.loadAdminOrders = loadAdminOrders;
+
+async function loadAdminRefunds() {
+    const el = document.getElementById("adm-refunds-list");
+    if (!el || !state.user?.is_admin) return;
+    try {
+        const r = await fetchWithTimeout("/api/admin/refunds", { headers: getAuthHeaders() });
+        if (!r.ok) { admStateError(el, "loadAdminRefunds()"); return; }
+        const d = await r.json();
+        const rows = d.refunds || [];
+        el.innerHTML = rows.length ? rows.slice(0, 20).map(rf => `
+            <div class="vcp-tx-row">
+                <div><b>User ${rf.user_id}</b> • ${escapeHtml(rf.reference_id || "")}<br><span class="text-xs text-muted">${escapeHtml(rf.note || "")} • ${admFmtDate(rf.created_at)}</span></div>
+                <b>+${_fmtCreditNum(rf.recap_credits_refunded)} Cr · +${_fmtCreditNum(rf.voice_minutes_refunded)}m</b>
+            </div>`).join("") : `<p class="text-muted text-xs">${escapeHtml(t("admin_empty"))}</p>`;
+    } catch (e) { admStateError(el, "loadAdminRefunds()"); }
+}
+window.loadAdminRefunds = loadAdminRefunds;
+
+async function adminManualRefundJob(jobIdArg) {
+    const jid = (jobIdArg || document.getElementById("adm-refund-job-id")?.value || "").trim();
+    if (!jid) return;
+    showStudioConfirm(tf("adm_confirm_refund_job", { id: jid }), async () => {
+        try {
+            const res = await fetch(`/api/admin/refunds/job/${encodeURIComponent(jid)}`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ reason: "Admin console manual refund" }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            showStudioToast(data.message || "Refunded", "success");
+            loadAdminRefunds();
+            loadAdminQueue(true);
+            loadAdminAnalytics(30);
+        } catch (e) {
+            showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
+        }
+    });
+}
+window.adminManualRefundJob = adminManualRefundJob;
 
 // ── Settings (loaders/savers preserved from the previous console) ────
 
@@ -17357,8 +17649,8 @@ const PORTABLE_RECAP_PRESET_KEYS = [
 ];
 
 function applyActiveRecapStep2Category() {
-    const valid = ["preset", "frame", "subtitle", "blur", "protection"];
-    const cat = valid.includes(state.recapStep2Cat) ? state.recapStep2Cat : "preset";
+    const valid = ["subtitle", "blur", "protection", "preset", "frame"];
+    const cat = valid.includes(state.recapStep2Cat) ? state.recapStep2Cat : "subtitle";
     state.recapStep2Cat = cat;
 
     document.querySelectorAll("#recap-step2-cat-tabs [data-step2-cat]").forEach(btn => {
@@ -17377,16 +17669,17 @@ function applyActiveRecapStep2Category() {
         if (hd) hd.setAttribute("aria-expanded", open ? "true" : "false");
     };
 
+    // Always keep Aspect Ratio picker visible directly under Preview (user essential control!)
+    const ratioGroup = document.getElementById("recap-preview-ratio-group");
+    if (ratioGroup) {
+        ratioGroup.classList.remove("hidden");
+        setAccOpen("recap-preview-ratio-group", true);
+    }
+
     const presetPanel = document.getElementById("recap-cat-preset");
     if (presetPanel) presetPanel.classList.toggle("hidden", cat !== "preset");
 
-    const ratioGroup = document.getElementById("recap-preview-ratio-group");
-    if (ratioGroup) {
-        ratioGroup.classList.toggle("hidden", cat !== "frame");
-        if (cat === "frame") setAccOpen("recap-preview-ratio-group", true);
-    }
-
-    const inFine = cat === "subtitle" || cat === "blur" || cat === "protection";
+    const inFine = cat === "subtitle" || cat === "blur" || cat === "protection" || cat === "preset";
     const fineWrap = document.querySelector("#recap-step-2 .recap-fine");
     const fineHeader = document.querySelector("#recap-step-2 .recap-fine-header");
     if (fineWrap) fineWrap.classList.toggle("hidden", !inFine);
@@ -17396,11 +17689,12 @@ function applyActiveRecapStep2Category() {
         toggleRecapFineSettings(inFine);
     }
 
+    // Core 3 tabs: Subtitle, Blur, Logo (protection) — Anti-Copyright Transform lives in Advanced (preset)
     const groupCatMap = {
         "recap-subtitle-group": "subtitle",
         "recap-blur-group": "blur",
         "recap-logo-group": "protection",
-        "recap-preview-transform-group": "protection",
+        "recap-preview-transform-group": "preset",
     };
     Object.keys(groupCatMap).forEach(id => {
         const grp = document.getElementById(id);
@@ -17425,8 +17719,8 @@ window.applyActiveRecapStep2Category = applyActiveRecapStep2Category;
 
 function switchRecapStep2Category(cat, silent) {
     if (!silent && typeof haptic === "function") haptic("light");
-    const valid = ["preset", "frame", "subtitle", "blur", "protection"];
-    state.recapStep2Cat = valid.includes(cat) ? cat : "preset";
+    const valid = ["subtitle", "blur", "protection", "preset", "frame"];
+    state.recapStep2Cat = valid.includes(cat) ? cat : "subtitle";
     applyActiveRecapStep2Category();
 }
 window.switchRecapStep2Category = switchRecapStep2Category;

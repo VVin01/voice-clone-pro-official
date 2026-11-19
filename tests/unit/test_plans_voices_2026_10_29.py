@@ -18,14 +18,28 @@ from app.services.payments import PLAN_CATALOGUE, get_plan_by_code
 from app.services.queue import create_voice_clone_job
 
 EXPECTED = {
-    "MIN_10": ("voice", 10, 0, 8000),
-    "MIN_30": ("voice", 30, 0, 20000),
-    "MIN_60": ("voice", 60, 0, 38000),
-    "voice_studio_pro": ("voice", 250, 0, 75000),
-    "recap_starter": ("recap", 0, 5, 20000),
-    "recap_studio_pro": ("recap", 0, 25, 90000),
-    "combined_starter": ("combined", 30, 5, 30000),
-    "all_in_one_master": ("combined", 500, 60, 180000),
+    "voice_mini": ("voice", 10, 0, 3000),
+    "voice_starter": ("voice", 20, 0, 5000),
+    "voice_creator": ("voice", 45, 0, 10000),
+    "voice_pro": ("voice", 100, 0, 20000),
+    "voice_business": ("voice", 220, 0, 40000),
+    "recap_mini": ("recap", 0, 15, 6000),
+    "recap_starter": ("recap", 0, 30, 10000),
+    "recap_creator": ("recap", 0, 70, 20000),
+    "recap_pro": ("recap", 0, 160, 40000),
+    "recap_business": ("recap", 0, 350, 80000),
+    "combo_mini": ("combo", 10, 15, 8100),
+    "combo_starter": ("combo", 20, 30, 13500),
+    "combo_creator": ("combo", 45, 70, 27000),
+    "combo_pro": ("combo", 100, 160, 54000),
+    "combo_business": ("combo", 220, 350, 108000),
+    "topup_voice_10": ("topup", 10, 0, 2500),
+    "topup_voice_30": ("topup", 30, 0, 6000),
+    "topup_voice_60": ("topup", 60, 0, 11000),
+    "topup_recap_5": ("topup", 0, 5, 3000),
+    "topup_recap_15": ("topup", 0, 15, 8000),
+    "topup_recap_30": ("topup", 0, 30, 14000),
+    "topup_recap_60": ("topup", 0, 60, 26000),
 }
 
 
@@ -43,7 +57,7 @@ def test_plan_categories_are_three_and_per_unit_falls():
     by_cat = {}
     for p in PLAN_CATALOGUE:
         by_cat.setdefault(p["category"], []).append(p)
-    assert set(by_cat) == {"voice", "recap", "combined"}
+    assert set(by_cat) == {"voice", "recap", "combo", "topup"}
     # Voice per-minute falls as the pack grows.
     voice = sorted(
         [p for p in by_cat["voice"] if p["minutes"]],
@@ -55,9 +69,9 @@ def test_plan_categories_are_three_and_per_unit_falls():
     recap = sorted(by_cat["recap"], key=lambda p: p["recap_credits"])
     per_cr = [p["price_mmk"] / p["recap_credits"] for p in recap]
     assert per_cr == sorted(per_cr, reverse=True)
-    # Combined starter is cheaper than its parts bought separately.
-    starter = get_plan_by_code("combined_starter")
-    separate = get_plan_by_code("MIN_30")["price_mmk"] + get_plan_by_code("recap_starter")["price_mmk"]
+    # Combo starter is cheaper than its parts bought separately (10% bundle discount).
+    starter = get_plan_by_code("combo_starter")
+    separate = get_plan_by_code("voice_starter")["price_mmk"] + get_plan_by_code("recap_starter")["price_mmk"]
     assert starter["price_mmk"] < separate
 
 

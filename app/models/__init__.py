@@ -15,9 +15,13 @@ from app.models.schema import (
     AuditLog,
     BotSetting,
     CustomVoiceRequest,
+    DatabaseMetadata,
+    ImportedAudience,
     Job,
+    JobCostTelemetry,
     MinuteBalance,
     MinuteLedgerEvent,
+    MonthlyFreeAllowanceGrant,
     PaymentRequest,
     PricingPlan,
     Referral,
@@ -25,10 +29,9 @@ from app.models.schema import (
     User,
     UserVoiceModelGrant,
     VoiceModel,
+    WalletReservation,
+    WalletTransaction,
     WelcomeBonusAward,
-    DatabaseMetadata,
-    ImportedAudience,
-    MonthlyFreeAllowanceGrant,
 )
 
 __all__ = [
@@ -41,6 +44,7 @@ __all__ = [
     "DatabaseMetadata",
     "ImportedAudience",
     "Job",
+    "JobCostTelemetry",
     "JobStatus",
     "JobType",
     "LedgerDirection",
@@ -59,5 +63,7 @@ __all__ = [
     "VoiceModel",
     "VoiceModelStatus",
     "VoiceModelType",
+    "WalletReservation",
+    "WalletTransaction",
     "WelcomeBonusAward",
 ]

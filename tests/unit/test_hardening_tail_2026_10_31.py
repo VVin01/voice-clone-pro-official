@@ -28,21 +28,21 @@ from app.services.payments import get_active_pricing_plans, update_pricing_plan_
 
 @pytest.mark.asyncio
 async def test_b3_service_rejects_out_of_range_prices(db_session):
-    await get_active_pricing_plans(db_session)  # seeds MIN_10 @ 8000
+    await get_active_pricing_plans(db_session)  # seeds voice_mini @ 3000
     for bad in (0, 99, -5, 10_000_001, 10**12):
-        ok, plan, msg = await update_pricing_plan_price(db_session, "MIN_10", bad, admin_id=1)
+        ok, plan, msg = await update_pricing_plan_price(db_session, "voice_mini", bad, admin_id=1)
         assert ok is False and plan is None and msg == "PRICE_OUT_OF_RANGE", bad
     row = (await db_session.execute(
-        PricingPlan.__table__.select().where(PricingPlan.code == "MIN_10")
+        PricingPlan.__table__.select().where(PricingPlan.code == "voice_mini")
     )).fetchone()
-    assert row.price_mmk == 8000  # untouched by every rejected write
+    assert row.price_mmk == 3000  # untouched by every rejected write
 
 
 @pytest.mark.asyncio
 async def test_b3_service_accepts_boundary_prices(db_session):
     await get_active_pricing_plans(db_session)
     for good in (100, 10_000_000):
-        ok, plan, msg = await update_pricing_plan_price(db_session, "MIN_10", good, admin_id=1)
+        ok, plan, msg = await update_pricing_plan_price(db_session, "voice_mini", good, admin_id=1)
         assert ok is True and plan.price_mmk == good
 
 

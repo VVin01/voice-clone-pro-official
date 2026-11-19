@@ -205,11 +205,11 @@ def test_ass_outline_guard_at_small_size(tmp_path):
 def test_package_recap_credits_from_catalogue():
     from app.services.payments import package_recap_credits
 
-    assert package_recap_credits("recap_starter") == 5
-    assert package_recap_credits("recap_studio_pro") == 25
-    assert package_recap_credits("combined_starter") == 5
-    assert package_recap_credits("MIN_30") == 0
-    assert package_recap_credits("voice_studio_pro") == 0
+    assert package_recap_credits("recap_starter") == 30
+    assert package_recap_credits("recap_business") == 350
+    assert package_recap_credits("combo_starter") == 30
+    assert package_recap_credits("voice_mini") == 0
+    assert package_recap_credits("voice_business") == 0
     assert package_recap_credits(None) == 0
     assert package_recap_credits("no-such-pack") == 0
 
@@ -297,20 +297,19 @@ def test_wrap_admin_value_wraps_and_escapes():
 
 def test_buy_menu_has_voice_pro_button():
     pay_py = (ROOT / "app" / "handlers" / "payment.py").read_text(encoding="utf-8")
-    # Data-driven: catalogue voice plans missing from the DB packs get
-    # a buy button with the standard buy_pkg: callback (Voice Pro).
-    assert 'entry["category"] == "voice" and entry["code"] not in _db_codes' in pay_py
+    # Data-driven: active DB plans render with standard buy_pkg:{p.code} callback.
+    assert 'callback_data=f"buy_pkg:{p.code}"' in pay_py
     from app.services.payments import get_plan_by_code
 
-    assert get_plan_by_code("voice_studio_pro")["minutes"] == 250
+    assert get_plan_by_code("voice_pro")["minutes"] == 100
+    assert get_plan_by_code("voice_business")["minutes"] == 220
 
 
 def test_recap_job_records_real_seconds():
-    # Creation stores the checked source duration (or Option B hold fallback,
-    # never the old 120s placeholder); completion stores the probed real duration.
+    # Creation stores checked source or estimated recap seconds; completion stores real duration.
     assert re.search(
-        r"seconds_estimated=\(\s*int\(checked_duration\)\s*if\s*checked_duration\s*else\s*"
-        r"\(int\(estimated_voice_seconds\)\s*if\s*estimated_voice_seconds\s*else\s*0\)\s*\)",
+        r"seconds_estimated=\(\s*int\(estimated_recap_seconds\)\s*if\s*estimated_recap_seconds\s*else\s*"
+        r"\(int\(checked_duration\)\s*if\s*checked_duration\s*else\s*0\)\s*\)",
         API_PY,
     )
     assert '"seconds_consumed": _real_dur' in API_PY

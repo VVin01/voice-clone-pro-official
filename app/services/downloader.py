@@ -1077,6 +1077,7 @@ class MediaDownloader:
             'max_filesize': MAX_DOWNLOAD_BYTES,
             'retries': 10,
             'fragment_retries': 10,
+            'concurrent_fragment_downloads': 4,
             'file_access_retries': 5,
             'remote_components': ['ejs:github'],
             'http_headers': {

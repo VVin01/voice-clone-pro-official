@@ -370,7 +370,9 @@ def _max_overlap(intervals) -> int:
             continue
         events.append((start, 1))
         events.append((end, -1))
-    events.sort(key=lambda e: (e[0], -e[1]))
+    # Half-open [start, end): process end (-1) before start (+1) at equal timestamps
+    # so back-to-back serial segments finishing within one coarse OS clock tick don't false-overlap.
+    events.sort(key=lambda e: (e[0], e[1]))
     cur = best = 0
     for _t, delta in events:
         cur += delta

@@ -27,17 +27,20 @@ from app.services import group_ai_admin as gai
 from app.services import private_ai as pai  # noqa: F401  (shared-sheet consumer)
 
 
-def test_sheet_states_purchased_balances_never_expire():
+def test_sheet_states_purchased_balances_30_day_validity_and_grandfather():
+    # Policy updated on 2026-11-19: newly purchased packages carry 30-day
+    # validity (FEFO consumption), while legacy pre-migration balances remain
+    # grandfathered (no expiry).
     sheet = gai.build_fact_sheet()
     assert "သက်တမ်း (အရေးကြီး)" in sheet
-    assert "သက်တမ်း လုံးဝ မရှိပါ" in sheet
-    assert "တစ်လ ကန့်သတ်ချက် မဟုတ်ပါ" in sheet
-    assert "ကုန်တဲ့အထိ ကြိုက်တဲ့အချိန် ခွဲသုံးနိုင်ပါတယ်" in sheet
+    assert "သက်တမ်း ၃၀ ရက် (30 Days)" in sheet
+    assert "FEFO" in sheet
+    assert "Grandfathered" in sheet
 
 
 def test_sheet_never_claims_a_plan_expiry():
-    # The exact invented claim from the 2026-11-12 incident, and its
-    # close paraphrases, must never be sheet content.
+    # Must explicitly state the exact 30-day + grandfather rule rather than
+    # vague/hallucinated expiry claims.
     sheet = gai.build_fact_sheet()
     assert "တစ်လ သက်တမ်း ရှိပါတယ်" not in sheet
     assert "တစ်လအတွင်း ကုန်သွား" not in sheet
@@ -45,14 +48,14 @@ def test_sheet_never_claims_a_plan_expiry():
 
 def test_sheet_forbids_monthly_plan_framing():
     sheet = gai.build_fact_sheet()
-    assert "ပမာဏ (မိနစ် / Credit)" in sheet
-    assert "Plan ကို တစ်လစာ လို့ မပြောပါနှင့်" in sheet
+    assert "သက်တမ်း ၃၀ ရက် (30 Days)" in sheet
+    assert "၃ ရက်အလို" in sheet and "၂၄ နာရီအလို" in sheet
 
 
 def test_sheet_separates_free_reset_from_purchased_balance():
     sheet = gai.build_fact_sheet()
     assert "မရောပါနှင့်" in sheet
-    assert "ဝယ်ထားတဲ့ ပမာဏနဲ့ လုံးဝ မဆိုင်ပါ" in sheet
+    assert "ဝယ်ထားတဲ့ ၃၀ ရက် Package များနှင့် သီးခြားစီ ဖြစ်ပါတယ်" in sheet
     # ...while still stating the FREE allowance itself resets monthly
     # and does not roll over.
     assert "နောက်လ ဆက်မသွားပါ" in sheet
@@ -71,7 +74,7 @@ def test_private_ai_prompt_carries_the_expiry_block():
     prompt = pai.build_private_prompt(
         author_name="Member", text="ဝယ်ထားတဲ့ မိနစ် သက်တမ်းကုန်လား"
     )
-    assert "သက်တမ်း လုံးဝ မရှိပါ" in prompt
+    assert "သက်တမ်း ၃၀ ရက် (30 Days)" in prompt
 
 
 def test_decision_prompt_has_followup_rule():

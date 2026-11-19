@@ -184,17 +184,17 @@ async def test_payment_approval_writes_single_recap_credit_row_and_blocks_double
             s, uid, package_code="recap_starter", receipt_file_id="rcpt_recap_only"
         )
         pay_combo = await create_payment_request(
-            s, uid, package_code="combined_starter", receipt_file_id="rcpt_combo"
+            s, uid, package_code="combo_starter", receipt_file_id="rcpt_combo"
         )
         pay_voice = await create_payment_request(
-            s, uid, package_code="MIN_10", receipt_file_id="rcpt_voice_only"
+            s, uid, package_code="voice_mini", receipt_file_id="rcpt_voice_only"
         )
         pay_edited = await create_payment_request(
             s, uid, package_code="recap_starter", receipt_file_id="rcpt_edited"
         )
         await s.commit()
 
-    # 1) Recap-only approval: +5 credits, 1 CREDIT row referencing pay_recap.id + plan name
+    # 1) Recap-only approval: +30 credits, 1 CREDIT row referencing pay_recap.id + plan name
     async with maker() as s:
         ok, p1, code = await approve_payment_request(s, pay_recap.id, admin_id=admin_id)
         await s.commit()
@@ -215,10 +215,10 @@ async def test_payment_approval_writes_single_recap_credit_row_and_blocks_double
         ).scalars().all()
         assert len(rows_p1) == 1
         assert rows_p1[0].direction == LedgerDirection.CREDIT.value
-        assert rows_p1[0].credits == 5
+        assert rows_p1[0].credits == 30
         assert "recap_starter" in (rows_p1[0].note or "")
 
-    # 2) Combined plan approval: credits both minutes and 5 recap credits in same txn
+    # 2) Combo plan approval: credits both minutes and 30 recap credits in same txn
     async with maker() as s:
         ok, _p, code = await approve_payment_request(s, pay_combo.id, admin_id=admin_id)
         await s.commit()
@@ -231,8 +231,8 @@ async def test_payment_approval_writes_single_recap_credit_row_and_blocks_double
             )
         ).scalars().all()
         assert len(rows_combo) == 1
-        assert rows_combo[0].credits == 5
-        assert "combined_starter" in (rows_combo[0].note or "")
+        assert rows_combo[0].credits == 30
+        assert "combo_starter" in (rows_combo[0].note or "")
 
     # 3) Voice-only plan writes 0 recap credit rows
     async with maker() as s:
@@ -272,8 +272,8 @@ async def test_payment_approval_writes_single_recap_credit_row_and_blocks_double
         assert rows_ed[0].credits == 8
 
         user = await s.get(User, uid)
-        # 3 (signup) + 5 + 5 + 0 + 8 = 21
-        assert user.recap_credits == 21
+        # 3 (signup) + 30 + 30 + 0 + 8 = 71
+        assert user.recap_credits == 71
         assert int(user.recap_credits) == await _recap_ledger_sum(s, uid)
 
     await engine.dispose()

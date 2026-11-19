@@ -20,13 +20,14 @@ from app.services import private_ai as pai
 APPROVED_LINE = (
     "• Recap ပြောပြသူ အသံ: Plan ဝယ်ထားသူတွေက Persona အသံ ၁၂ မျိုးတင် မကဘဲ "
     "ကိုယ်တိုင် Clone လုပ်ထားတဲ့ ကိုယ်ပိုင် အသံနဲ့ပါ Recap ကို ပြောခိုင်းလို့ ရပါတယ် — "
-    "အသံ အတွက် သီးခြား အပို ဝယ်စရာ မလိုပါဘူး၊ Recap Credit ပဲ ကုန်ပါတယ်။ "
-    "Free အကောင့်ကတော့ Gemini / Edge အသံတွေနဲ့ပဲ ပြောပေးပါတယ်။"
+    "Persona / Custom Voice Clone (VoxCPM) သုံးရင် Voice Audio Duration အတိုင်း Voice Clone မိနစ်ကို သီးခြားဖြတ်ပြီး "
+    "Normal AI Voice (Gemini/Edge) နဲ့ Subtitle-Only မှာ Voice Clone မိနစ် မဖြတ်ပါဘူး။ "
+    "Free အကောင့်ကတော့ Gemini / Edge / Subtitle-Only နဲ့ပဲ သုံးနိုင်ပါတယ်။"
 )
 
 FRAGMENTS = (
     "ကိုယ်ပိုင် အသံနဲ့ပါ",
-    "Recap Credit ပဲ ကုန်ပါတယ်",
+    "Voice Clone မိနစ် မဖြတ်ပါဘူး",
     "Gemini / Edge",
 )
 
@@ -46,7 +47,7 @@ def test_sheet_carries_the_approved_line_verbatim_once():
 def test_approved_line_sits_right_after_the_recap_engine_line():
     lines = gai.build_fact_sheet().splitlines()
     engine_idx = next(
-        i for i, line in enumerate(lines) if line.startswith("• အသံ Engine ၂ မျိုး")
+        i for i, line in enumerate(lines) if line.startswith("• အသံ Engine ")
     )
     assert lines[engine_idx + 1] == APPROVED_LINE
 

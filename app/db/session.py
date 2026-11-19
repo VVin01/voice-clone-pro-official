@@ -124,6 +124,12 @@ async def ensure_batch_aj_unique_indexes(engine) -> None:
             "ON recap_credit_ledger_events (reference_id) "
             "WHERE substr(reference_id, 1, 7) = 'REFUND:' AND direction = 'CREDIT'",
         ),
+        (
+            "uq_pr_payment_reference",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_pr_payment_reference "
+            "ON payment_requests (payment_reference) "
+            "WHERE payment_reference IS NOT NULL",
+        ),
     )
     for name, ddl in statements:
         try:
@@ -194,7 +200,39 @@ async def init_db() -> None:
             dialect_name = connection.dialect.name
             if dialect_name == "postgresql":
                 # PostgreSQL safe IF NOT EXISTS column additions
-                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS recap_credits INTEGER DEFAULT 3"))
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS recap_credits DOUBLE PRECISION DEFAULT 3.0"))
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS recap_credit_seconds BIGINT"))
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reserved_recap_seconds BIGINT DEFAULT 0"))
+                connection.execute(text(
+                    "DO $$ BEGIN "
+                    "IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='recap_credits' AND data_type IN ('integer','bigint')) THEN "
+                    "ALTER TABLE users ALTER COLUMN recap_credits TYPE DOUBLE PRECISION USING recap_credits::double precision; "
+                    "END IF; END $$;"
+                ))
+                connection.execute(text("UPDATE users SET recap_credit_seconds = CAST(ROUND(COALESCE(recap_credits, 3) * 60) AS BIGINT) WHERE recap_credit_seconds IS NULL"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_monthly_free_seconds BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_welcome_seconds BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_purchased_seconds BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS name VARCHAR(80) DEFAULT ''"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS category VARCHAR(20) DEFAULT 'voice'"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS sub_type VARCHAR(20) DEFAULT 'voice'"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS recap_credits INTEGER DEFAULT 0"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS is_topup BOOLEAN DEFAULT FALSE"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS badge VARCHAR(30) DEFAULT ''"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS validity_days INTEGER DEFAULT 30"))
+                connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE"))
+                connection.execute(text("ALTER TABLE wallet_transactions DROP CONSTRAINT IF EXISTS chk_wallet_tx_type"))
+                connection.execute(text(
+                    "ALTER TABLE wallet_transactions ADD CONSTRAINT chk_wallet_tx_type CHECK "
+                    "(tx_type IN ('PURCHASE', 'RESERVE', 'DEDUCT', 'RELEASE', 'REFUND', 'ADMIN_ADJUST', 'BONUS', 'EXPIRE'))"
+                ))
+                connection.execute(text("ALTER TABLE recap_credit_ledger_events ADD COLUMN IF NOT EXISTS seconds BIGINT DEFAULT 0"))
+                connection.execute(text(
+                    "DO $$ BEGIN "
+                    "IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='recap_credit_ledger_events' AND column_name='credits' AND data_type IN ('integer','bigint')) THEN "
+                    "ALTER TABLE recap_credit_ledger_events ALTER COLUMN credits TYPE DOUBLE PRECISION USING credits::double precision; "
+                    "END IF; END $$;"
+                ))
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_test_account BOOLEAN DEFAULT FALSE"))
                 connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS gemini_api_key TEXT"))
@@ -203,6 +241,10 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preset_voice VARCHAR(50)"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_config TEXT"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_duration_seconds INTEGER DEFAULT 0"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS voice_audio_seconds INTEGER DEFAULT 0"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recap_credits_charged DOUBLE PRECISION DEFAULT 0"))
+                connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_size_bytes BIGINT DEFAULT 0"))
                 # Batch DP: park-and-ask state column + the widened
                 # job-status constraint. Existing rows only ever hold
                 # the old status set (a subset of the new one), so
@@ -224,6 +266,9 @@ async def init_db() -> None:
                 connection.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS final_script TEXT"))
                 connection.execute(text("ALTER TABLE voice_models ADD COLUMN IF NOT EXISTS sample_audio_path TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS slip_url TEXT"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS recap_credits INTEGER DEFAULT 0"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS validity_days INTEGER DEFAULT 30"))
+                connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(128)"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS admin_notify_copies TEXT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS review_claimed_by BIGINT"))
                 connection.execute(text("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS review_claimed_at TIMESTAMP WITH TIME ZONE"))
@@ -236,7 +281,12 @@ async def init_db() -> None:
                 res_users = connection.execute(text("PRAGMA table_info(users)"))
                 cols_users = [row[1] for row in res_users.fetchall()]
                 if "recap_credits" not in cols_users:
-                    connection.execute(text("ALTER TABLE users ADD COLUMN recap_credits INTEGER DEFAULT 3"))
+                    connection.execute(text("ALTER TABLE users ADD COLUMN recap_credits REAL DEFAULT 3.0"))
+                if "recap_credit_seconds" not in cols_users:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN recap_credit_seconds BIGINT"))
+                    connection.execute(text("UPDATE users SET recap_credit_seconds = CAST(ROUND(COALESCE(recap_credits, 3) * 60) AS INTEGER) WHERE recap_credit_seconds IS NULL"))
+                if "reserved_recap_seconds" not in cols_users:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN reserved_recap_seconds BIGINT DEFAULT 0"))
                 if "bot_blocked" not in cols_users:
                     connection.execute(text("ALTER TABLE users ADD COLUMN bot_blocked BOOLEAN DEFAULT 0"))
                 if "is_test_account" not in cols_users:
@@ -245,6 +295,36 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE users ADD COLUMN gemini_api_key TEXT"))
                 if "gemini_key_state" not in cols_users:
                     connection.execute(text("ALTER TABLE users ADD COLUMN gemini_key_state VARCHAR(10) DEFAULT ''"))
+
+                res_mb = connection.execute(text("PRAGMA table_info(minute_balances)"))
+                cols_mb = [row[1] for row in res_mb.fetchall()]
+                for _mb_col in ("reserved_monthly_free_seconds", "reserved_welcome_seconds", "reserved_purchased_seconds"):
+                    if _mb_col not in cols_mb:
+                        connection.execute(text(f"ALTER TABLE minute_balances ADD COLUMN {_mb_col} BIGINT DEFAULT 0"))
+
+                res_pp = connection.execute(text("PRAGMA table_info(pricing_plans)"))
+                cols_pp = [row[1] for row in res_pp.fetchall()]
+                if "name" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN name VARCHAR(80) DEFAULT ''"))
+                if "category" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN category VARCHAR(20) DEFAULT 'voice'"))
+                if "sub_type" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN sub_type VARCHAR(20) DEFAULT 'voice'"))
+                if "recap_credits" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN recap_credits INTEGER DEFAULT 0"))
+                if "is_topup" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN is_topup BOOLEAN DEFAULT 0"))
+                if "badge" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN badge VARCHAR(30) DEFAULT ''"))
+                if "validity_days" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN validity_days INTEGER DEFAULT 30"))
+                if "updated_at" not in cols_pp:
+                    connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN updated_at TIMESTAMP"))
+
+                res_rcle = connection.execute(text("PRAGMA table_info(recap_credit_ledger_events)"))
+                cols_rcle = [row[1] for row in res_rcle.fetchall()]
+                if "seconds" not in cols_rcle:
+                    connection.execute(text("ALTER TABLE recap_credit_ledger_events ADD COLUMN seconds BIGINT DEFAULT 0"))
 
                 res = connection.execute(text("PRAGMA table_info(voice_models)"))
                 cols = [row[1] for row in res.fetchall()]
@@ -275,11 +355,25 @@ async def init_db() -> None:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN engine VARCHAR(20) DEFAULT 'voxcpm'"))
                 if "preset_voice" not in cols_jobs:
                     connection.execute(text("ALTER TABLE jobs ADD COLUMN preset_voice VARCHAR(50)"))
+                if "output_duration_seconds" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN output_duration_seconds INTEGER DEFAULT 0"))
+                if "voice_audio_seconds" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN voice_audio_seconds INTEGER DEFAULT 0"))
+                if "recap_credits_charged" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN recap_credits_charged REAL DEFAULT 0"))
+                if "output_size_bytes" not in cols_jobs:
+                    connection.execute(text("ALTER TABLE jobs ADD COLUMN output_size_bytes BIGINT DEFAULT 0"))
 
                 res_pay = connection.execute(text("PRAGMA table_info(payment_requests)"))
                 cols_pay = [row[1] for row in res_pay.fetchall()]
                 if "slip_url" not in cols_pay:
                     connection.execute(text("ALTER TABLE payment_requests ADD COLUMN slip_url TEXT"))
+                if "recap_credits" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN recap_credits INTEGER DEFAULT 0"))
+                if "validity_days" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN validity_days INTEGER DEFAULT 30"))
+                if "payment_reference" not in cols_pay:
+                    connection.execute(text("ALTER TABLE payment_requests ADD COLUMN payment_reference VARCHAR(128)"))
                 if "admin_notify_copies" not in cols_pay:
                     connection.execute(text("ALTER TABLE payment_requests ADD COLUMN admin_notify_copies TEXT"))
                 if "review_claimed_by" not in cols_pay:
@@ -334,6 +428,37 @@ async def init_db() -> None:
                         finally:
                             connection.execute(text("PRAGMA foreign_keys=ON"))
 
+                # Migrate pre-existing SQLite wallet_transactions CHECK constraint if EXPIRE is missing.
+                wt_ddl = connection.execute(
+                    text("SELECT sql FROM sqlite_master WHERE type='table' AND name='wallet_transactions'")
+                ).scalar_one_or_none()
+                if wt_ddl and "chk_wallet_tx_type" in wt_ddl and "'EXPIRE'" not in wt_ddl:
+                    import re as _re2
+                    upgraded_wt = _re2.sub(
+                        r"CONSTRAINT\s+chk_wallet_tx_type\s+CHECK\s*\(\s*tx_type\s+IN\s*\([^)]*\)\s*\)",
+                        "CONSTRAINT chk_wallet_tx_type CHECK (tx_type IN ('PURCHASE', 'RESERVE', 'DEDUCT', 'RELEASE', 'REFUND', 'ADMIN_ADJUST', 'BONUS', 'EXPIRE'))",
+                        wt_ddl,
+                        flags=_re2.IGNORECASE,
+                    )
+                    if upgraded_wt != wt_ddl:
+                        tmp_wt = _re2.sub(
+                            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[\"`\[]?wallet_transactions[\"`\]]?)",
+                            "CREATE TABLE wallet_transactions__new_chk",
+                            upgraded_wt,
+                            count=1,
+                            flags=_re2.IGNORECASE,
+                        )
+                        connection.execute(text("PRAGMA foreign_keys=OFF"))
+                        try:
+                            connection.execute(text("DROP TABLE IF EXISTS wallet_transactions__new_chk"))
+                            connection.execute(text(tmp_wt))
+                            connection.execute(text("INSERT INTO wallet_transactions__new_chk SELECT * FROM wallet_transactions"))
+                            connection.execute(text("DROP TABLE wallet_transactions"))
+                            connection.execute(text("ALTER TABLE wallet_transactions__new_chk RENAME TO wallet_transactions"))
+                            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_wt_user_created ON wallet_transactions (user_id, created_at)"))
+                        finally:
+                            connection.execute(text("PRAGMA foreign_keys=ON"))
+
         await conn.run_sync(_add_missing_cols)
 
     # Batch AJ: defensive unique indexes (see the helper). Runs AFTER
@@ -353,6 +478,14 @@ async def init_db() -> None:
 
         from app.services.dynamic_settings import load_dynamic_settings
         await load_dynamic_settings(session)
+
+        try:
+            from app.services.payments import _ensure_pricing_plans_seeded
+            await _ensure_pricing_plans_seeded(session)
+            await session.commit()
+        except Exception as e_plan_seed:
+            import logging
+            logging.getLogger(__name__).warning("Pricing plan seed skipped: %s", e_plan_seed)
 
         # Ensure VoxCPM Cloud AI model is active and available
         try:
@@ -410,6 +543,27 @@ async def init_db() -> None:
 
         logging.getLogger(__name__).warning(
             "Recap credit opening balance backfill skipped: %s", e_recap_backfill
+        )
+
+    # 30-day expiration transition: idempotently grandfather pre-existing paid balances
+    # into LEGACY_GRANDFATHER grants (expires_at=NULL) so existing customers keep their balances.
+    try:
+        from app.services.billing import backfill_legacy_wallet_grants
+
+        async with AsyncSessionLocal() as grant_backfill_session:
+            g_summary = await backfill_legacy_wallet_grants(grant_backfill_session)
+            if g_summary.get("users_grandfathered", 0) > 0:
+                await grant_backfill_session.commit()
+                import logging
+
+                logging.getLogger(__name__).info(
+                    "Legacy wallet grant grandfather backfill applied: %s", g_summary
+                )
+    except Exception as e_grant_backfill:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Legacy wallet grant grandfather backfill skipped: %s", e_grant_backfill
         )
 
 

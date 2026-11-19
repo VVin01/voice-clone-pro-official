@@ -28,6 +28,12 @@ from app.services.audio import (
 )
 from app.services.download_names import branded_download_filename
 from app.services.i18n import t
+from app.services.billing import (
+    record_cost_telemetry,
+    refund_or_release_job,
+    release_job_reservation,
+    settle_job_reservation,
+)
 from app.services.ledger import consume_seconds
 from app.services.models import get_authorized_model
 from app.services.progress import JobProgressTracker, render_stepper_progress, safe_edit_status
@@ -524,6 +530,7 @@ async def process_single_job(
         await tracker.update_step(3)
         await tracker.start_ticker(step=3)
         used_fallback = False
+        _vox_runtime_seconds = 0.0
         # Batch BU: same treatment for the reference auto-trim flag —
         # read from the engine after the try/finally below.
         reference_trimmed = False
@@ -645,6 +652,7 @@ async def process_single_job(
                         "Owner chose Edge-only delivery at the park prompt (Batch DP)"
                     )
                 else:
+                    _vox_t0 = time.monotonic()
                     try:
                         loop = asyncio.get_running_loop()
                         await loop.run_in_executor(
@@ -734,6 +742,8 @@ async def process_single_job(
                         _vox_error = e_quota
                     except Exception as e_vox:
                         _vox_error = e_vox
+                    finally:
+                        _vox_runtime_seconds = round(max(0.0, time.monotonic() - _vox_t0), 3)
                 if _vox_error is not None:
                     used_fallback = True
                     logger.warning("VoxCPM 2 primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", _vox_error)
@@ -806,38 +816,53 @@ async def process_single_job(
         # refund). Honour it: no charge, no delivery, no SUCCESS.
         if await _voice_job_cancelled(session, job):
             logger.info("Voice job %s was cancelled before billing; not charging or delivering.", job.id)
+            if not settings.is_admin(job.user_id):
+                await release_job_reservation(
+                    session,
+                    job.user_id,
+                    str(job.id),
+                    reason="USER_CANCELLED",
+                    note="Voice job cancelled before billing",
+                )
             await session.commit()
             return False
 
-        # Batch AJ (H7): billing comes FIRST now. The old order copied
-        # the audio into outputs/, set result_path and uploaded it to
-        # the cloud BEFORE consume_seconds ran — a job whose charge
-        # then failed (or a cancel that landed mid-flight) still
-        # carried a downloadable result. Charge → persist → deliver.
+        # Batch AJ (H7): billing comes FIRST now. Charge -> persist -> deliver.
+        settled_voice_sec = 0 if used_fallback else duration_seconds
         if not settings.is_admin(job.user_id):
             if used_fallback:
-                # Batch CH (Item 2): a job delivered via the Edge
-                # fallback is not the clone service the user's minutes
-                # pay for — deduct NOTHING from the voice balance
-                # (FREE monthly wallet / welcome / purchased), and the
-                # seconds_consumed=0 write below keeps it out of the
-                # Batch AN daily-cap counting as well (queue.py also
-                # skips edge_fallback SUCCESS rows explicitly). The
-                # Edge audio, the fallback caption note and the
-                # edge_fallback engine marking all stay as they were.
                 logger.info(
                     "Voice job %s delivered via Edge fallback; "
-                    "skipping voice-balance deduction (Batch CH).",
+                    "releasing reserve with zero voice-balance deduction (Batch CH).",
                     job.id,
                 )
+                await release_job_reservation(
+                    session,
+                    job.user_id,
+                    str(job.id),
+                    reason="EDGE_FALLBACK",
+                    note="Delivered via Edge fallback (no voice deduction)",
+                )
             else:
-                await consume_seconds(
-                    session=session,
+                settle_res = await settle_job_reservation(
+                    session,
                     user_id=job.user_id,
-                    seconds_to_consume=duration_seconds,
                     job_id=str(job.id),
+                    actual_recap_seconds=0,
+                    actual_voice_seconds=duration_seconds,
+                    raise_on_voice_shortfall=True,
                     note=f"Voice clone generation ({model.name}, {duration_seconds}s)",
                 )
+                if settle_res.get("found"):
+                    settled_voice_sec = int(settle_res.get("settled_voice_seconds") or 0)
+                else:
+                    await consume_seconds(
+                        session=session,
+                        user_id=job.user_id,
+                        seconds_to_consume=duration_seconds,
+                        job_id=str(job.id),
+                        note=f"Voice clone generation ({model.name}, {duration_seconds}s)",
+                    )
         else:
             logger.info("Admin voice job %s completed (%ss); skipping balance deduction.", job.id, duration_seconds)
             session.add(
@@ -853,41 +878,49 @@ async def process_single_job(
                 )
             )
 
-        # Batch CH (Item 2): fallback-delivered jobs consumed no
-        # voice minutes — record 0, not the delivered duration.
-        job.seconds_consumed = 0 if used_fallback else duration_seconds
+        await record_cost_telemetry(
+            session,
+            job_id=str(job.id),
+            user_id=job.user_id,
+            provider="edge_tts" if used_fallback else "voxcpm",
+            model_name=str(getattr(model, "name", "VoxCPM") or "VoxCPM"),
+            requests_count=1,
+            audio_seconds=float(duration_seconds or 0.0),
+            runtime_seconds=0.0 if used_fallback else float(_vox_runtime_seconds),
+        )
+
+        # Batch CH (Item 2): fallback-delivered jobs consumed no voice minutes.
+        job.seconds_consumed = 0 if used_fallback else settled_voice_sec
+        job.voice_audio_seconds = 0 if used_fallback else int(duration_seconds or 0)
+        job.output_duration_seconds = int(duration_seconds or 0)
         if used_fallback:
-            # Persist the fallback flag on the job result so the Mini App
-            # job status/history can show the fallback notice as well.
             job.engine = "edge_fallback"
         if reference_trimmed:
-            # Batch BU: persist the trim flag on the job result so the
-            # Mini App job status/history can show the trim note as
-            # well (mirrors the fallback flag above).
             job.reference_trimmed = True
 
-        # Preserve the generated audio in permanent outputs storage for Mini App & API downloads.
-        # A persistence failure now FAILS the job (the failure path
-        # refunds the charge above) instead of pointing result_path at
-        # the temp file the finally-block is about to delete.
         outputs_dir = settings.storage_root / "outputs"
         outputs_dir.mkdir(parents=True, exist_ok=True)
         permanent_wav_path = outputs_dir / f"{job.id}_{out_filename}"
         if converted_wav_path.resolve() != permanent_wav_path.resolve():
             shutil.copy2(converted_wav_path, permanent_wav_path)
         job.result_path = str(permanent_wav_path)
+        out_bytes = int(permanent_wav_path.stat().st_size) if permanent_wav_path.is_file() else 0
+        job.output_size_bytes = out_bytes
 
         # Upload audio result to Render Cloud server so Mini App & Bot can stream / download it
         final_audio_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
         synced = await sync_output_to_cloud(job.id, final_audio_path)
         if not synced and not getattr(settings, "instance_primary", True) and (getattr(settings, "worker_token", "") or "").strip():
             raise RuntimeError("Failed to upload rendered output to cloud server")
+        if synced and out_bytes > 0:
+            await record_cost_telemetry(
+                session,
+                job_id=str(job.id),
+                user_id=job.user_id,
+                provider="bandwidth",
+                bytes_transferred=out_bytes,
+            )
 
-        # Persist the billing + result state and end the transaction
-        # BEFORE delivery (audit fix 2026-11-03): the Telegram sends
-        # below are network I/O and must not hold the billing
-        # transaction's pooled connection open. The SUCCESS status
-        # write after delivery gets its own short transaction.
         await session.commit()
 
         # Batch AJ (H5): cancel re-check AFTER the billing commit,
@@ -896,9 +929,12 @@ async def process_single_job(
         # row stays CANCELLED — never delivered, never SUCCESS.
         if await _voice_job_cancelled(session, job):
             logger.info("Voice job %s was cancelled after billing; refunding and not delivering.", job.id)
-            from app.services.ledger import refund_job_seconds
-
-            await refund_job_seconds(session, job.user_id, str(job.id))
+            res_ref = await refund_or_release_job(
+                session, job.user_id, str(job.id), reason="USER_CANCELLED"
+            )
+            if not res_ref.get("found"):
+                from app.services.ledger import refund_job_seconds
+                await refund_job_seconds(session, job.user_id, str(job.id))
             job.result_path = None
             await session.commit()
             return False
@@ -1016,9 +1052,12 @@ async def process_single_job(
             if await _voice_job_cancelled(session, job):
                 logger.info("Voice job %s was cancelled during delivery; refunding instead of SUCCESS.", job.id)
                 if not settings.is_admin(job.user_id):
-                    from app.services.ledger import refund_job_seconds
-
-                    await refund_job_seconds(session, job.user_id, str(job.id))
+                    res_ref = await refund_or_release_job(
+                        session, job.user_id, str(job.id), reason="USER_CANCELLED"
+                    )
+                    if not res_ref.get("found"):
+                        from app.services.ledger import refund_job_seconds
+                        await refund_job_seconds(session, job.user_id, str(job.id))
                 job.result_path = None
                 await session.commit()
                 return False
@@ -1056,10 +1095,13 @@ async def process_single_job(
             pass
         if job.status == JobStatus.CANCELLED.value:
             if not settings.is_admin(job.user_id):
-                from app.services.ledger import refund_job_seconds
-
                 try:
-                    await refund_job_seconds(session, job.user_id, str(job.id))
+                    res_ref = await refund_or_release_job(
+                        session, job.user_id, str(job.id), reason="USER_CANCELLED"
+                    )
+                    if not res_ref.get("found"):
+                        from app.services.ledger import refund_job_seconds
+                        await refund_job_seconds(session, job.user_id, str(job.id))
                     await session.commit()
                 except Exception:
                     pass
@@ -1074,10 +1116,14 @@ async def process_single_job(
         job.error_message = user_error
         job.finished_at = utc_now()
 
-        # Refund if any debit occurred for this job
+        # Refund or release reservation if any hold/debit occurred for this job
         if not settings.is_admin(job.user_id):
-            from app.services.ledger import refund_job_seconds
-            await refund_job_seconds(session, job.user_id, str(job.id))
+            res_ref = await refund_or_release_job(
+                session, job.user_id, str(job.id), reason="JOB_FAILED"
+            )
+            if not res_ref.get("found"):
+                from app.services.ledger import refund_job_seconds
+                await refund_job_seconds(session, job.user_id, str(job.id))
 
         await session.commit()
 
@@ -1125,9 +1171,12 @@ async def _fail_timed_out_job(job_id: str) -> None:
             job.error_message = "Voice job timed out (worker deadline exceeded)"
             job.finished_at = utc_now()
             if not settings.is_admin(job.user_id):
-                from app.services.ledger import refund_job_seconds
-
-                await refund_job_seconds(session, job.user_id, str(job.id))
+                res_ref = await refund_or_release_job(
+                    session, job.user_id, str(job.id), reason="WORKER_TIMEOUT"
+                )
+                if not res_ref.get("found"):
+                    from app.services.ledger import refund_job_seconds
+                    await refund_job_seconds(session, job.user_id, str(job.id))
             await session.commit()
     except Exception as exc:
         logger.warning("Could not fail timed-out job %s: %s", job_id, exc)

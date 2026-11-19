@@ -5283,6 +5283,12 @@ input[type="range"]::-moz-range-thumb,
 #tab-tts > #tts-progress-box,
 #tab-tts > #tts-result-box,
 #tab-tts > .hub-link { order: 5; }
+#tab-tts > .input-card#tts-gemini-key-card { order: 6; }
+#home-expiry-pill.exp-soon { background: rgba(239,68,68,.16); color: #ef4444; border-color: rgba(239,68,68,.4); }
+.vcp-plan-validity { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; background:var(--gold-soft); color:var(--gold-2); margin-bottom:6px; }
+.vcp-grant-row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.vcp-grant-row:last-child { border-bottom:0; }
+.vcp-grant-exp-soon { color:#ef4444; font-weight:700; }
 
 /* Non-destructive character excess highlight banner */
 .vcp-excess-banner {
@@ -10835,6 +10841,24 @@ html[data-theme="dark"] .top-nav .lite-pill-btn.is-active {
     font-size: 12px;
     font-weight: 600;
 }
+
+.plan-tabs-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 420px) { .plan-tabs-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.vcp-vip-subnav { margin-top: 10px; }
+.vcp-plan-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-bottom: 6px; background: rgba(250,204,21,0.16); color: #facc15; }
+.vcp-badge-best { background: rgba(56,189,248,0.18); color: #38bdf8; }
+.vcp-features-mini { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12px; opacity: 0.85; display: grid; gap: 4px; }
+.vcp-tx-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.vcp-tx-filters .mini-chip.active { background: var(--gold, #f59e0b); color: #111; border-color: transparent; }
+.vcp-tx-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 12px; }
+.vcp-tx-row > div { min-width: 0; overflow-wrap: anywhere; }
+.vcp-tx-row:last-child { border-bottom: none; }
+.adm-analytics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+#tab-vip, #tab-vip .pricing-grid, #tab-vip .plan-panel { min-width: 0; max-width: 100%; }
+.adm-cost-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px dashed rgba(255,255,255,0.08); font-size: 12px; }
+.adm-basis-tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); opacity: 0.85; }
+.adm-price-specs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.adm-price-specs input { width: 72px; }
 
 
 

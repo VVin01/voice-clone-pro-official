@@ -341,7 +341,9 @@ def test_ax_payload_and_prefs_invariants_hold():
     # (title_enabled/title_text/title_x/title_y), sub_y joined for
     # the Top/Center position bands, and the DD settings ride the
     # ddConfigExtras() spread (not literal keys).
-    assert len(keys) == 41, keys
+    # 2026-11-19 UX Redesign deliberate pin update: 43 — added logo_scale
+    # and logo_opacity for end-to-end Logo Size & Opacity preview/render parity.
+    assert len(keys) == 43, keys
     assert keys[0] == "url" and keys[-1] == "split_minutes"
     assert 'RECAP_SETTINGS_KEY = "vcp_recap_settings"' in APP_JS
 

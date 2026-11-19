@@ -347,7 +347,7 @@ async def apply_edited_approval(
     row (edited_recap_credits) and honoured by the approval's recap
     grant instead of the catalogue amount.
     """
-    if int(corrected_minutes) <= 0 or int(corrected_minutes) > 100_000:
+    if int(corrected_minutes) < 0 or int(corrected_minutes) > 100_000:
         return False, None, "INVALID_MINUTES"
     if corrected_recap_credits is not None and not (
         0 <= int(corrected_recap_credits) <= 1000
@@ -361,6 +361,17 @@ async def apply_edited_approval(
         return False, payment, f"ALREADY_{payment.status}"
     if payment.review_claimed_by != admin_id:
         return False, payment, "NOT_CLAIMED_BY_ADMIN"
+    _eff_credits = (
+        int(corrected_recap_credits)
+        if corrected_recap_credits is not None
+        else int(
+            payment.recap_credits
+            if getattr(payment, "recap_credits", None) is not None
+            else package_recap_credits(payment.package_code)
+        )
+    )
+    if int(corrected_minutes) <= 0 and _eff_credits <= 0:
+        return False, None, "INVALID_MINUTES"
 
     if payment.original_minutes is None:
         payment.original_minutes = payment.minutes

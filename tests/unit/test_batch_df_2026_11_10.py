@@ -62,7 +62,7 @@ def test_df_upload_response_surfaces_has_audio():
 
 def test_df_submit_guard_precedes_credit_read():
     guard = API.index("NO_AUDIO_TRACK_MESSAGE, probe_local_media")
-    credits = API.index('credits = getattr(user, "recap_credits", 0) or 0')
+    credits = API.index("avail_recap_seconds = get_recap_available_seconds(user)")
     assert guard < credits
     assert 'if _df_meta.get("has_video") and not _df_meta.get("has_audio"):' in API
     assert "raise HTTPException(status_code=400, detail=NO_AUDIO_TRACK_MESSAGE)" in API

@@ -650,6 +650,19 @@ def segment_fingerprint(seg: dict[str, Any], voice: str) -> str:
 
 
 def probe_duration(ffprobe: str, path: Path) -> float:
+    # Fast-path stdlib WAV header read (~0.05 ms vs ~80 ms ffprobe spawn × 50–150 segments).
+    try:
+        p = Path(path)
+        if p.suffix.lower() == ".wav" and p.is_file():
+            import wave as _wave
+
+            with _wave.open(str(p), "rb") as _wf:
+                _rate = _wf.getframerate()
+                _frames = _wf.getnframes()
+                if _rate > 0 and _frames > 0:
+                    return float(_frames) / float(_rate)
+    except Exception:
+        pass
     result = _run_media(
         [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
         timeout=PROBE_TIMEOUT_SECONDS, what="ffprobe duration probe",
@@ -2203,12 +2216,13 @@ def render_video_part(
     frame_count: int | None = None,
     layout: dict[str, Any] | None = None,
     render_quality: str = "standard",
+    intermediate: bool = False,
 ) -> dict[str, float]:
     """frame_count (when given) locks the part to exactly that many 30 fps frames.
     layout (frame_layout) is the output ratio / fill; None = the original 16:9 fill.
-
-    Without it each part rounds up to the next whole frame; over ~270 parts that
-    added ~6 s, so the picture drifted behind the narration and -shortest cut the end.
+    When ``intermediate=True`` (Pass 2 overlays will immediately re-encode), uses
+    fast high-fidelity mezzanine settings (ultrafast CRF 16 / NVENC p1 CQ 16) and
+    skips redundant ``-movflags +faststart`` file rewrites on scratch segments.
     """
     source_duration = float(seg["video_end"]) - float(seg["video_start"])
     frame_lock = ["-frames:v", str(int(frame_count))] if frame_count and frame_count > 0 else []
@@ -2220,6 +2234,16 @@ def render_video_part(
         smooth_freeze_fallback=smooth_freeze_fallback,
         max_freeze_hold=max_freeze_hold,
     )
+
+    if intermediate:
+        if encoder == "h264_nvenc":
+            enc_args = ["-c:v", "h264_nvenc", "-preset", "p1", "-rc", "vbr", "-cq", "16", "-pix_fmt", "yuv420p"]
+        else:
+            enc_args = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-pix_fmt", "yuv420p"]
+        tail_flags: list[str] = [str(output)]
+    else:
+        enc_args = encoder_args_for_quality(encoder, render_quality)
+        tail_flags = ["-movflags", "+faststart", str(output)]
 
     # CRITICAL: -t MUST come BEFORE -i so FFmpeg limits the INPUT read duration to
     # source_duration instead of truncating the stretched OUTPUT duration at source_duration!
@@ -2247,8 +2271,8 @@ def render_video_part(
             "-filter_complex", graph,
             "-map", out_label,
             *frame_lock,
-            *encoder_args_for_quality(encoder, render_quality),
-            "-movflags", "+faststart", str(output),
+            *enc_args,
+            *tail_flags,
         ]
     else:
         visual, zoom = _visual_filters(mirror_video, zoom_factor, layout)
@@ -2263,8 +2287,8 @@ def render_video_part(
             *common_input,
             "-vf", vf,
             *frame_lock,
-            *encoder_args_for_quality(encoder, render_quality),
-            "-movflags", "+faststart", str(output),
+            *enc_args,
+            *tail_flags,
         ]
 
     result = _run_media(
@@ -2276,10 +2300,13 @@ def render_video_part(
         raise RuntimeError(f"Video segment render failed ({encoder}):\n{result.stderr[-4000:]}")
     return metrics
 
-def concat_video_parts(ffmpeg: str, parts: list[Path], output: Path, work_dir: Path, *, total_duration: float | None = None) -> None:
+def concat_video_parts(ffmpeg: str, parts: list[Path], output: Path, work_dir: Path, *, total_duration: float | None = None, faststart: bool = True) -> None:
     list_file = work_dir / "video_parts.txt"
     list_file.write_text("\n".join(_concat_list_line(p) for p in parts) + "\n", encoding="utf-8")
-    cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", "-movflags", "+faststart", str(output)]
+    cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy"]
+    if faststart:
+        cmd += ["-movflags", "+faststart"]
+    cmd.append(str(output))
     result = _run_media(cmd, timeout=ffmpeg_timeout(total_duration), what="Video concat")
     if result.returncode != 0:
         raise RuntimeError(f"Video concat failed:\n{result.stderr[-4000:]}")
@@ -2294,32 +2321,38 @@ def mux_audio(
     bgm_path: Optional[Path] = None,
     bgm_volume: float = 0.18,
     duration: float | None = None,
-) -> None:
-    # Warm broadcast mastering chain:
-    # 1. highpass=60Hz: cuts low-frequency hum/rumble
-    # 2. lowpass=12kHz: softens harsh digital sibilance
-    # 3. volume scaling: user configured volume
-    # 4. alimiter: soft-knee limiter to prevent clipping and ensure comfortable listening
+    soft_srt_path: Optional[Path] = None,
+) -> bool:
+    """Master audio + copy video (and optionally embed UTF-8 mov_text soft CC
+    track in ONE FFmpeg pass to avoid a second full MP4 +faststart rewrite).
+    Returns True if soft subtitles were embedded in this pass, False otherwise.
+    """
     vol_scale = float(volume_percent or 100) / 100.0
+    _has_soft = bool(soft_srt_path and Path(soft_srt_path).is_file())
 
-    if bgm_path and Path(bgm_path).is_file():
-        # Studio ducking: Voice triggers sidechain compressor on BGM
-        # When voice is active, BGM ducks smoothly; when voice pauses, BGM rises gently.
-        filter_complex = (
-            f"[1:a]highpass=f=75,deesser=i=0.45:m=0.5:f=0.5:s=o,equalizer=f=7200:width_type=q:w=2:g=-3.0,lowpass=f=9500,acompressor=threshold=-18dB:ratio=2.5:attack=15:release=120:makeup=1.3,volume={vol_scale:.3f}[v_master];"
-            f"[v_master]asplit=2[v_out][v_sc];"
-            f"[2:a]volume={bgm_volume:.3f},aloop=loop=-1:size=2e+09[bgm_loop];"
-            f"[bgm_loop][v_sc]sidechaincompress=threshold=0.08:ratio=4:attack=50:release=350[bgm_ducked];"
-            f"[v_out][bgm_ducked]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.95:level=disabled[a_final]"
-        )
-        cmd = [
-            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", str(video), "-i", str(audio), "-i", str(bgm_path),
-            "-map", "0:v:0", "-map", "[a_final]", "-map_metadata", "-1", "-c:v", "copy",
-            "-filter_complex", filter_complex, "-c:a", "aac", "-b:a", "192k",
-            "-shortest", "-movflags", "+faststart", str(output),
-        ]
-    else:
+    def _build_cmd(with_soft: bool) -> list[str]:
+        if bgm_path and Path(bgm_path).is_file():
+            filter_complex = (
+                f"[1:a]highpass=f=75,deesser=i=0.45:m=0.5:f=0.5:s=o,equalizer=f=7200:width_type=q:w=2:g=-3.0,lowpass=f=9500,acompressor=threshold=-18dB:ratio=2.5:attack=15:release=120:makeup=1.3,volume={vol_scale:.3f}[v_master];"
+                f"[v_master]asplit=2[v_out][v_sc];"
+                f"[2:a]volume={bgm_volume:.3f},aloop=loop=-1:size=2e+09[bgm_loop];"
+                f"[bgm_loop][v_sc]sidechaincompress=threshold=0.08:ratio=4:attack=50:release=350[bgm_ducked];"
+                f"[v_out][bgm_ducked]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.95:level=disabled[a_final]"
+            )
+            c = [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", str(video), "-i", str(audio), "-i", str(bgm_path),
+            ]
+            if with_soft:
+                c += ["-sub_charenc", "UTF-8", "-i", str(soft_srt_path)]
+            c += ["-map", "0:v:0", "-map", "[a_final]"]
+            if with_soft:
+                c += ["-map", "3:0"]
+            c += ["-map_metadata", "-1", "-c:v", "copy", "-filter_complex", filter_complex, "-c:a", "aac", "-b:a", "192k"]
+            if with_soft:
+                c += ["-c:s", "mov_text", "-metadata:s:s:0", "language=mya", "-metadata:s:s:0", "title=Myanmar"]
+            c += ["-shortest", "-movflags", "+faststart", str(output)]
+            return c
         af_filters = [
             "highpass=f=75",
             "deesser=i=0.45:m=0.5:f=0.5:s=o",
@@ -2330,17 +2363,31 @@ def mux_audio(
             "alimiter=limit=0.95:level=disabled",
         ]
         af_str = ",".join(af_filters)
-        cmd = [
+        c = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
             "-i", str(video), "-i", str(audio),
-            "-map", "0:v:0", "-map", "1:a:0", "-map_metadata", "-1", "-c:v", "copy",
-            "-af", af_str, "-c:a", "aac", "-b:a", "192k",
-            "-shortest", "-movflags", "+faststart", str(output),
         ]
+        if with_soft:
+            c += ["-sub_charenc", "UTF-8", "-i", str(soft_srt_path)]
+        c += ["-map", "0:v:0", "-map", "1:a:0"]
+        if with_soft:
+            c += ["-map", "2:0"]
+        c += ["-map_metadata", "-1", "-c:v", "copy", "-af", af_str, "-c:a", "aac", "-b:a", "192k"]
+        if with_soft:
+            c += ["-c:s", "mov_text", "-metadata:s:s:0", "language=mya", "-metadata:s:s:0", "title=Myanmar"]
+        c += ["-shortest", "-movflags", "+faststart", str(output)]
+        return c
 
-    result = _run_media(cmd, timeout=ffmpeg_timeout(duration), what="Final mux")
+    result = _run_media(_build_cmd(_has_soft), timeout=ffmpeg_timeout(duration), what="Final mux")
+    if result.returncode != 0 and _has_soft:
+        # Fail-open retry without soft subtitle track so a malformed SRT never kills the render.
+        result = _run_media(_build_cmd(False), timeout=ffmpeg_timeout(duration), what="Final mux")
+        if result.returncode != 0:
+            raise RuntimeError(f"Final mux failed:\n{result.stderr[-4000:]}")
+        return False
     if result.returncode != 0:
         raise RuntimeError(f"Final mux failed:\n{result.stderr[-4000:]}")
+    return _has_soft
 
 
 
@@ -6114,7 +6161,7 @@ def apply_production_overlays(
             lx = _clamp01(pos[0] if len(pos) > 0 else 0.80, 0.80)
             ly = _clamp01(pos[1] if len(pos) > 1 else 0.06, 0.06)
             lw = max(0.04, min(0.40, float(overlays.get("logo_width_fraction", 0.16))))
-            lo = max(0.10, min(1.00, float(overlays.get("logo_opacity", 0.65))))
+            lo = max(0.10, min(1.00, float(overlays.get("logo_opacity", 0.70))))
             graph.append(f"[{logo_idx}:v]scale={max(24, int(round(pw * lw)))}:-1[lg0]")
             if lo < 0.999:
                 graph.append(f"[lg0]format=rgba,colorchannelmixer=aa={lo:.3f}[lg]")
@@ -6175,7 +6222,10 @@ def apply_production_overlays(
             graph.append(f"{current}[{pattern_idx}:v]overlay=x='{ox}':y='{oy}':eof_action=repeat[vpat]")
             current = "[vpat]"
 
-        graph.append(f"{current}format=yuv420p[vout]")
+        if bool(overlays.get("protection_strong")):
+            graph.append(f"{current}noise=alls=6:allf=t,format=yuv420p[vout]")
+        else:
+            graph.append(f"{current}format=yuv420p[vout]")
         cmd += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map_metadata", "-1", "-an"] + encoder_args_for_quality(step_encoder, render_quality) + ["-threads", str(OVERLAY_FFMPEG_THREADS)]
         if output_path is None:
             cmd += ["-movflags", "+faststart", str(output_video)]
@@ -6288,24 +6338,30 @@ def apply_production_overlays(
                 )
 
             work_dir.mkdir(parents=True, exist_ok=True)
-            probe_path = work_dir / "overlay_probe.mp4"
-            probe_seconds = 10.0
-            if duration:
-                probe_seconds = min(10.0, max(1.0, float(duration)))
-            probe_cmd = _single_cmd(used_encoder)[:-1] + ["-t", f"{probe_seconds:.3f}", str(probe_path)]
-            rc, peak, _tail = _run_overlay_probe(probe_cmd, timeout=180)
-            try:
-                probe_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            cap = OVERLAY_SINGLE_PASS_MAX_RSS_BYTES
-            if rc != 0 or peak <= 0 or peak > cap:
-                log(
-                    f"🧪 Overlay probe: rc={rc}, peak RSS {peak / 1048576:.0f} MB "
-                    f"(cap {cap / 1048576:.0f} MB) — two-step path"
-                )
-                return False
-            log(f"🧪 Overlay probe OK: peak RSS {peak / 1048576:.0f} MB — single-pass overlay")
+            # Single-stream Timeline (ffconcat) & vector ASS peak at ~250 MB RSS
+            # regardless of cue count — skip the redundant 10s full-res probe encode
+            # to save ~10-30s on every recap job (legacy multi-input PNG keeps the probe).
+            if timeline_spec is not None or ass_burn_file is not None:
+                log("⚡ Overlay fast single-pass (timeline/ASS low-RSS path — skipping 10s probe)")
+            else:
+                probe_path = work_dir / "overlay_probe.mp4"
+                probe_seconds = 10.0
+                if duration:
+                    probe_seconds = min(10.0, max(1.0, float(duration)))
+                probe_cmd = _single_cmd(used_encoder)[:-1] + ["-t", f"{probe_seconds:.3f}", str(probe_path)]
+                rc, peak, _tail = _run_overlay_probe(probe_cmd, timeout=180)
+                try:
+                    probe_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                cap = OVERLAY_SINGLE_PASS_MAX_RSS_BYTES
+                if rc != 0 or peak <= 0 or peak > cap:
+                    log(
+                        f"🧪 Overlay probe: rc={rc}, peak RSS {peak / 1048576:.0f} MB "
+                        f"(cap {cap / 1048576:.0f} MB) — two-step path"
+                    )
+                    return False
+                log(f"🧪 Overlay probe OK: peak RSS {peak / 1048576:.0f} MB — single-pass overlay")
             used_encoder, p_single = _run_overlay_step(_single_cmd, used_encoder)
             if p_single.returncode != 0 or not output_video.is_file() or output_video.stat().st_size < 5000:
                 log("⚠️ Overlay single pass failed — two-step fallback")
@@ -7222,10 +7278,18 @@ class EdgeSmartSync:
             log=self.log,
         )
 
+        # Subtitle-only / No-voice mode: skip all voice synthesis, render video at original
+        # segment pacing with synchronized burned/soft Myanmar subtitles (0 voice minutes).
+        subtitle_only_mode = str(self.overlays.get("tts_engine") or "").strip().lower() in (
+            "none", "subtitle_only", "no_voice"
+        )
         # Method 1: Check if VoxCPM Cloud Engine is requested
         use_voxcpm = (
-            str(self.voice).lower().startswith(("voxcpm", "vox_"))
-            or str(self.overlays.get("tts_engine") or "").lower() == "voxcpm"
+            not subtitle_only_mode
+            and (
+                str(self.voice).lower().startswith(("voxcpm", "vox_"))
+                or str(self.overlays.get("tts_engine") or "").lower() == "voxcpm"
+            )
         )
         vox_engine = None
         if use_voxcpm:
@@ -7247,7 +7311,7 @@ class EdgeSmartSync:
         # engine, NOT a replacement. The persona path below stays as the
         # per-segment fallback, reported via the same fallback_used /
         # fallback_segments transparency fields as VoxCPM fallbacks.
-        use_gemini = str(self.overlays.get("tts_engine") or "").lower() == "gemini"
+        use_gemini = (not subtitle_only_mode) and str(self.overlays.get("tts_engine") or "").lower() == "gemini"
         gem_engine = None
         gemini_voice_name = ""
         if use_gemini:
@@ -7525,6 +7589,12 @@ class EdgeSmartSync:
                 else:
                     self.progress(idx - 1, len(segments), f"Smart Sync video {idx}/{len(segments)}")
                     self.log(f"🎞️ VIDEO [{idx}/{len(segments)}] {base} → {target:.2f}s")
+                    _use_intermediate = bool(
+                        self.overlays.get("blur_boxes")
+                        or str(self.overlays.get("logo_path") or "").strip()
+                        or str(self.overlays.get("extra_text") or "").strip()
+                        or (self.overlays.get("burn_subtitles", True) and str(self.overlays.get("sub_render_mode") or "png").strip().lower() != "soft")
+                    )
                     try:
                         metrics = render_video_part(
                             self.ffmpeg, source, dst, seg, target, encoder,
@@ -7533,6 +7603,7 @@ class EdgeSmartSync:
                             self.smooth_freeze_fallback, self.max_freeze_hold,
                             frame_count=frame_count, layout=layout,
                             render_quality=self.render_quality,
+                            intermediate=_use_intermediate,
                         )
                     except Exception:
                         # Only on the first non-reused part, allow global NVENC -> CPU fallback.
@@ -7550,6 +7621,7 @@ class EdgeSmartSync:
                                 self.smooth_freeze_fallback, self.max_freeze_hold,
                                 frame_count=frame_count, layout=layout,
                                 render_quality=self.render_quality,
+                                intermediate=_use_intermediate,
                             )
                             # Recompute fingerprint with CPU encoder.
                             vfp_raw = json.dumps({
@@ -7639,7 +7711,14 @@ class EdgeSmartSync:
         _prewarm_renderer = None
         _prewarm_params: tuple[int, int, int] | None = None
         _prewarm_wait_sec = 0.0
-        if render_pipelined and self.overlays.get("burn_subtitles", True):
+        _srm_pre = str(self.overlays.get("sub_render_mode") or "png").strip().lower()
+        _overlays_will_reencode = bool(
+            self.overlays.get("blur_boxes")
+            or str(self.overlays.get("logo_path") or "").strip()
+            or str(self.overlays.get("extra_text") or "").strip()
+            or (self.overlays.get("burn_subtitles", True) and _srm_pre != "soft")
+        )
+        if render_pipelined and self.overlays.get("burn_subtitles", True) and _srm_pre in ("png", "timeline"):
             try:
                 _cw_pre = int(layout.get("cw", 1920))
                 _ch_pre = int(layout.get("ch", 1080))
@@ -7718,7 +7797,39 @@ class EdgeSmartSync:
             return max(0.0, time.monotonic() - _tw0)
 
         _t_tts_stage0 = time.monotonic()
-        for _tts_pass in range(2):
+        if subtitle_only_mode:
+            checkpoint["tts_provider"] = "subtitle_only"
+            checkpoint["fallback_used"] = False
+            checkpoint["fallback_segments"] = []
+            checkpoint["reference_trimmed"] = False
+            timing = []
+            audio_parts = []
+            cursor = 0.0
+            tts_total = 0.0
+            fallback_segments = []
+            for _idx, _seg in enumerate(segments, 1):
+                _dur = max(0.2, float(_seg.get("video_end", 0.0)) - float(_seg.get("video_start", 0.0)))
+                _start = cursor
+                _end = _start + _dur
+                cursor = _end
+                timing.append({
+                    "segment_id": _seg["segment_id"],
+                    "source_index": _seg["source_index"],
+                    "video_start": _seg["video_start"],
+                    "video_end": _seg["video_end"],
+                    "audio_start": round(_start, 3),
+                    "audio_end": round(_end, 3),
+                    "audio_duration": round(_dur, 3),
+                    "speech_duration": round(_dur, 3),
+                    "text": _seg["narration"],
+                    "audio_file": None,
+                })
+            _stage_timings["tts"] = 0.0
+            checkpoint["stage_timings"] = dict(_stage_timings)
+            atomic_write_json(paths.checkpoint, checkpoint)
+            self.log(f"📝 Subtitle-Only mode (no voice synthesis) · {len(timing)} segments · duration={cursor:.2f}s")
+        else:
+          for _tts_pass in range(2):
             engine_provider = "gemini" if use_gemini else ("voxcpm" if use_voxcpm else "edge_tts")
             if use_gemini:
                 # Gemini lines must never reuse persona/VoxCPM cache
@@ -7929,7 +8040,7 @@ class EdgeSmartSync:
 
             if not restart_uniform:
                 break
-        with _checkpoint_lock:
+          with _checkpoint_lock:
             checkpoint["fallback_used"] = bool(fallback_segments)
             checkpoint["fallback_segments"] = list(fallback_segments)
             checkpoint["reference_trimmed"] = bool(reference_trimmed)
@@ -7978,13 +8089,26 @@ class EdgeSmartSync:
                     "taste_blocked": bool(self.gemini_route.taste_blocked),
                 }
 
-        if short_pauses:
-            self.log(f"✂️ Short pauses: Edge TTS silence trimmed · voice {tts_total / 60:.1f} → {cursor / 60:.1f} min "
-                     f"(~0.25 s between lines; picture never cut for it)")
-        self.log("🔗 Timestamp audio parts concat...")
-        concat_audio(self.ffmpeg, audio_parts, paths.voice, paths.work, total_duration=cursor)
-        final_audio_duration = probe_duration(self.ffprobe, paths.voice)
-        self.log(f"✅ {paths.voice.name} = {final_audio_duration:.2f}s")
+        if subtitle_only_mode:
+            final_audio_duration = 0.0
+            paths.voice.parent.mkdir(parents=True, exist_ok=True)
+            _sil_dur = max(0.2, float(cursor or _source_duration or 1.0))
+            subprocess.run(
+                [
+                    self.ffmpeg, "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono:d={_sil_dur:.3f}",
+                    "-c:a", "pcm_s16le", str(paths.voice),
+                ],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=ffmpeg_timeout(_sil_dur),
+            )
+        else:
+            if short_pauses:
+                self.log(f"✂️ Short pauses: Edge TTS silence trimmed · voice {tts_total / 60:.1f} → {cursor / 60:.1f} min "
+                         f"(~0.25 s between lines; picture never cut for it)")
+            self.log("🔗 Timestamp audio parts concat...")
+            concat_audio(self.ffmpeg, audio_parts, paths.voice, paths.work, total_duration=cursor)
+            final_audio_duration = probe_duration(self.ffprobe, paths.voice)
+            self.log(f"✅ {paths.voice.name} = {final_audio_duration:.2f}s")
 
         # Voice v2: legacy trained-model conversion removed; base audio is kept.
         if str(self.voice).startswith(("clone_", "clone:")) or self.overlays.get("clone_model"):
@@ -8129,7 +8253,7 @@ class EdgeSmartSync:
                 sub_margin=self.overlays.get("sub_margin"),
                 sub_x=self.overlays.get("sub_x"),
                 subtitles_margin_v=self.overlays.get("subtitles_margin_v"),
-                boxes=self.overlays.get("boxes"),
+                boxes=self.overlays.get("blur_boxes") or self.overlays.get("boxes"),
                 layout=layout,
                 sub_visual_overrides=overlays_visual_overrides(self.overlays),
                 sub_effect=str(self.overlays.get("sub_effect") or ("karaoke" if str(self.overlays.get("sub_render_mode") or "").lower() == "karaoke" else "none")),
@@ -8197,7 +8321,7 @@ class EdgeSmartSync:
             self._check_run_deadline("concat")
             self.log("🔗 Smart Sync video parts concat...")
             _t_concat0 = time.monotonic()
-            concat_video_parts(self.ffmpeg, video_parts, synced, paths.work, total_duration=audio_cursor)
+            concat_video_parts(self.ffmpeg, video_parts, synced, paths.work, total_duration=audio_cursor, faststart=not _overlays_will_reencode)
             _concat_sec = max(0.0, time.monotonic() - _t_concat0)
             late["concat"] = concat_fp
             _stage_timings["sync"] = round(max(0.0, _sync_acc["parts_sec"] + _concat_sec), 3)
@@ -8280,6 +8404,12 @@ class EdgeSmartSync:
             "bgm": _file_identity(bgm_file) if bgm_file else None,
             "bgm_volume": bgm_vol,
         })
+        _srm = str(self.overlays.get("sub_render_mode") or "png").strip().lower()
+        _want_soft_cc = bool(
+            (_srm == "soft" or bool(self.overlays.get("embed_soft_subs", True)))
+            and srt_file.is_file()
+        )
+        _soft_embedded_inline = False
         if late.get("mux") == mux_fp and paths.final.is_file() and paths.final.stat().st_size > 5000:
             self.log("♻️ Final mux reuse (inputs unchanged)")
             _stage_timings.setdefault("mux", 0.0)
@@ -8287,27 +8417,28 @@ class EdgeSmartSync:
             self._check_run_deadline("mux")
             self.progress(1, 1, "Muxing final video")
             _t_mux0 = time.monotonic()
-            mux_audio(
-                self.ffmpeg,
-                video_for_mux,
-                paths.voice,
-                paths.final,
-                volume_percent,
-                bgm_path=Path(bgm_file) if bgm_file else None,
-                bgm_volume=bgm_vol,
-                duration=audio_cursor,
+            _soft_embedded_inline = bool(
+                mux_audio(
+                    self.ffmpeg,
+                    video_for_mux,
+                    paths.voice,
+                    paths.final,
+                    volume_percent,
+                    bgm_path=Path(bgm_file) if bgm_file else None,
+                    bgm_volume=bgm_vol,
+                    duration=audio_cursor,
+                    soft_srt_path=srt_file if _want_soft_cc else None,
+                )
             )
+            if _soft_embedded_inline:
+                self.log("💬 Embedded soft Myanmar CC track (mov_text) inline during final mux")
             late["mux"] = mux_fp
             _stage_timings["mux"] = round(max(0.0, time.monotonic() - _t_mux0), 3)
 
-        # Method 4: Embed UTF-8 mov_text soft-subtitle CC track into MP4 container
-        # whenever sub_render_mode=="soft" or embed_soft_subs is enabled.
-        _srm = str(self.overlays.get("sub_render_mode") or "png").strip().lower()
-        if (
-            (_srm == "soft" or bool(self.overlays.get("embed_soft_subs", True)))
-            and srt_file.is_file()
-            and paths.final.is_file()
-        ):
+        # Fallback only if final was reused from cache without soft subs.
+        if _want_soft_cc and not _soft_embedded_inline and paths.final.is_file() and late.get("mux") == mux_fp:
+            pass
+        elif _want_soft_cc and not _soft_embedded_inline and paths.final.is_file():
             try:
                 mux_soft_subtitle_track(self.ffmpeg, paths.final, srt_file)
                 self.log("💬 Embedded soft Myanmar CC track (mov_text) into MP4 container")
@@ -8334,35 +8465,46 @@ class EdgeSmartSync:
             except Exception:
                 pass
 
-        # Export standalone MP3 of the voiceover audio for separate delivery
-        final_mp3 = paths.final.with_suffix(".mp3")
-        try:
-            cmd_mp3 = [
-                self.ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
-                "-y", "-i", str(paths.voice),
-                "-vn", "-af", "highpass=f=60,lowpass=f=12000,alimiter=limit=0.95:level=disabled",
-                "-c:a", "libmp3lame", "-b:a", "192k",
-                "-map_metadata", "-1",
-                str(final_mp3)
-            ]
-            subprocess.run(cmd_mp3, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=ffmpeg_timeout(final_duration))
-        except Exception as e_mp3:
-            self.log(f"⚠️ Standalone MP3 export warning: {e_mp3}")
-            final_mp3 = paths.voice
+        # Export standalone MP3 of the voiceover audio for separate delivery (skipped in subtitle-only mode)
+        final_mp3 = None
+        if not subtitle_only_mode:
+            final_mp3 = paths.final.with_suffix(".mp3")
+            try:
+                cmd_mp3 = [
+                    self.ffmpeg, "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+                    "-y", "-i", str(paths.voice),
+                    "-vn", "-af", "highpass=f=60,lowpass=f=12000,alimiter=limit=0.95:level=disabled",
+                    "-c:a", "libmp3lame", "-b:a", "192k",
+                    "-map_metadata", "-1",
+                    str(final_mp3)
+                ]
+                subprocess.run(cmd_mp3, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=ffmpeg_timeout(final_duration))
+            except Exception as e_mp3:
+                self.log(f"⚠️ Standalone MP3 export warning: {e_mp3}")
+                final_mp3 = paths.voice
+
+        actual_voice_secs = (
+            0
+            if (subtitle_only_mode or not use_voxcpm)
+            else max(0, int(math.ceil(float(final_audio_duration or 0.0))))
+        )
 
         self.log(f"✅ FINAL READY: {paths.final}")
         self.log(f"⏱️ Final duration: {final_duration:.2f}s")
         return {
-            "audio": str(final_mp3 if (isinstance(final_mp3, Path) and final_mp3.is_file()) else paths.voice),
-            "voice_wav": str(paths.voice),
+            "audio": None if subtitle_only_mode else str(final_mp3 if (isinstance(final_mp3, Path) and final_mp3.is_file()) else paths.voice),
+            "voice_wav": None if subtitle_only_mode else str(paths.voice),
             "plan": str(paths.plan),
             "final": str(paths.final),
             "subtitles_srt": str(final_srt) if final_srt.is_file() else (str(srt_file) if srt_file.is_file() else None),
             "subtitles_ass": str(final_ass) if final_ass.is_file() else (str(ass_file) if ass_file.is_file() else None),
             "segments": len(timing),
             "duration": final_duration,
+            "actual_voice_seconds": actual_voice_secs,
+            "tts_runtime_seconds": float(_stage_timings.get("tts") or 0.0),
             # Batch CG: BYOK route outcome (None for non-routed runs).
             "gemini_route": self._gemini_outcome,
             "stage_timings": dict(_stage_timings),
+            "protection_strong_baked": bool(overlays_active and self.overlays.get("protection_strong")),
         }

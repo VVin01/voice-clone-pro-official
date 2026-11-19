@@ -405,9 +405,14 @@ async def _expire_parked_job(session, job: Job, state: dict, bot) -> None:
         await session.rollback()
         return
     if not settings.is_admin(job.user_id):
-        from app.services.ledger import refund_job_seconds
+        from app.services.billing import refund_or_release_job
 
-        await refund_job_seconds(session, job.user_id, str(job.id))
+        rel_res = await refund_or_release_job(
+            session, job.user_id, str(job.id), reason="PARK_EXPIRED"
+        )
+        if not rel_res.get("found"):
+            from app.services.ledger import refund_job_seconds
+            await refund_job_seconds(session, job.user_id, str(job.id))
     await session.commit()
     if bot is not None and job.status_message_id:
         try:

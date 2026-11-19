@@ -70,21 +70,23 @@ def test_cz_cache_token_is_r140():
 
 def test_setup_tabs_handler_paints_speed_pills():
     handler = _dock_handler()
-    # The handler still does its own pane switching (no delegation).
-    assert 'activePane.classList.add("active");' in handler
-    # ... and now mirrors switchTab's pill repaint.
+    # 2026-11-19 refactor: setupTabs() delegates pane switching to switchTab(targetTab),
+    # which activates the pane and repaints pills, followed by the rAF safety net.
+    assert "switchTab(targetTab);" in handler
     assert "moveSpeedPills();" in handler
     assert "moveSegPills();" in handler
 
 
 def test_setup_tabs_handler_pill_repaint_follows_pane_switch():
-    # The repaint must run AFTER the pane becomes visible — measuring
-    # while the pane is display:none is the exact failure this batch
-    # fixes (moveSpeedPill early-returns on !active.offsetWidth).
+    # Both switchTab() and setupTabs() show the pane BEFORE repainting pills.
     handler = _dock_handler()
-    shown = handler.index('activePane.classList.add("active");')
-    assert handler.index("moveSpeedPills();") > shown
-    assert handler.index("moveSegPills();") > shown
+    delegated = handler.index("switchTab(targetTab);")
+    assert handler.index("moveSpeedPills();") > delegated
+    assert handler.index("moveSegPills();") > delegated
+    sw = _switch_tab_body()
+    shown = sw.index('activePane.classList.add("active");')
+    assert sw.index("moveSpeedPills();") > shown
+    assert sw.index("moveSegPills();") > shown
 
 
 def test_setup_tabs_handler_has_raf_repaint_safety_net():
