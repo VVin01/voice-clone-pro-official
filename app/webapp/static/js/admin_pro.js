@@ -27,20 +27,28 @@
         st.id = "adm-pro-styles";
         st.textContent = `
 .admp-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.admp-row-nowrap{display:flex;flex-wrap:nowrap;gap:6px;align-items:center;flex-shrink:0}
 .admp-between{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
-.admp-card-item{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);margin-bottom:8px}
+.admp-card-item{padding:10px 12px;border-radius:12px;background:rgba(15,23,42,0.04);border:1px solid rgba(15,23,42,0.10);margin-bottom:8px}
 .admp-bank-item{border-left:4px solid #0047BA}
-.admp-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.08);font-weight:600}
-.admp-badge-ok{background:rgba(16,185,129,0.16);color:#10b981}
-.admp-badge-warn{background:rgba(245,158,11,0.18);color:#f59e0b}
-.admp-badge-err{background:rgba(239,68,68,0.18);color:#ef4444}
-.admp-preset-chip{font-size:11px;padding:4px 9px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.05);color:inherit;cursor:pointer;white-space:nowrap}
+.admp-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(15,23,42,0.07);color:inherit;font-weight:600;white-space:nowrap}
+.admp-badge-ok{background:rgba(16,185,129,0.15);color:#059669}
+.admp-badge-warn{background:rgba(245,158,11,0.18);color:#b45309}
+.admp-badge-err{background:rgba(239,68,68,0.16);color:#dc2626}
+.admp-preset-chip{font-size:11px;padding:4px 9px;border-radius:999px;border:1px solid rgba(15,23,42,0.16);background:rgba(15,23,42,0.04);color:inherit;cursor:pointer;white-space:nowrap}
 .admp-preset-chip:hover{border-color:#d4af37}
 .admp-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.admp-bar-bg{height:8px;border-radius:999px;background:rgba(255,255,255,0.1);overflow:hidden;margin-top:6px}
+.admp-bar-bg{height:8px;width:100%;border-radius:999px;background:rgba(15,23,42,0.11);overflow:hidden;margin-top:6px}
 .admp-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#10b981,#f59e0b)}
 .admp-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.68);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px}
 .admp-modal{width:100%;max-width:420px;border-radius:18px;padding:18px;background:var(--surface-elevated,#141824);border:1px solid rgba(255,255,255,0.14);color:var(--text-primary,#fff);max-height:88vh;overflow-y:auto}
+html[data-theme="dark"] .admp-card-item{background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.09)}
+html[data-theme="dark"] .admp-badge{background:rgba(255,255,255,0.09)}
+html[data-theme="dark"] .admp-badge-ok{color:#34d399}
+html[data-theme="dark"] .admp-badge-warn{color:#fbbf24}
+html[data-theme="dark"] .admp-badge-err{color:#f87171}
+html[data-theme="dark"] .admp-preset-chip{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.16)}
+html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
 @media(max-width:480px){.admp-grid-2{grid-template-columns:1fr}}
 `;
         document.head.appendChild(st);
@@ -425,8 +433,8 @@
         bar.id = "admp-orders-bar";
         bar.className = "admp-row mt-2";
         bar.innerHTML = `
-            <input type="text" id="admp-ord-q" class="studio-input text-xs" style="flex:1;min-width:140px" placeholder="${esc(L("User ID / @username / Order ID / Ref ရှာရန်…", "Search User ID / @user / Order / Ref…"))}">
-            <select id="admp-ord-days" class="studio-input text-xs" style="width:90px">
+            <input type="text" id="admp-ord-q" class="studio-input text-xs" style="flex:1 1 160px;min-width:130px" placeholder="${esc(L("ID / @user / Ref ရှာရန်…", "Search ID / @user / Ref…"))}">
+            <select id="admp-ord-days" class="studio-input text-xs" style="width:94px">
                 <option value="0">${esc(L("အားလုံး", "All"))}</option>
                 <option value="7">7D</option>
                 <option value="30">30D</option>
@@ -766,7 +774,7 @@
                 ["TEST", "🧪 Test"],
             ];
             ex.innerHTML = flts.map(([k, lbl]) => `<button type="button" class="mini-chip ${k === "" ? "active" : ""}" data-u-flt="${k}">${esc(lbl)}</button>`).join("")
-                + `<select id="admp-u-sort" class="studio-input text-xs" style="width:110px;margin-left:auto"><option value="recent">${esc(L("အသစ်ဆုံး", "Newest"))}</option><option value="balance">${esc(L("Voice အများဆုံး", "Top Voice"))}</option><option value="recap">${esc(L("Recap အများဆုံး", "Top Recap"))}</option></select>`;
+                + `<select id="admp-u-sort" class="studio-input text-xs" style="min-width:134px;width:auto;margin-left:auto"><option value="recent">${esc(L("အသစ်ဆုံး", "Newest"))}</option><option value="balance">${esc(L("Voice အများဆုံး", "Top Voice"))}</option><option value="recap">${esc(L("Recap အများဆုံး", "Top Recap"))}</option></select>`;
             row.parentElement.insertBefore(ex, row.nextSibling);
             ex.querySelectorAll("[data-u-flt]").forEach(btn => {
                 btn.onclick = () => {
@@ -953,10 +961,10 @@
         card.id = "admp-ops-health-card";
         card.className = "card glass mt-3";
         card.innerHTML = `
-            <div class="card-header-row">
-                <div class="card-label">🩺 ${esc(L("Server Disk, Local Bot API & Shield", "Server Disk, Local Bot API & Shield"))}</div>
-                <div class="admp-row">
-                    <button type="button" class="mini-chip" id="admp-lba-probe">🔌 ${esc(L("Test Bot API", "Test Bot API"))}</button>
+            <div class="card-header-row" style="flex-wrap:nowrap;gap:8px">
+                <div class="card-label" style="min-width:0">🩺 ${esc(L("Infra, Bot API & Shield", "Infra, Bot API & Shield"))}</div>
+                <div class="admp-row-nowrap">
+                    <button type="button" class="mini-chip" id="admp-lba-probe" style="white-space:nowrap">🔌 ${esc(L("Test API", "Test API"))}</button>
                     <button type="button" class="mini-chip" id="admp-ops-ref">🔄</button>
                 </div>
             </div>
@@ -978,8 +986,8 @@
                     const lba = data.local_bot_api;
                     toast(
                         lba.active
-                            ? `✅ Local Bot API Active (${lba.max_upload_mb} MB limit)`
-                            : `ℹ️ Bot API: ${lba.mode} (${lba.max_upload_mb} MB${lba.last_error ? " — " + lba.last_error.slice(0, 80) : ""})`,
+                            ? `Local Bot API Active (${lba.max_upload_mb} MB limit)`
+                            : `Bot API: ${lba.mode} (${lba.max_upload_mb} MB${lba.last_error ? " — " + lba.last_error.slice(0, 80) : ""})`,
                         lba.active ? "success" : "info"
                     );
                 }

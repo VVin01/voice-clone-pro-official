@@ -3098,6 +3098,10 @@ function moveNavPill() {
     if (nav && active.dataset.tab) {
         nav.setAttribute("data-active-tab", active.dataset.tab);
     }
+    if (nav && !nav._pillRO && typeof ResizeObserver === "function") {
+        nav._pillRO = new ResizeObserver(() => requestAnimationFrame(moveNavPill));
+        nav._pillRO.observe(nav);
+    }
     if (!pill || !active.offsetWidth) return;
     pill.style.width = active.offsetWidth + "px";
     pill.style.height = active.offsetHeight + "px";
