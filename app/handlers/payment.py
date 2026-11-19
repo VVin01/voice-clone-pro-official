@@ -71,7 +71,7 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
     # catalogue). Free tier stays separate and is not listed here.
     from app.services.billing import get_recap_available_seconds, seconds_to_credits
 
-    buttons = []
+    plan_btns: list[InlineKeyboardButton] = []
     for p in plans:
         meta = get_plan_by_code(p.code) or {}
         cat = str(getattr(p, "category", None) or meta.get("category") or "voice").lower()
@@ -92,9 +92,9 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
 
         if is_topup:
             if mins > 0 and cr <= 0:
-                btn_text = f"⚡ {name} (+{mins}m) — {p.price_mmk:,} Ks"
+                btn_text = f"⚡ {name} (+{mins}m) — {p.price_mmk:,} MMK"
             else:
-                btn_text = f"⚡ {name} (+{cr} Cr) — {p.price_mmk:,} Ks"
+                btn_text = f"⚡ {name} (+{cr} Cr) — {p.price_mmk:,} MMK"
         elif cat == "combo":
             btn_text = t(
                 "pay_package_combined_btn",
@@ -121,12 +121,14 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
                 tag=tag,
             )
 
-        buttons.append([
+        plan_btns.append(
             InlineKeyboardButton(
                 text=btn_text,
                 callback_data=f"buy_pkg:{p.code}",
             )
-        ])
+        )
+    # Pair into 2-column compact rows so 22 plans occupy ~11 viewport-friendly rows.
+    buttons = [plan_btns[i:i + 2] for i in range(0, len(plan_btns), 2)]
     buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:home")])
 
     if settings.is_admin(callback.from_user.id):
@@ -242,10 +244,22 @@ async def handle_package_selected(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PaymentFSM.waiting_for_receipt)
     await state.update_data(package_code=pkg_code, lang=lang, minutes=pkg_minutes, price=pkg_price)
 
+    plan_meta = get_plan_by_code(pkg_code) or {}
+    friendly_name = str(
+        (getattr(plan, "name", None) if plan else None)
+        or plan_meta.get("name")
+        or ""
+    ).strip()
+    pkg_display = (
+        f"{friendly_name} ({pkg_code})"
+        if friendly_name and friendly_name != pkg_code
+        else pkg_code
+    )
+
     text = t(
         "pay_invoice_text",
         lang,
-        pkg_code=pkg_code,
+        pkg_code=pkg_display,
         pkg_minutes=pkg_minutes,
         pkg_recap_credits=pkg_recap,
         pkg_price=f"{pkg_price:,}",

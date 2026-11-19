@@ -289,6 +289,61 @@ async def probe_local_bot_api(
         return get_local_bot_api_status()
 
 
+async def activate_local_bot_api(
+    target_url: Optional[str] = None,
+    token: Optional[str] = None,
+) -> dict[str, Any]:
+    """Activate Local Bot API cleanly, performing the 1-time official ``logOut``
+    handshake automatically if Local Bot API reports the bot is still logged in
+    on ``api.telegram.org``.
+
+    Safe to call from Admin Panel: never logs or exposes the bot token, and falls
+    back cleanly if activation fails.
+    """
+    import asyncio as _asyncio
+
+    if target_url is not None and target_url.strip():
+        clean_url = target_url.strip().rstrip("/")
+        settings.telegram_bot_api_url = clean_url
+        if "127.0.0.1" in clean_url or "localhost" in clean_url:
+            settings.telegram_bot_api_is_local = True
+
+    url = get_configured_local_bot_api_url()
+    if not url:
+        return get_local_bot_api_status()
+
+    tok = (token if token is not None else getattr(settings, "bot_token", "")) or ""
+    status = await probe_local_bot_api(token=tok)
+    if status.get("active"):
+        return status
+
+    err_low = str(status.get("last_error") or "").lower()
+    if tok and any(k in err_low for k in ("logged", "unauthorized", "401", "conflict", "not found")):
+        try:
+            from aiogram import Bot
+
+            official_bot = Bot(token=tok)
+            try:
+                logged_out = await official_bot.log_out()
+                logger.info("Called official api.telegram.org logOut for Local Bot API migration: %s", logged_out)
+            finally:
+                try:
+                    await official_bot.session.close()
+                except Exception:
+                    pass
+            await _asyncio.sleep(1.5)
+            status = await probe_local_bot_api(token=tok)
+        except Exception as exc:
+            set_local_bot_api_probe_result(
+                url,
+                active=False,
+                last_error=f"{status.get('last_error', '')} | logOut failed: {str(exc)[:160]}",
+            )
+            status = get_local_bot_api_status()
+
+    return status
+
+
 # ── Bounded Telegram file_id Cache (Saves Repeat Upload Egress) ─────────────
 def _file_cache_key(file_path: str | Path) -> Optional[tuple[str, str, int, int]]:
     try:

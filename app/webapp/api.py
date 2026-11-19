@@ -56,6 +56,7 @@ from app.services.speed import (
     normalize_api_speed,
 )
 from app.services.telegram_bot_factory import (
+    activate_local_bot_api,
     create_telegram_bot,
     get_local_bot_api_status,
     get_telegram_max_upload_bytes,
@@ -13171,6 +13172,23 @@ async def admin_probe_local_bot_api(admin: User = Depends(require_admin)):
     """Re-probe TELEGRAM_BOT_API_URL on demand and return live Local Bot API status."""
     status = await probe_local_bot_api(settings.bot_token)
     return {"success": True, "local_bot_api": status}
+
+
+class _LocalBotApiActivateReq(BaseModel):
+    url: Optional[str] = Field(default=None, max_length=256)
+
+
+@api_router.post("/admin/local-bot-api/activate")
+async def admin_activate_local_bot_api(
+    req: _LocalBotApiActivateReq = _LocalBotApiActivateReq(),
+    admin: User = Depends(require_admin),
+):
+    """Admin-only Local Bot API handshake (runs 1-time official logOut if needed)."""
+    target = (req.url or "").strip() or None
+    if target and not (target.startswith("http://127.0.0.1") or target.startswith("http://localhost") or target.startswith("https://")):
+        raise HTTPException(status_code=400, detail="Invalid Local Bot API URL")
+    status = await activate_local_bot_api(target_url=target, token=settings.bot_token)
+    return {"success": bool(status.get("active")), "local_bot_api": status}
 
 
 @api_router.get("/admin/income-detail")

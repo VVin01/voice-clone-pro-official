@@ -1,3 +1,9 @@
+FROM aiogram/telegram-bot-api:latest AS tgbotapi_bin
+RUN mkdir -p /opt/tba-bundle/bin /opt/tba-bundle/lib \
+    && cp /usr/local/bin/telegram-bot-api /opt/tba-bundle/bin/telegram-bot-api \
+    && ldd /usr/local/bin/telegram-bot-api | tr ' ' '\n' | grep '^/' | sort -u | while IFS= read -r lib; do [ -e "$lib" ] && cp -L "$lib" /opt/tba-bundle/lib/; done \
+    && for f in /lib/ld-musl-*.so.1; do [ -e "$f" ] && cp -L "$f" /opt/tba-bundle/lib/; done
+
 FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -115,6 +121,14 @@ RUN curl -fsSL -o /tmp/usque.zip "https://github.com/Diniboy1123/usque/releases/
     && chmod +x /opt/usque/usque \
     && rm /tmp/usque.zip \
     && /opt/usque/usque version
+
+# Co-located Local Telegram Bot API server binary (lifts 50 MB -> 2,000 MB).
+# Extracted from aiogram/telegram-bot-api (musl) with its own dynamic loader &
+# shared libs isolated under /opt/telegram-bot-api/lib so Debian glibc stays untouched.
+COPY --from=tgbotapi_bin /opt/tba-bundle /opt/telegram-bot-api
+RUN printf '#!/bin/sh\nLOADER=$(ls /opt/telegram-bot-api/lib/ld-musl-*.so.1 | head -n 1)\nexec "$LOADER" --library-path /opt/telegram-bot-api/lib /opt/telegram-bot-api/bin/telegram-bot-api "$@"\n' > /opt/telegram-bot-api/run-telegram-bot-api \
+    && chmod +x /opt/telegram-bot-api/run-telegram-bot-api /opt/telegram-bot-api/bin/telegram-bot-api \
+    && (/opt/telegram-bot-api/run-telegram-bot-api --help 2>&1 || true) | grep -q "api-id"
 
 # Run Voice Clone Pro Official Bot & Worker.
 # The entrypoint starts the POT provider server first (bounded wait,

@@ -1036,6 +1036,23 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
                         <span class="admp-badge ${lbaCls}" title="${esc(lba.last_error || lba.url || "")}">${lbaTxt}</span>
                         <span class="admp-badge admp-badge-ok">${shTxt}</span>
                     </div>`;
+                    if (lba.configured && !lba.active) {
+                        const actBtn = document.createElement("button");
+                        actBtn.type = "button";
+                        actBtn.className = "mini-chip mt-2";
+                        actBtn.id = "admp-lba-activate";
+                        actBtn.textContent = "🚀 " + L("Local Bot API (2,000 MB) ဖွင့်မည်", "Activate Local Bot API (2,000 MB)");
+                        actBtn.onclick = async () => {
+                            actBtn.disabled = true;
+                            try {
+                                const aRes = await reqFetch("/api/admin/local-bot-api/activate", { method: "POST", headers: { ...hdrs(), "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                                const aData = aRes.ok ? await aRes.json() : null;
+                                toast(aData?.success ? `Local Bot API Active (${aData.local_bot_api?.max_upload_mb || 2000} MB)` : `Local Bot API fallback (${aData?.local_bot_api?.last_error || "unavailable"})`, aData?.success ? "success" : "info");
+                                await loadOverviewOpsHealth();
+                            } finally { actBtn.disabled = false; }
+                        };
+                        infraEl.appendChild(actBtn);
+                    }
                 }
             }
             if (qRes.ok) {

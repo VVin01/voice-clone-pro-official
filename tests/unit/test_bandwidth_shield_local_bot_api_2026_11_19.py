@@ -363,3 +363,85 @@ def test_no_direct_aiogram_bot_instantiations_outside_factory():
             if re.search(r"\bBot\s*\(", line):
                 strays.append(f"{p.relative_to(REPO_ROOT)}:{i}: {line.strip()}")
     assert not strays, f"Direct Bot() calls must go through create_telegram_bot(): {strays}"
+
+
+# ── 6. Co-located Local Bot API Sidecar, Handshake & Bot UI Polish ────────
+
+def test_dockerfile_and_entrypoint_colocate_local_bot_api():
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (REPO_ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
+    assert "FROM aiogram/telegram-bot-api:latest AS tgbotapi_bin" in dockerfile
+    assert "/opt/telegram-bot-api/run-telegram-bot-api" in dockerfile
+    assert "--local --http-ip-address=127.0.0.1" in entrypoint
+    assert 'TELEGRAM_BOT_API_IS_LOCAL="true"' in entrypoint
+
+
+@pytest.mark.asyncio
+async def test_activate_local_bot_api_auto_logout_handshake(monkeypatch):
+    monkeypatch.setattr(settings, "bot_token", "123456:TESTTOKEN")
+    local_fail = MagicMock()
+    local_fail.get_me = AsyncMock(side_effect=RuntimeError("Unauthorized"))
+    local_fail.session.close = AsyncMock()
+
+    official_bot = MagicMock()
+    official_bot.log_out = AsyncMock(return_value=True)
+    official_bot.session.close = AsyncMock()
+
+    local_ok = MagicMock()
+    local_ok.get_me = AsyncMock(return_value=SimpleNamespace(username="voiceclonepro_bot"))
+    local_ok.session.close = AsyncMock()
+
+    with patch("aiogram.Bot", side_effect=[local_fail, official_bot, local_ok]):
+        st = await lba.activate_local_bot_api(target_url="http://127.0.0.1:8081")
+
+    official_bot.log_out.assert_awaited_once()
+    assert st["active"] is True
+    assert st["is_local_fs"] is True
+    assert st["max_upload_mb"] == 2000
+
+
+@pytest.mark.asyncio
+async def test_bot_buy_menu_is_two_columns_mmk_and_invoice_shows_validity(db_session, monkeypatch):
+    import json
+    from contextlib import asynccontextmanager
+    from aiogram.types import CallbackQuery, Message, User as TgUser
+    from app.handlers.payment import handle_buy_minutes_menu, handle_package_selected
+    from app.services.ledger import get_or_create_user
+    from app.services.payments import get_active_pricing_plans
+
+    await get_active_pricing_plans(db_session)
+    user, _ = await get_or_create_user(db_session, telegram_id=981122)
+    user.language_code = "en"
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _ctx():
+        yield db_session
+
+    monkeypatch.setattr("app.handlers.payment.AsyncSessionLocal", lambda: _ctx())
+
+    cb = MagicMock(spec=CallbackQuery)
+    cb.from_user = TgUser(id=981122, is_bot=False, first_name="Buyer")
+    cb.message = MagicMock(spec=Message)
+    cb.message.edit_text = AsyncMock()
+    cb.answer = AsyncMock()
+    state = MagicMock()
+    state.clear = AsyncMock()
+    state.set_state = AsyncMock()
+    state.update_data = AsyncMock()
+
+    await handle_buy_minutes_menu(cb, state)
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    # 22 plans paired 2-per-row (11 rows) + 1 Back row = 12 rows total
+    assert len(kb.inline_keyboard) == 12
+    assert all(" Ks" not in btn.text for row in kb.inline_keyboard for btn in row)
+
+    cb.data = "buy_pkg:MIN_10"
+    cb.message.edit_text.reset_mock()
+    await handle_package_selected(cb, state)
+    inv_text = cb.message.edit_text.call_args.args[0]
+    assert "MIN_10" in inv_text
+    assert "30 days from approval" in inv_text
+
+    en_msgs = json.loads((REPO_ROOT / "locales" / "en" / "messages.json").read_text(encoding="utf-8"))
+    assert en_msgs["referral_title"] == "🎁 <b>Refer Friends & Earn</b>"

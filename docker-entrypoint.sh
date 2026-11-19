@@ -101,4 +101,48 @@ else
     echo "[entrypoint] WARNING: usque binary not found at ${WARP_BIN} — starting app without the WARP tunnel"
 fi
 
+# ── Local Telegram Bot API loopback sidecar (lifts 50 MB -> 2,000 MB) ───
+# Starts only when TELEGRAM_API_ID and TELEGRAM_API_HASH are configured and
+# binds strictly to 127.0.0.1 so raw bot tokens are never exposed publicly.
+# Auto-exports TELEGRAM_BOT_API_URL + TELEGRAM_BOT_API_IS_LOCAL=true when up
+# (unless the operator explicitly set TELEGRAM_BOT_API_URL).
+TBA_PORT="${LOCAL_BOT_API_PORT:-8081}"
+TBA_BIN="${LOCAL_BOT_API_BIN:-/opt/telegram-bot-api/run-telegram-bot-api}"
+TBA_DIR="${LOCAL_BOT_API_DIR:-/app/storage/telegram-bot-api}"
+TBA_TMP="${LOCAL_BOT_API_TEMP:-/tmp/telegram-bot-api}"
+
+if [ -x "$TBA_BIN" ] && [ -n "${TELEGRAM_API_ID:-}" ] && [ -n "${TELEGRAM_API_HASH:-}" ]; then
+    mkdir -p "$TBA_DIR" "$TBA_TMP"
+    (
+        while true; do
+            echo "[entrypoint] starting co-located telegram-bot-api (--local) on 127.0.0.1:${TBA_PORT}"
+            find "$TBA_DIR" -type f -mmin +120 -not -name '*.binlog*' -delete 2>/dev/null || true
+            "$TBA_BIN" --local --http-ip-address=127.0.0.1 --http-port="$TBA_PORT" --dir="$TBA_DIR" --temp-dir="$TBA_TMP" --verbosity=1
+            echo "[entrypoint] telegram-bot-api exited (rc=$?) — restarting in 5s"
+            sleep 5
+        done
+    ) &
+
+    tba_up=0
+    for _ in $(seq 1 15); do
+        if (exec 3<>"/dev/tcp/127.0.0.1/${TBA_PORT}") 2>/dev/null; then
+            exec 3>&- 3<&-
+            tba_up=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$tba_up" = "1" ]; then
+        echo "[entrypoint] telegram-bot-api (--local) is up on 127.0.0.1:${TBA_PORT}"
+        if [ -z "${TELEGRAM_BOT_API_URL:-}" ]; then
+            export TELEGRAM_BOT_API_URL="http://127.0.0.1:${TBA_PORT}"
+            export TELEGRAM_BOT_API_IS_LOCAL="true"
+        fi
+    else
+        echo "[entrypoint] WARNING: telegram-bot-api did not open 127.0.0.1:${TBA_PORT} within 15s — app keeps official 50 MB API"
+    fi
+elif [ -x "$TBA_BIN" ]; then
+    echo "[entrypoint] TELEGRAM_API_ID/TELEGRAM_API_HASH unset — skipping co-located telegram-bot-api sidecar"
+fi
+
 exec "$@"
