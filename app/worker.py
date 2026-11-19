@@ -43,11 +43,20 @@ from app.services.voice_chunking import plan_text_chunks
 
 logger = logging.getLogger(__name__)
 
-# Telegram Bot API refuses bot uploads above 50 MB. Voice WAVs run
-# ~5.8 MB/min, so long generations can cross the cap; delivery must
-# check before sending (hunt #3 B1) — the recap pipeline applies the
-# same limit to its sends.
-TELEGRAM_SEND_LIMIT_BYTES = 50 * 1024 * 1024
+# Telegram Bot API refuses bot uploads above 50 MB on official api.telegram.org,
+# and lifts that cap to 2,000 MB when TELEGRAM_BOT_API_URL (Local Bot API) is
+# active. Voice WAVs run ~5.8 MB/min, so delivery checks the live limit before
+# sending (hunt #3 B1).
+_DEFAULT_TELEGRAM_SEND_LIMIT_BYTES = 50 * 1024 * 1024
+TELEGRAM_SEND_LIMIT_BYTES = _DEFAULT_TELEGRAM_SEND_LIMIT_BYTES
+
+
+def _effective_telegram_send_limit_bytes() -> int:
+    if TELEGRAM_SEND_LIMIT_BYTES != _DEFAULT_TELEGRAM_SEND_LIMIT_BYTES:
+        return TELEGRAM_SEND_LIMIT_BYTES
+    from app.services.telegram_bot_factory import get_telegram_max_upload_bytes
+
+    return get_telegram_max_upload_bytes()
 
 
 def _implausible_audio_reason(text: str, duration_seconds: int, speed_preset) -> str | None:
@@ -947,7 +956,7 @@ async def process_single_job(
             if getattr(job, "auto_deliver", False):
                 try:
                     audio_source_path = permanent_wav_path if permanent_wav_path.is_file() else converted_wav_path
-                    if audio_source_path.stat().st_size > TELEGRAM_SEND_LIMIT_BYTES:
+                    if audio_source_path.stat().st_size > _effective_telegram_send_limit_bytes():
                         # Over the Bot API send cap (hunt #3 B1): a
                         # send_audio attempt would fail inside Telegram
                         # and the user heard nothing at all. Tell them

@@ -238,9 +238,22 @@ def plan_parts(duration: float, part_seconds: float, *, smart: bool = True, max_
     return parts
 
 
-# Telegram's Bot API refuses bot-sent files over 50 MB; recap parts are
-# delivered through it, so a part must stay under this cap (batch N).
-MAX_PART_BYTES = 48 * 1024 * 1024
+# Telegram's official Bot API refuses bot-sent files over 50 MB; when Local Bot
+# API is active, the cap lifts to 2,000 MB (1,980 MB part budget). Keep
+# MAX_PART_BYTES as the 48 MB default so callers/tests overriding it still win.
+_DEFAULT_MAX_PART_BYTES = 48 * 1024 * 1024
+MAX_PART_BYTES = _DEFAULT_MAX_PART_BYTES
+
+
+def _effective_max_part_bytes() -> int:
+    if MAX_PART_BYTES != _DEFAULT_MAX_PART_BYTES:
+        return MAX_PART_BYTES
+    try:
+        from app.services.telegram_bot_factory import get_splitter_max_part_bytes
+
+        return get_splitter_max_part_bytes()
+    except Exception:
+        return MAX_PART_BYTES
 
 
 def size_capped_part_seconds(duration: float, total_bytes: int, part_seconds: float,
@@ -393,12 +406,13 @@ def split_rendered_video(
     # (≤ MAX_PART_BYTES); the re-split pass after rendering handles
     # sections whose bitrate runs hotter than the average.
     _uncapped_part_seconds = part_seconds
+    _cap_bytes = _effective_max_part_bytes()
     part_seconds = size_capped_part_seconds(
-        duration, source.stat().st_size, part_seconds, MAX_PART_BYTES
+        duration, source.stat().st_size, part_seconds, _cap_bytes
     )
     if part_seconds < _uncapped_part_seconds:
         log(f"📦 Splitter: size cap — part length limited to ~{part_seconds:.0f}s "
-            f"so each part stays under {MAX_PART_BYTES // (1024 * 1024)} MB")
+            f"so each part stays under {_cap_bytes // (1024 * 1024)} MB")
     has_audio = _has_audio(ffprobe, source)
 
     levels = None
@@ -477,7 +491,7 @@ def split_rendered_video(
     oversized = {
         (d["start"], d["end"])
         for d in done
-        if d.get("path") and Path(d["path"]).stat().st_size > MAX_PART_BYTES
+        if d.get("path") and Path(d["path"]).stat().st_size > _cap_bytes
     }
     if oversized:
         refined: list[dict[str, Any]] = []
@@ -485,7 +499,7 @@ def split_rendered_video(
             if (p["start"], p["end"]) in oversized:
                 span = float(p["end"]) - float(p["start"])
                 actual = Path(out_dir / f"recap_part_{p['n']:02d}.mp4").stat().st_size
-                sub_seconds = max(5.0, span * (MAX_PART_BYTES / float(actual)))
+                sub_seconds = max(5.0, span * (_cap_bytes / float(actual)))
                 sub_plan = plan_parts(span, sub_seconds, smart=False, levels=None)
                 for sp in sub_plan:
                     refined.append({

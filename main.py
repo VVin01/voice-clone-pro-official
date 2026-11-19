@@ -34,9 +34,18 @@ async def run_bot_and_worker(mode: str) -> None:
 
     bot = None
     if settings.bot_token:
-        bot = Bot(
+        from app.services.telegram_bot_factory import (
+            create_telegram_bot,
+            get_configured_local_bot_api_url,
+            probe_local_bot_api,
+        )
+
+        if get_configured_local_bot_api_url():
+            await probe_local_bot_api(settings.bot_token)
+        bot = create_telegram_bot(
             token=settings.bot_token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            bot_cls=Bot,
         )
     else:
         logger.warning("TELEGRAM_BOT_TOKEN is not set. Bot polling will not start unless provided.")

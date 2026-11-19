@@ -55,11 +55,21 @@ from app.services.speed import (
     migrate_speed_pref,
     normalize_api_speed,
 )
+from app.services.telegram_bot_factory import (
+    create_telegram_bot,
+    get_local_bot_api_status,
+    get_telegram_max_upload_bytes,
+    get_telegram_max_upload_mb,
+    is_local_bot_api_active,
+    probe_local_bot_api,
+    send_cached_telegram_media,
+)
 from app.webapp.auth import (
     ADMIN_INIT_DATA_MAX_AGE_SECONDS,
     init_data_auth_date,
     parse_and_verify_init_data,
 )
+from app.webapp.rate_limit import get_bandwidth_shield_stats
 
 logger = logging.getLogger(__name__)
 api_router = APIRouter(prefix="/api")
@@ -424,7 +434,7 @@ async def require_gate_verified(
         )
     from aiogram import Bot
 
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         is_verified, _reason = await verify_user_membership(db, user, bot)
     finally:
@@ -3858,6 +3868,8 @@ async def get_user_profile(
         "gate_configured": bool(settings.required_channel_id and settings.required_group_id),
         "channel_invite_link": settings.channel_invite_link,
         "group_invite_link": settings.group_invite_link,
+        "telegram_max_upload_mb": get_telegram_max_upload_mb(),
+        "local_bot_api_active": is_local_bot_api_active(),
     }
 
 
@@ -3887,7 +3899,7 @@ async def verify_membership_endpoint(
         }
     from aiogram import Bot
 
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         is_verified, _reason = await verify_user_membership(db, user, bot)
     finally:
@@ -3906,6 +3918,8 @@ async def verify_membership_endpoint(
         "gate_configured": True,
         "channel_invite_link": settings.channel_invite_link,
         "group_invite_link": settings.group_invite_link,
+        "telegram_max_upload_mb": get_telegram_max_upload_mb(),
+        "local_bot_api_active": is_local_bot_api_active(),
     }
 
 
@@ -3990,6 +4004,8 @@ async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
         "maintenance_mode": str(maintenance_raw).lower() in ("true", "1", "yes"),
         # Batch AR: the note the full-screen maintenance gate renders.
         "maintenance_note": str(maintenance_note_raw or ""),
+        "telegram_max_upload_mb": get_telegram_max_upload_mb(),
+        "local_bot_api_active": is_local_bot_api_active(),
     }
 
 
@@ -4054,6 +4070,7 @@ async def get_user_logo_file(
         path=str(found),
         media_type=LOGO_MEDIA_TYPES.get(found.suffix.lower(), "application/octet-stream"),
         content_disposition_type="inline",
+        headers={"Cache-Control": "private, max-age=300"},
     )
 
 
@@ -5593,7 +5610,15 @@ async def extract_media_info(
 _DL_ID_RE = re.compile(r"^[a-f0-9]{12}$")
 _DL_FORMATS = ("video", "mp3", "srt")
 _DL_KEEP_PER_USER = 10
-_DL_TELEGRAM_LIMIT = 50 * 1024 * 1024  # Telegram Bot API send cap
+_DL_DEFAULT_TELEGRAM_LIMIT = 50 * 1024 * 1024
+_DL_TELEGRAM_LIMIT = _DL_DEFAULT_TELEGRAM_LIMIT  # Official Bot API send cap (50 MB)
+
+
+def _telegram_send_limit_bytes() -> int:
+    """Effective Telegram bot upload cap (50 MB official, 2,000 MB Local Bot API)."""
+    if _DL_TELEGRAM_LIMIT != _DL_DEFAULT_TELEGRAM_LIMIT:
+        return _DL_TELEGRAM_LIMIT
+    return get_telegram_max_upload_bytes()
 
 
 def _dl_root() -> Path:
@@ -5696,11 +5721,27 @@ async def fetch_downloader_format(
     dest = _dl_dir(download_id)
     dest.mkdir(parents=True, exist_ok=True)
     downloader = MediaDownloader()
+    _dl_is_vip = bool(
+        settings.is_admin(user.id)
+        or getattr(user, "account_category", None) == AccountCategory.PURCHASED.value
+    )
+    _dl_max_height = 1080 if _dl_is_vip else 720
     try:
         if fmt == "video":
-            file_path, info = await asyncio.to_thread(
-                downloader.download_video, canonical_url, str(dest)
-            )
+            import inspect as _inspect
+
+            _dl_sig = _inspect.signature(downloader.download_video)
+            if "max_height" in _dl_sig.parameters:
+                file_path, info = await asyncio.to_thread(
+                    downloader.download_video,
+                    canonical_url,
+                    str(dest),
+                    max_height=_dl_max_height,
+                )
+            else:
+                file_path, info = await asyncio.to_thread(
+                    downloader.download_video, canonical_url, str(dest)
+                )
         elif fmt == "mp3":
             # yt-dlp's FFmpegExtractAudio postprocessor: ffmpeg-side
             # audio extraction to 192k MP3, same as the recap pipeline.
@@ -5760,7 +5801,8 @@ async def fetch_downloader_format(
         "filename": _dl_display_name(meta),
         "size_bytes": meta["size_bytes"],
         "download_url": f"/api/downloader/file/{download_id}",
-        "telegram_sendable": meta["size_bytes"] <= _DL_TELEGRAM_LIMIT,
+        "telegram_sendable": meta["size_bytes"] <= _telegram_send_limit_bytes(),
+        "telegram_max_upload_mb": get_telegram_max_upload_mb(),
     }
 
 
@@ -5795,22 +5837,26 @@ async def send_downloader_to_telegram(
     file_path = _dl_dir(download_id) / str(meta.get("filename") or "")
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="ဖိုင် အဆင်သင့်မဖြစ်သေးပါ သို့မဟုတ် ရှာမတွေ့ပါ။")
-    if file_path.stat().st_size > _DL_TELEGRAM_LIMIT:
+    if file_path.stat().st_size > _telegram_send_limit_bytes():
         raise HTTPException(status_code=413, detail="file_too_large_telegram")
 
-    from aiogram import Bot
-    from aiogram.types import FSInputFile
-
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         caption = f"📥 <b>{html.escape(str(meta.get('title') or 'Video Content'))}</b>"
-        upload = FSInputFile(str(file_path), filename=_dl_display_name(meta))
-        if meta.get("format") == "video":
-            await bot.send_video(chat_id=user.id, video=upload, caption=caption, parse_mode="HTML")
-        elif meta.get("format") == "mp3":
-            await bot.send_audio(chat_id=user.id, audio=upload, caption=caption, parse_mode="HTML")
-        else:
-            await bot.send_document(chat_id=user.id, document=upload, caption=caption, parse_mode="HTML")
+        media_kind = (
+            "video"
+            if meta.get("format") == "video"
+            else ("audio" if meta.get("format") == "mp3" else "document")
+        )
+        await send_cached_telegram_media(
+            bot,
+            media_kind=media_kind,
+            chat_id=user.id,
+            file_path=file_path,
+            filename=_dl_display_name(meta),
+            caption=caption,
+            parse_mode="HTML",
+        )
         return {"success": True, "message": "Telegram ဆီ ဖိုင်ပို့ပြီးပါပြီ!"}
     except Exception as e:
         logger.warning(f"Failed to send downloader file {download_id} to {user.id}: {e}")
@@ -6110,7 +6156,7 @@ async def get_recap_frame(
             raise HTTPException(status_code=404, detail="Frame not found")
 
     if direct_thumb:
-        return FileResponse(cand, media_type="image/jpeg")
+        return FileResponse(cand, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
 
     if actual_path.is_file():
         seek_sec = max(0.1, float(t or 1.0))
@@ -6121,12 +6167,12 @@ async def get_recap_frame(
         out_thumb = settings.storage_root / "temp" / f"frame_{cache_key}.jpg"
 
         if out_thumb.is_file() and out_thumb.stat().st_size > 500:
-            return FileResponse(out_thumb, media_type="image/jpeg")
+            return FileResponse(out_thumb, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
 
         from app.services.downloader import extract_thumbnail_from_media
         res = extract_thumbnail_from_media(str(actual_path), str(out_thumb), timestamp_sec=seek_sec)
         if res and Path(res).is_file():
-            return FileResponse(res, media_type="image/jpeg")
+            return FileResponse(res, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
 
     raise HTTPException(status_code=404, detail="Frame not found")
 
@@ -6221,7 +6267,7 @@ async def recap_preview_frame(
             extract_thumbnail_from_media, str(source_path), str(frame_path), timestamp_sec=seek_sec
         )
         if res and Path(res).is_file():
-            return FileResponse(res, media_type="image/jpeg")
+            return FileResponse(res, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
     raise HTTPException(status_code=404, detail="Frame not found")
 
 
@@ -6514,7 +6560,7 @@ async def recap_preview_composite(
         logger.warning(f"preview-composite render failed: {e}")
         raise HTTPException(status_code=422, detail="နမူနာပုံ မရယူနိုင်ပါ")
     if out_img and Path(out_img).is_file():
-        return FileResponse(out_img, media_type="image/jpeg")
+        return FileResponse(out_img, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
     raise HTTPException(status_code=404, detail="Frame not found")
 # ── 5. Recap Studio Configuration & Background Pipeline ─────────────────────
 RECAP_JOBS_REGISTRY: Dict[str, Dict[str, Any]] = {}
@@ -7459,14 +7505,15 @@ def _recap_output_size_and_sendable(job_id: str, result_path: Optional[str] = No
     size keeps the button (True): only a KNOWN oversize hides it.
     """
     video_path = resolve_recap_deliverable_path(job_id, "video", result_path=result_path)
+    limit = _telegram_send_limit_bytes()
     size = _file_size_or_none(video_path)
-    if size is not None and size <= _DL_TELEGRAM_LIMIT:
+    if size is not None and size <= limit:
         return size, True
     entry = RECAP_JOBS_REGISTRY.get(job_id) or {}
     parts = resolve_recap_part_paths(job_id)
     if parts and (entry.get("segmented") or len(parts) >= 2):
         part_sizes = [_file_size_or_none(p.get("path")) for p in parts]
-        if all(s is not None and s <= _DL_TELEGRAM_LIMIT for s in part_sizes):
+        if all(s is not None and s <= limit for s in part_sizes):
             return size, True
     if size is not None:
         return size, False
@@ -7494,21 +7541,21 @@ def _voice_output_size_and_sendable(job) -> tuple:
             size = None
     if size is None:
         return None, True
-    return size, size <= _DL_TELEGRAM_LIMIT
+    return size, size <= _telegram_send_limit_bytes()
 
 
 async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my", title: Optional[str] = None) -> int:
     """Send every split part of a recap job to a Telegram chat.
 
-    Parts up to Telegram's 50 MB bot limit go as videos with their part
-    label; an oversized part gets a short note pointing at the Mini App
-    (where the same part is downloadable). Returns the number of parts
-    actually sent as video. Never raises.
+    Parts up to the active Telegram bot limit (50 MB official, 2,000 MB Local
+    Bot API) go as videos with their part label; an oversized part gets a short
+    note pointing at the Mini App (where the same part is downloadable).
+    Returns the number of parts actually sent as video. Never raises.
     """
-    from aiogram.types import FSInputFile
     from app.services.downloader import format_filesize
 
     sent = 0
+    limit = _telegram_send_limit_bytes()
     try:
         parts = resolve_recap_part_paths(job_id)
     except Exception:
@@ -7516,22 +7563,24 @@ async def _deliver_recap_parts(bot, chat_id: int, job_id: str, lang: str = "my",
     for part in parts:
         try:
             size = os.path.getsize(part["path"]) if os.path.isfile(part["path"]) else 0
-            if 0 < size <= 50 * 1024 * 1024:
-                vf = FSInputFile(
-                    part["path"],
-                    filename=branded_download_filename(
-                        "Recap", Path(part["path"]).suffix.lstrip(".") or "mp4",
-                        title=title, job_id=job_id, part=part["n"],
-                    ),
-                )
+            if 0 < size <= limit:
                 caption = t(
                     "recap_part_caption",
                     lang,
                     label=html.escape(str(part["label"])),
                     size_formatted=format_filesize(size),
                 )
-                await bot.send_video(
-                    chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML"
+                await send_cached_telegram_media(
+                    bot,
+                    media_kind="video",
+                    chat_id=chat_id,
+                    file_path=part["path"],
+                    filename=branded_download_filename(
+                        "Recap", Path(part["path"]).suffix.lstrip(".") or "mp4",
+                        title=title, job_id=job_id, part=part["n"],
+                    ),
+                    caption=caption,
+                    parse_mode="HTML",
                 )
                 sent += 1
             else:
@@ -7597,11 +7646,9 @@ async def _send_recap_telegram_delivery(
         lang = "my"
     delivered = False
     try:
-        from aiogram import Bot
-        from aiogram.types import FSInputFile
         from app.services.downloader import format_duration, format_filesize
 
-        bot = Bot(token=settings.bot_token)
+        bot = create_telegram_bot(token=settings.bot_token)
         try:
             file_size = os.path.getsize(video_path) if os.path.isfile(video_path) else 0
             dur_formatted = format_duration(duration_sec)
@@ -7634,15 +7681,19 @@ async def _send_recap_telegram_delivery(
                 # the parts together are the whole delivery.
                 sent_parts = await _deliver_recap_parts(bot, chat_id, job_id, lang, title=title)
                 delivered = sent_parts > 0
-            elif file_size <= 50 * 1024 * 1024:
-                vf = FSInputFile(
-                    video_path,
+            elif file_size <= _telegram_send_limit_bytes():
+                await send_cached_telegram_media(
+                    bot,
+                    media_kind="video",
+                    chat_id=chat_id,
+                    file_path=video_path,
                     filename=branded_download_filename(
                         "Recap", Path(video_path).suffix.lstrip(".") or "mp4",
                         title=title, job_id=job_id,
                     ),
+                    caption=caption,
+                    parse_mode="HTML",
                 )
-                await bot.send_video(chat_id=chat_id, video=vf, caption=caption, parse_mode="HTML")
                 delivered = True
             elif parts_available:
                 # Full render exceeds Telegram's 50 MB bot limit, but the
@@ -7829,7 +7880,7 @@ async def _send_recap_failure_dm(
     )
     from aiogram import Bot
 
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         await bot.send_message(chat_id=int(chat_id), text=text, parse_mode="HTML")
     finally:
@@ -9063,7 +9114,7 @@ async def _execute_recap_background_job(
                     _recap_notify_lang,
                     retention_hours=_media_retention_days() * 24,
                 )
-                bot_inst = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                bot_inst = create_telegram_bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
                     await bot_inst.send_message(
                         chat_id=chat_id,
@@ -9092,7 +9143,7 @@ async def _execute_recap_background_job(
                 from aiogram.client.default import DefaultBotProperties
                 from aiogram.enums import ParseMode
 
-                _dp_bot = Bot(token=getattr(settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                _dp_bot = create_telegram_bot(token=getattr(settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
                     await _voice_choice.clear_prompt_for_job(_dp_bot, _dp_job)
                 finally:
@@ -9162,7 +9213,7 @@ async def _execute_recap_background_job(
                 from aiogram.client.default import DefaultBotProperties
                 from aiogram.enums import ParseMode
 
-                _dp_bot = Bot(token=getattr(settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                _dp_bot = create_telegram_bot(token=getattr(settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
                     if _dp_repark:
                         await _voice_choice.refresh_choice_prompt(
@@ -10887,7 +10938,7 @@ async def send_recap_demo(
         )
     from aiogram import Bot
 
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         try:
             await bot.send_video(chat_id=user.id, video=asset)
@@ -11113,7 +11164,7 @@ async def _send_recap_thumbnail_telegram(
     from aiogram import Bot
     from aiogram.types import FSInputFile
 
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         caption = t("recap_thumb_telegram_caption", lang, title=title or "Movie Recap")
         await bot.send_photo(
@@ -11513,23 +11564,14 @@ async def send_voice_to_telegram(
     # Telegram. Same coded 413 the downloader send endpoint raises; the
     # client turns it into the "download it instead" message and the job
     # itself stays SUCCESS with the file downloadable in the Mini App.
-    if audio_path.stat().st_size > _DL_TELEGRAM_LIMIT:
+    if audio_path.stat().st_size > _telegram_send_limit_bytes():
         raise HTTPException(status_code=413, detail="file_too_large_telegram")
 
-    from aiogram import Bot
-    from aiogram.types import FSInputFile
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         # Batch AW: a TTS job's on-demand send carries the TTS brand
         # and caption; voice-clone jobs keep theirs.
         _is_tts_job = db_job.job_type == JobType.TTS.value
-        af = FSInputFile(
-            str(audio_path),
-            filename=branded_download_filename(
-                "TTS" if _is_tts_job else "Voice", audio_path.suffix.lstrip(".") or "wav",
-                title=db_job.preset_voice, job_id=job_id,
-            ),
-        )
         caption = (
             f"🎧 <b>TTS အသံ</b>\n"
             f"✨ <i>Mini App TTS Tab ကနေ ဖန်တီးထားတဲ့ အသံဖိုင်ပါ။</i>"
@@ -11537,7 +11579,18 @@ async def send_voice_to_telegram(
             f"🎙️ <b>AI Myanmar Voice Clone</b>\n"
             f"✨ <i>Mini App ကနေ ဖန်တီးထားတဲ့ အသံဖိုင်ပါ။</i>"
         )
-        await bot.send_audio(chat_id=user.id, audio=af, caption=caption, parse_mode="HTML")
+        await send_cached_telegram_media(
+            bot,
+            media_kind="audio",
+            chat_id=user.id,
+            file_path=audio_path,
+            filename=branded_download_filename(
+                "TTS" if _is_tts_job else "Voice", audio_path.suffix.lstrip(".") or "wav",
+                title=db_job.preset_voice, job_id=job_id,
+            ),
+            caption=caption,
+            parse_mode="HTML",
+        )
         return {"success": True, "message": "Telegram ဆီ အသံဖိုင် ပို့ပြီးပါပြီ!"}
     except Exception as e:
         logger.warning(f"Failed to send voice to Telegram chat {user.id}: {e}")
@@ -12619,12 +12672,10 @@ async def submit_payment_slip(
     # request row so a terminal action from ANY surface syncs them.
     if settings.bot_token and settings.admin_ids:
         try:
-            from aiogram import Bot
             from aiogram.enums import ParseMode
-            from aiogram.types import FSInputFile
             from app.services.payment_review import add_admin_copy
             from app.ui.keyboards import admin_pay_review_kb
-            bot = Bot(token=settings.bot_token)
+            bot = create_telegram_bot(token=settings.bot_token)
             try:
                 admin_text = (
                     f"🔔 <b>New VIP Payment Slip Submitted!</b>\n\n"
@@ -12640,9 +12691,13 @@ async def submit_payment_slip(
                 for admin_id in settings.admin_ids:
                     try:
                         if dest_path.is_file():
-                            sent = await bot.send_photo(
+                            # Upload receipt photo ONCE to Telegram and reuse file_id
+                            # across all remaining admins (saves (N-1)x egress).
+                            sent = await send_cached_telegram_media(
+                                bot,
+                                media_kind="photo",
                                 chat_id=admin_id,
-                                photo=FSInputFile(str(dest_path)),
+                                file_path=dest_path,
                                 caption=admin_text,
                                 reply_markup=review_kb,
                                 parse_mode=ParseMode.HTML,
@@ -12703,7 +12758,7 @@ async def get_receipt_image(
     if not p.is_relative_to(receipts_dir) or not p.is_file():
         raise HTTPException(status_code=404, detail="Receipt image not found")
     if settings.is_admin(user.id):
-        return FileResponse(str(p))
+        return FileResponse(str(p), headers={"Cache-Control": "private, max-age=300"})
     slip_url = f"/api/receipts/{clean_fn}"
     res = await db.execute(
         select(PaymentRequest).where(
@@ -12713,7 +12768,7 @@ async def get_receipt_image(
     )
     if res.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Receipt image not found")
-    return FileResponse(str(p))
+    return FileResponse(str(p), headers={"Cache-Control": "private, max-age=300"})
 
 
 # ── 7. Role-Gated Admin Console ───────────────────────────────────────────
@@ -13105,8 +13160,17 @@ async def get_admin_overview(
         "db_size_bytes": db_size_bytes,
         "storage_bytes": storage_bytes,
         "disk": disk_info,
+        "local_bot_api": get_local_bot_api_status(),
+        "bandwidth_shield": get_bandwidth_shield_stats(),
         "recent_admin_actions": recent_actions,
     }
+
+
+@api_router.post("/admin/local-bot-api/probe")
+async def admin_probe_local_bot_api(admin: User = Depends(require_admin)):
+    """Re-probe TELEGRAM_BOT_API_URL on demand and return live Local Bot API status."""
+    status = await probe_local_bot_api(settings.bot_token)
+    return {"success": True, "local_bot_api": status}
 
 
 @api_router.get("/admin/income-detail")
@@ -13863,7 +13927,7 @@ async def send_admin_user_message(
 
     delivered = False
     error_kind = None
-    bot = Bot(token=settings.bot_token)
+    bot = create_telegram_bot(token=settings.bot_token)
     try:
         await bot.send_message(chat_id=user_id, text=text)
         delivered = True
@@ -15572,7 +15636,7 @@ async def edit_and_approve_payment_slip(
     if settings.bot_token:
         try:
             from aiogram import Bot
-            bot = Bot(token=settings.bot_token)
+            bot = create_telegram_bot(token=settings.bot_token)
             try:
                 vdays = int(getattr(p_req, "validity_days", 30) if getattr(p_req, "validity_days", None) is not None else 30)
                 exp_note = f" (သက်တမ်း {vdays} ရက်)" if vdays > 0 else " (သက်တမ်းမကုန်)"
@@ -15655,7 +15719,7 @@ async def approve_payment_slip(
             from aiogram import Bot
             from aiogram.enums import ParseMode
             from app.ui.keyboards import main_menu_kb
-            bot = Bot(token=settings.bot_token)
+            bot = create_telegram_bot(token=settings.bot_token)
             try:
                 # R40 deck A9: single source — the approval notice is
                 # the bot locale string (dual minutes + credits, VIP
@@ -15733,7 +15797,7 @@ async def reject_payment_slip(
         try:
             from aiogram import Bot
             from aiogram.enums import ParseMode
-            bot = Bot(token=settings.bot_token)
+            bot = create_telegram_bot(token=settings.bot_token)
             try:
                 reject_notice = (
                     f"⚠️ <b>ငွေလွှဲပြေစာ အတည်မပြုနိုင်ကြောင်း အသိပေးချက်</b>\n\n"
@@ -16679,7 +16743,7 @@ async def send_admin_broadcast(
             raise HTTPException(status_code=503, detail="Bot token မရှိသေးသောကြောင့် Test DM ပို့၍ မရပါ။")
         from aiogram import Bot
 
-        bot = Bot(token=settings.bot_token)
+        bot = create_telegram_bot(token=settings.bot_token)
         try:
             await bot.send_message(chat_id=admin.id, text=f"[TEST PREVIEW]\n\n{text}")
         finally:
@@ -16715,7 +16779,7 @@ async def send_admin_broadcast(
         # Batch AJ M2: plain text, exactly like the bot broadcast
         # path — the old HTML default parse mode let a stray "<" in
         # the admin's text break or silently reformat the message.
-        bot = Bot(token=settings.bot_token)
+        bot = create_telegram_bot(token=settings.bot_token)
         sent_count = 0
         blocked_by_user_count = 0
         deactivated_or_not_found_count = 0
@@ -17139,7 +17203,7 @@ async def extend_admin_wallet_grant(
         try:
             from aiogram import Bot
 
-            bot = Bot(token=settings.bot_token)
+            bot = create_telegram_bot(token=settings.bot_token)
             try:
                 rem_parts = []
                 if int(grant.remaining_recap_seconds or 0) > 0:

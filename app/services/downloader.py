@@ -199,8 +199,9 @@ def extract_thumbnail_from_media(file_path: str, output_path: str, timestamp_sec
             "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
             "-ss", str(max(0.1, timestamp_sec)),
             "-i", file_path,
+            "-vf", "scale='min(720,iw)':-2",
             "-vframes", "1",
-            "-q:v", "2",
+            "-q:v", "6",
             output_path
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=THUMBNAIL_TIMEOUT_SECONDS)

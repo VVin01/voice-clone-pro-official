@@ -1071,7 +1071,7 @@ function setupStickyCtas() {
     refreshStickyCtas();
 }
 
-// ── Home sample players: only one plays at a time ──────────────────────
+// Home sample players: lazy-load on first Play tap, one plays at a time
 function setupSamplePlayers() {
     const a = document.getElementById("sample-audio-voice");
     const b = document.getElementById("sample-audio-recap");
@@ -1079,20 +1079,14 @@ function setupSamplePlayers() {
         a.addEventListener("play", () => { try { b.pause(); } catch (e) {} });
         b.addEventListener("play", () => { try { a.pause(); } catch (e) {} });
     }
-    // /api/voices/sample requires the Telegram auth header (privacy
-    // fix, hunt #2 V2), which an <audio src> load cannot send — fetch
-    // each sample with auth and hand the player a blob URL instead.
-    [a, b].forEach(async (el) => {
-        if (!el) return;
+    const ensureSampleSrc = async (el) => {
+        if (!el || el.src) return !!el?.src;
         const url = el.getAttribute("data-sample-url");
-        if (!url) return;
+        if (!url) return false;
         const authUrl = await fetchAuthImageUrl(url);
         if (authUrl) el.src = authUrl;
-    });
-    // Batch AY: branded mini-player buttons drive the SAME elements
-    // (native controls are gone). Button state is rendered FROM the
-    // media events, never from the click, so the one-at-a-time pause
-    // above also resets the other row's button + progress.
+        return !!el.src;
+    };
     const wireSampleButton = (el, btnId, fillId) => {
         const btn = document.getElementById(btnId);
         if (!el || !btn) return;
@@ -1105,8 +1099,9 @@ function setupSamplePlayers() {
             btn.setAttribute("aria-label", t(playing ? "sample_pause" : "sample_play"));
             if (el.ended && fill) fill.style.width = "0%";
         };
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
             if (el.paused || el.ended) {
+                if (!(await ensureSampleSrc(el))) return;
                 const p = el.play();
                 if (p && p.catch) p.catch(() => {});
             } else {
@@ -2431,29 +2426,22 @@ window.showGateReminder = showGateReminder;
     };
 })();
 
-// Authenticated image loading: /api/recap/frame and /api/receipts/*
-// now require the Telegram header, which a plain <img src> cannot send.
-// External thumbnails (YouTube etc.) are returned untouched.
+// Auth media fetch with in-memory cache for voice samples
+const _authSampleCache = new Map();
 async function fetchAuthImageUrl(url) {
     if (!url || !url.startsWith("/api/")) return url;
+    if (url.startsWith("/api/voices/sample/") && _authSampleCache.has(url)) return _authSampleCache.get(url);
     try {
         const res = await fetch(url, { headers: getAuthHeaders(false) });
-        if (isAuthFailure(res)) return null;
-        if (!res.ok) return null;
-        const blob = await res.blob();
-        return URL.createObjectURL(blob);
+        if (isAuthFailure(res) || !res.ok) return null;
+        const objUrl = URL.createObjectURL(await res.blob());
+        if (url.startsWith("/api/voices/sample/")) _authSampleCache.set(url, objUrl);
+        return objUrl;
     } catch (e) { return null; }
 }
 window.fetchAuthImageUrl = fetchAuthImageUrl;
 
 // ── Authenticated result media (round-6 P1) ─────────────────────────
-// Generated results live behind the Telegram init-data header, which
-// <audio>/<video> elements and plain <a href> clicks cannot send —
-// raw API URLs answered 401, so the voice result player sat at
-// 0:00/0:00, the WAV download failed, and History's recap player
-// never loaded. Fetch the bytes WITH the header and hand over a
-// blob: object URL instead (the pattern dlDownloadFile proved for
-// the downloader). Per-element object URLs are revoked on replace.
 const _authMediaObjectUrls = new WeakMap();
 
 async function fetchAuthBlobUrl(url) {
@@ -2461,21 +2449,11 @@ async function fetchAuthBlobUrl(url) {
     if (!url.startsWith("/api/")) return url;
     try {
         const res = await fetch(url, { headers: getAuthHeaders(false) });
-        if (isAuthFailure(res)) return null;
-        if (!res.ok) return null;
-        const blob = await res.blob();
-        return URL.createObjectURL(blob);
+        if (isAuthFailure(res) || !res.ok) return null;
+        return URL.createObjectURL(await res.blob());
     } catch (e) { return null; }
 }
 
-// Batch AF: progress-reporting variant for the DOWNLOAD path only.
-// The blob design holds the whole file in memory before the save
-// prompt appears, so a large render used to be a long, silent,
-// apparently-dead wait with no feedback at all. When the response
-// can be streamed, report real percentages computed from
-// Content-Length; when no total is known, report null and the
-// caller paints an indeterminate "downloading…" state. Playback
-// keeps using fetchAuthBlobUrl / the signed stream URL — untouched.
 async function fetchAuthBlobUrlWithProgress(url, onProgress) {
     if (!url) return null;
     if (!url.startsWith("/api/")) return url;
@@ -2521,6 +2499,11 @@ async function _streamedResponseBlob(res, onProgress) {
 
 async function setAuthMediaSource(el, url) {
     if (!el || !url) return false;
+    if (/[?&]t=/.test(url)) {
+        clearAuthMediaSource(el);
+        el.src = url;
+        return true;
+    }
     const objUrl = await fetchAuthBlobUrl(url);
     if (!objUrl) return false;
     const prev = _authMediaObjectUrls.get(el);
@@ -16088,16 +16071,22 @@ function toggleHistoryDetail(jobId) {
 }
 window.toggleHistoryDetail = toggleHistoryDetail;
 
-// Wire the History detail's inline voice player (item 7): the audio
-// element renders with data-auth-src and no src; the authenticated
-// blob URL is attached lazily, only for the row being opened, so a
-// long history list never fetches every job's audio up front.
+// Lazy-load History audio only when interacted with (saves multi-MB egress on row expand)
 function wireHubDetailAudio(scope) {
     if (!scope) return;
     scope.querySelectorAll("audio[data-auth-src]").forEach(audio => {
-        if (!audio.getAttribute("src")) {
-            setAuthMediaSource(audio, audio.getAttribute("data-auth-src"));
-        }
+        if (audio.getAttribute("src") || audio.dataset.lazyWired) return;
+        audio.dataset.lazyWired = "1";
+        const url = audio.getAttribute("data-auth-src");
+        if (/[?&]t=/.test(url || "")) { audio.preload = "none"; audio.src = url; return; }
+        const load = async () => {
+            if (audio.getAttribute("src") || audio.dataset.loading) return;
+            audio.dataset.loading = "1";
+            if (await setAuthMediaSource(audio, url)) { audio.play().catch(() => {}); }
+            delete audio.dataset.loading;
+        };
+        audio.addEventListener("pointerdown", load, { once: true });
+        audio.addEventListener("focus", load, { once: true });
     });
 }
 

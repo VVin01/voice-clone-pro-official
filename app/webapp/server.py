@@ -373,6 +373,22 @@ async def lifespan(app: FastAPI):
 
         logging.getLogger(__name__).warning("Gate configuration check error: %s", gate_err)
 
+    # Probe Local Telegram Bot API server when TELEGRAM_BOT_API_URL is set.
+    # If reachable, lifts upload limit from 50 MB -> 2,000 MB; otherwise falls
+    # back safely to official api.telegram.org (50 MB).
+    try:
+        from app.services.telegram_bot_factory import (
+            get_configured_local_bot_api_url,
+            probe_local_bot_api,
+        )
+
+        if get_configured_local_bot_api_url():
+            await probe_local_bot_api()
+    except Exception as lba_err:
+        import logging
+
+        logging.getLogger(__name__).warning("Local Bot API startup probe error: %s", lba_err)
+
     # Initialize database tables and metadata
     try:
         await init_db()
@@ -450,7 +466,8 @@ async def lifespan(app: FastAPI):
                 )).scalars().all()
             if not rows:
                 return
-            bot = Bot(token=settings.bot_token)
+            from app.services.telegram_bot_factory import create_telegram_bot
+            bot = create_telegram_bot(token=settings.bot_token)
             try:
                 for campaign_id in rows:
                     async with AsyncSessionLocal() as session:
@@ -504,7 +521,8 @@ async def lifespan(app: FastAPI):
                     async with _CuSession() as _cu_session:
                         _cu_released = await release_stale_editing_claims(_cu_session)
                     if _cu_released:
-                        _cu_bot = _CuBot(token=getattr(_cu_settings, "bot" + "_token"))
+                        from app.services.telegram_bot_factory import create_telegram_bot as _create_cu_bot
+                        _cu_bot = _create_cu_bot(token=getattr(_cu_settings, "bot" + "_token"))
                         try:
                             async with _CuSession() as _cu_session:
                                 for _cu_snap in _cu_released:
@@ -529,8 +547,8 @@ async def lifespan(app: FastAPI):
 
                 _exp_bot = None
                 if getattr(_exp_settings, "instance_primary", True) and _exp_settings.bot_token:
-                    from aiogram import Bot as _ExpBot
-                    _exp_bot = _ExpBot(token=getattr(_exp_settings, "bot" + "_token"))
+                    from app.services.telegram_bot_factory import create_telegram_bot as _create_exp_bot
+                    _exp_bot = _create_exp_bot(token=getattr(_exp_settings, "bot" + "_token"))
                 try:
                     async with _ExpSession() as _exp_session:
                         _exp_res = await sweep_expired_grants_and_reminders(_exp_session, bot=_exp_bot)
@@ -599,11 +617,11 @@ async def lifespan(app: FastAPI):
             try:
                 _bot = None
                 try:
-                    from aiogram import Bot
                     from aiogram.client.default import DefaultBotProperties
                     from aiogram.enums import ParseMode
+                    from app.services.telegram_bot_factory import create_telegram_bot as _create_dp_bot
 
-                    _bot = Bot(token=getattr(_dp_settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                    _bot = _create_dp_bot(token=getattr(_dp_settings, "bot" + "_token"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 except Exception:
                     _bot = None
                 try:
@@ -776,8 +794,24 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     elif request.url.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "no-cache"
+        query = str(getattr(request.url, "query", "") or "")
+        if "v=" in query:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif request.url.path.startswith(("/static/fonts/", "/static/audio/")):
+            response.headers["Cache-Control"] = "public, max-age=604800"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+# Bandwidth & Anti-Flood Shield: SmartGZip (HTML/JS/CSS/JSON/SVG only — never
+# touches video/audio/image/206 Range streams) wrapped by StaticFloodShield
+# outermost so flood bursts and invalid CF_ORIGIN_SECRET requests get tiny
+# 429/403 responses before touching GZip, StaticFiles, or FastAPI routing.
+from app.webapp.rate_limit import SmartGZipMiddleware, StaticFloodShieldMiddleware
+
+webapp_app.add_middleware(SmartGZipMiddleware, minimum_size=500)
+webapp_app.add_middleware(StaticFloodShieldMiddleware)
 
 
 @webapp_app.get("/")
@@ -820,7 +854,13 @@ async def health_check():
             status_code=503,
             content={"status": "db_unavailable", "app": "Voice Clone Pro & Recap Studio"},
         )
+    from app.services.telegram_bot_factory import get_local_bot_api_status
+
     return JSONResponse(
         status_code=200,
-        content={"status": "ok", "app": "Voice Clone Pro & Recap Studio"},
+        content={
+            "status": "ok",
+            "app": "Voice Clone Pro & Recap Studio",
+            "local_bot_api": get_local_bot_api_status(),
+        },
     )

@@ -791,7 +791,12 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 if matches and matches[0].is_file():
                     res_path = matches[0]
 
-            if res_path and res_path.is_file() and res_path.stat().st_size > 50 * 1024 * 1024:
+            from app.services.telegram_bot_factory import (
+                get_telegram_max_upload_bytes,
+                send_cached_telegram_media,
+            )
+
+            if res_path and res_path.is_file() and res_path.stat().st_size > get_telegram_max_upload_bytes():
                 # Over the Telegram Bot API send cap (hunt #3 B1): the
                 # send would fail inside Telegram. Same honest routing
                 # as the missing-file branch below — a Mini App button,
@@ -812,9 +817,12 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                     parse_mode="HTML",
                 )
             elif res_path and res_path.is_file():
-                await callback.bot.send_audio(
+                await send_cached_telegram_media(
+                    callback.bot,
+                    media_kind="audio",
                     chat_id=target_chat_id,
-                    audio=FSInputFile(str(res_path), filename=branded_download_filename("Voice", res_path.suffix.lstrip(".") or "wav", title=getattr(job, "preset_voice", None), job_id=job_id)),
+                    file_path=res_path,
+                    filename=branded_download_filename("Voice", res_path.suffix.lstrip(".") or "wav", title=getattr(job, "preset_voice", None), job_id=job_id),
                     caption=t("clone_caption_voice", lang, job_id=job_id),
                     parse_mode="HTML",
                 )
@@ -967,7 +975,12 @@ async def _deliver_recap_extra(callback: CallbackQuery, file_type: str) -> None:
                     parse_mode="HTML",
                 )
             elif file_type == "audio":
-                if file_path.stat().st_size > 50 * 1024 * 1024:
+                from app.services.telegram_bot_factory import (
+                    get_telegram_max_upload_bytes,
+                    send_cached_telegram_media,
+                )
+
+                if file_path.stat().st_size > get_telegram_max_upload_bytes():
                     app_url = settings.mini_app_url
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [
@@ -984,14 +997,14 @@ async def _deliver_recap_extra(callback: CallbackQuery, file_type: str) -> None:
                         parse_mode="HTML",
                     )
                     return
-                await callback.bot.send_audio(
+                await send_cached_telegram_media(
+                    callback.bot,
+                    media_kind="audio",
                     chat_id=target_chat_id,
-                    audio=FSInputFile(
-                        str(file_path),
-                        filename=branded_download_filename(
-                            "RecapAudio", file_path.suffix.lstrip(".") or "mp3",
-                            title=recap_title, job_id=job_id,
-                        ),
+                    file_path=file_path,
+                    filename=branded_download_filename(
+                        "RecapAudio", file_path.suffix.lstrip(".") or "mp3",
+                        title=recap_title, job_id=job_id,
                     ),
                     caption=t("clone_caption_recap_audio", lang),
                     parse_mode="HTML",
@@ -1114,11 +1127,19 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                 except Exception:
                     pass
             elif video_path and video_path.is_file():
+                from app.services.telegram_bot_factory import (
+                    get_telegram_max_upload_bytes,
+                    send_cached_telegram_media,
+                )
+
                 file_size = video_path.stat().st_size
-                if file_size <= 50 * 1024 * 1024:
-                    await callback.bot.send_video(
+                if file_size <= get_telegram_max_upload_bytes():
+                    await send_cached_telegram_media(
+                        callback.bot,
+                        media_kind="video",
                         chat_id=target_chat_id,
-                        video=FSInputFile(str(video_path), filename=branded_download_filename("Recap", "mp4", title=recap_title, job_id=job_id)),
+                        file_path=video_path,
+                        filename=branded_download_filename("Recap", "mp4", title=recap_title, job_id=job_id),
                         caption=t("clone_caption_recap", lang, job_id=job_id),
                         parse_mode="HTML",
                     )

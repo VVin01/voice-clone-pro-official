@@ -954,20 +954,47 @@
         card.className = "card glass mt-3";
         card.innerHTML = `
             <div class="card-header-row">
-                <div class="card-label">🩺 ${esc(L("Server Disk & Ops Queues", "Server Disk & Operational Queues"))}</div>
-                <button type="button" class="mini-chip" id="admp-ops-ref">🔄</button>
+                <div class="card-label">🩺 ${esc(L("Server Disk, Local Bot API & Shield", "Server Disk, Local Bot API & Shield"))}</div>
+                <div class="admp-row">
+                    <button type="button" class="mini-chip" id="admp-lba-probe">🔌 ${esc(L("Test Bot API", "Test Bot API"))}</button>
+                    <button type="button" class="mini-chip" id="admp-ops-ref">🔄</button>
+                </div>
             </div>
             <div id="admp-disk-body" class="mt-2 text-xs text-muted">${esc(L("စစ်ဆေးနေသည်…", "Checking…"))}</div>
+            <div id="admp-infra-body" class="mt-2 text-xs"></div>
             <div id="admp-queues-body" class="mt-2 text-xs"></div>
         `;
         const anchor = document.getElementById("admin-recent-card");
         if (anchor) ov.insertBefore(card, anchor);
         else ov.appendChild(card);
         document.getElementById("admp-ops-ref").onclick = () => loadOverviewOpsHealth();
+        document.getElementById("admp-lba-probe").onclick = async () => {
+            const btn = document.getElementById("admp-lba-probe");
+            if (btn) btn.disabled = true;
+            try {
+                const res = await reqFetch("/api/admin/local-bot-api/probe", { method: "POST", headers: hdrs() });
+                const data = res.ok ? await res.json() : null;
+                if (data && data.local_bot_api) {
+                    const lba = data.local_bot_api;
+                    toast(
+                        lba.active
+                            ? `✅ Local Bot API Active (${lba.max_upload_mb} MB limit)`
+                            : `ℹ️ Bot API: ${lba.mode} (${lba.max_upload_mb} MB${lba.last_error ? " — " + lba.last_error.slice(0, 80) : ""})`,
+                        lba.active ? "success" : "info"
+                    );
+                }
+                await loadOverviewOpsHealth();
+            } catch (e) {
+                toast("Local Bot API probe failed", "error");
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        };
     }
 
     async function loadOverviewOpsHealth() {
         const diskEl = document.getElementById("admp-disk-body");
+        const infraEl = document.getElementById("admp-infra-body");
         const qEl = document.getElementById("admp-queues-body");
         if (!diskEl || !qEl) return;
         try {
@@ -986,6 +1013,21 @@
                     diskEl.innerHTML = `<div class="admp-between"><span>💾 Disk: <b>${pct}%</b> used · <b>${freeGb} GB</b> free / ${totGb} GB</span>${badge}</div><div class="admp-bar-bg"><div class="admp-bar-fill" style="width:${Math.min(100, Number(pct))}%"></div></div>`;
                 } else {
                     diskEl.textContent = "💾 Disk telemetry unavailable";
+                }
+                if (infraEl) {
+                    const lba = ov.local_bot_api || {};
+                    const sh = ov.bandwidth_shield || {};
+                    const lbaCls = lba.active ? "admp-badge-ok" : (lba.configured ? "admp-badge-warn" : "");
+                    const lbaTxt = lba.active
+                        ? `🚀 Local Bot API: ${esc(lba.max_upload_mb || 2000)} MB`
+                        : (lba.configured
+                            ? `⚠️ Bot API Fallback (${esc(lba.max_upload_mb || 50)} MB)`
+                            : `📡 Official Bot API (${esc(lba.max_upload_mb || 50)} MB)`);
+                    const shTxt = `🛡️ Shield: GZip + Flood(${esc(sh.static_flood_max_requests || 180)}/m, 429:${esc(sh.blocked_static_flood_429 || 0)})${sh.origin_lock_enabled ? " + OriginLock" : ""}`;
+                    infraEl.innerHTML = `<div class="admp-row">
+                        <span class="admp-badge ${lbaCls}" title="${esc(lba.last_error || lba.url || "")}">${lbaTxt}</span>
+                        <span class="admp-badge admp-badge-ok">${shTxt}</span>
+                    </div>`;
                 }
             }
             if (qRes.ok) {

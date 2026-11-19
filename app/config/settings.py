@@ -80,6 +80,25 @@ class Settings(BaseSettings):
         alias="MINI_APP_URL",
     )
 
+    # Local Telegram Bot API server (lifts official 50 MB upload cap -> 2,000 MB / 2 GB)
+    # Example: TELEGRAM_BOT_API_URL=https://telegram-bot-api-kydu.onrender.com
+    # Leave TELEGRAM_BOT_API_IS_LOCAL=false for remote HTTP Local Bot API servers
+    # (so Aiogram uploads via multipart HTTP); set true ONLY when sharing disk on same host.
+    telegram_bot_api_url: str = Field(default="", alias="TELEGRAM_BOT_API_URL")
+    telegram_bot_api_is_local: bool = Field(default=False, alias="TELEGRAM_BOT_API_IS_LOCAL")
+    # 0 = auto (2000 MB when Local Bot API is active, 50 MB on official api.telegram.org).
+    telegram_max_upload_mb: int = Field(default=0, alias="TELEGRAM_MAX_UPLOAD_MB")
+    telegram_bot_api_timeout_seconds: int = Field(default=300, alias="TELEGRAM_BOT_API_TIMEOUT_SECONDS")
+
+    # Bandwidth & Anti-Flood Shield (DDoS / Static Flood Protection)
+    # Optional Cloudflare Origin Secret: when non-empty, every request except
+    # /health and the Telegram webhook path must present X-Origin-Secret matching
+    # this secret (blocks direct attacks bypassing Cloudflare to *.onrender.com).
+    cf_origin_secret: str = Field(default="", alias="CF_ORIGIN_SECRET")
+    # Per-IP sliding-window flood cap on "/" and "/static/*" (GET/HEAD).
+    static_flood_max_requests: int = Field(default=180, alias="STATIC_FLOOD_MAX_REQUESTS")
+    static_flood_window_seconds: int = Field(default=60, alias="STATIC_FLOOD_WINDOW_SECONDS")
+
     # Membership Gate (Channel and Group)
     required_channel_id: str = Field(default="", alias="REQUIRED_CHANNEL_ID")
     required_group_id: str = Field(default="", alias="REQUIRED_GROUP_ID")

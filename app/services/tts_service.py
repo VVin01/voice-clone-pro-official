@@ -652,11 +652,20 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
     try:
         if not settings.bot_token:
             return
-        if out_path.stat().st_size > 50 * 1024 * 1024:
-            logger.info("TTS job %s output exceeds the Bot API 50MB cap; chat delivery skipped", job.id)
+        from app.services.telegram_bot_factory import (
+            create_telegram_bot,
+            get_telegram_max_upload_bytes,
+            get_telegram_max_upload_mb,
+            send_cached_telegram_media,
+        )
+
+        if out_path.stat().st_size > get_telegram_max_upload_bytes():
+            logger.info(
+                "TTS job %s output exceeds the Bot API %dMB cap; chat delivery skipped",
+                job.id,
+                get_telegram_max_upload_mb(),
+            )
             return
-        from aiogram import Bot
-        from aiogram.types import FSInputFile
 
         filename = branded_download_filename("TTS", "wav", job_id=job.id)
         # Batch BX: the caption now names the engine + friendly voice
@@ -709,11 +718,14 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
         # still delivered (pool/Edge served it); the user is told.
         if getattr(job, "gemini_key_broken", False):
             caption += "\n" + _tts_t("tts_own_key_broken_note", lang)
-        bot = Bot(token=settings.bot_token)
+        bot = create_telegram_bot(token=settings.bot_token)
         try:
-            await bot.send_audio(
+            await send_cached_telegram_media(
+                bot,
+                media_kind="audio",
                 chat_id=job.chat_id or job.user_id,
-                audio=FSInputFile(str(out_path), filename=filename),
+                file_path=out_path,
+                filename=filename,
                 caption=caption,
                 parse_mode="HTML",
             )

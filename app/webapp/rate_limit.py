@@ -37,6 +37,8 @@ VoxCPM / Gemini / Groq quotas, not to police ordinary users.
 
 from __future__ import annotations
 
+import gzip
+import hmac
 import time
 import urllib.parse
 from collections import defaultdict, deque
@@ -44,6 +46,8 @@ from collections import defaultdict, deque
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.config import settings
 
 # path -> (max requests, window seconds)
 RATE_LIMITS: dict[str, tuple[int, int]] = {
@@ -378,3 +382,263 @@ class ChunkedUploadCapMiddleware:
             return {"type": "http.request", "body": b"", "more_body": False}
 
         await self.app(scope, replay_receive, send)
+
+
+# ── Bandwidth & Anti-Flood Shield (DDoS / Static Flood + Origin Lock + Smart GZip) ─
+_SHIELD_COUNTERS: dict[str, int] = {
+    "blocked_static_flood_429": 0,
+    "blocked_origin_403": 0,
+}
+
+_COMPRESSIBLE_PREFIXES = (
+    b"text/",
+    b"application/json",
+    b"application/javascript",
+    b"application/x-javascript",
+    b"application/xml",
+    b"image/svg+xml",
+)
+
+
+def get_bandwidth_shield_stats() -> dict[str, object]:
+    """Snapshot of Bandwidth Shield config & live block counters for Admin Overview."""
+    return {
+        "gzip_enabled": True,
+        "origin_lock_enabled": bool(str(getattr(settings, "cf_origin_secret", "") or "").strip()),
+        "static_flood_max_requests": int(getattr(settings, "static_flood_max_requests", 180) or 180),
+        "static_flood_window_seconds": int(getattr(settings, "static_flood_window_seconds", 60) or 60),
+        "blocked_static_flood_429": _SHIELD_COUNTERS["blocked_static_flood_429"],
+        "blocked_origin_403": _SHIELD_COUNTERS["blocked_origin_403"],
+    }
+
+
+def _scope_header(scope: dict, name_lower: bytes) -> str:
+    for k, v in scope.get("headers") or ():
+        if k.lower() == name_lower:
+            return v.decode("latin-1", errors="ignore")
+    return ""
+
+
+def _scope_client_ip(scope: dict) -> str:
+    forwarded = _scope_header(scope, b"x-forwarded-for")
+    if forwarded:
+        ip = forwarded.split(",")[-1].strip()
+        if ip:
+            return ip
+    client = scope.get("client")
+    if client and client[0]:
+        return str(client[0])
+    return "unknown"
+
+
+class StaticFloodShieldMiddleware:
+    """Outermost pure-ASGI shield protecting Render egress against L7 floods.
+
+    1. Optional Cloudflare Origin Lock: when ``CF_ORIGIN_SECRET`` is configured,
+       every HTTP request except ``/health`` and the Telegram webhook path must
+       present ``X-Origin-Secret`` matching the secret; otherwise returns a tiny
+       10-byte 403 immediately (blocks direct attacks bypassing Cloudflare).
+    2. Per-IP Static & Root Flood Cap: bounds GET/HEAD bursts on ``/`` and
+       ``/static/*`` (default 180 req / 60 s per IP) with a tiny 17-byte 429 +
+       ``Retry-After: 30``. Bounded to 4,096 IP buckets so distributed floods
+       cannot OOM the container.
+    """
+
+    def __init__(
+        self,
+        app,
+        *,
+        max_requests: int | None = None,
+        window_seconds: int | None = None,
+    ):
+        self.app = app
+        self._override_max = max_requests
+        self._override_window = window_seconds
+        self._hits: dict[str, deque[float]] = defaultdict(deque)
+
+    def _effective_limits(self) -> tuple[int, int]:
+        max_req = (
+            self._override_max
+            if self._override_max is not None
+            else int(getattr(settings, "static_flood_max_requests", 180) or 180)
+        )
+        win = (
+            self._override_window
+            if self._override_window is not None
+            else int(getattr(settings, "static_flood_window_seconds", 60) or 60)
+        )
+        return max(1, max_req), max(1, win)
+
+    def _is_flooding(self, ip: str, now: float) -> tuple[bool, int]:
+        max_req, window = self._effective_limits()
+        if len(self._hits) > 2048:
+            stale = [
+                k for k, dq in list(self._hits.items())
+                if not dq or dq[-1] <= now - max(window, 60)
+            ]
+            for sk in stale:
+                self._hits.pop(sk, None)
+            while len(self._hits) >= (4096 if ip not in self._hits else 4097):
+                oldest = next(iter(self._hits), None)
+                if oldest is None:
+                    break
+                self._hits.pop(oldest, None)
+        dq = self._hits[ip]
+        while dq and dq[0] <= now - window:
+            dq.popleft()
+        if len(dq) >= max_req:
+            return True, window
+        dq.append(now)
+        return False, window
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "") or ""
+        method = (scope.get("method") or "GET").upper()
+
+        # Layer 1: Optional Cloudflare Origin Secret Lock
+        secret = str(getattr(settings, "cf_origin_secret", "") or "").strip()
+        if secret:
+            webhook_path = str(getattr(settings, "bot_webhook_path", "/telegram/webhook") or "/telegram/webhook")
+            if path != "/health" and path != webhook_path:
+                presented = _scope_header(scope, b"x-origin-secret").strip()
+                if not presented or not hmac.compare_digest(presented, secret):
+                    _SHIELD_COUNTERS["blocked_origin_403"] += 1
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 403,
+                            "headers": [
+                                (b"content-type", b"text/plain; charset=utf-8"),
+                                (b"cache-control", b"no-store"),
+                                (b"content-length", b"9"),
+                            ],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": b"Forbidden", "more_body": False})
+                    return
+
+        # Layer 2: Per-IP flood shield on "/" and "/static/*"
+        if method in ("GET", "HEAD") and (path == "/" or path.startswith("/static/")):
+            ip = _scope_client_ip(scope)
+            flooded, window = self._is_flooding(ip, time.monotonic())
+            if flooded:
+                _SHIELD_COUNTERS["blocked_static_flood_429"] += 1
+                retry_after = str(min(max(window, 10), 60)).encode("ascii")
+                body = b"" if method == "HEAD" else b"Too Many Requests"
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 429,
+                        "headers": [
+                            (b"content-type", b"text/plain; charset=utf-8"),
+                            (b"retry-after", retry_after),
+                            (b"cache-control", b"no-store"),
+                            (b"content-length", str(len(body)).encode("ascii")),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body, "more_body": False})
+                return
+
+        await self.app(scope, receive, send)
+
+
+class SmartGZipMiddleware:
+    """Pure-ASGI GZip middleware restricted to text/JS/CSS/JSON/SVG payloads.
+
+    Compresses SPA HTML/JS/CSS and JSON API responses (~75-85% bandwidth drop)
+    while leaving already-compressed binary media (video/*, audio/*, image/jpeg,
+    image/png, woff2) and HTTP 206 Range streams completely untouched so video
+    seeking never breaks and CPU is never wasted re-compressing MP4/JPG bytes.
+    """
+
+    def __init__(self, app, *, minimum_size: int = 500, compresslevel: int = 6):
+        self.app = app
+        self.minimum_size = minimum_size
+        self.compresslevel = compresslevel
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or (scope.get("method") or "").upper() == "HEAD":
+            await self.app(scope, receive, send)
+            return
+
+        accept_encoding = _scope_header(scope, b"accept-encoding").lower()
+        if "gzip" not in accept_encoding:
+            await self.app(scope, receive, send)
+            return
+
+        start_message: dict | None = None
+        passthrough = False
+        chunks: list[bytes] = []
+
+        async def send_wrapper(message):
+            nonlocal start_message, passthrough
+            msg_type = message.get("type")
+            if msg_type == "http.response.start":
+                status = int(message.get("status", 200))
+                headers = list(message.get("headers") or [])
+                hdr_map = {k.lower(): v for k, v in headers}
+                ctype = hdr_map.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+                already_encoded = b"content-encoding" in hdr_map
+                is_range = status == 206 or b"content-range" in hdr_map
+                compressible = (
+                    not already_encoded
+                    and not is_range
+                    and status >= 200
+                    and status not in (204, 304)
+                    and any(ctype.startswith(p) for p in _COMPRESSIBLE_PREFIXES)
+                )
+                if not compressible:
+                    passthrough = True
+                    await send(message)
+                    return
+                start_message = {"type": "http.response.start", "status": status, "headers": headers}
+                return
+
+            if msg_type == "http.response.body":
+                if passthrough or start_message is None:
+                    await send(message)
+                    return
+                body = message.get("body", b"")
+                if body:
+                    chunks.append(body)
+                if message.get("more_body", False):
+                    return
+
+                raw = b"".join(chunks)
+                chunks.clear()
+                headers = list(start_message["headers"])
+                if len(raw) >= self.minimum_size:
+                    compressed = gzip.compress(raw, compresslevel=self.compresslevel)
+                    if len(compressed) < len(raw):
+                        new_headers = [
+                            (k, v) for k, v in headers
+                            if k.lower() not in (b"content-length", b"content-encoding")
+                        ]
+                        # Preserve/append Vary: Accept-Encoding cleanly
+                        vary_vals = [v for k, v in new_headers if k.lower() == b"vary"]
+                        if not any(b"accept-encoding" in v.lower() for v in vary_vals):
+                            new_headers.append((b"vary", b"Accept-Encoding"))
+                        new_headers.append((b"content-encoding", b"gzip"))
+                        new_headers.append((b"content-length", str(len(compressed)).encode("ascii")))
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": start_message["status"],
+                                "headers": new_headers,
+                            }
+                        )
+                        await send({"type": "http.response.body", "body": compressed, "more_body": False})
+                        return
+
+                await send(start_message)
+                await send({"type": "http.response.body", "body": raw, "more_body": False})
+                return
+
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)

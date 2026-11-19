@@ -6680,7 +6680,7 @@ def extract_preview_with_overlays(
         "-filter_complex", ";".join(graph),
         "-map", "[vout]",
         "-frames:v", "1",
-        "-q:v", "2",
+        "-q:v", "6",
         "-strict", "-2",
         "-update", "1",
         str(out_img),
