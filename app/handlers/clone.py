@@ -30,6 +30,38 @@ logger = logging.getLogger(__name__)
 clone_router = Router(name="clone")
 
 
+# 2026-11-20 (H): one tap on "📱 Video ဖိုင် ပို့ပေးပါ" delivered the
+# video TWICE. Every tap is a distinct update (the webhook update_id
+# dedup cannot catch it), the handler answers the callback instantly
+# so the client's spinner clears while a large upload is still running,
+# and a second tap / client resend started a second upload. Claim each
+# (user, job, file) delivery for the duration of the send plus a short
+# cooldown; repeats inside that window are answered with a toast only.
+import time as _time
+
+_SEND_CLAIM_COOLDOWN_SECONDS = 90.0
+_SEND_CLAIMS: dict[tuple[int, str, str], float] = {}
+
+
+def _claim_file_send(user_id: int, job_id: str, kind: str) -> bool:
+    """Return True when this delivery may proceed (not already claimed)."""
+    now = _time.monotonic()
+    # Opportunistic purge keeps the map tiny.
+    for k, exp in list(_SEND_CLAIMS.items()):
+        if exp <= now:
+            _SEND_CLAIMS.pop(k, None)
+    key = (int(user_id), str(job_id), str(kind))
+    if _SEND_CLAIMS.get(key, 0.0) > now:
+        return False
+    _SEND_CLAIMS[key] = now + _SEND_CLAIM_COOLDOWN_SECONDS
+    return True
+
+
+def _release_file_send(user_id: int, job_id: str, kind: str) -> None:
+    """Drop a claim (used when the send failed so a retry is allowed)."""
+    _SEND_CLAIMS.pop((int(user_id), str(job_id), str(kind)), None)
+
+
 class CloneFSM(StatesGroup):
     waiting_for_text = State()
     waiting_for_voice = State()
@@ -757,6 +789,12 @@ async def handle_send_audio_callback(callback: CallbackQuery):
             lang = _u.language_code
     except Exception:
         lang = "my"
+    if not _claim_file_send(callback.from_user.id, job_id, "audio"):
+        try:
+            await callback.answer(t("clone_toast_send_in_progress", lang), show_alert=False)
+        except Exception:
+            pass
+        return
     try:
         await callback.answer(t("clone_toast_sending_audio", lang))
     except Exception:
@@ -767,6 +805,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
         async with AsyncSessionLocal() as session:
             job = await session.get(Job, job_id)
             if not job or job.status != JobStatus.SUCCESS.value:
+                _release_file_send(callback.from_user.id, job_id, "audio")
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
                     text=t("clone_audio_not_found", lang),
@@ -777,6 +816,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
             # owner, and the audio must never be delivered to anyone else
             # who obtains or guesses a job id.
             if job.user_id != callback.from_user.id and not settings.is_admin(callback.from_user.id):
+                _release_file_send(callback.from_user.id, job_id, "audio")
                 await callback.bot.send_message(
                     chat_id=target_chat_id,
                     text=t("clone_audio_not_found", lang),
@@ -852,6 +892,7 @@ async def handle_send_audio_callback(callback: CallbackQuery):
                 )
     except Exception as e:
         logger.error(f"Error handling send_audio callback for job {job_id}: {e}", exc_info=True)
+        _release_file_send(callback.from_user.id, job_id, "audio")
         try:
             # Bot cleanup 2026-11-03: the raw exception text (Telegram
             # API errors, file paths) used to be interpolated into the
@@ -900,6 +941,12 @@ async def _deliver_recap_extra(callback: CallbackQuery, file_type: str) -> None:
             lang = _u.language_code
     except Exception:
         lang = "my"
+    if not _claim_file_send(callback.from_user.id, job_id, file_type):
+        try:
+            await callback.answer(t("clone_toast_send_in_progress", lang))
+        except Exception:
+            pass
+        return
     try:
         await callback.answer(t("clone_toast_sending_file", lang))
     except Exception:
@@ -1024,6 +1071,7 @@ async def _deliver_recap_extra(callback: CallbackQuery, file_type: str) -> None:
                 )
     except Exception as e:
         logger.error(f"Error handling send_recap_{file_type} callback for job {job_id}: {e}", exc_info=True)
+        _release_file_send(callback.from_user.id, job_id, file_type)
         try:
             await callback.bot.send_message(
                 chat_id=callback.from_user.id,
@@ -1060,6 +1108,12 @@ async def handle_send_recap_callback(callback: CallbackQuery):
             lang = _u.language_code
     except Exception:
         lang = "my"
+    if not _claim_file_send(callback.from_user.id, job_id, "video"):
+        try:
+            await callback.answer(t("clone_toast_send_in_progress", lang))
+        except Exception:
+            pass
+        return
     try:
         await callback.answer(t("clone_toast_sending_recap", lang))
     except Exception:
@@ -1193,6 +1247,7 @@ async def handle_send_recap_callback(callback: CallbackQuery):
                 )
     except Exception as e:
         logger.error(f"Error handling send_recap callback for job {job_id}: {e}", exc_info=True)
+        _release_file_send(callback.from_user.id, job_id, "video")
         try:
             # Bot cleanup 2026-11-03: sanitized user line only — the
             # raw exception stays in the server log above.

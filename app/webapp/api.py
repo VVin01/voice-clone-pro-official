@@ -5802,6 +5802,14 @@ async def fetch_downloader_format(
         "filename": _dl_display_name(meta),
         "size_bytes": meta["size_bytes"],
         "download_url": f"/api/downloader/file/{download_id}",
+        # 2026-11-20 (H): a self-authenticating copy of the same URL for
+        # Telegram.WebApp.downloadFile / openLink — neither can attach
+        # the initData header, so the scoped stream token (?t=) is what
+        # authenticates the native download. download_url is unchanged.
+        "download_url_signed": _append_stream_token(
+            f"/api/downloader/file/{download_id}",
+            _make_stream_token(download_id, user.id, "dl"),
+        ),
         "telegram_sendable": meta["size_bytes"] <= _telegram_send_limit_bytes(),
         "telegram_max_upload_mb": get_telegram_max_upload_mb(),
     }
@@ -5810,9 +5818,27 @@ async def fetch_downloader_format(
 @api_router.get("/downloader/file/{download_id}")
 async def download_downloader_file(
     download_id: str,
-    user: User = Depends(get_current_user),
+    user: Optional[User] = Depends(get_optional_user),
+    t: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db_session),
 ):
-    """Ownership-checked download of a fetched Downloader file."""
+    """Ownership-checked download of a fetched Downloader file.
+
+    Auth mirrors the recap/audio download routes: the initData header
+    OR a signed stream token scoped to this exact download id (used by
+    Telegram.WebApp.downloadFile, which cannot send headers). Either
+    way the resolved user goes through the same ownership check.
+    """
+    if user is None and isinstance(t, str) and t:
+        token_uid = _verify_stream_token(t, download_id, "dl")
+        if token_uid is not None:
+            user = await db.get(User, token_uid)
+            if user is not None:
+                if getattr(user, "status", None) == "BLOCKED" and not settings.is_admin(user.id):
+                    raise HTTPException(status_code=404, detail="Download not found")
+                _enforce_maintenance_access(user)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Telegram authentication required")
     meta = _dl_require_owner(download_id, user)
     file_path = _dl_dir(download_id) / str(meta.get("filename") or "")
     if not file_path.is_file():
@@ -11776,8 +11802,11 @@ async def get_user_history(
 
     out = []
     for j in jobs:
-        created_ts = j.created_at.timestamp() if j.created_at else time.time()
-        mins_ago = int((time.time() - created_ts) // 60)
+        _cat = j.created_at
+        if _cat is not None and _cat.tzinfo is None:
+            _cat = _cat.replace(tzinfo=timezone.utc)
+        created_ts = _cat.timestamp() if _cat else time.time()
+        mins_ago = max(0, int((time.time() - created_ts) // 60))
         time_ago = _time_ago_str(mins_ago, user.language_code or "my")
 
         is_recap = (j.job_type == JobType.RECAP.value or j.id.startswith("rc_"))
@@ -12000,7 +12029,7 @@ async def get_user_history(
             "engine_display": _job_display_names(j, is_recap=is_recap, is_tts=is_tts)[1],
             "status": j.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
-            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "created_at": _cat.isoformat() if _cat else None,
             "time_ago": time_ago,
             "download_url": download_url,
             "deliverables": deliverables,

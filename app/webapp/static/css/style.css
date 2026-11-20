@@ -1,5 +1,4 @@
 /* VOICE CLONE PRO — MINI APP DESIGN SYSTEM (Premium Rebuild 2026-1 */
-
 /* Subtitle webfonts (Batch Q font choice, 2026-11-04) */
 @font-face {
     font-family: 'Padauk';
@@ -25,8 +24,6 @@
     font-weight: 700;
     font-display: swap;
 }
-
-/* Tokens */
 :root {
     --bg: #dde9f5;
     --bg-deep: #dcebf7;
@@ -71,12 +68,9 @@
             Padauk, "Noto Sans Myanmar", "Myanmar Text", "Helvetica Neue", Arial, sans-serif;
     color-scheme: light;
 }
-
 /* ── Reset & base ───────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 html { -webkit-text-size-adjust: 100%; }
-
 body {
     font-family: var(--font);
     background: var(--bg-deep);
@@ -89,21 +83,17 @@ body {
     overflow-x: hidden;
     overflow-x: clip;
 }
-
 img, video { max-width: 100%; }
 button { font-family: inherit; cursor: pointer; }
 input, select, textarea { font-family: inherit; }
 a { color: var(--gold-2); }
-
 ::selection { background: rgba(242, 179, 61, 0.35); }
-
 :focus { outline: none; }
 :focus-visible {
     outline: 2px solid var(--gold);
     outline-offset: 2px;
     border-radius: 6px;
 }
-
 /* ── Utilities ──────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 .hidden-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
@@ -125,7 +115,6 @@ a { color: var(--gold-2); }
 .text-green { color: var(--green) !important; }
 .text-success { color: var(--green) !important; }
 .flex-wrap { flex-wrap: wrap; }
-
 /* ── App frame ──────────────────────────────────────────────────────── */
 .app-container {
     max-width: 620px;
@@ -134,19 +123,16 @@ a { color: var(--gold-2); }
     background: var(--bg);
     position: relative;
 }
-
 .content-viewport {
     padding: var(--s4) var(--s4) calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + var(--s6));
     display: flex;
     flex-direction: column;
     gap: var(--s4);
 }
-
 .tab-pane { display: none; flex-direction: column; gap: var(--s5); }
 .tab-pane.active { display: flex; animation: paneIn 0.22s ease; }
 @keyframes paneIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
 /* ── Header ─────────────────────────────────────────────────────────── */
 .top-nav {
     position: sticky;
@@ -209,11 +195,9 @@ a { color: var(--gold-2); }
     padding: 3px 10px; border-radius: 999px; white-space: nowrap; line-height: 1.5;
 }
 .bal-chip.recap { color: var(--gold-2); }
-
 .top-nav .brand { grid-area: brand; }
 .top-nav .top-actions { grid-area: actions; }
 .top-nav .user-pill { grid-area: user; }
-
 /* ── Gate banner ────────────────────────────────────────────────────── */
 .gate-banner {
     margin: var(--s3) var(--s4) 0;
@@ -233,8 +217,6 @@ a { color: var(--gold-2); }
 .gate-chip { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--gold-border); color: var(--text-2); background: rgba(255, 255, 255, 0.5); }
 .gate-chip.joined { color: #137333; border-color: rgba(19, 115, 51, 0.45); }
 .gate-chip.missing { color: #b3261e; border-color: rgba(179, 38, 30, 0.35); }
-
-/* Mini App entry gate lock (entry-gate, 2026-10-30) */
 body.gate-locked { overflow: hidden; }
 body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-select: none; }
 .gate-lock {
@@ -260,7 +242,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
 .gate-lock-actions .gold-gradient-btn { width: 100%; }
 .gate-lock-checking { font-size: 13px; color: var(--gold-2); }
 .gate-lock-checking:empty { display: none; }
-
 /* ── Bottom navigation ──────────────────────────────────────────────── */
 .bottom-nav {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 0;
@@ -283,7 +264,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
 .nav-label { white-space: nowrap; }
 .nav-item.active { color: var(--gold-2); background: var(--gold-soft); }
 .nav-item:active { background: var(--surface-2); }
-
 /* ── Pane headers ───────────────────────────────────────────────────── */
 .pane-header { display: flex; flex-direction: column; gap: 2px; padding: var(--s1) 2px 0; }
 .pane-title-row { display: flex; align-items: center; gap: var(--s2); }
@@ -296,7 +276,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     padding: 2px 8px; border-radius: 999px; line-height: 1.5;
 }
 .badge-studio.gold { color: var(--gold-2); background: var(--gold-soft); border-color: var(--gold-border); }
-
 /* ── Batch AE: VIP pane title stacking on phones ───────────────────────
    The VIP title is too long to share a row with the PREMIUM badge at
    phone widths: the h2 wrapped so a single Burmese word dropped alone
@@ -310,7 +289,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     #tab-vip .pane-title-row { flex-direction: column; align-items: flex-start; gap: var(--s1); }
     #tab-vip .pane-header h2 { text-wrap: balance; }
 }
-
 /* ── Cards ──────────────────────────────────────────────────────────── */
 .card {
     background: var(--surface);
@@ -340,7 +318,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     line-height: 1.5; white-space: nowrap;
 }
 .hint-tag { color: var(--gold-2); background: var(--gold-soft); }
-
 /* ── Step titles ────────────────────────────────────────────────────── */
 .step-badge-title { display: flex; align-items: center; gap: var(--s2); }
 .step-num-pill {
@@ -351,7 +328,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     border-radius: 50%;
 }
 .step-title { font-size: 15px; font-weight: 700; line-height: 1.55; }
-
 /* ── Tutorial banner ────────────────────────────────────────────────── */
 .tutorial-banner-card {
     display: flex; align-items: center; gap: var(--s3);
@@ -369,7 +345,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     background: var(--gold-soft); border: 1px solid var(--gold-border);
     padding: 6px 10px; border-radius: 999px; white-space: nowrap;
 }
-
 /* ── Queue notice (caption under the CTA) ───────────────────────────── */
 .queue-notice-banner {
     display: flex; align-items: center; justify-content: center; gap: var(--s2);
@@ -377,7 +352,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
 }
 .queue-notice-banner .notice-icon { color: var(--gold); }
 .queue-notice-banner .notice-text { line-height: 1.55; }
-
 /* ── Buttons ────────────────────────────────────────────────────────── */
 .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: var(--s2);
@@ -445,7 +419,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
     border-radius: var(--r-md); font-size: 14px; font-weight: 600; cursor: pointer;
 }
 .upload-icon { font-size: 17px; }
-
 /* ── Segmented controls & pills ─────────────────────────────────────── */
 .segmented-control {
     display: flex; gap: var(--s2);
@@ -464,7 +437,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
 .seg-btn.active { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
 .seg-btn.active .seg-desc { color: var(--text-2); }
 .segmented-control .seg-btn:only-child { text-align: left; align-items: flex-start; }
-
 .pill-group { display: inline-flex; gap: var(--s1); background: var(--inset); border: 1px solid var(--border); border-radius: 999px; padding: 3px; }
 .pill-group.sm { border-radius: 999px; }
 .pill-btn {
@@ -475,14 +447,12 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
 .pill-btn.active { background: var(--gold-soft); color: var(--gold-2); box-shadow: inset 0 0 0 1px var(--gold-border); }
 /* Batch K: recap pill controls meet the 44px touch-target floor. */
 #tab-recap .pill-btn { min-height: 44px; }
-
 .filter-chip {
     min-height: 38px; padding: 5px 13px;
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
     color: var(--text-2); font-size: 13.5px; font-weight: 600; line-height: 1.45;
 }
 .filter-chip.active { background: var(--gold-soft); color: var(--gold-2); border-color: var(--gold-border); }
-
 /* ── Personas grid ──────────────────────────────────────────────────── */
 .persona-filter-row { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s3); }
 .personas-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
@@ -529,7 +499,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
 .voice-preview-btn.playing { border-color: var(--gold-border); color: var(--gold-2); }
 @keyframes previewPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .voice-preview-btn.playing .preview-btn-icon { animation: previewPulse 1s ease infinite; }
-
 /* ── Reference upload ───────────────────────────────────────────────── */
 .ref-audio-card { margin-top: var(--s3); border-top: 1px solid var(--border); padding-top: var(--s3); }
 .ref-desc { font-size: 13.5px; color: var(--text-2); line-height: 1.65; margin-bottom: var(--s2); }
@@ -537,7 +506,6 @@ body.gate-locked #app { pointer-events: none; user-select: none; -webkit-user-se
    recap persona-area engine note) — the .ref-desc rhythm. */
 .hint-line { font-size: 13px; color: var(--text-2); line-height: 1.65; margin-bottom: var(--s2); }
 .ref-upload-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
-
 /* ── Text input card ────────────────────────────────────────────────── */
 .char-counter { font-size: 12px; color: var(--text-3); font-weight: 600; white-space: nowrap; }
 textarea, .studio-input, .studio-select {
@@ -558,7 +526,6 @@ select.studio-input { min-height: 50px; }
 .sample-chips { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s2); }
 .control-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
 .ctrl-title { font-size: 14px; font-weight: 600; color: var(--text-2); }
-
 /* ── Voice preflight + CTA ──────────────────────────────────────────── */
 .voice-preflight {
     font-size: 13.5px; line-height: 1.6; color: var(--text-2);
@@ -572,7 +539,6 @@ select.studio-input { min-height: 50px; }
 }
 .cta-block { display: flex; flex-direction: column; gap: var(--s2); }
 #btn-generate-voice { width: 100%; min-height: 56px; font-size: 16px; border-radius: var(--r-lg); }
-
 /* ── Progress & result ──────────────────────────────────────────────── */
 .progress-card { gap: var(--s2); }
 .progress-status-header { display: flex; align-items: center; gap: var(--s2); }
@@ -587,7 +553,6 @@ select.studio-input { min-height: 50px; }
     transition: width 0.45s ease;
     position: relative; overflow: hidden;
 }
-/* Upload motion states (upload-ux pass): while work is in flight t */
 .progress-bar-fill.busy::after,
 .progress-bar-fill.indeterminate::after {
     content: ""; position: absolute; inset: 0;
@@ -623,7 +588,6 @@ select.studio-input { min-height: 50px; }
 .custom-video-player { width: 100%; max-height: 62vh; object-fit: contain; border-radius: var(--r-md); background: #000; display: block; margin: 0 auto; }
 .result-actions { display: flex; gap: var(--s2); flex-wrap: wrap; }
 .result-actions .btn { flex: 1; min-width: 140px; }
-
 /* ── History ────────────────────────────────────────────────────────── */
 .history-expiry-note { font-size: 12.5px; color: var(--text-3); line-height: 1.55; }
 .history-list-container { display: flex; flex-direction: column; gap: var(--s2); }
@@ -651,12 +615,7 @@ select.studio-input { min-height: 50px; }
 .history-item-badge.status-queued { background: var(--surface-3); color: var(--text-2); }
 .history-item-badge.hub-fallback-badge { background: rgba(217, 119, 6, 0.14); color: #d97706; }
 .hub-fallback-note { color: #d97706; font-weight: 600; }
-/* The hub detail note also carries .history-item-body (dark default
-   text, defined later in this file) — outrank it so the note reads
-   as the amber warning it is. */
 .history-item-body.hub-fallback-note { color: #d97706; }
-
-/* Refer & Support card (round-6 P2). */
 .ref-desc {
     font-size: 13px;
     line-height: 1.55;
@@ -699,7 +658,6 @@ select.studio-input { min-height: 50px; }
 .dl-downloading { opacity: 0.72; pointer-events: none; }
 .badge-expired { color: var(--text-3); font-size: 12px; }
 .history-error-snippet { font-size: 12px; color: var(--red); word-break: break-word; }
-
 /* ── History Hub (dedicated tab) ────────────────────────────────────── */
 .hub-link {
     display: flex; align-items: center; justify-content: center; gap: var(--s2);
@@ -764,9 +722,7 @@ select.studio-input { min-height: 50px; }
 .hub-state-emoji { font-size: 34px; line-height: 1.2; }
 .hub-state-text { font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif; font-size: 14.5px; font-weight: 600; color: var(--text); line-height: 1.6; }
 .hub-state-sub { font-size: 13px; line-height: 1.6; }
-
 /* ════ RECAP STUDIO ════ */
-
 /* ── Announcement carousel ──────────────────────────────────────────── */
 .studio-alert-carousel {
     background: var(--surface); border: 1px solid var(--border);
@@ -791,7 +747,6 @@ select.studio-input { min-height: 50px; }
 .carousel-dots { display: flex; gap: 6px; }
 .carousel-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--surface-3); cursor: pointer; }
 .carousel-dot.active { background: var(--gold); width: 20px; border-radius: 999px; }
-
 /* ── Recap step cards / source ──────────────────────────────────────── */
 .recap-streamlined-container { display: flex; flex-direction: column; }
 .recap-step-card { gap: var(--s2); }
@@ -840,10 +795,7 @@ select.studio-input { min-height: 50px; }
     font-size: 11px; font-weight: 600; color: var(--text-2);
     background: var(--surface-3); border-radius: 999px; padding: 1px 8px; line-height: 1.6;
 }
-
 /* ── Live canvas mockup ─────────────────────────────────────────────── */
-/* Preview empty/loading state: the tidy placeholder shown in the Step-2
-   card until a source is ready (the mockup + toolbar stay hidden). */
 .preview-empty-state {
     border: 1.5px dashed var(--border-strong); border-radius: var(--r-lg);
     padding: 34px 20px; display: flex; align-items: center; justify-content: center;
@@ -873,7 +825,6 @@ select.studio-input { min-height: 50px; }
     background: linear-gradient(160deg, #1c2434 0%, #0d1119 70%);
     background-size: cover; background-position: center;
 }
-/* Mirror flips backdrop + inset together: the render's _visual_fil */
 .video-bg-placeholder.mirrored .mockup-inner-movie,
 .video-bg-placeholder.mirrored .video-backdrop-blur { transform: scaleX(-1); }
 .mockup-inner-movie { position: absolute; inset: 0; overflow: hidden; }
@@ -909,7 +860,6 @@ select.studio-input { min-height: 50px; }
 .preview-logo-watermark.top-left { order: -1; }
 .preview-logo-watermark.bottom-right { position: absolute; bottom: 8px; right: 10px; }
 .preview-logo-watermark.bottom-left { position: absolute; bottom: 8px; left: 10px; }
-/* Custom channel logo manager (paid-only, owner decision 2026-11-02) */
 .logo-manager-controls { display: inline-flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
 .logo-thumb { height: 34px; max-width: 90px; object-fit: contain; border-radius: 6px; border: 1px solid var(--border); background: rgba(0, 0, 0, 0.35); padding: 2px; }
 .logo-vip-hint { font-size: 12px; color: var(--gold-2); }
@@ -924,7 +874,6 @@ select.studio-input { min-height: 50px; }
 #recap-engine-picker .pill-btn.engine-locked::after { content: " 🔒"; }
 .draggable-box { position: absolute; left: 4%; right: 4%; z-index: 6; cursor: grab; touch-action: pan-y; }
 .draggable-box.is-dragging { cursor: grabbing; opacity: 0.9; }
-/* R40 item 5: the grip is the ONLY touch-drag initiator (see */
 /* Batch AH: the grip is the ONLY touch-drag initiator (R40 item 5) */
 .drag-grip-icon { touch-action: none; padding: 7px 16px; margin: -4px 0; cursor: grab; background: rgba(10, 12, 18, 0.55); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; min-width: 30px; text-align: center; }
 .preview-blur-box {
@@ -934,10 +883,7 @@ select.studio-input { min-height: 50px; }
     display: flex; align-items: center; justify-content: center; gap: 5px;
     /* Batch AM (M1): NO min-height floor. The old 22px floor painted */
 }
-/* The blur label is an editing affordance, not a standing caption: */
 .preview-blur-box .blur-label { display: none; font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.7); white-space: nowrap; overflow: hidden; }
-/* No-media placeholder state: slim outline only — with no media loaded
-   there is nothing to blur yet. */
 .preview-blur-box.no-media { background: rgba(120, 130, 150, 0.16); }
 .drag-grip-icon { color: rgba(255, 255, 255, 0.9); font-size: 13px; letter-spacing: 2px; }
 .box-resize-handle { position: absolute; left: 50%; transform: translateX(-50%); width: 34px; height: 8px; cursor: ns-resize; }
@@ -960,7 +906,6 @@ select.studio-input { min-height: 50px; }
     background: rgba(255, 217, 59, 0.07);
 }
 .preview-sub-box .sub-grip { text-shadow: 0 1px 2px rgba(0,0,0,0.8); padding-top: 2px; }
-
 /* Batch AH: the recap title overlay box — centred on (title_x, */
 .preview-title-box {
     z-index: 7; text-align: center; padding: 4px 10px; pointer-events: auto;
@@ -969,7 +914,6 @@ select.studio-input { min-height: 50px; }
     background: rgba(10, 12, 18, 0.25);
 }
 .recap-title-input { width: 100%; box-sizing: border-box; }
-
 /* ── Canvas toolbar ─────────────────────────────────────────────────── */
 .canvas-compact-toolbar { display: flex; flex-direction: column; gap: var(--s2); }
 .toolbar-tabs-nav {
@@ -1051,7 +995,6 @@ select.studio-input { min-height: 50px; }
 .style-chip.active { background: var(--gold-soft); color: var(--gold-2); border-color: var(--gold-border); }
 .style-selector-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
 .spec-col-half { display: flex; flex-direction: column; gap: var(--s1); }
-
 /* ── Recap voices & story styles ────────────────────────────────────── */
 .recap-top-voices-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
 .voice-card {
@@ -1096,7 +1039,6 @@ select.studio-input { min-height: 50px; }
     color: var(--text-2); font-size: 13.5px; font-weight: 600; line-height: 1.45;
 }
 .style-select-pill.active { background: var(--gold-soft); color: var(--gold-2); border-color: var(--gold-border); }
-
 /* ── Recap CTA + advanced accordion ─────────────────────────────────── */
 .recap-action-cta-wrap { display: flex; flex-direction: column; }
 .advanced-studio-accordion {
@@ -1144,7 +1086,6 @@ select.studio-input { min-height: 50px; }
 .deliverables-grid { display: flex; flex-direction: column; }
 .dl-sub-buttons { display: flex; gap: var(--s2); flex-wrap: wrap; }
 .dl-sub-buttons .btn { flex: 1; min-width: 100px; }
-
 /* ════ DOWNLOADER ════ */
 .dl-info-header { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s3); }
 .dl-thumb { width: 100px; height: 56px; object-fit: cover; border-radius: var(--r-sm); background: var(--inset); flex-shrink: 0; }
@@ -1175,7 +1116,6 @@ select.studio-input { min-height: 50px; }
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dl-delivery-note { font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
 #btn-dl-use-in-recap { width: 100%; }
-
 /* ════ VIP / PLANS ════ */
 .stats-card { padding: var(--s4); }
 .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--s3); }
@@ -1184,7 +1124,6 @@ select.studio-input { min-height: 50px; }
 .stat-val { font-size: 16.5px; font-weight: 800; line-height: 1.45; word-break: break-word; }
 .plan-how-card { gap: var(--s2); }
 .plan-how-text { font-size: 14px; color: var(--text-2); line-height: 1.75; }
-/* Plan category tabs: one category at a time (simplification pass) */
 .plan-tabs .seg-btn { min-height: 44px; }
 .plan-tab-btn { flex: 1; }
 .plan-panel { display: block; min-width: 0; }
@@ -1203,7 +1142,6 @@ select.studio-input { min-height: 50px; }
     box-shadow: 0 10px 34px rgba(217, 138, 6, 0.16);
 }
 .master-title { color: var(--gold-2); }
-
 /* ── Payment drawer ─────────────────────────────────────────────────── */
 .payment-drawer { gap: var(--s3); }
 .drawer-header-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
@@ -1220,7 +1158,6 @@ select.studio-input { min-height: 50px; }
 .slip-preview-container { margin-top: var(--s2); border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
 .slip-preview-container img { width: 100%; display: block; }
 .pay-note { font-size: 13px; color: var(--text-2); line-height: 1.65; }
-
 /* ════ ADMIN ════ */
 .admin-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
 .stat-mini-card { align-items: flex-start; gap: 0; padding: var(--s3) var(--s4); }
@@ -1328,7 +1265,6 @@ select.studio-input { min-height: 50px; }
 .admin-purge-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
 .admin-purge-grid .purge-btn { width: 100%; }
 .admin-history-stats-row { display: flex; flex-wrap: wrap; gap: 6px; }
-
 /* ════ MODALS / TOAST / ALERTS ════ */
 .image-modal {
     position: fixed; inset: 0; z-index: 900;
@@ -1362,12 +1298,10 @@ select.studio-input { min-height: 50px; }
 .admin-media-body video, .admin-media-body audio { width: 100%; border-radius: var(--r-md); }
 .admin-media-deliverables { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
 .admin-media-deliverables .btn { flex: 1; min-width: 120px; }
-
 .studio-toast {
     position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 50%;
     transform: translateX(-50%); z-index: 1350;
     display: flex; align-items: flex-start; gap: var(--s2);
-    /* An explicit width is required: with left:50% + translateX(-50%)  */
     width: min(430px, calc(100vw - 32px)); padding: 11px 16px;
     background: var(--surface-3); border: 1px solid var(--border-strong);
     border-radius: var(--r-md); box-shadow: var(--shadow-pop);
@@ -1403,7 +1337,6 @@ select.studio-input { min-height: 50px; }
 .studio-confirm-msg { font-size: 14.5px; line-height: 1.65; margin-bottom: var(--s4); }
 .studio-confirm-actions { display: flex; gap: var(--s2); }
 .studio-confirm-actions .btn { flex: 1; min-height: 48px; font-size: 14px; }
-
 .floating-alert-container {
     position: fixed; left: 50%; transform: translateX(-50%);
     bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + var(--s3));
@@ -1431,7 +1364,6 @@ select.studio-input { min-height: 50px; }
     flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
     background: transparent; border: none; color: var(--text-3); font-size: 14px;
 }
-
 /* ── Loading skeleton ───────────────────────────────────────────────── */
 .skeleton {
     border-radius: var(--r-md); min-height: 64px;
@@ -1439,7 +1371,6 @@ select.studio-input { min-height: 50px; }
     background-size: 200% 100%; animation: skeletonWave 1.3s ease infinite;
 }
 @keyframes skeletonWave { from { background-position: 120% 0; } to { background-position: -80% 0; } }
-
 /* ── Responsive ─────────────────────────────────────────────────────── */
 @media (min-width: 561px) {
     .pricing-grid { grid-template-columns: 1fr 1fr; }
@@ -1453,7 +1384,6 @@ select.studio-input { min-height: 50px; }
     .stats-row { grid-template-columns: 1fr 1fr; }
     .crop-sliders-grid, .form-row-2, .style-selector-grid-2 { grid-template-columns: 1fr; }
 }
-
 /* ── Reduced motion ─────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -1463,7 +1393,6 @@ select.studio-input { min-height: 50px; }
         scroll-behavior: auto !important;
     }
 }
-
 /* ── Admin queue items, banners, slips (JS-rendered) ────────────────── */
 .active-queue-status-banner { display: flex; gap: var(--s3); align-items: flex-start; }
 .active-queue-status-banner.queued { border-color: var(--gold-border); background: var(--gold-soft); color: var(--gold-2); }
@@ -1532,14 +1461,12 @@ select.studio-input { min-height: 50px; }
 .admin-modal-player-video { width: 100%; border-radius: var(--r-md); background: #000; }
 .admin-modal-player-audio { width: 100%; }
 .modal-audio-icon { font-size: 40px; }
-
 /* ── Rebuild structural additions ───────────────────────────────────── */
 .control-row.divided { border-top: 1px solid var(--border); padding-top: var(--s3); }
 .story-style-block { border-top: 1px solid var(--border); padding-top: var(--s3); }
 .story-style-label { font-size: 13px; margin-bottom: var(--s2); }
 .mini-btn-seek.sm { min-height: 36px; font-size: 12px; padding: 4px 10px; }
 .input-card, .visual-editor-card { gap: var(--s2); }
-
 /* ── Coverage: JS-state & hook classes ──────────────────────────────── */
 .dark-theme { color-scheme: dark; }
 .btn-text { line-height: 1.5; }
@@ -1568,9 +1495,6 @@ select.studio-input { min-height: 50px; }
 .badge-status.cancelled { background: var(--gold-soft); color: var(--gold-2); }
 .badge-engine.voxcpm { background: var(--violet-soft); color: var(--violet); }
 .preview-logo-watermark.top-right { position: static; }
-
-/* Narrow screens: the header tutorial pill's icon-only collapse */
-
 /* ── Final fixes: bare inputs + VIP stat scale ──────────────────────── */
 input[type="text"], input[type="url"], input[type="number"], input[type="search"], input[type="tel"] {
     background: var(--inset); color: var(--text);
@@ -1584,9 +1508,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 .stat-val { font-size: 15px; line-height: 1.55; }
 .reset-row { display: flex; justify-content: flex-end; }
 .spec-col.span-all { grid-column: 1 / -1; }
-
-/* LIQUID GLASS RESKIN (Style 5 — owner's pick, 2026-10-29) */
-
 /* ── Ambient background (fixed layer behind everything) ─────────────── */
 html { background: #dcebf7; }
 body::before {
@@ -1601,7 +1522,6 @@ body::before {
 .app-container { background: transparent; }
 .dark-theme { color-scheme: light; }
 ::selection { background: rgba(10, 132, 255, 0.28); }
-
 /* ── Major glass surfaces: blur + specular edge ─────────────────────── */
 .card, .gate-banner, .studio-alert-carousel, .tutorial-banner-card,
 .advanced-studio-accordion {
@@ -1610,7 +1530,6 @@ body::before {
     border-color: var(--glass-line);
 }
 .gate-banner { background: rgba(255, 255, 255, 0.55); border-color: var(--gold-border); }
-
 /* ── Header: frosted bar + glass chips ──────────────────────────────── */
 .top-nav {
     background: rgba(255, 255, 255, 0.55);
@@ -1623,7 +1542,6 @@ body::before {
 .pro-tag { color: #ffffff; }
 .vip-badge.vip { color: #ffffff; }
 .vip-badge.free { background: rgba(255, 255, 255, 0.6); }
-
 /* ── Bottom nav: floating glass pill, filled active pill ────────────── */
 .bottom-nav {
     bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
@@ -1643,14 +1561,11 @@ body::before {
 }
 .nav-item:active { background: rgba(255, 255, 255, 0.55); }
 .content-viewport {
-    /* Bottom space = pill nav height (64) + float offset (10) + clear margin,
-       so the last card/button always scrolls fully above the floating nav. */
     padding-bottom: calc(64px + 34px + env(safe-area-inset-bottom, 0px) + var(--s5));
 }
 .floating-alert-container {
     bottom: calc(64px + 34px + env(safe-area-inset-bottom, 0px) + var(--s3));
 }
-
 /* ── Primary actions: bright filled pills ───────────────────────────── */
 .gold-gradient-btn, .primary-btn {
     color: #ffffff; border-radius: 999px;
@@ -1663,7 +1578,6 @@ body::before {
 .voice-preview-btn .preview-btn-icon { color: #ffffff; }
 .floating-alert-action { color: #ffffff; }
 .progress-bar-track, .progress-bar-bg { background: rgba(22, 40, 60, 0.12); }
-
 /* ── Tabs & segmented tracks: glass track, white active pill ────────── */
 .segmented-control, .pill-group, .toolbar-tabs-nav {
     background: rgba(255, 255, 255, 0.35);
@@ -1686,7 +1600,6 @@ body::before {
     background: rgba(255, 255, 255, 0.85); color: var(--text);
     box-shadow: 0 2px 8px rgba(70, 110, 160, 0.15);
 }
-
 /* ── Selectable cards: sample-style blue ring when active ───────────── */
 .persona-card, .voice-card { border-radius: 20px; }
 .persona-card.active, .voice-card.active {
@@ -1698,7 +1611,6 @@ body::before {
     background: linear-gradient(180deg, rgba(10, 132, 255, 0.10), var(--surface) 55%);
     box-shadow: 0 10px 34px rgba(10, 132, 255, 0.18);
 }
-
 /* ── Inputs: bright glass fields, blue focus ring ───────────────────── */
 textarea:focus, .studio-input:focus, .studio-select:focus {
     border-color: var(--gold-border);
@@ -1708,7 +1620,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     border-color: var(--gold-border);
     box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.18);
 }
-
 /* ── Sliders & switch (light-track versions) ────────────────────────── */
 .studio-slider::-webkit-slider-runnable-track { background: rgba(22, 40, 60, 0.15); }
 .studio-slider::-moz-range-track { background: rgba(22, 40, 60, 0.15); }
@@ -1720,13 +1631,11 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 .switch-luxury .slider::before { background: #ffffff; box-shadow: 0 1px 3px rgba(22, 40, 60, 0.35); }
 .switch-luxury input:checked + .slider { background: var(--gold); border-color: transparent; }
 .switch-luxury input:checked + .slider::before { background: #ffffff; }
-
 /* ── Dividers inside glass (hairlines, not white edges) ─────────────── */
 .ref-audio-card, .control-row.divided, .story-style-block, .tutorial-admin-section {
     border-top-color: var(--divider);
 }
 .queue-section-header { border-bottom-color: var(--divider); }
-
 /* ── Overlays: stronger glass so text stays readable ────────────────── */
 .image-modal { background: rgba(23, 43, 66, 0.45); }
 .studio-confirm-overlay { background: rgba(23, 43, 66, 0.40); }
@@ -1752,7 +1661,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     -webkit-backdrop-filter: blur(20px) saturate(1.5);
     border-color: var(--glass-line);
 }
-
 /* ── Small light-theme corrections (dark-era hard-coded colours) ────── */
 .voice-preflight.preflight-warn { color: #b42318; border-color: rgba(217, 45, 32, 0.35); }
 .pay-method.kpay .pay-title { color: #9a6b0f; }
@@ -1763,7 +1671,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     background: linear-gradient(100deg, rgba(120, 150, 185, 0.18) 40%, rgba(255, 255, 255, 0.55) 50%, rgba(120, 150, 185, 0.18) 60%);
     background-size: 200% 100%;
 }
-
 /* ── Fallback: no backdrop-filter → near-opaque surfaces ────────────── */
 @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
     :root {
@@ -1777,7 +1684,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     .bottom-nav { background: rgba(255, 255, 255, 0.97); }
     .gate-banner { background: rgba(255, 255, 255, 0.95); }
 }
-
 /* ── Reduced transparency: honour the OS setting ────────────────────── */
 @media (prefers-reduced-transparency: reduce) {
     :root {
@@ -1794,9 +1700,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     }
     .top-nav, .bottom-nav { background: rgba(255, 255, 255, 0.97); }
 }
-
-/* DEFECT-FIX PASS (owner review of after3 screenshots, 2026-10-29) */
-
 /* ── 2 · Wallet stats: tier as a header row, balances in 2 wide columns ── */
 .stats-row { grid-template-columns: 1fr 1fr; gap: var(--s3); }
 .stats-row .stat-col:first-child {
@@ -1806,7 +1709,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     border-bottom: 1px solid var(--divider);
 }
 .stat-val { word-break: normal; overflow-wrap: break-word; }
-
 /* ── 3 · Plan-how: collapsed by default, one summary row ── */
 .plan-how-card { padding: var(--s3) var(--s4); }
 .plan-how-summary {
@@ -1820,7 +1722,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 }
 .plan-how-card[open] .plan-how-chevron { transform: rotate(180deg); }
 .plan-how-card .plan-how-text { margin-top: var(--s1); }
-
 /* ── 4 · Plan tabs: equal flex, single-line labels ── */
 .plan-tabs { gap: var(--s1); }
 .plan-tabs .seg-btn { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
@@ -1828,7 +1729,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font-size: 13px; max-width: 100%; line-height: 1.8;
 }
-
 /* ── 5 · LIVE dot in the brand bar (folded from the removed pane header) ── */
 .live-dot {
     display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
@@ -1841,7 +1741,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
     background: var(--green); animation: previewPulse 1.6s ease infinite;
 }
-
 /* ── 5 · Tutorial banner: compact single row (icon + title + watch pill) ── */
 .tutorial-banner-card { padding: var(--s2) var(--s3); gap: var(--s2); border-radius: var(--r-md); }
 .tutorial-banner-icon { font-size: 18px; }
@@ -1850,7 +1749,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tutorial-banner-btn { padding: 4px 9px; font-size: 12px; }
-
 /* ── 7 · Persona filter chips: one segmented row, never wraps ── */
 .persona-filter-row { flex-wrap: nowrap; gap: var(--s1); }
 .persona-filter-row .filter-chip {
@@ -1859,7 +1757,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     padding: 5px 3px; font-size: 11.5px;
 }
-
 /* ── 8 · Recap tutorial: mini button inside the tool card header ── */
 .tutorial-mini-btn {
     margin-left: auto; flex-shrink: 0;
@@ -1871,8 +1768,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 .tutorial-mini-btn:active { background: var(--surface-3); }
 .recap-step-card .step-badge-title { align-items: flex-start; }
 .recap-step-card .step-badge-title .step-title { min-width: 0; }
-
-/* LIQUID GLASS POLISH (high-end pass — owner's 'အဆင့်မြင့်မြင့် အက */
 :root {
     --glass-hi-tile: inset 0 1px 0 rgba(255, 255, 255, 0.85);
     --glass-hi-soft: inset 0 1px 0 rgba(255, 255, 255, 0.55);
@@ -1880,7 +1775,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     --shadow-inset: inset 0 1px 4px rgba(70, 110, 160, 0.13), inset 0 -1px 0 rgba(255, 255, 255, 0.5);
     --blur-overlay: blur(24px) saturate(1.5);
 }
-
 /* ── Token consistency: chrome + overlays use the shared blur tokens ── */
 .top-nav {
     backdrop-filter: var(--blur-chrome);
@@ -1890,13 +1784,11 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
     backdrop-filter: var(--blur-overlay);
     -webkit-backdrop-filter: var(--blur-overlay);
 }
-
 /* ── L1 · Major surfaces that had blur but no shadow: full card depth ── */
 .gate-banner, .studio-alert-carousel, .tutorial-banner-card,
 .advanced-studio-accordion {
     box-shadow: var(--shadow-card);
 }
-
 /* ── L1 · Nested glass tiles (inside blurred cards — highlight, no blur) ── */
 .persona-card, .voice-card, .history-item, .queue-item, .admin-history-item,
 .slip-item-row, .pay-method, .format-card, .model-tier-box, .video-info-card,
@@ -1907,7 +1799,6 @@ input[type="text"]:focus, input[type="url"]:focus, input[type="number"]:focus {
 .pricing-card.featured-master {
     box-shadow: var(--glass-hi), 0 10px 34px rgba(10, 132, 255, 0.18);
 }
-
 /* ── Inset wells: pressed-glass depth for fields & readouts ─────────── */
 textarea, .studio-input, .studio-select,
 input[type="text"], input[type="url"], input[type="number"],
@@ -1921,14 +1812,12 @@ input[type="search"]:focus, input[type="tel"]:focus {
     box-shadow: var(--shadow-inset), 0 0 0 3px rgba(10, 132, 255, 0.18);
 }
 .queue-item-error { box-shadow: var(--shadow-inset); }
-
 /* ── Raised glass buttons (secondary family) ────────────────────────── */
 .secondary-btn, .mini-btn, .mini-chip, .mini-copy-btn, .close-btn,
 .btn-file-upload, .queue-act-btn, .carousel-arrow, .v-preview-btn,
 .voice-preview-btn, .modal-close, .tutorial-pill-btn, .lang-pill-btn {
     box-shadow: var(--shadow-tile);
 }
-
 /* ── Tinted glass buttons: specular only, their tint stays ──────────── */
 .secondary-gold-btn, .send-telegram-gold-btn, .btn-approve, .btn-reject,
 .btn-play-preview, .history-dl-link, .tutorial-banner-btn, .tutorial-mini-btn {
@@ -1937,19 +1826,16 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .floating-alert-action {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 8px 20px rgba(10, 132, 255, 0.30);
 }
-
 /* ── Interactive chips (standalone, on cards): glass tile depth ─────── */
 .filter-chip, .filter-pill, .engine-pill, .style-chip, .style-select-pill,
 .chip-toggle, .toggle-pill-btn, .mini-toggle, .ratio-btn, .source-tab-btn,
 .seek-pill-btn, .mini-btn-seek {
     box-shadow: var(--shadow-tile);
 }
-
 /* ── Active pills inside glass tracks: add the specular edge ────────── */
 .seg-btn.active, .pill-btn.active, .tb-tab-btn.active {
     box-shadow: var(--glass-hi), 0 2px 8px rgba(70, 110, 160, 0.18);
 }
-
 /* ── L0 · Micro badges & pills: soft specular only ──────────────────── */
 .bal-chip, .badge-studio, .count-badge, .hint-tag, .mini-tag, .pill-badge,
 .badge-status, .badge-engine, .history-item-badge, .badge-mini-gold,
@@ -1957,13 +1843,11 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .live-dot, .pro-tag, .vip-badge, .step-num-pill, .selected-indicator {
     box-shadow: var(--glass-hi-soft);
 }
-
 /* ── Progress: inset track, lit fill ────────────────────────────────── */
 .progress-bar-track, .progress-bar-bg {
     box-shadow: inset 0 1px 3px rgba(22, 40, 60, 0.16);
 }
 .progress-bar-fill { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
-
 /* ── Switch & sliders: pressed track, lit knob/thumb ────────────────── */
 .switch-luxury .slider { box-shadow: inset 0 1px 3px rgba(22, 40, 60, 0.14); }
 .switch-luxury .slider::before {
@@ -1975,7 +1859,6 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .studio-slider::-moz-range-track {
     box-shadow: inset 0 1px 2px rgba(22, 40, 60, 0.18);
 }
-
 /* ── Tinted info boxes & skeleton: same glass language ──────────────── */
 .voice-preflight.preflight-warn, .telegram-leave-hint {
     box-shadow: var(--glass-hi-soft);
@@ -1984,12 +1867,10 @@ input[type="search"]:focus, input[type="tel"]:focus {
     border: 1px solid var(--glass-line);
     box-shadow: var(--glass-hi-soft);
 }
-
 /* ── Primary CTA: match the sample's shadow weight exactly ──────────── */
 .gold-gradient-btn, .primary-btn {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 12px 28px rgba(10, 132, 255, 0.35);
 }
-
 /* ── Recap script review / edit (two-phase flow) ─────────────────────── */
 /* Batch AK (P8): .script-review-row is defined ONCE (the Liquid */
 .script-hint { font-size: 13px; line-height: 1.7; opacity: 0.75; margin-top: 6px; }
@@ -2006,7 +1887,6 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .script-seg-text:focus { outline: 2px solid rgba(212, 175, 55, 0.65); }
 .script-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .script-actions .btn { flex: 1 1 150px; min-height: 44px; }
-
 /* Release 2026-10-30 integration: Script Editor in Liquid Glass */
 .script-seg {
     background: var(--surface-2);
@@ -2037,55 +1917,29 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .script-review-row input[type="checkbox"] { accent-color: var(--gold); }
 .script-hint { color: var(--text-2); opacity: 1; }
 .rights-note { color: var(--text-2); }
-
-/* OVERFLOW FIXES (2026-10-30 — owner-caught clipped text; verified */
-
-/* 1 · Bottom nav: tighter type/padding + shrinkable items, so all  */
 .bottom-nav { padding: 5px; gap: 1px; }
 .nav-item { min-width: 0; padding: 4px 1px; font-size: 10.5px; }
 .nav-label { max-width: 100%; }
-
-/* 1b · Seven-item nav (admin variant, Home tab added): reclaim the */
 .bottom-nav:has(#nav-btn-admin:not(.hidden)) { gap: 0; }
 .bottom-nav:has(#nav-btn-admin:not(.hidden)) .nav-item { padding: 4px 0; font-size: 10px; }
-
-/* 2 · Pill groups: wrap cleanly inside the container instead of pu */
 .pill-group { display: flex; flex-wrap: wrap; align-items: center; max-width: 100%; }
 .pill-group > .spec-lbl { flex: 1 0 100%; margin-bottom: 2px; }
-
-/* 3 · Grid blowout guards: tracks may shrink below their min-content,
-      so nowrap/ellipsis text truncates inside its card, not off-screen. */
 .recap-top-voices-grid > .voice-card,
 .style-selector-grid-2 > *,
 .form-row-2 > *,
 .personas-grid > * { min-width: 0; }
 .voice-card { min-width: 0; }
-
-/* 4 · Phone-width stacking for two-column form/spec grids — the old
-      380px breakpoint missed the common 390–480px phones entirely. */
 @media (max-width: 480px) {
     .form-row-2, .style-selector-grid-2, .crop-sliders-grid { grid-template-columns: 1fr; }
     .payment-methods { grid-template-columns: 1fr; }
 }
-
-/* 4b · Recap top-voice cards: one per row — name + description + p */
 .recap-top-voices-grid { grid-template-columns: 1fr; }
-
-/* 4c · Overlay toggles: two per row so icon + label + ON/OFF stay on one
-      tidy line each; the value never splits across lines. */
 .overlays-toggle-row .mini-toggle { flex: 1 1 44%; }
 .mini-toggle .t-val { white-space: nowrap; }
-
-/* 5 · Mini toggles: slightly tighter type so long labels fit the button. */
 .mini-toggle { font-size: 12px; gap: 4px; padding: 6px 6px; }
-
-/* 6 · Source-mode tabs + recap step title: calmer type for long labels. */
 .source-tab-btn { font-size: 12.5px; line-height: 1.45; padding: 8px 6px; }
 .recap-step-card .step-title { font-size: 14.5px; }
 .tutorial-mini-btn { font-size: 11.5px; padding: 4px 9px; }
-
-/* 7 · Declutter pass: one compact queue-filter row, accordion helpers,
-   and recap settings groups that sit flush inside their cards. */
 .queue-filter-bar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
 .queue-filter-bar .filter-pill-group,
 .queue-filter-bar .engine-filter-group { display: contents; }
@@ -2094,10 +1948,6 @@ input[type="search"]:focus, input[type="tel"]:focus {
 .accordion-refresh-row { display: flex; justify-content: flex-end; margin-top: var(--s3); }
 .settings-group > :first-child { margin-top: 0; }
 .settings-group .story-style-block { border-top: none; padding-top: 0; }
-
-/* 8 · PREMIUM PASS 2 (owner's annotated screenshots, 2026-10-30) */
-
-/* 8a · Admin queue filters: ONE compact row — a horizontally scrol */
 .queue-filter-bar { flex-wrap: nowrap; gap: 8px; }
 .filter-scroll-strip {
     display: flex; flex: 1 1 auto; min-width: 0;
@@ -2123,8 +1973,6 @@ input[type="search"]:focus, input[type="tel"]:focus {
     padding: 0 26px 0 11px; line-height: 1.4; cursor: pointer;
 }
 .queue-engine-select:focus { outline: none; border-color: var(--gold-border); }
-
-/* 8b · Live Preview canvas: cinematic surface — deep gradient fram */
 .video-bg-placeholder {
     background:
         radial-gradient(120% 90% at 18% 0%, rgba(245, 180, 80, 0.14) 0%, rgba(245, 180, 80, 0) 55%),
@@ -2175,15 +2023,11 @@ input[type="search"]:focus, input[type="tel"]:focus {
     background: #ff5a5a; box-shadow: 0 0 6px rgba(255, 90, 90, 0.9);
     animation: previewPulse 1.6s ease infinite; flex-shrink: 0;
 }
-
-/* Recap-fix pass 2026-10-30 */
 .video-backdrop-blur {
     position: absolute; inset: 0; z-index: 0; pointer-events: none;
     background-size: cover; background-position: center;
     filter: blur(16px) brightness(0.55);
     -webkit-filter: blur(16px) brightness(0.55);
-    /* No scale(): a transformed child inflates the frame's scrollable
-       overflow area. The canvas vignette (::after) masks the soft edge. */
     opacity: 0; transition: opacity 0.25s ease;
 }
 .video-backdrop-blur.on { opacity: 1; }
@@ -2202,7 +2046,6 @@ body.lang-my .gate-banner-text strong { line-height: 1.7; }
 body.lang-my .gate-banner-text span { line-height: 1.9; }
 body.lang-my .tutorial-banner-text strong { line-height: 1.7; }
 body.lang-my .tutorial-banner-text span { line-height: 1.9; }
-
 /* ════════════════ ADMIN CONSOLE — REBUILD 2026-10-31 ════════════════ */
 /* Hub + one-topic screens. Compact, calm, Liquid Glass.               */
 .adm-nav {
@@ -2212,8 +2055,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     border-radius: 999px;
     scrollbar-width: none; position: sticky; top: calc(var(--vcp-hdr-sticky-top, 114px) + 4px); z-index: 95;
     box-shadow: var(--glass-hi);
-    /* Round-6 P10: a soft right-edge fade signals the row scrolls —
-       the last tabs used to sit off-screen with no affordance. */
     -webkit-mask-image: linear-gradient(to right, #000 92%, transparent 100%);
     mask-image: linear-gradient(to right, #000 92%, transparent 100%);
 }
@@ -2237,7 +2078,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-screen > .card:first-child { margin-top: 0; }
 .adm-tap { cursor: pointer; }
 .adm-tap:active { transform: scale(.985); }
-
 .adm-seg {
     display: flex; gap: var(--s1); padding: var(--s1);
     background: var(--surface-2); border: 1px solid var(--border);
@@ -2252,8 +2092,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     background: var(--glass-strong); color: var(--text);
     border-color: var(--border-strong); box-shadow: 0 2px 8px rgba(22,40,60,.10);
 }
-
-/* Shared list states */
 .adm-state {
     display: flex; align-items: center; justify-content: center; gap: var(--s2);
     padding: 18px 12px; color: var(--text-2); font-size: 13.5px; text-align: center;
@@ -2262,8 +2100,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 }
 .adm-state-error { color: var(--red); border-color: rgba(217,45,32,.35); }
 .adm-state-icon { font-size: 17px; }
-
-/* Overview */
 .adm-status-chips { display: flex; flex-wrap: wrap; gap: var(--s1); }
 .adm-status-tag.success { color: var(--green); }
 .adm-status-tag.failed { color: var(--red); }
@@ -2275,8 +2111,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 }
 .adm-action-row-line:last-child { border-bottom: none; }
 .adm-line-time { margin-left: auto; font-size: 11px; white-space: nowrap; }
-
-/* Users */
 .adm-user-row {
     display: flex; align-items: center; gap: var(--s2);
     padding: 10px 6px; border-bottom: 1px solid var(--divider);
@@ -2296,7 +2130,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .badge-status.blocked { background: var(--red-soft); color: var(--red); }
 .badge-status.botblocked { background: var(--gold-soft); color: var(--gold-2); }
 .badge-status.cancelled { background: var(--surface-3); color: var(--text-2); }
-
 .adm-back-btn {
     border: 1px solid var(--border); background: var(--surface-2);
     backdrop-filter: var(--blur-card); color: var(--text);
@@ -2309,7 +2142,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-detail-name { font-size: 16.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .adm-detail-sub { color: var(--text-2); font-size: 12.5px; }
 .adm-detail-meta { display: flex; flex-wrap: wrap; gap: var(--s1); margin-top: var(--s2); }
-
 .adm-wide-btn { width: 100%; }
 .adm-danger-btn {
     background: var(--red); color: #fff; border: 1px solid rgba(217,45,32,.6);
@@ -2321,7 +2153,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     border-radius: var(--r-md, 14px); padding: var(--s3);
 }
 .adm-danger-title { color: var(--red); font-weight: 700; font-size: 13.5px; }
-
 .adm-job-mini {
     display: flex; align-items: center; gap: var(--s2);
     padding: 7px 2px; border-bottom: 1px solid var(--divider); font-size: 13px;
@@ -2329,7 +2160,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-job-mini:last-child { border-bottom: none; }
 .adm-job-mini-main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .adm-job-code { opacity: .7; font-size: 10px; }
-
 /* Batch CD: recorded private-AI chat log rows in the user detail. */
 .adm-chat-row {
     display: flex; flex-direction: column; gap: 2px;
@@ -2343,8 +2173,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-chat-who { font-size: 11px; font-weight: 700; color: var(--text-2); }
 .adm-chat-text { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
 .adm-chat-time { font-size: 11px; color: var(--text-3, var(--text-2)); opacity: .75; }
-
-/* Jobs */
 .queue-section-header {
     font-size: 13px; font-weight: 700; color: var(--text-2);
     padding: 6px 2px 0;
@@ -2353,8 +2181,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
     border-radius: 8px; word-break: break-word; color: #b3261e;
     background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
 }
-
-/* Broadcast */
 .adm-broadcast-meta { text-align: right; color: var(--text-3); font-size: 11.5px; margin-top: 4px; }
 .adm-bc-title { font-weight: 700; color: var(--green); font-size: 14px; margin-bottom: 10px; }
 .adm-bc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); margin-bottom: 10px; }
@@ -2376,15 +2202,11 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 }
 /* Batch O: the pre-existing-blocked count is NOT part of the */
 .adm-bc-note { margin-top: 8px; background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--r-sm, 10px); padding: 8px 10px; }
-
-/* Activity */
 .adm-audit-row { padding: 9px 2px; border-bottom: 1px solid var(--divider); }
 .adm-audit-row:last-child { border-bottom: none; }
 .adm-audit-main { display: flex; gap: var(--s2); align-items: baseline; font-size: 13.5px; flex-wrap: wrap; }
 .adm-audit-detail { color: var(--text-2); font-size: 12px; margin-top: 2px; word-break: break-word; }
 .adm-audit-time { color: var(--text-3); font-size: 11px; margin-top: 2px; }
-
-/* Pricing */
 .adm-price-row {
     display: flex; align-items: center; gap: var(--s2);
     padding: 9px 2px; border-bottom: 1px solid var(--divider);
@@ -2395,7 +2217,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-price-alloc { color: var(--text-2); font-size: 11.5px; }
 .adm-price-input { width: 104px; flex: 0 0 104px; text-align: right; }
 .adm-price-cur { color: var(--text-3); font-size: 11.5px; flex: 0 0 auto; }
-
 /* ===== ADMIN REBUILD — capture-fix round 2026-10-31 ===== */
 #adm-screen-jobs .queue-filter-bar { flex-direction: column; align-items: stretch; gap: var(--s2); }
 #adm-screen-jobs .filter-scroll-strip { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
@@ -2410,8 +2231,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .adm-fleet-node-card { background: var(--vcp-flat-glass-bg, rgba(255, 255, 255, 0.86)); border: 1px solid var(--vcp-border, rgba(15, 23, 42, 0.12)); color: var(--vcp-text-primary, #0F172A); border-radius: 14px; padding: 14px; box-shadow: var(--vcp-shadow-sm); }
 .adm-fleet-node-head { display: flex; justify-content: space-between; align-items: center; }
 .adm-fleet-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-
-/* UI audit 2026-10-31 (wave2): Myanmar headings/titles/labels rend */
 .gate-lock-card h3, #gate-lock-btn-verify, #gate-btn-verify,
 .tutorial-banner-text strong, .tutorial-banner-btn,
 .persona-name, .card-label, .step-title, .accordion-title,
@@ -2426,14 +2245,11 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .mini-chip, #btn-submit-slip-action, #adm-adjust-apply-btn {
     font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
 }
-
-/* Persona names were hard-truncated to one line on all 12 cards */
 .persona-header { flex-direction: column; align-items: flex-start; gap: 6px; }
 .persona-meta { width: 100%; min-width: 0; }
 .persona-name {
     white-space: normal; overflow: visible; text-overflow: clip;
 }
-
 /* ════════════════ PREMIUM POLISH PASS — 2026-10-31 ════════════════
    MYANMAR TYPOGRAPHY STANDARD (applies app-wide):
    • Font stack: "Padauk" first for ALL Myanmar text (headings AND body).
@@ -2450,10 +2266,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
      micro-labels ≥ 11px. Descriptions clamp cleanly (2 lines) instead
      of mid-word/mid-parenthesis ellipsis cuts.
    • No fixed heights on text containers; let stacks grow the box. */
-
-/* P3 — Padauk-first for regular-weight body text (completes the font
-   fix: the wave-2 sweep covered weight ≥600; body copy had the same
-   bracket defect at reading sizes). */
 .persona-desc, .ref-desc, .voice-card .v-desc, .persona-badge,
 .hub-row-meta, .history-item-body, .script-hint, .plan-how-text,
 .pay-note, .drop-subtext, .preview-empty-desc, .adm-audit-detail,
@@ -2463,8 +2275,6 @@ body.lang-my .tutorial-banner-text span { line-height: 1.9; }
 .studio-input, .studio-textarea, #voice-text-input, .seg-textarea {
     font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
 }
-
-/* A2 — Myanmar line-height completion for multi-line body copy. */
 body.lang-my .persona-desc { line-height: 1.85; }
 body.lang-my .ref-desc { line-height: 1.85; }
 body.lang-my .voice-card .v-desc { line-height: 1.7; }
@@ -2477,32 +2287,18 @@ body.lang-my .drop-subtext { line-height: 1.8; }
 body.lang-my .preview-empty-desc { line-height: 1.85; }
 body.lang-my .adm-audit-detail { line-height: 1.8; }
 body.lang-my .load-error-text { line-height: 1.8; }
-
-/* A3 — smoother pane transition (softens the base 0.22s snap). */
 .tab-pane.active { animation: paneIn 0.32s cubic-bezier(0.22, 0.9, 0.3, 1); }
-
-/* P1 — scroll affordance: soft fade on the clipped edge of the admin
-   sub-nav and the queue filter strip (both scroll horizontally). */
 .adm-nav, #adm-screen-jobs .filter-scroll-strip {
     -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 26px), transparent 100%);
     mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 26px), transparent 100%);
 }
-
-/* P5 — Admin Overview recent-actions: the label column may shrink and
-   wrap internally; the timestamp never orphans onto its own line, and
-   the card header wraps cleanly instead of squeezing. */
 .adm-action-row-line > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 #admin-recent-card .card-header-row { flex-wrap: wrap; row-gap: 4px; }
 #admin-recent-card .card-label { min-width: 0; }
-
-/* P11 — persona voice-card descriptions: clean 2-line clamp instead of
-   a mid-parenthesis single-line cut. */
 .voice-card .v-desc {
     white-space: normal; overflow: hidden; text-overflow: clip;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-
-/* A1 — staged progress steppers (honest stages, no fake percentages). */
 .stage-stepper {
     display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
     margin-top: var(--s3);
@@ -2520,8 +2316,6 @@ body.lang-my .load-error-text { line-height: 1.8; }
 .stage-chip.done { color: var(--green); border-color: rgba(30,160,90,.4); background: rgba(30,160,90,.08); }
 .stage-arrow { color: var(--text-3); font-size: 13px; }
 @keyframes stagePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-
-/* A4 — Home samples card. */
 .home-samples-card { display: flex; flex-direction: column; gap: var(--s3); }
 .sample-row { display: flex; flex-direction: column; gap: 6px; }
 .sample-row + .sample-row { border-top: 1px solid var(--divider); padding-top: var(--s3); }
@@ -2529,9 +2323,6 @@ body.lang-my .load-error-text { line-height: 1.8; }
 .sample-name { font-size: 14px; font-weight: 700; line-height: 1.55; }
 .sample-desc { font-size: 12px; color: var(--text-2); line-height: 1.6; }
 .sample-audio { width: 100%; height: 40px; }
-
-/* Home tab — tutorials list + start-creating rows (one shared row
-   pattern: icon, title block, chevron; rows divide hairline-thin). */
 .home-tut-list { display: flex; flex-direction: column; }
 .home-tut-row {
     display: flex; align-items: center; gap: var(--s2);
@@ -2549,17 +2340,12 @@ body.lang-my .load-error-text { line-height: 1.8; }
 body.lang-my .home-tut-name { line-height: 1.7; }
 body.lang-my .home-tut-desc { line-height: 1.8; }
 #home-tutorials-card .card-header-row, #home-start-card .card-label { margin-bottom: var(--s2); }
-
-/* A5 — Home load-error strip. */
 .load-error-strip {
     display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
     padding: 10px 12px; border-radius: var(--r-md);
     border: 1px solid rgba(217,45,32,.35); background: rgba(217,45,32,.06);
 }
 .load-error-text { flex: 1; min-width: 180px; font-size: 13px; color: var(--red); }
-
-/* A6 — sticky create CTAs: float above the bottom nav (nav pill is
-   bottom:10px + 64px tall; content already clears ~44px past it). */
 .sticky-cta-bar {
     position: fixed; left: 12px; right: 12px; z-index: 60;
     bottom: calc(64px + 10px + 12px + env(safe-area-inset-bottom, 0px));
@@ -2573,25 +2359,16 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .sticky-cta-btn { width: 100%; }
 @keyframes stickyCtaIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-
-/* T3 — compact per-section tutorial banners reuse the Voice banner
-   pattern at a smaller footprint. */
 .tutorial-banner-card.compact { padding: 10px 12px; }
 .tutorial-banner-card.compact .tutorial-banner-text strong { font-size: 13px; }
 .tutorial-banner-card.compact .tutorial-banner-text span { font-size: 11.5px; }
-
-/* T4 — Recap Step-1 tutorial button shows the configured title; ke */
 /* Batch AV: the #recap-step1-tut-btn sizing rule was retired with the
    button itself (duplicate of the header guide — parent dedupe). */
-
-/* P10 — slip upload: styled label button (the input itself is the
-   standard visually-hidden file input used across the app). */
 .slip-file-label { width: 100%; justify-content: center; }
 .slip-file-name {
     display: block; margin-top: 6px; font-size: 12px; color: var(--text-2);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
 /* ── Journey audit 2026-10-31: one-time Home welcome strip + quiet
    link-source help lines. New selectors only. ──────────────────── */
 .welcome-strip {
@@ -2617,9 +2394,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .link-source-help { margin: 8px 2px 0; font-size: 12px; line-height: 1.65; color: var(--text-2); }
 .recap-free-terms { margin: 10px 2px 0; font-size: 12.5px; line-height: 1.65; color: var(--text-2); font-weight: 600; }
-/* P1 (premium round 2026-11-02): persistent Downloader extract
-   failure state — a toast alone fades and leaves the tab looking
-   idle/ambiguous after a timeout or failure. */
 .dl-error-box {
     margin-top: 12px; padding: 12px 14px;
     border-radius: var(--r-md); background: var(--red-soft);
@@ -2627,8 +2401,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .dl-error-title { font-size: 13.5px; font-weight: 700; color: var(--red); line-height: 1.6; }
 .dl-error-hint { margin: 4px 0 0; font-size: 12.5px; line-height: 1.65; color: var(--text-2); }
-
-/* Voice compact UX 2026-11-01: text input first, persona picker */
 .voice-selected-row {
     display: flex; align-items: center; gap: 8px;
     margin-top: 10px; padding: 9px 12px;
@@ -2642,59 +2414,39 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .vsr-change { flex-shrink: 0; }
-/* In-place picker: no card chrome of its own (it lives inside the */
 .persona-picker-card:not(.picker-collapsed) {
     margin-top: 10px; padding-top: 10px;
     border-top: 1px solid var(--border);
 }
 .persona-picker-card.picker-collapsed #curated-personas-card { display: none; }
-
-/* RECAP TAB TIDY (2026-11-01 — owner's premium/hierarchy directive */
-
-/* B3 — sticky header/ADMIN bar: near-opaque glass, no ghosting. */
 .top-nav {
     background: rgba(255, 255, 255, 0.97);
     backdrop-filter: blur(26px) saturate(1.6);
     -webkit-backdrop-filter: blur(26px) saturate(1.6);
 }
-
-/* AGY-4 — type scale: section landmarks are never smaller than body. */
 .recap-step-card .step-title { font-size: 15.5px; }
 .accordion-title { font-size: 15.5px; }
 #tab-recap .card-label, #tab-recap .recap-adv-section-title {
     font-size: 14px; font-weight: 700; color: var(--text);
 }
-/* Legible floor for recap micro-labels (were 10.5–11px). */
 #tab-recap .mini-tag { font-size: 12px; }
 .preview-blur-box .blur-label { font-size: 12px; }
 .preview-logo-watermark { font-size: 12px; }
 .mockup-orig-sub { font-size: 12px; }
-
 /* E2 — (Batch AV) the Step-1 tutorial pill and its row were removed:
    the header 📚 guide is the single tutorial entry point. */
-
-/* B2 — the sticky bar is the single Recap CTA: the tab keeps enough
-   bottom room that the bar + dock never sit on top of content. */
 #tab-recap { padding-bottom: 120px; }
 .cta-source-hidden { display: none !important; }
-
-/* Quiet, uniform labels inside the Recap tab. */
 #tab-recap .spec-lbl, #tab-recap .style-lbl {
     font-size: 13px; font-weight: 600; color: var(--text-2);
 }
-
 /* ── Step 3: engine + Gemini select (B1/B4 — full width, nothing clips) */
 .recap-engine-row { display: flex; width: 100%; margin-top: var(--s3); }
 .recap-gemini-wrap { display: flex; flex-direction: column; gap: var(--s2); }
 .recap-gemini-select { width: 100%; min-width: 0; }
 .recap-auto-hint { font-size: 12px; line-height: 1.7; color: var(--text-3); }
 .recap-gemini-wrap .preview-recap-voice-btn { align-self: flex-start; }
-
-/* One preview-button anatomy across the tab (C2 single icon comes from
-   the label copy no longer carrying its own speaker glyph). */
 .preview-recap-voice-btn { border-radius: 999px; min-height: 44px; }
-
-/* Uniform pill groups (C1/C5/C9/C10): one component, even tiles. */
 #story-style-picker-quick .style-select-pill,
 #recap-crop-presets-toolbar .pill-btn,
 #recap-logo-pos-picker .pill-btn,
@@ -2720,16 +2472,11 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     flex: 1 1 42%; min-width: 0; white-space: normal; text-align: center;
     display: inline-flex; align-items: center; justify-content: center;
 }
-
-/* C8 — ratio cards shrink to compact pills in their docked home. */
 .ratio-pills-grid { grid-template-columns: 1fr 1fr; gap: var(--s2); }
 .ratio-btn { min-height: 44px; padding: 6px 10px; border-radius: 999px; justify-content: center; }
 .ratio-btn .ratio-icon { display: none; }
-
 /* ── Docked canvas sections (AGY-2): hairline-divided, no nested cards */
 .recap-dock-section { border-top: 1px solid var(--divider); padding-top: var(--s3); margin-top: var(--s3); }
-
-/* D1/D4 — designed no-thumbnail canvas surface. */
 .canvas-no-thumb {
     position: absolute; inset: 0; z-index: 3;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -2737,14 +2484,10 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .canvas-no-thumb-icon { font-size: 34px; opacity: 0.9; }
 .canvas-no-thumb-text { font-size: 12.5px; font-weight: 600; line-height: 1.7; color: rgba(255, 255, 255, 0.85); max-width: 210px; }
-/* F4 — short frames (16:9, incl. the Original fallback shape): shr */
 .mockup-screen.ratio-16-9 .canvas-no-thumb { padding: var(--s2) var(--s4) 16%; gap: var(--s1); }
 .mockup-screen.ratio-16-9 .canvas-no-thumb-icon { font-size: 24px; }
 .mockup-screen.ratio-16-9 .canvas-no-thumb-text { font-size: 11.5px; line-height: 1.55; max-width: 250px; }
-/* The drag boxes stay inside the frame in every ratio. */
 .draggable-box { max-width: 92%; box-sizing: border-box; }
-
-/* D5 — checking state: subtle progress shimmer under the title. */
 .preview-progress-shimmer {
     width: 150px; height: 5px; border-radius: 999px; overflow: hidden;
     background: var(--surface-3); position: relative; display: block;
@@ -2755,16 +2498,10 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     animation: previewShimmer 1.3s ease-in-out infinite alternate;
 }
 @keyframes previewShimmer { from { left: 0; } to { left: 60%; } }
-
-/* AGY-4 — empty state contrast on the light background. */
 .preview-empty-state { background: var(--surface-2); border-color: var(--border-strong); }
 .preview-empty-desc { opacity: 1; color: var(--text-2); }
-
-/* AGY-4 — canvas frame shadow joins the ambient tinted family. */
 .mockup-screen { box-shadow: 0 14px 34px rgba(70, 110, 160, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
-/* Radii: recap cards use the token scale (was a hardcoded 20px). */
 #tab-recap .voice-card { border-radius: var(--r-md); }
-
 /* ── Advanced: flattened, labeled, hairline-divided (AGY-1) ───────── */
 .advanced-accordion-body { gap: 0; }
 .recap-adv-section { padding: var(--s4) 0; }
@@ -2773,8 +2510,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-adv-section-title { margin-bottom: var(--s2); }
 .recap-adv-group { display: flex; flex-direction: column; }
 .recap-adv-group.hidden { display: none; }
-
-/* Nested fine-control expander (crop sliders live one level deeper). */
 .recap-detail-toggle {
     display: inline-flex; align-items: center; gap: var(--s2);
     background: none; border: none; padding: 0; cursor: pointer;
@@ -2783,7 +2518,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-detail-toggle .recap-detail-chevron { color: var(--text-3); font-size: 12px; }
 .recap-detail-body { margin-top: var(--s2); }
 .recap-detail-body.hidden { display: none; }
-
 /* ── ONE switch component (C4/C6): checkbox rows, mirror, Mask toggles.
    Track 40×22, knob 16, accent = the app blue; label left, switch right. */
 .script-review-row {
@@ -2809,7 +2543,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .script-review-row input[type="checkbox"]:checked { background: var(--gold); border-color: var(--gold-border); }
 .script-review-row input[type="checkbox"]:checked::after { left: 20px; }
-
 .toggle-pill-btn {
     display: flex; align-items: center; justify-content: space-between;
     gap: var(--s3); width: 100%; min-height: 48px; padding: 8px 12px;
@@ -2830,7 +2563,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .toggle-pill-btn.active .switch-track { background: var(--gold); border-color: var(--gold-border); }
 .toggle-pill-btn.active .switch-track::after { left: 20px; }
-/* Mask-tab toggles: uniform rows — label left, switch right (C3). */
 .overlays-toggle-row { flex-direction: column; flex-wrap: nowrap; }
 .overlays-toggle-row .mini-toggle {
     flex: 1 1 auto; width: 100%; min-height: 44px;
@@ -2850,54 +2582,35 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 }
 .mini-toggle.active .t-val { background: var(--gold); border-color: var(--gold-border); }
 .mini-toggle.active .t-val::after { left: 16px; }
-
-/* E3 — copyright copy: small muted note below the CTA area. */
 .recap-rights-note {
     font-size: 12px; line-height: 1.7; color: var(--text-3);
     opacity: 0.85; text-align: left; margin-top: var(--s3);
 }
 .recap-cost-hint { font-size: 12px; opacity: 0.9; }
 .recap-unverified-warning { font-size: 12.5px; line-height: 1.55; color: #d97706; font-weight: 600; }
-
 /* Batch CI — persistent duration-cap notice (Step 1 source area + */
 .recap-overlimit-notice { padding: var(--s2) var(--s3); border-radius: var(--r-md); background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); font-size: 12.5px; line-height: 1.55; font-weight: 600; color: var(--red); }
-
-/* AGY-4 — slider thumbs lose the dark-theme black rim; blur box gets
-   the glass specular highlight like every other frosted surface. */
 .studio-slider::-webkit-slider-thumb { border-color: #ffffff; }
 .studio-slider::-moz-range-thumb { border-color: #ffffff; }
 .preview-blur-box { box-shadow: var(--glass-hi); }
-
-/* F1 — the blur label paints only in its editing context: the Mask */
 .preview-blur-box.label-on .blur-label,
 .preview-blur-box.is-dragging .blur-label,
 .preview-blur-box:hover .blur-label {
     display: block; position: absolute; bottom: calc(100% + 1px); left: 50%;
     transform: translateX(-50%); line-height: 1.1;
 }
-
 /* FULL-APP POLISH (2026-11-01) — closes the full-app audit's fixab */
-
-/* NAV — the dock now carries 4 destinations (5 for admin): Downloa */
-
-/* G-1 — text ghosting under the floating dock at max scroll: the p */
 .bottom-nav { background: rgba(255, 255, 255, 0.97); }
 .nav-scrim {
     position: fixed; left: 0; right: 0; bottom: 0; height: 108px;
     background: linear-gradient(to top, rgba(220, 235, 247, 0.95) 26%, rgba(220, 235, 247, 0));
     pointer-events: none; z-index: 40;
 }
-
-/* G-3 — multi-word headings read gappy at the display weight; pull
-   the tracking in slightly on the shared heading classes. */
 .card-label, .step-title, .pane-header h2 { letter-spacing: -0.2px; }
-
-/* H-1/H-2 — Refer card: the link gets its own wrapping box (full U */
 .ref-link-row { display: block; }
 .ref-link-text {
     display: block; white-space: normal; overflow: visible; text-overflow: clip;
     word-break: break-all; font-size: 11.5px; line-height: 1.6;
-    /* P3 (premium round 2026-11-02): balance the wrapped lines so a */
     text-wrap: balance;
     background: var(--inset); border: 1px solid var(--border);
     border-radius: var(--r-sm); padding: 8px 10px;
@@ -2907,59 +2620,35 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     flex: 1; justify-content: center; min-height: 42px;
     font-size: 13.5px; white-space: nowrap;
 }
-
-/* V-1 — the speed label keeps its natural width; the row wraps as a
-   whole (label above the selector) instead of breaking the word. */
 .control-row .ctrl-title { flex: none; white-space: nowrap; }
-
-/* V-3 — persona preview button: icon + label stay on one line as o */
 .voice-preview-btn { flex-wrap: nowrap; padding: 5px 8px; gap: 5px; font-size: 11.5px; }
 .voice-preview-btn .preview-btn-icon { width: 18px; height: 18px; }
 .voice-preview-btn .preview-btn-label { white-space: nowrap; }
 .persona-desc { text-wrap: balance; }
-
-/* R-2 — Micro-Zoom pills: natural one-line tiles (the uniform-tile */
 #recap-zoom-picker { align-items: stretch; }
 #recap-zoom-picker .pill-btn {
     flex: 0 1 auto; white-space: nowrap;
     display: inline-flex; align-items: center; justify-content: center;
 }
-
-/* D-1 — downloader meta line: separators are generated only betwee */
 .dl-meta-row > span:empty { display: none; }
 .dl-meta-row > span:not(:empty) ~ span:not(:empty)::before {
     content: "•"; margin-right: 6px; color: var(--text-3);
 }
-
-/* Y-1/Y-2 — History rows: titles may use three lines before the clamp
-   (typical titles lose nothing), and the meta line wraps instead of
-   cutting off at one line. */
 .hub-row-title { -webkit-line-clamp: 3; }
 .hub-row-meta {
     white-space: normal; overflow: visible; text-overflow: clip;
     overflow-wrap: anywhere;
 }
-/* P2 (premium round 2026-11-02): the relative-time phrase ("45h
-   ago") is one token — it must never split across lines when the
-   meta row wraps on badge-carrying cards. */
 .hub-time-ago { white-space: nowrap; }
-
-/* A-1 — admin sub-nav: every section visible at once as a wrapped
-   chip row; the scroll-strip fade mask goes with the scrolling. */
 .adm-nav {
     flex-wrap: wrap; overflow-x: visible; overflow-y: visible;
     -webkit-mask-image: none; mask-image: none;
     border-radius: var(--r-lg);
 }
-
-/* A-2 — queue status filters: same wrap treatment, scoped to the one
-   strip (the engine select keeps its own row in the column bar). */
 #adm-screen-jobs #queue-status-filters {
     flex-wrap: wrap; overflow-x: visible; overflow-y: visible;
     -webkit-mask-image: none; mask-image: none;
 }
-
-/* A-3/A-4/A-6 — admin user rows: two lines. Line 1 = name (the onl */
 .adm-user-line1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .adm-user-name {
     flex: 0 1 auto; min-width: 0;
@@ -2977,26 +2666,17 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     white-space: normal; overflow: visible; text-overflow: clip;
     overflow-wrap: anywhere; line-height: 1.55;
 }
-/* Segments are atomic inline-blocks: a plain inline span can */
 .adm-user-sub .adm-sub-seg { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .adm-user-sub .adm-sub-seg + .adm-sub-seg::before {
     content: "•"; margin: 0 5px; color: var(--text-3);
 }
-
-/* A-5 — the Users search row: the shared .admin-action-row gives t */
 #adm-users-main .admin-action-row .btn { flex: none; }
-
-/* A-6 — category filter chips + Load-more for the Users list (the
-   filter itself is server-side; see api.py / app.js). */
 .adm-users-filter-row { margin-top: var(--s3); }
 .adm-users-filter-chip { white-space: nowrap; }
 #adm-users-load-more { width: 100%; margin-top: var(--s3); min-height: 44px; }
-
 /* Recap settings-UI fix batch (2026-11-02, RS-1/RS-2/RS-6/RS-7) */
 .pill-group, .pill-group.sm { border-radius: 24px; }
 .pill-group .pill-btn.active { box-shadow: var(--glass-hi); }
-
-/* RS-6/RS-7 — the R28 "uniform tiles" flex rules (flex-basis 42%/2 */
 #recap-quality-picker, #recap-logo-pos-picker, #recap-fill-picker,
 #recap-crop-presets-toolbar, #sub-lines-picker-toolbar,
 #font-size-picker-toolbar, #recap-sub-font-picker, #recap-speed-picker {
@@ -3008,11 +2688,8 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 #sub-lines-picker-toolbar { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
 #font-size-picker-toolbar { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; }
 #recap-sub-font-picker { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
-/* Fill's three labels are the tab's longest; as a one-column stack
-   each keeps its full one-line label at the standard 38px height. */
 #recap-fill-picker { grid-template-columns: 1fr; grid-auto-rows: 1fr; }
 #recap-fill-picker .pill-btn { white-space: nowrap; }
-/* Speed: 3 + 2 over a 6-column grid — both lines span full width. */
 #recap-speed-picker { grid-template-columns: repeat(6, 1fr); grid-auto-rows: 1fr; }
 #recap-speed-picker .pill-btn { grid-column: span 2; }
 #recap-speed-picker .pill-btn:nth-child(4),
@@ -3026,20 +2703,14 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     display: flex; align-items: center; justify-content: center; text-align: center;
 }
 .ratio-pills-grid { grid-auto-rows: 1fr; }
-
 /* RS-2 (superseded by Batch AH, 2026-11-05) — this block used to */
-
-/* RS-7 minors — one packing rule for the seek panel: every line */
 .seek-actions-row .mini-btn-seek { flex: 1 1 0; }
 .seek-presets-pills {
     flex: 1 1 100%; margin-left: 0; justify-content: space-between;
 }
-/* The crop-sync chip keeps its label on one line (it wrapped to two
-   inside the header row); the detail toggle takes the slack. */
 #btn-sync-crop { flex: 0 0 auto; }
 #btn-sync-crop .chip-lbl { white-space: nowrap; }
 .recap-detail-toggle { flex: 1 1 auto; min-width: 0; }
-
 /* ── Batch AC: live jobs pill + sheet, prefs saved note ─────────── */
 /* Batch AK (Addition C): the pill is a full-width status BAR — */
 .live-jobs-pill {
@@ -3124,8 +2795,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .live-job-row-meta { font-size: 12px; opacity: 0.75; white-space: normal; overflow-wrap: break-word; line-height: 1.55; }
 .live-job-row-actions { display: flex; gap: 6px; align-items: center; }
 @media (max-width: 480px) {
-    /* Actions get their own full row at phone widths so nothing
-       competes with the title/meta column. */
     .live-job-row-actions { flex: 1 0 100%; justify-content: flex-end; }
 }
 .live-job-row-bar { height: 5px; border-radius: 999px; background: #e6ebf2; overflow: hidden; margin-top: 4px; }
@@ -3163,50 +2832,34 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .submit-confirm-icon { font-size: 34px; }
 .submit-confirm-hint { font-size: 12px; opacity: 0.8; margin-top: 10px; }
 .submit-confirm-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
-
 /* Batch AK — premium-standard fixes (2026-11-05) */
-
-/* P1: the fill picker's selected state is unmistakable — a filled
-   gold pill, not a faint tint (the ratio/fill/style pickers share
-   .pill-btn). */
 .pill-btn.active {
     background: linear-gradient(180deg, #ffd968, #f5b921);
     color: #221a04; border-color: #d99a06;
     box-shadow: 0 2px 8px rgba(217, 154, 6, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.55);
     font-weight: 700;
 }
-/* S4: when the fill cannot change anything the picker greys out. */
 .fill-picker-disabled { opacity: 0.45; filter: grayscale(0.6); }
 .fill-picker-disabled .pill-btn { pointer-events: none; }
-/* S5/N5: the honest note under the fill picker. */
 .fill-note {
     margin-top: 8px; font-size: 12.5px; line-height: 1.55;
     color: var(--text-2);
 }
-
-/* N1: output dimensions on the ratio pills. */
 .ratio-btn .ratio-dims {
     display: block; font-size: 11px; font-weight: 600;
     color: var(--text-3); margin-top: 2px; letter-spacing: 0.02em;
 }
 .ratio-btn.active .ratio-dims { color: var(--gold-2); }
-
-/* S6: the language picker — label outside the group, a real grid
-   (the label used to sit INSIDE the pill row as a non-button). */
 .recap-lang-block .spec-lbl { display: block; }
 .lang-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
     gap: 6px;
 }
 .lang-grid .pill-btn { width: 100%; justify-content: center; text-align: center; }
-
-/* Preview unification: the engine-composited frame fills the inner
-   movie plainly (it is already the exact render frame). */
 .canvas-composite-img {
     position: absolute; inset: 0; width: 100%; height: 100%;
     object-fit: fill; display: block;
 }
-
 /* Batch AM (M3 residual): explicit preparing state while the first
    engine composite is in flight — the canvas never sits on a bare
    unexplained backdrop in that window. */
@@ -3220,7 +2873,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     font-size: 12.5px; font-weight: 700; color: rgba(255, 255, 255, 0.92);
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
-
 /* Batch AM (M4): the raw source-video surface carries this label so
    its native black letterbox is not read as the styled preview. */
 .canvas-source-label {
@@ -3231,27 +2883,18 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 .canvas-source-label.hidden { display: none; }
-
-/* S6: the step-2 hint tag gets its own row under the header. */
 .visual-editor-card .hint-tag { display: inline-block; margin-top: 6px; }
 .visual-editor-card .hint-tag.hidden { display: none; }
-
-/* Addition B: the title fallback hint (toggle ON + empty text). */
 .recap-title-fallback-hint {
     font-size: 12.5px; line-height: 1.6; color: #d97706; font-weight: 600;
 }
-
-/* S6/P8: ONE switch language for every toggle component. The */
 .chip-toggle::before {
     content: ""; width: 8px; height: 8px; border-radius: 50%;
     background: var(--surface-3); border: 1px solid var(--border-strong);
     flex: 0 0 auto; transition: background 0.18s ease;
 }
 .chip-toggle.active::before { background: var(--gold); border-color: var(--gold-border); }
-
 /* ── Batch AS (2026-11-05): preview-truth + overflow fixes ─────────── */
-
-/* AS-1: the aspect cards are CARDS again, not pills — each stacks  */
 .ratio-pills-grid .ratio-btn {
     flex-direction: column; align-items: flex-start; justify-content: center;
     gap: 1px; min-height: 0; padding: 10px 12px;
@@ -3262,28 +2905,20 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     font-size: 11.5px; font-weight: 500; line-height: 1.45; color: var(--text-3);
 }
 .ratio-btn.active .ratio-sub { color: var(--gold-2); }
-
-/* AS-6: bottom clearance for the fixed CTA band. The sticky CTA ba */
 #tab-voice { padding-bottom: 72px; }
-
-/* AS-6: the Voice persona filter chips size to their content and */
 .persona-filter-row { flex-wrap: wrap; }
 .persona-filter-row .filter-chip {
     flex: 1 1 auto; overflow: visible; text-overflow: clip;
 }
-
 /* Batch AX: Recap wizard */
 .recap-steps-nav { margin-bottom: var(--s2); }
 /* Batch AZ-9: the AX-2R track/nodes/caption rules that stood here */
-
 .recap-step-head { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 4px 2px; font-weight: 700; }
 .recap-step-word { color: var(--text-2); font-size: 14px; }
 .recap-step-dot { color: var(--text-3); }
 .recap-step-body { padding-top: var(--s1, 4px); }
 .recap-step-next-row { display: flex; justify-content: flex-end; }
 .recap-step-next { min-height: 48px; padding: 0 22px; }
-
-/* Fine-tune expandable inside Step 2 (mirrors the house accordion). */
 .recap-fine-header {
     display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
     width: 100%; min-height: 48px; padding: 10px 14px;
@@ -3293,14 +2928,9 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-fine-title { font-size: 14px; font-weight: 600; }
 .recap-fine-chevron { color: var(--text-3); font-size: 12px; flex-shrink: 0; }
 .recap-fine-body { padding-top: var(--s2); }
-
 .recap-detail-group { padding: var(--s2) 0; border-top: 1px dashed rgba(255, 255, 255, 0.10); }
 .recap-detail-group:first-child { border-top: none; padding-top: 0; }
 .recap-detail-group-title { font-size: 13.5px; font-weight: 700; color: var(--text-1); margin-bottom: var(--s1, 4px); }
-
-/* Step 4 choices line (AX-4): title · voice · aspect in ONE compact
-   line above the quote — the title segment truncates with an
-   ellipsis so the line never overflows. */
 .recap-step4-choices {
     display: flex; align-items: center; gap: 6px; min-width: 0;
     margin-bottom: var(--s2); font-size: 13px; color: var(--text-2);
@@ -3310,35 +2940,21 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-step4-choice-voice, .recap-step4-choice-ratio { flex: 0 0 auto; }
 .recap-step4-choice-voice::before, .recap-step4-choice-ratio::before { content: "·"; margin-right: 6px; color: var(--text-3); }
 .recap-step4-choice-voice:empty::before, .recap-step4-choice-ratio:empty::before { content: none; }
-
-/* Language control (AX-5 → AZ-11): the full 18-value list as ONE
-   compact dropdown — since AZ-11 it is the only language control
-   (the frequent pills are retired). */
 .recap-lang-more { width: 100%; min-width: 0; }
-
-/* Step 4 review: preview thumbnail + the large credit quote. */
 .recap-step4-review { display: flex; align-items: center; gap: var(--s3, 14px); }
 .recap-step4-thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; flex-shrink: 0; border: 1px solid rgba(255, 255, 255, 0.15); }
 .recap-step4-quote { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .recap-step4-quote-label { font-size: 12.5px; color: var(--text-3); }
 .recap-step4-quote-value { font-size: 30px; font-weight: 800; line-height: 1.1; color: var(--gold, #f5c451); }
 .recap-step4-quote-unit { font-size: 15px; font-weight: 600; }
-
-/* Grip offset (owner 9:16 finding): the subtitle/title drag handle */
 .preview-sub-box .sub-grip,
 .preview-title-box .title-grip {
     position: absolute; top: 0; left: 50%;
     transform: translate(-50%, calc(-100% - 3px));
     margin: 0; z-index: 6; white-space: nowrap;
 }
-
-/* Cramped-spot guard (parent inventory): the custom-crop label and
-   the sync lock pill wrap onto two lines instead of colliding. */
 #recap-preview-transform-group .card-header-row { flex-wrap: wrap; row-gap: var(--s2); }
-
 /* Batch AX-4R + AX-6: Step 4 output preview + tab-wide polish */
-
-/* Output preview card (AX-4R). The frame is a fixed aspect box */
 .recap-output-card { margin-bottom: var(--s3); }
 .recap-output-frame {
     position: relative; width: 100%; margin: 0 auto;
@@ -3357,7 +2973,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
     font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap;
 }
-
 /* Card headers (AX-6): one pattern — the step number as a badge in */
 .recap-step-head { gap: var(--s2); padding: var(--s2) 2px var(--s3); min-height: 52px; }
 .recap-step-head .step-num-pill {
@@ -3365,10 +2980,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     background: linear-gradient(135deg, #2563eb, #60a5fa);
     box-shadow: 0 2px 8px rgba(2, 6, 23, 0.30), 0 0 0 3px rgba(96, 165, 250, 0.18);
 }
-
-/* Buttons (AX-6): Continue = full-width primary in the blue
-   gradient language with a soft shadow (the "→" affordance is in
-   the markup); secondary actions stay quiet. */
 .recap-step-next-row { justify-content: stretch; margin-top: var(--s3); }
 .recap-step-next {
     width: 100%; min-height: 52px; padding: 0 22px;
@@ -3376,9 +2987,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     color: #fff; border-color: transparent; font-weight: 700;
     box-shadow: 0 6px 20px rgba(37, 99, 235, 0.32);
 }
-
-/* Pickers (AX-6): ONE selected language across the tab — blue
-   gradient fill, white text, soft shadow. */
 #tab-recap .pill-btn.active,
 #tab-recap .style-chip.active,
 #tab-recap .ratio-btn.active {
@@ -3387,48 +2995,29 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     box-shadow: 0 4px 14px rgba(37, 99, 235, 0.32);
 }
 #tab-recap .ratio-btn.active .ratio-sub { color: rgba(255, 255, 255, 0.88); }
-/* The AU render-quality lock keeps its shipped gold look — do not
-   restyle (AX-6 explicit exclusion). */
 #recap-quality-picker .pill-btn.active {
     background: linear-gradient(180deg, #ffd968, #f5b921);
     color: #221a04; border-color: #d99a06;
     box-shadow: 0 2px 8px rgba(217, 154, 6, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
-
-/* Toggles (AX-6): one switch language across Steps 2–4 — the
-   switch-track component and the checkbox rows share the blue
-   on-state of the new primary language. */
 #tab-recap .toggle-pill-btn.active .switch-track {
     background: linear-gradient(135deg, #2563eb, #60a5fa); border-color: transparent;
 }
 #tab-recap .script-review-row input[type="checkbox"] { accent-color: #2563eb; }
-
-/* Sliders (AX-6): the value readout is a fixed-width right-aligned */
 #tab-recap .slider-val {
     min-width: 58px; text-align: right; padding: 2px 8px;
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
 }
-
-/* Detail-group titles (AX-6): one section-label pattern — icon +
-   label over a hairline divider, identical rhythm above/below. */
 .recap-detail-group { padding: var(--s4) 0 var(--s3); }
 .recap-detail-group-title {
     padding-bottom: var(--s2); margin-bottom: var(--s3);
     border-bottom: 1px solid rgba(127, 148, 179, 0.22);
 }
-
-/* Empty stage (AX-6): soft dashed inner frame, centred icon and
-   one guidance line; same padding as the loaded stage's card so
-   the card does not jump when a source lands. */
 .preview-empty-state {
     border: 1.5px dashed rgba(127, 148, 179, 0.45);
     border-radius: var(--r-lg); padding: 24px 16px;
     background: rgba(127, 148, 179, 0.06);
 }
-
-/* Step 4 summary (AX-6): choices as a tidy chip row (title chip
-   truncates), and the credit quote in a subtle gradient-bordered
-   summary card. */
 .recap-step4-choices { flex-wrap: wrap; overflow: visible; white-space: normal; row-gap: 6px; }
 .recap-step4-choices > span {
     background: var(--surface-2); border: 1px solid var(--border);
@@ -3441,23 +3030,15 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     background: linear-gradient(var(--surface), var(--surface)) padding-box,
                 linear-gradient(135deg, #2563eb, #60a5fa) border-box;
 }
-
-/* 1-Click CTA (AX-6): exact behaviour/ids untouched; its gradient
-   and shadow join the new primary-button language. */
 #btn-start-recap {
     background: linear-gradient(135deg, #2563eb, #60a5fa);
     color: #fff; box-shadow: 0 8px 24px rgba(37, 99, 235, 0.38);
 }
-
 /* Batch AY — Home rearrangement: welcome strip tint, Start/Tools */
-
-/* Welcome strip: soft blue gradient tint over the glass surface. */
 #tab-home .welcome-strip {
     background: linear-gradient(135deg, rgba(37, 99, 235, 0.13), rgba(96, 165, 250, 0.05)), var(--surface);
     border-color: rgba(37, 99, 235, 0.28);
 }
-
-/* Start / Tools tiles: one tile language — gradient icon chip, nam */
 .home-tile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
 #tab-home .home-tile {
     display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2);
@@ -3484,8 +3065,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 body.lang-my .home-tile-name { line-height: 1.7; }
 body.lang-my .home-tile-hint { line-height: 1.8; }
 #home-tools-card .card-label { margin-bottom: var(--s2); }
-
-/* Samples: branded mini-player rows — round gradient play/pause */
 .sample-main { display: flex; align-items: center; gap: var(--s3); }
 .sample-main .sample-meta { flex: 1; }
 .sample-play-btn {
@@ -3513,8 +3092,6 @@ body.lang-my .home-tile-hint { line-height: 1.8; }
     transition: width 0.2s linear;
 }
 #home-samples-card .sample-audio { display: none; }
-
-/* Tutorials (owner addendum): the card collapses to ONE header row */
 .home-tut-head {
     display: flex; align-items: center; gap: var(--s2);
     width: 100%; min-height: 44px; padding: 2px 0;
@@ -3534,14 +3111,10 @@ body.lang-my .home-tut-count { line-height: 1.7; }
 #home-tut-more { margin-top: var(--s2); }
 .home-tut-index-row { display: flex; justify-content: flex-end; margin-bottom: var(--s2); }
 #home-tut-more .home-tut-row:first-child { border-top: 1px solid var(--divider); }
-
-/* Support: slim card — the row carries its own padding. */
 .home-support-card { padding-top: 6px; padding-bottom: 6px; }
-
 @media (prefers-reduced-motion: reduce) {
     #tab-home .home-tile, .home-tut-expand-chevron, .sample-progress-fill { transition: none; }
 }
-
 /* ════════════════════════════════════════════════════════════════════
    BATCH AZ — GLASSMORPHISM 2.0 / LIQUIDMORPHISM (2026-11-06)
    Spec: ~/workspace/batch-az-spec-2026-11-06.md (AZ-1…AZ-12).
@@ -3554,8 +3127,6 @@ body.lang-my .home-tut-count { line-height: 1.7; }
    AZ-12 i18n/spacing rules. CSS-first; the only JS is AZ-4's
    nav-pill mover + tab-enter toggles and AZ-7's toast exit hook.
    ════════════════════════════════════════════════════════════════════ */
-
-/* AZ-3 · Depth tiers + AZ-2 · specular rim tokens */
 :root {
     --glass-1-bg: rgba(255, 255, 255, 0.50);
     --glass-2-bg: rgba(255, 255, 255, 0.65);
@@ -3572,7 +3143,6 @@ body.lang-my .home-tut-count { line-height: 1.7; }
     --shadow-1: var(--rim-shadow), 0 8px 24px rgba(70, 110, 160, 0.10);
     --shadow-2: var(--rim-shadow), 0 14px 34px rgba(70, 110, 160, 0.20);
     --shadow-3: var(--rim-shadow), 0 22px 54px rgba(70, 110, 160, 0.30);
-    /* Tier mapping — legacy names resolve to the tiers. */
     --surface: var(--glass-1-bg);
     --blur-card: var(--glass-1-blur);
     --blur-chrome: var(--glass-2-blur);
@@ -3581,8 +3151,6 @@ body.lang-my .home-tut-count { line-height: 1.7; }
     --shadow-card: var(--shadow-1);
     --shadow-pop: var(--shadow-3);
 }
-
-/* AZ-2 · Gradient hairline rims on the major surfaces */
 .card, .top-nav, .bottom-nav, .modal-content, .studio-confirm-card,
 .gate-lock-card, .studio-toast, .floating-alert-card, .sticky-cta-bar,
 .submit-confirm-card, .live-jobs-sheet-card, .advanced-studio-accordion,
@@ -3592,7 +3160,6 @@ body.lang-my .home-tut-count { line-height: 1.7; }
         linear-gradient(var(--az-bg, var(--glass-1-bg)), var(--az-bg, var(--glass-1-bg))) padding-box,
         linear-gradient(180deg, var(--rim-hi), var(--rim-lo)) border-box;
 }
-/* Tier assignment per surface (AZ-3). */
 .top-nav { --az-bg: rgba(255, 255, 255, 0.62); }
 .bottom-nav { --az-bg: rgba(255, 255, 255, 0.88); } /* nav keeps its
     readability floor (the polish pass's .9-opacity verdict) while
@@ -3602,7 +3169,6 @@ body.lang-my .home-tut-count { line-height: 1.7; }
 .floating-alert-card, .submit-confirm-card, .live-jobs-sheet-card {
     --az-bg: var(--glass-3-bg);
 }
-/* Tier blur completion: the surfaces the older layers did not */
 .sticky-cta-bar {
     backdrop-filter: var(--glass-2-blur);
     -webkit-backdrop-filter: var(--glass-2-blur);
@@ -3611,16 +3177,11 @@ body.lang-my .home-tut-count { line-height: 1.7; }
     backdrop-filter: var(--glass-3-blur);
     -webkit-backdrop-filter: var(--glass-3-blur);
 }
-/* The live-jobs status pill is a DARK glass surface by design
-   (white text over jobs content): it joins tier 2 by blur + rim,
-   its colours stay. */
 .live-jobs-pill {
     backdrop-filter: var(--glass-2-blur);
     -webkit-backdrop-filter: var(--glass-2-blur);
     box-shadow: var(--rim-shadow), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
-
-/* AZ-1 · Liquid ambient */
 body::before {
     inset: -8%;
     background:
@@ -3635,16 +3196,12 @@ body::before {
     from { transform: translate3d(-1.6%, -1%, 0) scale(1); }
     to { transform: translate3d(1.6%, 1.4%, 0) scale(1.05); }
 }
-
-/* AZ-4 · Liquid motion */
 .tab-pane.active { animation: none; }
 .tab-pane.tab-enter { animation: azPaneIn 0.22s ease; }
 @keyframes azPaneIn {
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: none; }
 }
-/* The sliding nav pill: ONE element behind the active item,
-   positioned by moveNavPill() from the active item's own box. */
 .nav-pill {
     position: absolute; left: 0; top: 0; z-index: 0;
     border-radius: 999px; pointer-events: none;
@@ -3656,7 +3213,6 @@ body::before {
 }
 .bottom-nav .nav-item { position: relative; z-index: 1; }
 .nav-item.active { background: transparent; box-shadow: none; }
-/* Sheets + modals: gentle spring entrances (transform/opacity). */
 .live-jobs-sheet-card, .submit-confirm-card { animation: azSheetIn 0.38s cubic-bezier(0.34, 1.25, 0.4, 1); }
 .modal-content, .studio-confirm-card, .gate-lock-card { animation: azPopIn 0.32s cubic-bezier(0.34, 1.2, 0.4, 1); }
 @keyframes azSheetIn {
@@ -3667,8 +3223,6 @@ body::before {
     from { opacity: 0; transform: scale(0.96) translateY(8px); }
     to { opacity: 1; transform: none; }
 }
-/* Presses: squash to 0.97 and recover; primary buttons also get
-   a sheen sweep while pressed. */
 .pill-btn, .seg-btn, .filter-chip, .style-select-pill { transition: transform 0.1s ease; }
 .pill-btn:active, .seg-btn:active, .filter-chip:active, .style-select-pill:active { transform: scale(0.97); }
 .gold-gradient-btn, .primary-btn { position: relative; overflow: hidden; }
@@ -3680,8 +3234,6 @@ body::before {
 .gold-gradient-btn:active::after, .primary-btn:active::after {
     transform: translateX(120%); transition: transform 0.45s ease;
 }
-
-/* AZ-5 · Tinted glass accents */
 .gold-gradient-btn, .primary-btn {
     border: 1px solid rgba(255, 255, 255, 0.35);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55),
@@ -3691,7 +3243,6 @@ body::before {
 .seg-btn.active, .pill-btn.active, .tb-tab-btn.active {
     box-shadow: var(--rim-shadow), 0 2px 8px rgba(70, 110, 160, 0.18);
 }
-/* Warm-gold glass variant: the AU quality pill keeps its shipped */
 #recap-quality-picker .pill-btn.active {
     box-shadow: var(--rim-shadow), 0 2px 8px rgba(217, 154, 6, 0.35);
 }
@@ -3700,17 +3251,12 @@ body::before {
     border-color: rgba(217, 154, 6, 0.45);
     box-shadow: var(--rim-shadow), 0 10px 34px rgba(217, 154, 6, 0.16);
 }
-/* Semantic tints raised to the same recipe (specular + rim). */
 .btn-approve, .btn-reject { box-shadow: var(--rim-shadow); }
-/* Media frames sit INTO the glass: deep inner shadow + edge
-   light on the two stage surfaces. */
 .mockup-screen, .recap-output-frame {
     box-shadow: inset 0 2px 14px rgba(2, 6, 23, 0.45),
                 inset 0 0 0 1px rgba(255, 255, 255, 0.14),
                 0 14px 34px rgba(70, 110, 160, 0.25);
 }
-
-/* AZ-7 · Toasts — presentation rebuilt */
 .studio-toast {
     --toast-accent: var(--violet);
     border-radius: var(--r-lg);
@@ -3750,7 +3296,6 @@ body::before {
     from { transform: scaleX(1); }
     to { transform: scaleX(0); }
 }
-/* The toast's sibling surface speaks the same language. */
 .floating-alert-card {
     box-shadow: var(--shadow-3);
     animation: azAlertIn 0.32s cubic-bezier(0.34, 1.25, 0.4, 1);
@@ -3759,8 +3304,6 @@ body::before {
     from { opacity: 0; transform: translateY(10px) scale(0.97); }
     to { opacity: 1; transform: none; }
 }
-
-/* AZ-9 · Step indicator — liquid segmented capsule */
 .recap-steps-capsule {
     display: flex; align-items: stretch; gap: 6px;
     padding: 6px; border-radius: 999px;
@@ -3801,15 +3344,8 @@ body::before {
     55% { transform: scale(1.03); }
     100% { transform: scale(1); }
 }
-
-/* AZ-10 · Text-defect fixes (live-observed on r70) */
-/* Class: pill labels never starve their glyph stacks. */
 .pill-btn { line-height: 1.6; }
-/* Class: pills break only at word boundaries — never mid-word
-   (the "Korean (ကိုရီး / ယား)" failure). */
 .pill-btn, .style-select-pill, .filter-chip { word-break: keep-all; overflow-wrap: normal; }
-/* 1 · Header balance chips: proper glass pills — icon + value,
-   vertically centred, fully inside the header. */
 .balance-chips { align-items: center; }
 .bal-chip {
     display: inline-flex; align-items: center; gap: 5px;
@@ -3819,33 +3355,23 @@ body::before {
     border: 1px solid var(--glass-line);
     box-shadow: var(--glass-hi-soft);
 }
-/* 2 · Voice speed pills: full height + descender room. */
 #speed-selector .pill-btn {
     min-height: 44px; padding: 7px 14px;
     display: inline-flex; align-items: center; justify-content: center;
 }
-/* 3 · VIP plan buttons + card lines: numerals and ဝယ်မည် clear. */
 .pricing-card .btn { min-height: 56px; line-height: 1.7; padding: 12px 18px; }
 .plan-name { line-height: 1.6; }
-/* 4 · Bottom-nav labels: raised line-height + bottom clearance
-   inside the pill (the sliding AZ-4 pill matches the item box, so
-   labels stay clear of it by construction). */
 .nav-item { line-height: 1.6; }
 .nav-label { line-height: 1.6; padding-bottom: 2px; }
 body.lang-my .nav-label { line-height: 1.75; }
-/* 5 · CTA/nav occlusion: the Voice pane gains the same order of */
 #tab-voice { padding-bottom: 72px; }
-/* 8 · Admin sub-texts + card labels: descender clearance. */
 .stat-lbl { line-height: 1.65; }
 .card-label { line-height: 1.6; }
-/* 9 · Welcome-strip touch targets ≥ 44px. */
 .welcome-strip-btn { min-height: 44px; display: inline-flex; align-items: center; }
 .welcome-strip-x {
     min-width: 44px; min-height: 44px;
     display: inline-flex; align-items: center; justify-content: center;
 }
-
-/* AZ-11 · Compact dropdown pattern */
 .glass-dropdown {
     appearance: none; -webkit-appearance: none;
     min-height: 50px; padding: 10px 40px 10px 14px;
@@ -3862,14 +3388,10 @@ select.studio-input {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath d='M1.5 1.5L6 5.5L10.5 1.5' stroke='%2347617c' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 12px center;
 }
-/* Voice persona picker (already the compact pattern — selected
-   row + expand-in-place grid): restyle only, into the glass
-   language. */
 .voice-selected-row {
     border-color: var(--glass-line);
     box-shadow: var(--shadow-tile);
 }
-
 /* ── AZ fallbacks: extend the no-backdrop-filter + reduced-
    transparency nets to every new layer ────────────────────────── */
 @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
@@ -3914,32 +3436,21 @@ select.studio-input {
     .submit-confirm-card { animation: none; }
     .studio-toast .toast-progress { animation: none; }
 }
-
 /* BATCH BA: Header phone-width fit (BA-1) */
 @media (max-width: 430px) {
-    /* Header side padding tightens one step on the spacing scale. */
     .top-nav { padding-inline: var(--s2); }
-    /* Brand compacts: the STUDIO subtitle hides; the VOICE CLONE
-       wordmark, PRO tag and logo stay whole. */
     .sub-brand { display: none; }
-    /* Guide + language become compact icon buttons (the guide's */
     .tutorial-pill-btn, .lang-pill-btn {
         width: 40px; min-height: 40px; padding: 5px 0;
         justify-content: center; flex-shrink: 0;
     }
     .tutorial-pill-btn .tutorial-btn-text,
     .lang-pill-btn .lang-btn-text { display: none; }
-    /* User-pill row tightens: pill padding one step in, the ADMIN /
-       FREE badge text shrinks to the 10px floor (never below,
-       never clipped), LIVE padding tightens, and the balance chips
-       keep their AZ-10.1 glass-pill form with tighter inline
-       padding — icons + values stay whole. */
     .user-pill { padding: var(--s2); }
     .vip-badge { font-size: 10px; padding: 2px 6px; }
     .live-dot { padding: 2px 6px; }
     .bal-chip { padding: 6px 8px; }
 }
-
 /* ════════════════════════════════════════════════════════════════════
    BATCH BB (2026-11-06)
    BB-2: the three speed selectors (Voice #speed-selector, TTS
@@ -3970,8 +3481,6 @@ select.studio-input {
     backdrop-filter: blur(var(--glass-2-blur)) saturate(160%);
     -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(160%);
 }
-/* The recap picker's retired grid rules (higher up) are superseded:
-   the capsule is a flex track. */
 #recap-speed-picker.speed-capsule { display: flex; }
 .speed-capsule-pill {
     position: absolute; top: 0; left: 0; z-index: 0;
@@ -4000,17 +3509,12 @@ select.studio-input {
 .speed-seg .seg-full { display: none; }
 .speed-seg.active .seg-full { display: inline; }
 .speed-seg.active .seg-short { display: none; }
-/* Speed rows stack so the capsule spans the card; the title keeps
-   the standard inset (first-glyph clip fix). */
 .control-row.speed-row { flex-direction: column; align-items: stretch; gap: var(--s2); }
 .control-row.speed-row .ctrl-title { padding-inline-start: var(--s1); }
 #recap-preview-speed-group .card-label { padding-inline-start: var(--s1); }
-/* BB-3: TTS labelling tints. */
 .history-item-badge.badge-tts { background: var(--sky-soft); color: var(--sky); }
 .hub-type-icon.tts { background: var(--sky-soft); }
-/* BB-4: quota fallback line affordance. */
 .tts-balance-retry { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
-
 /* ════════════════════════════════════════════════════════════════════
    BATCH BG (2026-11-06) — PERSONA CARD TIDY (BD spec §15)
    Owner's real-phone screenshot (live r76): "ဖုန်းမှာမသေသပ်" — the
@@ -4029,39 +3533,21 @@ select.studio-input {
    Every value below is proven by measure_persona_cards.py (PIL/Padauk
    sweep at 360/390/430, my+en, all 12 personas, all 3 label states):
    resting-label slack +6.5/+21.5/+41.5px (my) after this block. ════ */
-
-/* Equal-height rows, explicit: the flex column fills the row so the
-   description flexes and the footer button pins to one baseline. */
 .persona-card { height: 100%; }
-
-/* Header rhythm: avatar → meta gap and the meta's internal gaps move
-   to the §1 scale (8 / 4). */
 .persona-header { gap: var(--s2); }
 .persona-meta { gap: var(--s1); }
-
-/* Name: the typography scale's 15px card-title step, ONE line — ev */
 .persona-name {
     font-size: 15px; line-height: 1.5;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
-/* Category: the former parenthetical as its own smaller line. It m */
 .persona-category {
     font-family: Padauk, "Noto Sans Myanmar", "Myanmar Text", sans-serif;
     font-size: 12px; font-weight: 600; line-height: 1.5;
     color: var(--text-2); text-wrap: balance;
 }
-
-/* Badge + description: line-heights complete the §11 rhythm (badge
-   1.5; Burmese description 1.75 under lang-my). */
 .persona-badge { line-height: 1.5; }
 body.lang-my .persona-desc { line-height: 1.75; }
-
-/* Footer: bleeds into the card's side padding so the button spans the
-   card's full inner width (see the measured note above). */
 .persona-footer-row { margin-inline: calc(-1 * var(--s3)); }
-
-/* Preview button: §4's 44px floor, the §1 padding step (8px), labe */
 .voice-preview-btn {
     min-height: 44px; padding: var(--s2); gap: 5px; font-size: 12px;
 }
@@ -4069,7 +3555,6 @@ body.lang-my .persona-desc { line-height: 1.75; }
 .voice-preview-btn .preview-btn-label {
     line-height: 1.5; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
-
 /* ════════════════════════════════════════════════════════════════════
    BATCH BD (2026-11-06) — WHOLE-APP GLASSMORPHISM 2.0 POLISH
    Spec: ~/workspace/batch-bd-spec-2026-11-06.md (§1–§14). §15 and
@@ -4081,8 +3566,6 @@ body.lang-my .persona-desc { line-height: 1.75; }
    strings — the engine capsule's compact labels are the emoji
    already inside its existing labels.
    ════════════════════════════════════════════════════════════════════ */
-
-/* BD-0 · The capsule family's missing tokens */
 :root {
     --glass-rim: rgba(255, 255, 255, 0.65);
     --glass-spec: var(--rim-shadow);
@@ -4092,8 +3575,6 @@ body.lang-my .persona-desc { line-height: 1.75; }
     backdrop-filter: var(--glass-2-blur);
     -webkit-backdrop-filter: var(--glass-2-blur);
 }
-
-/* BD-1 · §5 — the shared segmented capsule (.seg-capsule) */
 .seg-capsule {
     position: relative; display: flex; align-items: stretch;
     gap: var(--s1); width: 100%; padding: 6px;
@@ -4131,9 +3612,6 @@ body.lang-my .persona-desc { line-height: 1.75; }
 .seg-capsule .capsule-seg .seg-full { display: none; }
 .seg-capsule .capsule-seg.active .seg-full { display: inline; }
 .seg-capsule .capsule-seg.active .seg-short { display: none; }
-/* One-row geometry (engine picker): equal segments, active one
-   expanded — the C1 even-tile flex for this picker is superseded
-   inside the capsule only. */
 #recap-engine-picker.seg-capsule { flex-wrap: nowrap; border-radius: 999px; }
 #recap-engine-picker .pill-btn.capsule-seg { flex: 1 1 0; min-width: 0; }
 #recap-engine-picker .pill-btn.capsule-seg.active { flex-grow: 2.4; }
@@ -4141,18 +3619,13 @@ body.lang-my .persona-desc { line-height: 1.75; }
 #recap-engine-picker .capsule-seg .seg-full { display: inline; }
 #recap-engine-picker .capsule-seg .seg-short { display: none; }
 #recap-engine-picker .pill-btn.capsule-seg.active { flex-grow: 1; }
-/* The engine label leaves the track (the speed-row pattern: title
-   above, capsule full width) so the capsule owns the full width. */
 .capsule-field { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s3); }
 .capsule-field .recap-engine-row { margin-top: 0; width: 100%; }
-/* Wrapped geometry (story styles): the track rounds to the card
-   family radius and the C1 tiles keep their flex + full labels. */
 #story-style-picker-quick.seg-capsule { flex-wrap: wrap; border-radius: var(--r-lg); padding: var(--s2); gap: var(--s2); }
 #story-style-picker-quick .style-select-pill.capsule-seg {
     white-space: normal; text-align: center; line-height: 1.6;
     padding: 6px 10px;
 }
-/* Fallback nets learn the new surface (AZ pattern). */
 @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
     .seg-capsule { background: rgba(255, 255, 255, 0.97); }
 }
@@ -4162,8 +3635,6 @@ body.lang-my .persona-desc { line-height: 1.75; }
 @media (prefers-reduced-motion: reduce) {
     .seg-capsule-pill { transition: none; }
 }
-
-/* BD-2 · §5 — glass switches */
 .switch-track, .mini-toggle .t-val,
 .script-review-row input[type="checkbox"] {
     background: var(--glass-2-bg);
@@ -4194,14 +3665,10 @@ body.lang-my .persona-desc { line-height: 1.75; }
     background: linear-gradient(135deg, #0a84ff, #38bdf8);
     border-color: rgba(255, 255, 255, 0.35);
 }
-
-/* BD-3 · §5 — inset glass fields */
 textarea:focus, .studio-input:focus, .studio-select:focus {
     box-shadow: var(--shadow-inset), 0 0 0 3px rgba(10, 132, 255, 0.18);
 }
 .studio-input { min-height: 44px; }
-
-/* BD-4 · §4 — button family completion */
 .secondary-btn, .mini-btn {
     box-shadow: var(--rim-shadow), 0 2px 10px rgba(70, 110, 160, 0.07);
 }
@@ -4212,8 +3679,6 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
     color: var(--red);
 }
 .adm-danger-btn { padding: var(--s3); }
-
-/* BD-5 · §6 — one row language */
 .hub-type-icon {
     width: 44px; height: 44px; font-size: 20px;
     box-shadow: var(--rim-shadow);
@@ -4232,8 +3697,6 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
     box-shadow: var(--rim-shadow);
 }
 .home-tut-name { font-size: 14px; }
-
-/* BD-6 · §7 — one status-pill style */
 .history-item-badge, .badge-status, .adm-status-tag, .badge-test,
 .count-badge, .hint-tag, .gate-chip, .mini-tag {
     box-shadow: var(--glass-hi-soft), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
@@ -4251,16 +3714,11 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
     background: rgba(245, 158, 11, 0.16); color: #b45309;
     border: 1px solid rgba(245, 158, 11, 0.45);
 }
-
-/* BD-7 · §8 — progress: gradient + glow head */
 .progress-bar-fill { box-shadow: 2px 0 10px rgba(10, 132, 255, 0.45); }
 .live-jobs-pill-fill, .live-job-row-fill {
     box-shadow: 2px 0 8px rgba(87, 199, 255, 0.55);
 }
-/* The live-jobs pill completes its tier-2 dressing: the AZ rim is */
 .live-jobs-pill { border-color: rgba(255, 255, 255, 0.45); }
-
-/* BD-8 · §1 — sheet interiors on the rhythm */
 .live-jobs-sheet-card { padding: var(--s4) var(--s4) calc(var(--s4) + env(safe-area-inset-bottom, 0px)); }
 .live-jobs-sheet-head { margin-bottom: var(--s2); }
 .live-job-row { gap: var(--s2); padding: var(--s2) 0; }
@@ -4273,8 +3731,6 @@ textarea:focus, .studio-input:focus, .studio-select:focus {
 .income-detail-total { margin: var(--s2) 0 0; }
 .income-detail-toggle-row { gap: var(--s3); padding: var(--s2) 0 0; }
 .adm-state { padding: var(--s4) var(--s3); }
-
-/* BD-9 · §9 — loading: glass skeleton + header treatment */
 .skeleton {
     background: linear-gradient(100deg, rgba(255, 255, 255, 0.42) 40%, rgba(255, 255, 255, 0.72) 50%, rgba(255, 255, 255, 0.42) 60%);
     background-size: 200% 100%;
@@ -4291,8 +3747,6 @@ body.gate-locked .user-pill .bal-chip {
     box-shadow: var(--glass-hi-soft);
 }
 body.gate-locked .user-pill .live-dot { opacity: 0.35; }
-
-/* BD-10 · §10 — empty states: glass medallions */
 .hub-state-emoji, .preview-empty-icon {
     width: 56px; height: 56px; font-size: 26px;
     display: inline-flex; align-items: center; justify-content: center;
@@ -4309,8 +3763,6 @@ body.gate-locked .user-pill .live-dot { opacity: 0.35; }
     border: 1px solid var(--glass-rim);
     box-shadow: var(--glass-hi-soft);
 }
-
-/* BD-11 · §11 — typography rhythm */
 body.lang-my { line-height: 1.75; }
 body.lang-en { line-height: 1.6; }
 .bal-chip, .stat-val, .stat-num, .price-val, .acc-num,
@@ -4318,20 +3770,16 @@ body.lang-en { line-height: 1.6; }
     font-variant-numeric: tabular-nums;
 }
 .pane-header p, .plan-allocation, .plan-how-text { text-wrap: balance; }
-
-/* BD-12 · §12 — compactness trims */
 .tab-pane { gap: var(--s4); }
 .video-drop-zone { padding: var(--s4); }
 .preview-empty-state { padding: var(--s6) var(--s4); }
 .hub-state { padding: var(--s4) var(--s3); }
-
 /* BATCH BZ (2026-11-07) — today's-TTS visibility */
 button.bal-chip {
     font-family: inherit; cursor: pointer; appearance: none;
 }
 .bal-chip.tts { color: var(--text); }
 .bal-chip.tts:active { transform: scale(0.96); }
-
 .home-free-list { display: flex; flex-direction: column; gap: var(--s2); }
 .home-free-row {
     display: flex; align-items: center; gap: var(--s3);
@@ -4356,16 +3804,12 @@ button.bal-chip {
     white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .home-free-chevron { color: var(--text-2); font-size: 18px; flex-shrink: 0; }
-
 @media (max-width: 430px) {
-    /* Three chips must share the user-pill row: the 🎧 chip drops */
     .bal-chip.tts { padding: 6px 7px; }
     .home-free-row { padding: var(--s2); gap: var(--s2); }
 }
-
 /* BATCH CN (2026-11-07) — TTS TAB FIXES */
 #tts-gemini-key-card { padding-inline-start: calc(var(--s4) + var(--s2)); }
-
 .detail-toggle {
     display: flex; align-items: center; gap: var(--s2);
     width: 100%; min-height: 44px; padding: 2px 0;
@@ -4379,7 +3823,6 @@ button.bal-chip {
     transition: transform 0.18s ease;
 }
 .detail-toggle.open .detail-toggle-chevron { transform: rotate(180deg); }
-
 /* ── Batch DD: Step-2 accordion groups ─────────────────────────── */
 .dd-acc-head {
     display: flex; align-items: center; gap: 10px; width: 100%;
@@ -4397,7 +3840,6 @@ button.bal-chip {
 .dd-acc.open .dd-acc-chevron { transform: rotate(90deg); }
 .dd-acc-orig-title { display: none !important; }
 .dd-acc-body { padding-bottom: 6px; }
-
 /* Batch DD: summary strip above the Step-2 continue row */
 .recap-step2-summary {
     font-size: 12.5px; line-height: 1.55; color: var(--text-dim, #8ea0b5);
@@ -4405,7 +3847,6 @@ button.bal-chip {
     border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
     border-radius: var(--r-md, 10px);
 }
-
 /* Batch DD: free style colour fields */
 .dd-color-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .dd-color-field {
@@ -4417,7 +3858,6 @@ button.bal-chip {
     border: 1px solid var(--border-strong, rgba(255,255,255,0.16));
     border-radius: 8px; background: none;
 }
-
 /* Batch DD: blur-box list chips + non-selected box outlines */
 .blur-box-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 .blur-box-actions { display: flex; gap: 8px; }
@@ -4427,18 +3867,14 @@ button.bal-chip {
     background: rgba(80, 150, 255, 0.10);
     border-radius: 6px; cursor: pointer; z-index: 6;
 }
-
 /* Batch DD: 9:16 preview frame height transitions (JS caps the
    frame at 36% / 22% of the screen height, aspect exact) */
 #recap-mockup-frame { transition: height 0.25s ease, width 0.25s ease; }
-
 /* ════════════════════════════════════════════════════════════════════
    PHASE 1 — VCP DESIGN SYSTEM TOKENS, FLAT-GLASS PERFORMANCE,
    .vcp-* COMPONENT LIBRARY, UI STATE MACHINE & .lite MODE
    ════════════════════════════════════════════════════════════════════ */
-
 :root {
-    /* 1. Audit Fix: 6 previously undefined CSS variables referenced in style.css */
     --text-muted: var(--text-2, #2F435E);
     --text-dim: var(--text-3, #475569);
     --text-1: var(--text, #0F172A);
@@ -4448,8 +3884,6 @@ button.bal-chip {
     --glass-hi-soft: inset 0 1px 0 rgba(255, 255, 255, 0.72);
     --shadow-inset: inset 0 1px 3px rgba(22, 40, 60, 0.08);
     --shadow-tile: var(--rim-shadow), 0 4px 14px rgba(70, 110, 160, 0.09);
-
-    /* 2. 4px Base Spacing Scale (§4) */
     --vcp-sp-1: 4px;
     --vcp-sp-2: 8px;
     --vcp-sp-3: 12px;
@@ -4459,8 +3893,6 @@ button.bal-chip {
     --vcp-sp-8: 32px;
     --vcp-sp-10: 40px;
     --vcp-sp-12: 48px;
-
-    /* 3. Geometry, Touch & Ergonomic Floors (§4) */
     --vcp-screen-pad: 16px;
     --vcp-card-pad: 16px;
     --vcp-card-radius: 16px;
@@ -4474,8 +3906,6 @@ button.bal-chip {
     --vcp-touch-min: 44px;
     --vcp-slider-thumb: 22px;
     --vcp-bottom-nav-h: 68px;
-
-    /* 4. Burmese-First Typography Scale (§4: never <14px for readable Burmese text) */
     --vcp-fs-body: 15.5px;
     --vcp-fs-body-sm: 14px;
     --vcp-fs-helper: 13.5px;
@@ -4487,38 +3917,29 @@ button.bal-chip {
     --vcp-lh-body: 1.7;
     --vcp-lh-title: 1.45;
     --vcp-ls-my: 0px;
-
-    /* 5. High-Contrast Semantic Color Roles (§4: >=7:1 primary, >=4.5:1 secondary) */
     --vcp-text-primary: #0F172A;
     --vcp-text-secondary: #2F435E;
     --vcp-text-muted: #475569;
-
     --vcp-primary: #0a84ff;
     --vcp-primary-deep: #0062cc;
     --vcp-primary-soft: rgba(10, 132, 255, 0.13);
     --vcp-primary-border: rgba(10, 132, 255, 0.42);
-
     --vcp-vip-gold: #d97706;
     --vcp-vip-gold-bright: #f59e0b;
     --vcp-vip-gold-soft: rgba(245, 158, 11, 0.16);
     --vcp-vip-gold-border: rgba(217, 119, 6, 0.48);
-
     --vcp-success: #0b7a55;
     --vcp-success-soft: rgba(11, 122, 85, 0.14);
     --vcp-success-border: rgba(11, 122, 85, 0.40);
-
     --vcp-warning: #b45309;
     --vcp-warning-soft: rgba(245, 158, 11, 0.16);
     --vcp-warning-border: rgba(217, 119, 6, 0.42);
-
     --vcp-danger: #c81e1e;
     --vcp-danger-soft: rgba(217, 45, 32, 0.12);
     --vcp-danger-border: rgba(217, 45, 32, 0.38);
-
     --vcp-info: #0369a1;
     --vcp-info-soft: rgba(2, 132, 199, 0.13);
     --vcp-info-border: rgba(2, 132, 199, 0.38);
-
     /* 6. Flat Glass Surface Tokens (for scrolling cards — zero backdrop-filter) */
     --vcp-flat-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.72) 100%);
     --vcp-flat-glass-inset: rgba(255, 255, 255, 0.62);
@@ -4528,7 +3949,6 @@ button.bal-chip {
     --vcp-shadow-sm: 0 4px 12px -4px rgba(15, 23, 42, 0.10);
     --vcp-bg-elevated: #FFFFFF;
 }
-
 /* ── Burmese Typography & Input Ergonomics Floor (§4) ───────────────── */
 body {
     font-size: var(--vcp-fs-body);
@@ -4546,7 +3966,6 @@ input[type="search"], input[type="password"], .studio-input, .studio-select,
     font-size: var(--vcp-fs-input);
     min-height: var(--vcp-input-min-h);
 }
-
 /* Glass Performance Rule (§4) */
 .tab-pane .card,
 .tab-pane .vcp-card,
@@ -4570,7 +3989,6 @@ input[type="search"], input[type="password"], .studio-input, .studio-select,
     border-radius: var(--vcp-card-radius);
     padding: var(--vcp-card-pad);
 }
-
 /* ── Low-Spec Android `.lite` Auto-Detect Mode (§4 & Addendum B) ────── */
 html.lite body::before,
 body.lite::before,
@@ -4621,7 +4039,6 @@ html.lite .modal-content,
 body.lite .modal-content {
     background: #ffffff !important;
 }
-
 /* ── Standard Component 1: .vcp-card ────────────────────────────────── */
 .vcp-card {
     position: relative;
@@ -4672,7 +4089,6 @@ body.lite .modal-content {
     color: var(--vcp-text-secondary);
     line-height: var(--vcp-lh-body);
 }
-
 /* ── Standard Component 2: .vcp-btn ─────────────────────────────────── */
 .vcp-btn {
     position: relative;
@@ -4749,7 +4165,6 @@ body.lite .modal-content {
     animation: vcpSpin 0.75s linear infinite;
 }
 @keyframes vcpSpin { to { transform: rotate(360deg); } }
-
 /* ── Standard Component 3: .vcp-chip / .vcp-pill ────────────────────── */
 .vcp-chip,
 .vcp-pill {
@@ -4783,7 +4198,6 @@ body.lite .modal-content {
     font-weight: 700;
     box-shadow: 0 4px 12px rgba(10, 132, 255, 0.28);
 }
-
 /* ── Standard Component 4: .vcp-segmented (Segmented Tab Bar) ───────── */
 .vcp-segmented {
     display: flex;
@@ -4826,7 +4240,6 @@ body.lite .modal-content {
     color: #ffffff;
     box-shadow: 0 3px 10px rgba(10, 132, 255, 0.28);
 }
-
 /* ── Standard Component 5: .vcp-sheet (Bottom Sheet) ────────────────── */
 .vcp-sheet-backdrop {
     position: fixed;
@@ -4885,7 +4298,6 @@ body.lite .modal-content {
     flex-direction: column;
     gap: var(--vcp-sp-3);
 }
-
 /* ── Standard Component 6: .vcp-accordion (L2 Progressive Disclosure) ─ */
 .vcp-accordion {
     border: 1px solid var(--border-strong);
@@ -4937,7 +4349,6 @@ body.lite .modal-content {
 }
 .vcp-accordion__body.hidden,
 .vcp-accordion-body.hidden { display: none !important; }
-
 /* ── Standard Component 7: .vcp-slider-row (Thumb >=22px + Reset) ───── */
 .vcp-slider-row {
     display: flex;
@@ -4999,7 +4410,6 @@ input[type="range"]::-moz-range-thumb,
     width: var(--vcp-slider-thumb) !important;
     height: var(--vcp-slider-thumb) !important;
 }
-
 /* ── Standard Component 8: .vcp-badge (Status = Icon + Text) ────────── */
 .vcp-badge {
     display: inline-flex;
@@ -5019,7 +4429,6 @@ input[type="range"]::-moz-range-thumb,
 .vcp-badge--warning, .vcp-badge-warning { background: var(--vcp-warning-soft); color: var(--vcp-warning); border: 1px solid var(--vcp-warning-border); }
 .vcp-badge--danger, .vcp-badge-danger { background: var(--vcp-danger-soft); color: var(--vcp-danger); border: 1px solid var(--vcp-danger-border); }
 .vcp-badge--info, .vcp-badge-info { background: var(--vcp-info-soft); color: var(--vcp-info); border: 1px solid var(--vcp-info-border); }
-
 /* ── UI State Machine (`data-ui-state` + `setSectionState()`) ───────── */
 [data-ui-state] > .vcp-ui-state-slot,
 [data-ui-state] > .vcp-state-loading,
@@ -5054,13 +4463,11 @@ input[type="range"]::-moz-range-thumb,
 [data-ui-state="ready"] > .vcp-ui-state-slot {
     display: none !important;
 }
-
 /* ════ PHASE 2: HOME DASHBOARD, STATUS STRIP, RECENT PROJECTS & HELP HUB ════ */
 #user-pill .vip-badge,
 #user-pill .bal-chip {
     cursor: pointer;
 }
-
 #tab-home .home-status-strip {
     display: flex;
     align-items: center;
@@ -5093,7 +4500,6 @@ input[type="range"]::-moz-range-thumb,
     color: var(--vcp-text-secondary);
     line-height: 1;
 }
-
 #tab-home .welcome-strip-actions {
     display: flex;
     align-items: center;
@@ -5111,7 +4517,6 @@ input[type="range"]::-moz-range-thumb,
     font-weight: 700;
     cursor: pointer;
 }
-
 #tab-home .home-tile-tts {
     grid-column: 1 / -1;
     display: flex;
@@ -5131,14 +4536,12 @@ input[type="range"]::-moz-range-thumb,
 #tab-home .home-tile-tts:active {
     transform: scale(0.985);
 }
-
 #tab-home .home-free-name-wrap {
     display: flex;
     align-items: center;
     gap: var(--vcp-sp-2);
     flex-wrap: wrap;
 }
-
 #tab-home .home-recent-header {
     display: flex;
     align-items: center;
@@ -5198,8 +4601,6 @@ input[type="range"]::-moz-range-thumb,
 #tab-home .home-recent-action {
     flex-shrink: 0;
 }
-
-/* Single Help entry point on Home: hides separate sample & tutorial cards until expanded */
 #tab-home .home-help-entry-card {
     padding: 0;
 }
@@ -5248,10 +4649,7 @@ input[type="range"]::-moz-range-thumb,
 #tab-home:not(.vcp-help-hub-open) #home-tutorials-card {
     display: none;
 }
-
 /* ════ PHASE 3: VOICE & TTS STUDIOS (TEXT-FIRST ORDER, EXCESS BANNER, CLONE STEPS & BYOK) ════ */
-/* Addendum A #1: Text-First visual flow (Script Input → Voice/Engine → Speed → Cost & Generate)
-   while preserving exact DOM order for existing test pins. */
 #tab-voice.active,
 #tab-tts.active {
     display: flex;
@@ -5266,7 +4664,6 @@ input[type="range"]::-moz-range-thumb,
 #tab-voice > #voice-progress-box,
 #tab-voice > #voice-result-box,
 #tab-voice > .hub-link { order: 6; }
-
 #tab-tts > .pane-header { order: 1; }
 #tab-tts > #tts-text-card { order: 2; }
 #tab-tts > .input-card:not(#tts-text-card) { order: 3; }
@@ -5280,8 +4677,6 @@ input[type="range"]::-moz-range-thumb,
 .vcp-grant-row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .vcp-grant-row:last-child { border-bottom:0; }
 .vcp-grant-exp-soon { color:#ef4444; font-weight:700; }
-
-/* Non-destructive character excess highlight banner */
 .vcp-excess-banner {
     display: flex;
     flex-direction: column;
@@ -5304,8 +4699,6 @@ input[type="range"]::-moz-range-thumb,
     gap: var(--vcp-sp-2);
     flex-wrap: wrap;
 }
-
-/* Custom Clone 5-Step Guided Flow & File Requirements */
 .vcp-clone-steps-bar {
     display: flex;
     align-items: center;
@@ -5357,8 +4750,6 @@ input[type="range"]::-moz-range-thumb,
     font-size: var(--vcp-fs-helper);
     font-weight: 600;
 }
-
-/* TTS BYOK Advanced Accordion Header & Active Badge */
 .tts-byok-advanced-head {
     width: 100%;
     display: flex;
@@ -5396,7 +4787,6 @@ input[type="range"]::-moz-range-thumb,
     opacity: 0.94;
     margin-inline-start: 4px;
 }
-
 /* ── Phase 4: Recap Step 2 Split-Screen 5-Tab Editor ────────────────── */
 .vcp-step2-sticky-preview {
     position: sticky;
@@ -5416,7 +4806,6 @@ body.lite .vcp-step2-sticky-preview {
     -webkit-backdrop-filter: none;
     background: rgba(244, 248, 255, 0.98);
 }
-
 .vcp-preview-stage-bar {
     position: relative;
     display: flex;
@@ -5449,8 +4838,6 @@ body.lite .vcp-step2-sticky-preview {
     box-shadow: 0 2px 8px rgba(15, 23, 42, 0.10);
 }
 .vcp-preview-corner-reset:active { transform: scale(0.97); }
-
-/* 5-Category Segmented Tab Bar */
 .vcp-step2-cat-tabs {
     flex-wrap: wrap;
     gap: var(--vcp-sp-1);
@@ -5486,12 +4873,9 @@ body.lite .vcp-step2-sticky-preview {
     color: #ffffff;
     box-shadow: 0 3px 10px rgba(10, 132, 255, 0.28);
 }
-
 .recap-fine-header.vcp-tab-mode-hidden {
     display: none;
 }
-
-/* Category 1: Master Presets (2-column flat glass cards) */
 .vcp-preset-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5536,8 +4920,6 @@ body.lite .vcp-step2-sticky-preview {
     width: 100%;
     overflow-wrap: break-word;
 }
-
-/* My Presets (VIP, max 3) */
 .vcp-my-presets-box {
     padding: var(--vcp-sp-3);
     border-radius: var(--vcp-radius-md);
@@ -5612,7 +4994,6 @@ body.lite .vcp-step2-sticky-preview {
     font-weight: 700;
     cursor: pointer;
 }
-
 /* Category 3: 10 Visual Subtitle Style Sample Cards */
 .vcp-sub-style-cards-grid {
     display: grid;
@@ -5723,7 +5104,6 @@ body.lite .vcp-step2-sticky-preview {
         grid-template-columns: 1fr;
     }
 }
-
 /* ═══ Phase 5: Recap Steps 3–4, Option B Dual Quote, Result/Failure Polish ═══ */
 .vcp-engine-billing-hint {
     margin-top: 8px;
@@ -5963,10 +5343,7 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
     border-color: var(--vcp-primary);
     background: rgba(10, 132, 255, 0.16);
 }
-
 /* ════ PHASE 6: DOWNLOADER, HISTORY HUB & VIP DESIGN PASS ════════════ */
-
-/* Downloader surface & state cards */
 .dl-search-card {
     gap: var(--vcp-sp-3);
 }
@@ -6044,8 +5421,6 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
     border: 1px solid var(--border-strong);
     margin-top: var(--vcp-sp-2);
 }
-
-/* History Hub design system + status + real duration + 22h expires-soon */
 #tab-history .hub-filter-row {
     gap: var(--vcp-sp-2);
     padding: 4px 2px;
@@ -6145,8 +5520,6 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
     align-items: center;
     justify-content: center;
 }
-
-/* VIP / Payment Design Pass (pricing logic & safeguards untouched) */
 #tab-vip .stats-card {
     gap: var(--vcp-sp-2);
 }
@@ -6199,7 +5572,6 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
 #tab-vip .vcp-pay-step-hint {
     margin-top: 0;
 }
-
 @media (max-width: 390px) {
     #tab-history .hub-row-main {
         padding: var(--vcp-sp-2) var(--vcp-sp-3);
@@ -6211,14 +5583,12 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
         gap: var(--vcp-sp-2);
     }
 }
-
 html.lite #tab-history .hub-skel-card,
 body.lite #tab-history .hub-skel-card,
 html.lite #tab-downloader .vcp-skel,
 body.lite #tab-downloader .vcp-skel {
     animation: none !important;
 }
-
 /* ════ PHASE 7: ADMIN CONSOLE DESIGN PASS ════ */
 #tab-admin .card.glass,
 #tab-admin .vcp-card {
@@ -6264,7 +5634,6 @@ body.lite #tab-downloader .vcp-skel {
     border-radius: var(--vcp-radius-md);
     background: var(--vcp-flat-glass-inset);
 }
-
 @media (max-width: 420px) {
     #tab-admin .form-row-2 {
         grid-template-columns: 1fr;
@@ -6279,7 +5648,6 @@ body.lite #tab-downloader .vcp-skel {
         grid-template-columns: 1fr;
     }
 }
-
 html.lite #tab-admin .card.glass,
 html.lite #tab-admin .vcp-card,
 html.lite #tab-admin .stat-mini-card,
@@ -6295,9 +5663,7 @@ body.lite #tab-admin .adm-back-btn {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
 }
-
 /* HOME POLISH + VISUAL IDENTITY PASS (feat/home-polish-visual, r14 */
-
 /* ── B1. Header Brand Moment ──────────────────────────────────────────────── */
 .top-nav,
 html.lite .top-nav,
@@ -6306,29 +5672,24 @@ body.lite .top-nav {
     border-bottom: 1px solid rgba(147, 197, 253, 0.28) !important;
     box-shadow: 0 8px 24px -6px rgba(11, 22, 48, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14) !important;
 }
-
 .top-nav .brand-crest {
     border-radius: 50%;
     overflow: hidden;
     box-shadow: 0 4px 12px rgba(2, 6, 23, 0.35), 0 0 0 1.5px rgba(255, 255, 255, 0.28);
 }
-
 .top-nav .brand-title-wrap h1 {
     color: #f8fafc !important;
     text-shadow: 0 1px 2px rgba(8, 17, 40, 0.35);
 }
-
 .top-nav .sub-brand {
     color: rgba(219, 234, 254, 0.86) !important;
 }
-
 .top-nav .pro-tag {
     background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%) !important;
     color: #ffffff !important;
     border: 1px solid rgba(255, 255, 255, 0.34) !important;
     box-shadow: 0 2px 8px rgba(14, 165, 233, 0.32) !important;
 }
-
 .top-nav .tutorial-pill-btn,
 .top-nav .lang-pill-btn,
 html.lite .top-nav .tutorial-pill-btn,
@@ -6338,12 +5699,10 @@ html.lite .top-nav .lang-pill-btn {
     border: 1px solid rgba(255, 255, 255, 0.28) !important;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
 }
-
 .top-nav .tutorial-pill-btn:active,
 .top-nav .lang-pill-btn:active {
     background: rgba(255, 255, 255, 0.24) !important;
 }
-
 .top-nav .user-pill,
 html.lite .top-nav .user-pill {
     background: rgba(255, 255, 255, 0.94) !important;
@@ -6351,12 +5710,10 @@ html.lite .top-nav .user-pill {
     box-shadow: 0 4px 12px -2px rgba(8, 17, 40, 0.22) !important;
     color: #0f172a !important;
 }
-
 .top-nav .bal-chip {
     font-weight: 600 !important;
     font-variant-numeric: tabular-nums;
 }
-
 /* ── B4. Main Cards: Two-layer shadow + Gradient hairline border ──────────── */
 .card.glass,
 .vcp-card,
@@ -6372,8 +5729,6 @@ html.lite .vcp-card {
         0 2px 6px rgba(15, 23, 42, 0.045),
         0 12px 28px -10px rgba(15, 42, 74, 0.10) !important;
 }
-
-/* Preserve VIP Master card gold aura inside gradient hairline border */
 #tab-vip .vcp-card--gold,
 html.lite #tab-vip .vcp-card--gold {
     background-image:
@@ -6383,7 +5738,6 @@ html.lite #tab-vip .vcp-card--gold {
         0 2px 8px rgba(180, 83, 9, 0.08),
         0 14px 30px -10px rgba(217, 119, 6, 0.22) !important;
 }
-
 /* ── B5. Section Titles & Balance Typography ──────────────────────────────── */
 .card-label,
 .vcp-card__title,
@@ -6393,20 +5747,17 @@ html.lite #tab-vip .vcp-card--gold {
     letter-spacing: -0.01em;
     color: #0f172a;
 }
-
 body.lang-my .card-label,
 body.lang-my .vcp-card__title,
 body.lang-my .step-title {
     line-height: 1.5 !important;
 }
-
 .pane-header h2 {
     font-size: 20.5px;
     font-weight: 800;
     letter-spacing: -0.02em;
     color: #0f172a;
 }
-
 .bal-chip,
 .home-bal-summary,
 .home-free-value,
@@ -6415,7 +5766,6 @@ body.lang-my .step-title {
     font-weight: 600 !important;
     font-variant-numeric: tabular-nums;
 }
-
 /* ── B3. Home Greeting Card -> Brand-Gradient Hero ────────────────────────── */
 #tab-home .home-status-strip,
 html.lite #tab-home .home-status-strip {
@@ -6433,7 +5783,6 @@ html.lite #tab-home .home-status-strip {
         0 14px 30px -10px rgba(29, 78, 216, 0.36) !important;
     color: #ffffff !important;
 }
-
 #tab-home .home-status-left {
     display: flex;
     align-items: center;
@@ -6442,27 +5791,23 @@ html.lite #tab-home .home-status-strip {
     width: 100%;
     flex-wrap: wrap;
 }
-
 #tab-home .home-greeting-text {
     color: #ffffff !important;
     font-size: 16.5px !important;
     font-weight: 700 !important;
     letter-spacing: -0.01em;
 }
-
 #tab-home .home-status-strip #home-tier-badge {
     background: rgba(255, 255, 255, 0.18) !important;
     color: #ffffff !important;
     border: 1px solid rgba(255, 255, 255, 0.34) !important;
     font-weight: 700;
 }
-
 #tab-home .home-status-strip #home-tier-badge.vcp-badge-gold {
     background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
     color: #1e1b4b !important;
     border-color: rgba(254, 243, 199, 0.85) !important;
 }
-
 #tab-home .home-status-right {
     display: flex;
     align-items: center;
@@ -6475,25 +5820,21 @@ html.lite #tab-home .home-status-strip {
     background: rgba(255, 255, 255, 0.14);
     border: 1px solid rgba(255, 255, 255, 0.20);
 }
-
 #tab-home .home-bal-summary {
     color: #f8fafc !important;
     font-size: 13.5px !important;
     line-height: 1.5 !important;
 }
-
 #tab-home .home-status-chevron {
     color: rgba(255, 255, 255, 0.88) !important;
     font-size: 16px;
     font-weight: 700;
 }
-
 /* ── A1. Welcome Strip Wrapping & Light Glass Alignment ───────────────────── */
 #tab-home .welcome-strip.hidden,
 html.lite #tab-home .welcome-strip.hidden {
     display: none !important;
 }
-
 #tab-home .welcome-strip:not(.hidden),
 html.lite #tab-home .welcome-strip:not(.hidden) {
     display: flex !important;
@@ -6507,7 +5848,6 @@ html.lite #tab-home .welcome-strip:not(.hidden) {
     border: 1px solid rgba(37, 99, 235, 0.24) !important;
     box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04), 0 10px 22px -10px rgba(37, 99, 235, 0.18) !important;
 }
-
 #tab-home .welcome-strip-text {
     display: block !important;
     order: 1;
@@ -6521,7 +5861,6 @@ html.lite #tab-home .welcome-strip:not(.hidden) {
     overflow-wrap: break-word;
     word-break: normal;
 }
-
 #tab-home .welcome-strip-x {
     order: 2;
     flex: 0 0 auto !important;
@@ -6535,7 +5874,6 @@ html.lite #tab-home .welcome-strip:not(.hidden) {
     background: rgba(15, 23, 42, 0.06) !important;
     color: #334155 !important;
 }
-
 #tab-home .welcome-strip-actions {
     order: 3;
     flex: 1 0 100% !important;
@@ -6545,7 +5883,6 @@ html.lite #tab-home .welcome-strip:not(.hidden) {
     align-items: center;
     gap: 8px !important;
 }
-
 #tab-home .welcome-strip-sample-btn,
 html.lite #tab-home .welcome-strip-sample-btn {
     flex: 1 1 0;
@@ -6562,7 +5899,6 @@ html.lite #tab-home .welcome-strip-sample-btn {
     text-align: center;
     box-shadow: 0 2px 6px rgba(37, 99, 235, 0.08);
 }
-
 #tab-home .welcome-strip-btn {
     flex: 0.9 1 0;
     min-width: 120px;
@@ -6577,7 +5913,6 @@ html.lite #tab-home .welcome-strip-sample-btn {
     text-align: center;
     box-shadow: 0 6px 14px -4px rgba(109, 40, 217, 0.36);
 }
-
 @media (min-width: 580px) {
     #tab-home .welcome-strip:not(.hidden) {
         flex-wrap: nowrap !important;
@@ -6597,7 +5932,6 @@ html.lite #tab-home .welcome-strip-sample-btn {
         align-self: center;
     }
 }
-
 /* ── A2 / B2. Fix Dark Slate TTS Tile + Add Studio Accents on Home Tiles ─── */
 #tab-home .home-tile,
 html.lite #tab-home .home-tile {
@@ -6607,7 +5941,6 @@ html.lite #tab-home .home-tile {
     border-radius: var(--r-lg, 16px) !important;
     color: #0f172a !important;
 }
-
 #tab-home .home-tile-tts,
 html.lite #tab-home .home-tile-tts {
     background: linear-gradient(135deg, rgba(240, 253, 250, 0.96) 0%, rgba(226, 250, 245, 0.90) 100%) !important;
@@ -6616,42 +5949,33 @@ html.lite #tab-home .home-tile-tts {
     border-radius: var(--r-lg, 16px) !important;
     color: #0f172a !important;
 }
-
 #tab-home .home-tile-tts .home-tile-name,
 #tab-home .home-tile-tts .home-tile-chevron {
     color: #0f172a !important;
 }
-
 #tab-home .home-tile-tts .home-tile-hint {
     color: #475569 !important;
 }
-
-/* Studio-accented circular icon badges on Home studio launcher tiles */
 #home-start-card .home-tile[onclick*="tab-voice"] .home-tile-icon {
     background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%) !important;
     box-shadow: 0 6px 14px -4px rgba(37, 99, 235, 0.42);
 }
-
 #home-start-card .home-tile[onclick*="tab-recap"] .home-tile-icon {
     background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%) !important;
     box-shadow: 0 6px 14px -4px rgba(124, 58, 237, 0.42);
 }
-
 #home-start-card .home-tile-tts .home-tile-icon {
     background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%) !important;
     box-shadow: 0 6px 14px -4px rgba(13, 148, 136, 0.42);
 }
-
 #home-tools-card .home-tile[onclick*="tab-downloader"] .home-tile-icon {
     background: linear-gradient(135deg, #b45309 0%, #f59e0b 100%) !important;
     box-shadow: 0 6px 14px -4px rgba(217, 119, 6, 0.40);
 }
-
 #home-tools-card .home-tile[onclick*="openHistoryHub"] .home-tile-icon {
     background: linear-gradient(135deg, #334155 0%, #64748b 100%) !important;
     box-shadow: 0 6px 14px -4px rgba(51, 65, 85, 0.32);
 }
-
 /* ── A2 / A3. Recent Projects: Light Glass Row, Full-Width 2-Line Name, Badges Under Name, Right-Centred Action */
 #tab-home .home-recent-header {
     display: flex;
@@ -6659,12 +5983,10 @@ html.lite #tab-home .home-tile-tts {
     justify-content: space-between;
     gap: 10px;
 }
-
 #tab-home .home-recent-header .card-label {
     flex: 1 1 auto;
     min-width: 0;
 }
-
 #tab-home .vcp-chip.home-recent-see-all,
 #home-recent-see-all {
     flex: 0 0 auto !important;
@@ -6680,13 +6002,11 @@ html.lite #tab-home .home-tile-tts {
     gap: 4px;
     line-height: 1.35 !important;
 }
-
 #tab-home .home-recent-list {
     display: flex;
     flex-direction: column;
     gap: 10px;
 }
-
 #tab-home .home-recent-row,
 html.lite #tab-home .home-recent-row {
     display: flex !important;
@@ -6700,7 +6020,6 @@ html.lite #tab-home .home-recent-row {
     box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04) !important;
     color: #0f172a !important;
 }
-
 #tab-home .home-recent-main {
     display: flex !important;
     align-items: flex-start !important;
@@ -6708,7 +6027,6 @@ html.lite #tab-home .home-recent-row {
     width: 100% !important;
     min-width: 0 !important;
 }
-
 #tab-home .home-recent-icon {
     flex: 0 0 32px !important;
     width: 32px !important;
@@ -6721,23 +6039,19 @@ html.lite #tab-home .home-recent-row {
     background: rgba(37, 99, 235, 0.12);
     border: 1px solid rgba(37, 99, 235, 0.22);
 }
-
 #tab-home .home-recent-row[data-job-kind="recap"] .home-recent-icon {
     background: rgba(124, 58, 237, 0.12);
     border-color: rgba(124, 58, 237, 0.24);
 }
-
 #tab-home .home-recent-row[data-job-kind="tts"] .home-recent-icon {
     background: rgba(13, 148, 136, 0.12);
     border-color: rgba(13, 148, 136, 0.24);
 }
-
 #tab-home .home-recent-meta {
     flex: 1 1 auto !important;
     min-width: 0 !important;
     width: 100% !important;
 }
-
 #tab-home .home-recent-name {
     display: -webkit-box !important;
     -webkit-box-orient: vertical !important;
@@ -6753,7 +6067,6 @@ html.lite #tab-home .home-recent-row {
     overflow-wrap: break-word !important;
     word-break: normal !important;
 }
-
 #tab-home .home-recent-footer {
     display: flex !important;
     align-items: center !important;
@@ -6763,7 +6076,6 @@ html.lite #tab-home .home-recent-row {
     width: 100% !important;
     box-sizing: border-box;
 }
-
 #tab-home .home-recent-badges {
     flex: 1 1 auto !important;
     min-width: 0 !important;
@@ -6772,13 +6084,11 @@ html.lite #tab-home .home-recent-row {
     align-items: center !important;
     gap: 6px !important;
 }
-
 #tab-home .home-recent-action {
     flex: 0 0 auto !important;
     align-self: center !important;
     margin-left: auto !important;
 }
-
 #tab-home .home-recent-action .vcp-chip,
 #tab-home .home-recent-action button,
 #tab-home .home-recent-action a {
@@ -6788,14 +6098,12 @@ html.lite #tab-home .home-recent-row {
     font-size: 12.5px !important;
     font-weight: 700 !important;
 }
-
 /* ── A4. Free-Today Row First-Line Alignment ──────────────────────────────── */
 #tab-home .home-free-list {
     display: flex;
     flex-direction: column;
     gap: 10px;
 }
-
 #tab-home .home-free-row,
 html.lite #tab-home .home-free-row {
     display: flex !important;
@@ -6806,7 +6114,6 @@ html.lite #tab-home .home-free-row {
     background: rgba(248, 250, 255, 0.90) !important;
     border: 1px solid rgba(15, 23, 42, 0.07) !important;
 }
-
 #tab-home .home-free-icon {
     flex: 0 0 28px !important;
     width: 28px !important;
@@ -6818,7 +6125,6 @@ html.lite #tab-home .home-free-row {
     font-size: 17px !important;
     line-height: 1 !important;
 }
-
 #tab-home .home-free-text {
     flex: 1 1 auto !important;
     min-width: 0 !important;
@@ -6827,21 +6133,18 @@ html.lite #tab-home .home-free-row {
     align-items: flex-start !important;
     gap: 4px !important;
 }
-
 #tab-home .home-free-title {
     font-size: 13.5px !important;
     font-weight: 600 !important;
     line-height: 1.5 !important;
     color: #0f172a !important;
 }
-
 #tab-home .home-free-sub,
 #tab-home .home-free-tts-note {
     font-size: 12px !important;
     line-height: 1.5 !important;
     color: #475569 !important;
 }
-
 #tab-home .home-free-value {
     flex: 0 0 auto !important;
     white-space: nowrap !important;
@@ -6854,7 +6157,6 @@ html.lite #tab-home .home-free-row {
     padding-top: 0 !important;
     margin-top: 0 !important;
 }
-
 #tab-home .home-free-chevron {
     flex: 0 0 auto !important;
     font-size: 15px !important;
@@ -6866,13 +6168,11 @@ html.lite #tab-home .home-free-row {
     padding-top: 0 !important;
     margin-top: 0 !important;
 }
-
 /* ── A6. Help / Samples Accordion Header Alignment & Unified Rhythm ───────── */
 #tab-home .home-help-entry-card {
     padding: 0 !important;
     overflow: hidden;
 }
-
 #tab-home .home-help-entry-btn {
     width: 100% !important;
     display: flex !important;
@@ -6885,7 +6185,6 @@ html.lite #tab-home .home-free-row {
     text-align: left !important;
     cursor: pointer;
 }
-
 #tab-home .home-help-entry-head {
     display: flex !important;
     align-items: center !important;
@@ -6893,7 +6192,6 @@ html.lite #tab-home .home-free-row {
     width: 100% !important;
     min-width: 0 !important;
 }
-
 #tab-home .home-help-entry-icon {
     flex: 0 0 36px !important;
     width: 36px !important;
@@ -6906,7 +6204,6 @@ html.lite #tab-home .home-free-row {
     background: rgba(37, 99, 235, 0.11) !important;
     border: 1px solid rgba(37, 99, 235, 0.20) !important;
 }
-
 #tab-home .home-help-entry-title {
     flex: 1 1 auto !important;
     min-width: 0 !important;
@@ -6915,7 +6212,6 @@ html.lite #tab-home .home-free-row {
     line-height: 1.45 !important;
     color: #0f172a !important;
 }
-
 #tab-home .home-help-entry-head .vcp-badge {
     flex: 0 0 auto !important;
     white-space: nowrap !important;
@@ -6923,32 +6219,27 @@ html.lite #tab-home .home-free-row {
     padding: 2px 9px !important;
     line-height: 1.55 !important;
 }
-
 #tab-home .home-help-entry-chevron {
     flex: 0 0 auto !important;
     font-size: 13px !important;
     color: #64748b !important;
     transition: transform 0.18s ease;
 }
-
 #tab-home .home-help-entry-btn[aria-expanded="true"] .home-help-entry-chevron {
     transform: rotate(180deg);
 }
-
 #tab-home .home-help-entry-text {
     display: block !important;
     width: 100% !important;
     padding-left: 46px !important;
     box-sizing: border-box !important;
 }
-
 #tab-home .home-help-entry-desc {
     display: block !important;
     font-size: 12.5px !important;
     line-height: 1.5 !important;
     color: #475569 !important;
 }
-
 #tab-home #home-tutorials-card .home-tut-head {
     display: flex !important;
     align-items: center !important;
@@ -6956,7 +6247,6 @@ html.lite #tab-home .home-free-row {
     padding: 4px 2px !important;
     min-height: 44px !important;
 }
-
 #tab-home #home-tutorials-card .home-tut-count {
     white-space: nowrap !important;
     flex-shrink: 0 !important;
@@ -6964,8 +6254,6 @@ html.lite #tab-home .home-free-row {
     color: #1d4ed8 !important;
     border-color: rgba(37, 99, 235, 0.22) !important;
 }
-
-/* Uniform vertical card spacing rhythm across Home */
 #tab-home > .card,
 #tab-home > .vcp-card,
 #tab-home > .welcome-strip,
@@ -6973,7 +6261,6 @@ html.lite #tab-home .home-free-row {
 #home-help-hub-body > .card {
     margin-bottom: 14px !important;
 }
-
 /* ── B2. One Accent Per Studio (No Rainbow Noise) ────────────────────────── */
 /* Voice Studio = Blue */
 #tab-voice .step-num-pill {
@@ -6981,7 +6268,6 @@ html.lite #tab-home .home-free-row {
     color: #ffffff !important;
     box-shadow: 0 4px 10px -2px rgba(37, 99, 235, 0.38) !important;
 }
-
 #tab-voice .speed-capsule-pill,
 #tab-voice #btn-generate-voice,
 #tab-voice-sticky #btn-generate-voice-sticky,
@@ -6992,27 +6278,22 @@ html.lite #tab-home .home-free-row {
     border-color: rgba(255, 255, 255, 0.28) !important;
     box-shadow: 0 10px 22px -8px rgba(37, 99, 235, 0.45) !important;
 }
-
 #tab-voice .badge-studio,
 #tab-voice .tutorial-banner-btn {
     background: rgba(37, 99, 235, 0.11) !important;
     color: #1d4ed8 !important;
     border-color: rgba(37, 99, 235, 0.28) !important;
 }
-
-/* Recap Maker = Violet */
 #tab-recap .step-num-pill {
     background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%) !important;
     color: #ffffff !important;
     box-shadow: 0 4px 10px -2px rgba(124, 58, 237, 0.38) !important;
 }
-
 #tab-recap .badge-studio {
     background: rgba(124, 58, 237, 0.12) !important;
     color: #6d28d9 !important;
     border: 1px solid rgba(124, 58, 237, 0.28) !important;
 }
-
 #tab-recap .recap-steps-nav-item.is-active {
     background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 60%, #a855f7 100%) !important;
     color: #ffffff !important;
@@ -7020,12 +6301,10 @@ html.lite #tab-home .home-free-row {
     padding-right: 12px !important;
     box-shadow: 0 6px 14px -4px rgba(124, 58, 237, 0.44) !important;
 }
-
 #tab-recap .recap-steps-nav-item.is-active .recap-steps-nav-num {
     background: rgba(255, 255, 255, 0.24) !important;
     color: #ffffff !important;
 }
-
 #tab-recap .speed-capsule-pill,
 #tab-recap .seg-capsule-pill,
 #tab-recap .gold-gradient-btn,
@@ -7036,7 +6315,6 @@ html.lite #tab-home .home-free-row {
     border-color: rgba(255, 255, 255, 0.28) !important;
     box-shadow: 0 10px 22px -8px rgba(124, 58, 237, 0.45) !important;
 }
-
 #tab-recap .source-tab-btn.active,
 #tab-recap .mode-btn.active,
 #tab-recap .recap-mode-pill.active,
@@ -7045,20 +6323,16 @@ html.lite #tab-home .home-free-row {
     background: rgba(124, 58, 237, 0.11) !important;
     color: #6d28d9 !important;
 }
-
-/* TTS Studio = Teal */
 #tab-tts .step-num-pill {
     background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%) !important;
     color: #ffffff !important;
     box-shadow: 0 4px 10px -2px rgba(13, 148, 136, 0.38) !important;
 }
-
 #tab-tts .badge-studio {
     background: rgba(13, 148, 136, 0.12) !important;
     color: #0f766e !important;
     border: 1px solid rgba(13, 148, 136, 0.28) !important;
 }
-
 #tab-tts .speed-capsule-pill,
 #tab-tts .seg-capsule-pill,
 #tab-tts .gold-gradient-btn,
@@ -7068,18 +6342,14 @@ html.lite #tab-home .home-free-row {
     border-color: rgba(255, 255, 255, 0.28) !important;
     box-shadow: 0 10px 22px -8px rgba(13, 148, 136, 0.44) !important;
 }
-
 #tab-tts .vcp-badge-info {
     background: rgba(13, 148, 136, 0.11) !important;
     color: #0f766e !important;
     border-color: rgba(13, 148, 136, 0.24) !important;
 }
-
 #tab-downloader #btn-extract-dl {
     font-weight: 700;
 }
-
-/* Downloader Studio = Indigo */
 #tab-downloader .dl-empty-icon {
     display: inline-flex;
     align-items: center;
@@ -7091,19 +6361,15 @@ html.lite #tab-home .home-free-row {
     border: 1px solid rgba(217, 119, 6, 0.26);
     margin: 0 auto 8px;
 }
-
 #tab-downloader #dl-url-input:focus {
     border-color: rgba(217, 119, 6, 0.55) !important;
     box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.14) !important;
 }
-
-/* VIP = Gold */
 #tab-vip .badge-studio {
     background: rgba(245, 158, 11, 0.14) !important;
     color: #92400e !important;
     border: 1px solid rgba(217, 119, 6, 0.34) !important;
 }
-
 #tab-vip .step-num-pill,
 #tab-vip .gold-gradient-btn,
 #tab-vip .vcp-btn--gold,
@@ -7113,19 +6379,16 @@ html.lite #tab-home .home-free-row {
     border-color: rgba(255, 255, 255, 0.28) !important;
     box-shadow: 0 10px 22px -8px rgba(217, 119, 6, 0.42) !important;
 }
-
 #tab-vip .secondary-gold-btn {
     background: linear-gradient(135deg, rgba(254, 243, 199, 0.85), rgba(253, 230, 138, 0.72)) !important;
     color: #92400e !important;
     border: 1px solid rgba(217, 119, 6, 0.32) !important;
     font-weight: 700 !important;
 }
-
 #tab-vip #profile-balance-credits,
 #tab-vip .text-cyan {
     color: #b45309 !important;
 }
-
 #tab-vip .plan-tab-btn.active,
 #tab-vip .plan-tab-btn.active .seg-title,
 #tab-vip .vip-tab-btn.active,
@@ -7135,12 +6398,10 @@ html.lite #tab-home .home-free-row {
     color: #ffffff !important;
     box-shadow: 0 6px 14px -4px rgba(217, 119, 6, 0.38) !important;
 }
-
 #tab-vip .plan-tab-btn.active .seg-title {
     background: transparent !important;
     box-shadow: none !important;
 }
-
 #tab-vip .vip-never-expire-pill,
 #tab-vip .plan-info-pill,
 #tab-vip .vcp-badge-info {
@@ -7148,7 +6409,6 @@ html.lite #tab-home .home-free-row {
     color: #92400e !important;
     border-color: rgba(217, 119, 6, 0.28) !important;
 }
-
 /* ── B4. Bottom-Nav Active Tab = Filled Accent Pill ───────────────────────── */
 .bottom-nav .nav-pill,
 html.lite .bottom-nav .nav-pill,
@@ -7157,31 +6417,26 @@ body.lite .bottom-nav .nav-pill {
     border: 1px solid rgba(255, 255, 255, 0.32) !important;
     box-shadow: 0 6px 16px -4px rgba(29, 78, 216, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.26) !important;
 }
-
 .bottom-nav[data-active-tab="tab-voice"] .nav-pill,
 html.lite .bottom-nav[data-active-tab="tab-voice"] .nav-pill {
     background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%) !important;
     box-shadow: 0 6px 16px -4px rgba(37, 99, 235, 0.44) !important;
 }
-
 .bottom-nav[data-active-tab="tab-tts"] .nav-pill,
 html.lite .bottom-nav[data-active-tab="tab-tts"] .nav-pill {
     background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%) !important;
     box-shadow: 0 6px 16px -4px rgba(13, 148, 136, 0.42) !important;
 }
-
 .bottom-nav[data-active-tab="tab-recap"] .nav-pill,
 html.lite .bottom-nav[data-active-tab="tab-recap"] .nav-pill {
     background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%) !important;
     box-shadow: 0 6px 16px -4px rgba(124, 58, 237, 0.44) !important;
 }
-
 .bottom-nav[data-active-tab="tab-vip"] .nav-pill,
 html.lite .bottom-nav[data-active-tab="tab-vip"] .nav-pill {
     background: linear-gradient(135deg, #b45309 0%, #f59e0b 100%) !important;
     box-shadow: 0 6px 16px -4px rgba(217, 119, 6, 0.44) !important;
 }
-
 .bottom-nav .nav-item.active,
 .bottom-nav .nav-item.active .nav-label,
 .bottom-nav .nav-item.active .nav-icon,
@@ -7190,16 +6445,13 @@ html.lite .bottom-nav .nav-item.active .nav-label {
     font-weight: 700 !important;
     text-shadow: 0 1px 2px rgba(15, 23, 42, 0.20);
 }
-
 /* ── Dark-Theme & OS Prefers-Color-Scheme Guardrail ───────────────────────── */
-/* Ensure host dark mode never inverts or washes out our frosted glass palette */
 @media (prefers-color-scheme: dark) {
     :root,
     body.dark-theme {
         color-scheme: light;
     }
 }
-
 /* ═══════════════════════════════════════════════════════════════════════════
    VCP UI REBUILD V2 — PHASE 1: LIQUID GLASS DESIGN SYSTEM, FLOATING CHROME,
    SF-STYLE VECTOR ICONS, FIRST-CLASS DARK GLASS & LITE CERAMIC THEMES
@@ -7207,7 +6459,6 @@ html.lite .bottom-nav .nav-item.active .nav-label {
     GPU Performance Rule: backdrop-filter ONLY on fixed chrome/sheets/modals,
     NEVER on scrolling content cards inside .tab-pane.)
    ═══════════════════════════════════════════════════════════════════════════ */
-
 :root {
     --vcp-glass-specular: inset 0 1.5px 0 rgba(255, 255, 255, 0.96), inset 0 -1px 0 rgba(15, 23, 42, 0.04);
     --vcp-chrome-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(242, 248, 255, 0.74) 100%);
@@ -7219,7 +6470,6 @@ html.lite .bottom-nav .nav-item.active .nav-label {
     --vcp-vip-champagne-border: rgba(217, 119, 6, 0.42);
     --vcp-ambient-opacity: 1;
 }
-
 /* ── SVG Icon Primitives (1.85px uniform optical SF-style strokes) ───────── */
 .vcp-ico {
     width: 19px;
@@ -7245,7 +6495,6 @@ html.lite .bottom-nav .nav-item.active .nav-label {
 .theme-ico-wrap .vcp-ico-sun { display: none; }
 html[data-theme="dark"] .theme-ico-wrap .vcp-ico-moon { display: none; }
 html[data-theme="dark"] .theme-ico-wrap .vcp-ico-sun { display: inline-block; }
-
 /* ── Ambient Multi-Stop Liquid Mesh (disabled in .lite / reduced motion) ─ */
 html:not(.lite) body::before {
     opacity: var(--vcp-ambient-opacity);
@@ -7256,7 +6505,6 @@ html:not(.lite) body::before {
         radial-gradient(420px 360px at 88% 92%, rgba(96, 165, 250, 0.20), transparent 68%),
         linear-gradient(168deg, #EAF3FB 0%, #DFECF8 52%, #E8EEF9 100%);
 }
-
 /* ── Floating iOS 26 Liquid Glass Header (.top-nav) ──────────────────────── */
 .top-nav {
     position: sticky;
@@ -7368,7 +6616,6 @@ html:not(.lite) body::before {
 .top-nav .bal-chip.tts {
     color: #0F766E !important;
 }
-
 @media (max-width: 540px) {
     .top-nav {
         top: 0;
@@ -7427,7 +6674,6 @@ html:not(.lite) body::before {
         min-height: 27px;
     }
 }
-
 /* ── Floating iOS 26 Capsule Bottom Dock (.bottom-nav) ───────────────────── */
 .bottom-nav {
     --az-bg: rgba(255, 255, 255, 0.84);
@@ -7485,7 +6731,6 @@ html.lite .bottom-nav[data-active-tab="tab-admin"] .nav-pill {
     background: linear-gradient(135deg, #1E293B 0%, #334155 100%) !important;
     box-shadow: 0 6px 16px -4px rgba(15, 23, 42, 0.42) !important;
 }
-
 /* ── Unified Modal / Bottom-Sheet Liquid Glass Chrome ────────────────────── */
 .vcp-sheet,
 .modal-content,
@@ -7496,7 +6741,6 @@ html.lite .bottom-nav[data-active-tab="tab-admin"] .nav-pill {
     border: 1px solid var(--vcp-chrome-border);
     box-shadow: var(--vcp-glass-specular), 0 24px 56px -14px rgba(15, 23, 42, 0.28);
 }
-
 /* ── Recap Stage Top-Left Source Chip Bar Separation (Feedback Fix #1) ───── */
 .vcp-preview-stage-bar .canvas-source-label {
     position: static;
@@ -7526,8 +6770,6 @@ html.lite .bottom-nav[data-active-tab="tab-admin"] .nav-pill {
 #recap-steps-nav {
     scroll-margin-top: 124px;
 }
-
-/* FIRST-CLASS DARK GLASS THEME (html[data-theme="dark"]) */
 html[data-theme="dark"] {
     color-scheme: dark;
     --bg: #070B16;
@@ -7612,7 +6854,6 @@ html[data-theme="dark"] .top-nav .bal-chip {
 }
 html[data-theme="dark"] .top-nav .bal-chip.recap { color: #C4B5FD !important; }
 html[data-theme="dark"] .top-nav .bal-chip.tts { color: #5EEAD4 !important; }
-
 html[data-theme="dark"] .card.glass,
 html[data-theme="dark"] .vcp-card,
 html[data-theme="dark"].lite .card.glass,
@@ -7735,7 +6976,6 @@ html[data-theme="dark"] .studio-confirm-card {
 html[data-theme="dark"] .bottom-nav .nav-item {
     color: #94A3B8;
 }
-
 /* ── Lite Mode Ceramic Surface Polish (Light + Dark) ─────────────────────── */
 html.lite,
 html.lite body,
@@ -7794,7 +7034,6 @@ html[data-theme="dark"].lite .card.glass,
 html[data-theme="dark"].lite .vcp-card {
     background-image: linear-gradient(180deg, #162038 0%, #11192E 100%), linear-gradient(135deg, #334155, #1E3A8A) !important;
 }
-
 /* ============================================================================
    VCP UI REBUILD V2 — PHASE 2: HOME 4-ZONE IA & CHAMPAGNE VIP
    ============================================================================ */
@@ -7809,8 +7048,6 @@ html[data-theme="dark"].lite .vcp-card {
     white-space: nowrap !important;
     border: 0 !important;
 }
-
-/* Zone A: Unified Hero + Champagne Pearl VIP / Admin */
 #tab-home .vcp-hero-card {
     padding: 14px !important;
     border-radius: 22px !important;
@@ -7922,8 +7159,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     background: #10B981;
     box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.20);
 }
-
-/* Balance Trio 3-Col Bento */
 #tab-home .vcp-balance-trio {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -7991,8 +7226,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     font-weight: 600;
     padding: 4px 6px 0;
 }
-
-/* First-Run Welcome Callout inside Zone A */
 #tab-home .welcome-strip {
     margin: 12px 0 0 0 !important;
     padding: 12px !important;
@@ -8057,8 +7290,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     align-items: center;
     justify-content: center;
 }
-
-/* Zone B: Studio Launcher Bento (Featured Recap + Twin Voice/TTS) */
 #tab-home .vcp-section-head {
     display: flex;
     align-items: baseline;
@@ -8146,7 +7377,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     display: inline-flex;
     align-items: center;
 }
-
 /* Zone C: Skeleton / Empty / Error Glass States + Recent Icon Disc */
 @keyframes vcp-shimmer { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.85; } }
 #tab-home .vcp-skel-row {
@@ -8211,8 +7441,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     background: rgba(37, 99, 235, 0.10) !important;
     color: #2563EB !important;
 }
-
-/* Zone D: Unified Tools Grouped List & Utility Icons */
 #tab-home #home-tools-card .home-tile-grid {
     display: grid !important;
     grid-template-columns: 1fr !important;
@@ -8257,8 +7485,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     border-radius: 12px;
     padding: 9px 11px;
 }
-
-/* Dark Theme Overrides for Home 4-Zone IA */
 html[data-theme="dark"] #tab-home .vcp-hero-card {
     background-image: linear-gradient(160deg, rgba(30, 41, 59, 0.94) 0%, rgba(15, 23, 42, 0.96) 100%) !important;
     border-color: rgba(148, 163, 184, 0.26) !important;
@@ -8334,8 +7560,6 @@ html[data-theme="dark"] #tab-home .vcp-refer-card .ref-link-row {
     background: rgba(15, 23, 42, 0.65) !important;
     border-color: rgba(148, 163, 184, 0.28) !important;
 }
-
-/* Lite Mode Ceramic Solids for Home 4-Zone IA */
 html.lite #tab-home .vcp-hero-card { background-image: none !important; background-color: #FFFFFF !important; }
 html.lite #tab-home .vcp-hero-card[data-tier="vip"],
 html.lite #tab-home .vcp-hero-card[data-tier="admin"] { background-image: none !important; background-color: #FFF9EB !important; }
@@ -8350,13 +7574,11 @@ html[data-theme="dark"].lite #tab-home .vcp-bal-tile,
 html[data-theme="dark"].lite #tab-home #home-start-card .home-tile-grid .home-tile,
 html[data-theme="dark"].lite #tab-home #home-tools-card .home-tile-grid,
 html[data-theme="dark"].lite #tab-home .vcp-studio-hero-tile { background: #1A243C !important; box-shadow: none !important; }
-
 @media (max-width: 360px) {
     #tab-home .vcp-bal-tile { padding: 8px 6px; }
     #tab-home .vcp-bal-val { font-size: 14.5px; }
     #tab-home #home-start-card .home-tile-grid { gap: 8px !important; }
 }
-
 /* Unified Non-Overlapping Queue & Job Card System (Home Recent, History, Live Sheet, Admin Queue) */
 .vcp-job-card {
     display: flex !important;
@@ -8489,21 +7711,17 @@ html[data-theme="dark"] #tab-home .vcp-job-card .home-recent-action {
 }
 html.lite .vcp-job-card { background: #F8FBFF !important; box-shadow: none !important; }
 html[data-theme="dark"].lite .vcp-job-card { background: #1A243C !important; box-shadow: none !important; }
-
 html, body {
     overflow-x: clip !important;
 }
-
 /* ═══════════════════════════════════════════════════════════════════════════
    VCP UI REBUILD V2 — PHASE 3: RECAP STUDIO & EDITOR (LIGHT / DARK / LITE)
    Pure multi-stop glass gradients in scrolling cards; sticky header & overlay
    fixes integrated cleanly with Preview = Output parity preserved.
    ═══════════════════════════════════════════════════════════════════════════ */
-
 :root {
     --vcp-hdr-sticky-top: 114px;
 }
-
 /* ── Recap Announcement Carousel & Steps Capsule Bar ────────────────────── */
 #tab-recap .studio-alert-carousel,
 #tab-recap .recap-demo-card,
@@ -8515,7 +7733,6 @@ html, body {
     box-shadow: var(--vcp-glass-specular), var(--vcp-glass-shadow-sm) !important;
     border-radius: 22px !important;
 }
-
 #tab-recap .studio-alert-carousel {
     padding: 14px 16px 12px !important;
 }
@@ -8529,7 +7746,6 @@ html, body {
 #tab-recap .carousel-dot.active {
     background: #7C3AED;
 }
-
 #tab-recap .recap-steps-nav {
     display: block;
     width: 100%;
@@ -8581,7 +7797,6 @@ html, body {
     background: rgba(16, 185, 129, 0.14);
 }
 #tab-recap .recap-steps-nav-item[aria-disabled="true"]{opacity:.45;cursor:not-allowed;color:#94A3B8;background:rgba(148,163,184,.08);border:1px dashed rgba(148,163,184,.38)}
-
 /* ── Step 1: Source URL & Dropzone ──────────────────────────────────────── */
 #tab-recap .input-with-btn input,
 #tab-recap .input-with-btn .btn {
@@ -8655,7 +7870,6 @@ html, body {
     border: 1px solid rgba(124, 58, 237, 0.20);
     color: var(--vcp-text-secondary);
 }
-
 /* ── Step 2 MUST-FIX #2: Sticky Preview Offset + Higher-Z Step-2 Deck ───── */
 #tab-recap .vcp-step2-sticky-preview {
     position: sticky;
@@ -8666,8 +7880,6 @@ html, body {
     padding: 4px 2px 10px;
 }
 @media (max-width: 767px) and (max-height: 960px) {
-    /* Portrait 9:16 canvas occupies ~590px vertically on phones; let it scroll
-       naturally so the 5-tab deck & presets stay reachable at all scroll positions. */
     #tab-recap .vcp-step2-sticky-preview.is-ratio-9-16,
     #tab-recap .vcp-step2-sticky-preview.is-portrait-stage {
         position: relative;
@@ -8699,7 +7911,6 @@ html, body {
     background: var(--vcp-bg-card, #F8FAFF);
     border-radius: 12px;
 }
-
 /* ── Step 2 MUST-FIX #1: Cinema Bezel + Separated Blur & Sub Grip Pills ─── */
 #tab-recap .vcp-preview-stage-bar {
     gap: 8px;
@@ -8726,7 +7937,6 @@ html, body {
     overflow: hidden;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
-/* Blur overlay sits interactive below hollow Sub outline */
 #tab-recap #preview-blur-box {
     z-index: 8;
     pointer-events: auto;
@@ -8767,8 +7977,6 @@ html, body {
     bottom: auto;
     top: calc(100% + 4px);
 }
-/* Subtitle outline box: pointer-events none lets Blur beneath remain draggable,
-   while .sub-grip right pill captures taps/drags cleanly without horizontal collision. */
 #tab-recap #preview-sub-box {
     pointer-events: none;
     border-radius: 6px;
@@ -8804,7 +8012,6 @@ html, body {
     bottom: auto;
     top: calc(100% + 4px);
 }
-
 /* ── Step 2 Controls Deck: Seek, 5-Cat Tabs, Presets, Subtitle Cards ────── */
 #tab-recap .canvas-compact-toolbar {
     background: var(--vcp-flat-glass-inset);
@@ -8877,7 +8084,6 @@ html, body {
     padding: 10px 12px;
     font-weight: 600;
 }
-
 /* ── Step 3 & Step 4: Narrator, Dual Quote Card & Studio Output Frame ───── */
 #tab-recap #recap-top-voices .voice-card,
 #tab-recap #recap-all-voices-grid .voice-card,
@@ -8917,7 +8123,6 @@ html, body {
     border-radius: 16px;
     font-weight: 800;
 }
-
 /* ── Dark & Lite Overrides for Phase 3 Recap Studio ─────────────────────── */
 html[data-theme="dark"] .studio-toast,
 html[data-theme="dark"] .floating-alert-card {
@@ -9000,13 +8205,11 @@ html[data-theme="dark"].lite #tab-recap .recap-dock-section {
     background: #141D33 !important;
     box-shadow: none !important;
 }
-
 /* ═══════════════════════════════════════════════════════════════════════════
    VCP UI REBUILD V2 — PHASE 4: VOICE & TTS STUDIOS (LIGHT / DARK / LITE)
    Royal Cobalt Studio Accent (#tab-voice) + Emerald Teal Accent (#tab-tts).
    Note: Keep scrolling content free of frosted filter rules for Android GPU.
    ═══════════════════════════════════════════════════════════════════════════ */
-
 /* ── Voice Clone Studio (#tab-voice — Royal Cobalt Accent) ─────────────── */
 #tab-voice .tutorial-banner-card {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(239, 246, 255, 0.90));
@@ -9133,8 +8336,6 @@ html[data-theme="dark"].lite #tab-recap .recap-dock-section {
     background: linear-gradient(135deg, #2563EB 0%, #0EA5E9 100%);
     color: #FFFFFF;
 }
-
-/* Custom Clone 5-Step Guided Flow & File Requirements (Light/Dark High Contrast) */
 #tab-voice #ref-audio-section .step-header {
     display: flex;
     align-items: flex-start;
@@ -9211,7 +8412,6 @@ html[data-theme="dark"].lite #tab-recap .recap-dock-section {
 #tab-voice .progress-bar-fill {
     background: linear-gradient(90deg, #2563EB, #0EA5E9);
 }
-
 /* ── Shared Sample Chips & Excess Warning Banners (Voice + TTS) ────────── */
 #tab-voice .mini-chip,
 #tab-tts .mini-chip {
@@ -9239,7 +8439,6 @@ html[data-theme="dark"].lite #tab-recap .recap-dock-section {
 #tab-tts .vcp-excess-text {
     color: #92400E;
 }
-
 /* ── TTS Studio (#tab-tts — Emerald Teal Accent) ───────────────────────── */
 #tab-tts #tts-engine-picker.segmented-control {
     background: rgba(240, 253, 250, 0.92);
@@ -9331,7 +8530,6 @@ html[data-theme="dark"].lite #tab-recap .recap-dock-section {
     border-radius: 16px;
     font-weight: 700;
 }
-
 /* ── Dark Glass & Lite Ceramic Overrides for Phase 4 (Voice & TTS) ──────── */
 html[data-theme="dark"] .sticky-cta-bar {
     background: rgba(15, 23, 42, 0.94) !important;
@@ -9486,13 +8684,10 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     background: #141D33 !important;
     box-shadow: none !important;
 }
-
 /* ============================================================
    VCP UI REBUILD V2 — PHASE 5: DOWNLOADER, VIP, HISTORY, MODALS & ADMIN CONSOLE
    Zero scroll blur rules; crisp Ceramic Light + Midnight Dark + Lite parity.
    ============================================================ */
-
-/* 1) Media Downloader (#tab-downloader — Indigo Studio accent) */
 #tab-downloader .pane-header h2 {
     color: #0F172A;
     font-weight: 800;
@@ -9551,8 +8746,6 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     border-color: rgba(79, 70, 229, 0.55);
     box-shadow: 0 0 0 1.5px rgba(79, 70, 229, 0.40), 0 8px 18px -10px rgba(79, 70, 229, 0.25);
 }
-
-/* 2) VIP Plans & Wallet (#tab-vip — Champagne Gold accent) */
 #tab-vip .stats-card {
     background: linear-gradient(180deg, rgba(255, 252, 245, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%);
     border: 1px solid rgba(217, 119, 6, 0.24);
@@ -9597,8 +8790,6 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     border: 1.5px dashed rgba(217, 119, 6, 0.38);
     background: rgba(255, 251, 235, 0.55);
 }
-
-/* 3) History (#tab-history) & Live Jobs Floating Pill */
 #tab-history .vcp-history-retention-bar {
     background: rgba(248, 250, 255, 0.92);
     border: 1px solid rgba(59, 130, 246, 0.18);
@@ -9617,8 +8808,6 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     border: 1px solid rgba(255, 255, 255, 0.16);
     box-shadow: 0 12px 28px -8px rgba(2, 6, 23, 0.45);
 }
-
-/* 4) Modals, Bottom Sheets & Entry Gate Lock */
 .submit-confirm-card,
 .live-jobs-sheet-card,
 .modal-content,
@@ -9647,7 +8836,6 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     align-items: center;
     justify-content: center;
 }
-
 /* 5) Admin Console (#tab-admin): 4x2 Nav Grid, Action Triage, KPI Cards & Collapsible Accordions */
 #tab-admin #adm-nav {
     display: grid;
@@ -9843,7 +9031,6 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     border-radius: 14px;
     font-weight: 800;
 }
-
 /* 6) Phase 5 Dark Glass Overrides (High Contrast Obsidian) */
 html[data-theme="dark"] #tab-downloader .pane-header h2,
 html[data-theme="dark"] #tab-vip .pane-header h2,
@@ -9962,8 +9149,6 @@ html[data-theme="dark"] #tab-admin .adm-acc-pill {
 html[data-theme="dark"] #tab-admin .adm-acc-chev {
     color: #94A3B8;
 }
-
-/* 7) Phase 5 Lite Ceramic Mode (Flat Opaque High Contrast) */
 html.lite #tab-downloader .dl-search-card,
 html.lite #tab-downloader #dl-result-card,
 html.lite #tab-vip .stats-card,
@@ -9992,11 +9177,7 @@ html[data-theme="dark"].lite .modal-content {
     background: #141D33 !important;
     box-shadow: none !important;
 }
-
 /* ══ POLISH PASS 1 (20261114_r148) ══════════════════════════════════════════ */
-/* NOTE: Pure opaque/gradient surfaces only after V2 Phase 3/4/5 markers.  */
-
-/* 1A. Home Hero Greeting & Tile Sub-Line Fit (no clipping / tidy wrap)      */
 #tab-home .vcp-hero-top {
     padding: 13px 14px !important;
     gap: 6px;
@@ -10052,7 +9233,6 @@ html[data-theme="dark"].lite .modal-content {
     overflow: visible !important;
     text-overflow: unset !important;
 }
-
 /* 1B. Admin Pricing Editor Cards                                            */
 #admin-pricing-list {
     display: flex;
@@ -10165,8 +9345,6 @@ html[data-theme="dark"].lite .modal-content {
     padding-top: 4px;
     padding-bottom: 14px;
 }
-
-/* 1C. Admin Nav Overview Label, Triage Banner, KPI Redesign & Sticky Save   */
 #tab-admin #adm-nav .adm-nav-btn {
     font-size: 11px;
     padding: 6px 4px;
@@ -10274,7 +9452,6 @@ html[data-theme="dark"].lite .modal-content {
 #tab-admin .stat-mini-card.adm-tap:active {
     transform: scale(0.98);
 }
-
 #tab-admin #adm-screen-settings {
     padding-bottom: 12px;
 }
@@ -10289,8 +9466,6 @@ html[data-theme="dark"].lite .modal-content {
     border: 1px solid rgba(15, 23, 42, 0.10);
     box-shadow: 0 -6px 20px -8px rgba(15, 23, 42, 0.14), 0 8px 22px -6px rgba(15, 23, 42, 0.20);
 }
-
-/* 1D & 1E. Global Bottom Scroll Clearance, Stepper Pills, Step 2 & Users    */
 .content-viewport {
     padding-bottom: calc(var(--nav-h, 64px) + 84px + env(safe-area-inset-bottom, 0px)) !important;
 }
@@ -10353,8 +9528,6 @@ html[data-theme="dark"].lite .modal-content {
     white-space: nowrap;
     font-size: 12.5px;
 }
-
-/* Dark & Lite Parity for Polish Pass 1                                      */
 html[data-theme="dark"] #admin-pricing-list .adm-price-row.adm-price-card {
     background: rgba(15, 23, 42, 0.88);
     border-color: rgba(148, 163, 184, 0.22);
@@ -10400,7 +9573,6 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
     background: #141D33;
     box-shadow: none;
 }
-
 /* ── Admin Key Health / Quota Pool Lists (consistent fixed-rhythm rows) ───── */
 #adm-keys-summary {
     display: flex;
@@ -10560,8 +9732,6 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
 .slider-ticks span:nth-child(3) { left: 56.25%; }
 .slider-ticks span:nth-child(4) { left: 75%; }
 .adm-stage-table .adm-num { text-align: right; white-space: nowrap; }
-
-/* Recap AI Thumbnail Panel (Light + Dark Ceramic/Obsidian themed) */
 .recap-ai-thumb-panel {
     padding: 12px 14px;
     border-radius: 14px;
@@ -10603,12 +9773,10 @@ html[data-theme="dark"] .recap-hist-thumb-box {
     flex: 1 1 auto;
     min-width: 0;
 }
-
 /* ═══════════════════════════════════════════════════════════════════════════
    UNIFIED DESIGN SYSTEM V3 — UTILITY PARITY, DARK SEMANTICS, ACCESSIBILITY
    & RESPONSIVE TABLET (>=768px) / DESKTOP (>=1024px) LAYOUTS
    ═══════════════════════════════════════════════════════════════════════════ */
-
 .sr-only {
     position: absolute !important;
     width: 1px !important;
@@ -10620,14 +9788,12 @@ html[data-theme="dark"] .recap-hist-thumb-box {
     white-space: nowrap !important;
     border: 0 !important;
 }
-
 html[data-theme="dark"] .text-gold { color: #FBBF24 !important; }
 html[data-theme="dark"] .adm-fleet-node-card {
     background: rgba(22, 32, 56, 0.88);
     border-color: rgba(148, 163, 184, 0.26);
     color: #F8FAFC;
 }
-
 #slip-preview-img {
     max-height: 260px;
     width: auto;
@@ -10637,8 +9803,6 @@ html[data-theme="dark"] .adm-fleet-node-card {
     margin: 0 auto;
     border-radius: 12px;
 }
-
-/* Missing button, utility, metric & table classes defined cleanly */
 .vcp-btn-secondary,
 .btn-secondary {
     background: var(--vcp-flat-glass-bg, #fff);
@@ -10707,7 +9871,6 @@ details[open] > summary .adm-acc-chev { transform: rotate(180deg); }
 }
 .studio-error-banner-title { font-weight: 700; font-size: 14px; color: var(--vcp-danger, #C81E1E); }
 .studio-error-banner-msg { font-size: 13px; line-height: 1.55; word-break: break-word; }
-
 @media (hover: hover) {
     .vcp-btn-secondary:hover, .btn-secondary:hover {
         border-color: var(--vcp-primary, #0A84FF);
@@ -10721,8 +9884,6 @@ details[open] > summary .adm-acc-chev { transform: rotate(180deg); }
         border-color: rgba(37, 99, 235, 0.34);
     }
 }
-
-/* Responsive Tablet (>=768px) */
 @media (min-width: 768px) {
     .app-container { max-width: 860px; }
     .top-nav { max-width: 840px; margin-left: auto; margin-right: auto; }
@@ -10738,8 +9899,6 @@ details[open] > summary .adm-acc-chev { transform: rotate(180deg); }
         gap: 12px;
     }
 }
-
-/* Responsive Desktop (>=1024px) */
 @media (min-width: 1024px) {
     .app-container { max-width: 1080px; }
     .top-nav { max-width: 1060px; }
@@ -10767,7 +9926,6 @@ details[open] > summary .adm-acc-chev { transform: rotate(180deg); }
         grid-template-columns: repeat(8, minmax(0, 1fr));
     }
 }
-
 /* ── Audit Section 8: Toast click-through & Lite Mode Utility Button ── */
 .studio-toast {
     pointer-events: none;
@@ -10882,7 +10040,6 @@ select.studio-select, select.studio-input, select.glass-dropdown {
     font-size: 12px;
     font-weight: 600;
 }
-
 .plan-tabs-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 @media (max-width: 420px) { .plan-tabs-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .vcp-vip-subnav { margin-top: 10px; }
@@ -10900,6 +10057,102 @@ select.studio-select, select.studio-input, select.glass-dropdown {
 .adm-basis-tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); opacity: 0.85; }
 .adm-price-specs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
 .adm-price-specs input { width: 72px; }
-
-
-
+/* ════════════════════════════════════════════════════════════════════════════
+   2026-11-20 UI/UX SIMPLIFICATION PASS (ZERO BACKDROP-FILTER HERE)
+   ════════════════════════════════════════════════════════════════════════════ */
+.sticky-cta-bar { background: var(--surface-1, rgba(14, 17, 29, 0.97)) !important; border: 1px solid var(--border, rgba(255, 255, 255, 0.14)); border-radius: 18px; padding: 8px 10px !important; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38); }
+html[data-theme="light"] .sticky-cta-bar { background: rgba(255, 255, 255, 0.97) !important; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14); }
+.content-viewport,
+.tab-pane.active,
+#tab-home.active,
+#tab-voice.active,
+#tab-tts.active,
+#tab-recap.active,
+#tab-downloader.active,
+#tab-vip.active,
+#tab-history.active,
+#tab-admin.active { padding-bottom: calc(var(--nav-h, 68px) + 148px + env(safe-area-inset-bottom, 0px)) !important; }
+#recap-step-1,
+#recap-step-2,
+#recap-step-3,
+#recap-step-4 { margin-bottom: 16px; }
+@media (max-width: 1023px) { #tab-recap .vcp-step2-sticky-preview, #tab-recap .vcp-step2-sticky-preview.is-ratio-9-16, #tab-recap .vcp-step2-sticky-preview.is-portrait-stage { position: relative !important; top: auto !important; z-index: 2 !important; } }
+.top-nav { position: relative; z-index: 50; gap: 8px; }
+.top-nav .live-dot { display: none !important; }
+.top-actions { position: relative; display: flex; align-items: center; gap: 6px; order: 3; }
+.header-more-btn { width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; font-size: 18px; font-weight: 800; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.header-more-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 196px; padding: 8px; border-radius: 14px; background: var(--surface-1, #131726); border: 1px solid var(--border, rgba(255, 255, 255, 0.14)); box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42); display: flex; flex-wrap: wrap; gap: 6px; z-index: 80; }
+html[data-theme="light"] .header-more-menu { background: #ffffff; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16); }
+.header-more-menu.hidden { display: none !important; }
+.header-more-menu .tutorial-pill-btn { width: auto !important; flex: 1 1 100%; justify-content: flex-start; padding: 6px 10px !important; }
+.header-more-menu .tutorial-btn-text { display: inline !important; }
+.top-nav .user-pill { position: relative; order: 2; margin-left: auto; padding: 2px 4px !important; background: transparent !important; border: none !important; box-shadow: none !important; }
+.header-bal-summary-btn { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2, rgba(255, 255, 255, 0.08)); border: 1px solid var(--border, rgba(255, 255, 255, 0.14)); color: var(--text, #f8fafc); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.header-bal-caret { font-size: 10px; opacity: 0.75; transition: transform 0.15s ease; }
+.user-pill.is-open .header-bal-caret { transform: rotate(180deg); }
+.top-nav .user-pill > .vip-badge,
+.top-nav .user-pill > .balance-chips { display: none; }
+.top-nav .user-pill.is-open { z-index: 75; }
+.top-nav .user-pill.is-open > .vip-badge { display: inline-flex; position: absolute; top: calc(100% + 14px); right: 12px; z-index: 81; }
+.top-nav .user-pill.is-open > .balance-chips { display: flex; flex-direction: column; align-items: stretch; gap: 6px; position: absolute; top: calc(100% + 8px); right: 0; min-width: 196px; padding: 36px 10px 10px; border-radius: 14px; background: var(--surface-1, #131726); border: 1px solid var(--border, rgba(255, 255, 255, 0.14)); box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42); z-index: 80; }
+html[data-theme="light"] .top-nav .user-pill.is-open > .balance-chips { background: #ffffff; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16); }
+@media (max-width: 430px) { .top-nav .user-pill.is-open > .balance-chips { right: -40px; } .top-nav .user-pill.is-open > .vip-badge { right: -28px; } }
+@keyframes vcpProfileShimmer { 0% { opacity: 0.45; } 50% { opacity: 0.85; } 100% { opacity: 0.45; } }
+body[data-profile-loading="1"] #home-tier-badge,
+body[data-profile-loading="1"] #vip-status-badge,
+body[data-profile-loading="1"] #profile-category-tag,
+body[data-profile-loading="1"] .home-free-period-badge,
+body[data-profile-loading="1"] .home-free-value,
+body[data-profile-loading="1"] #header-bal-summary-text,
+body.profile-loading #home-tier-badge,
+body.profile-loading #vip-status-badge,
+body.profile-loading #profile-category-tag,
+body.profile-loading .home-free-period-badge,
+body.profile-loading .home-free-value,
+body.profile-loading #header-bal-summary-text { color: transparent !important; background: rgba(148, 163, 184, 0.22) !important; border-color: transparent !important; border-radius: 8px; min-width: 52px; animation: vcpProfileShimmer 1.1s ease-in-out infinite; user-select: none; pointer-events: none; }
+#tab-voice.active,
+#tab-tts.active { display: flex !important; flex-direction: column !important; }
+#tab-voice > .tutorial-banner-card { order: 1; }
+#tab-voice > #voice-progress-box,
+#tab-voice > #voice-failed-box,
+#tab-voice > #voice-result-box,
+#tab-voice > #voice-inline-status { order: 6; }
+#tab-voice > .hub-link { order: 7; }
+#home-refer-card .ref-desc,
+.referral-banner-content .ref-desc { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; -webkit-line-clamp: unset !important; display: block !important; line-height: 1.5; }
+.persona-select-row,
+.tts-voice-select-flex { display: flex; align-items: center; gap: 8px; width: 100%; }
+.persona-select-row .studio-select,
+.tts-voice-select-flex .studio-select { flex: 1 1 auto; min-width: 0; }
+.vcp-saved-voice-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.vcp-clone-steps-bar { gap: 4px; margin-bottom: 6px; }
+.vcp-clone-req-box { margin-bottom: 6px; }
+.vip-shared-benefits-bar { padding: 8px 12px; margin-bottom: 10px; border-radius: 12px; font-size: 12px; font-weight: 600; line-height: 1.5; background: var(--gold-soft, rgba(245, 158, 11, 0.1)); border: 1px solid var(--gold-border, rgba(245, 158, 11, 0.25)); color: var(--text); }
+#studio-alert-carousel .carousel-nav-bar,
+#recap-step2-cat-tabs,
+#btn-toggle-recap-fine,
+#recap-voice-billing-badge,
+#recap-engine-picker .pill-btn[data-engine="none"],
+#sub-style-cards-grid { display: none !important; }
+.recap-fast-path-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
+.recap-fast-path-bar .btn { flex: 1 1 140px; min-height: 40px; font-size: 13px; }
+.recap-notes-collapse { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2, rgba(255, 255, 255, 0.04)); border: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
+.recap-notes-collapse > summary { cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--text-2); list-style: none; display: flex; align-items: center; justify-content: space-between; }
+.recap-notes-collapse .recap-rights-note { margin-top: 8px; font-size: 11.5px; line-height: 1.45; }
+#tab-recap #recap-preset-grid,
+#recap-master-presets-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.vcp-preset-card { padding: 8px 10px !important; min-height: 42px; flex-direction: row !important; align-items: center !important; gap: 6px !important; text-align: left; }
+.vcp-preset-card .vcp-preset-desc { display: none !important; }
+.vcp-preset-card .vcp-preset-name { font-size: 12px !important; line-height: 1.3; }
+.recap-sub-style-select-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.recap-sub-style-select-row select { flex: 1 1 auto; min-width: 0; }
+.recap-sub-live-badge { padding: 6px 10px; border-radius: 10px; font-size: 12.5px; font-weight: 700; white-space: nowrap; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(15, 23, 42, 0.85); color: #ffffff; }
+.dd-acc-group.open > .dd-acc-head .dd-acc-chevron { transform: rotate(90deg); }
+.dd-acc-head .dd-acc-chevron { display: inline-block; transition: transform 0.15s ease; }
+.dd-acc-vip-tag { font-size: 10.5px; font-weight: 800; padding: 2px 7px; border-radius: 999px; background: rgba(250, 204, 21, 0.18); color: #facc15; border: 1px solid rgba(250, 204, 21, 0.35); margin-left: 6px; flex-shrink: 0; }
+html[data-theme="light"] .dd-acc-vip-tag { background: rgba(217, 119, 6, 0.14); color: #b45309; border-color: rgba(217, 119, 6, 0.3); }
+#tab-recap #preview-blur-box .drag-grip-icon,
+#tab-recap #preview-sub-box .sub-grip { min-height: 28px; padding: 3px 9px; font-size: 11px; font-weight: 800; letter-spacing: 0.01em; border-radius: 999px; background: rgba(10, 14, 26, 0.88); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.36); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); display: inline-flex; align-items: center; gap: 4px; }
+.recap-step3-acc-wrap { margin-top: 10px; }
+.recap-step4-more-options { margin-top: 10px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2, rgba(255, 255, 255, 0.04)); border: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
+.recap-step4-more-options > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text); list-style: none; display: flex; align-items: center; justify-content: space-between; }

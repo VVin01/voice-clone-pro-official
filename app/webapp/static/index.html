@@ -26,7 +26,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/static/css/style.css?v=20261118_r164">
 </head>
-<body class="dark-theme gate-locked">
+<body class="dark-theme gate-locked" data-profile-loading="1">
     <div id="app" class="app-container">
         
         <!-- ════ TOP LUXURY STUDIO APP BAR ════ -->
@@ -45,35 +45,42 @@
             </div>
 
             <div class="top-actions">
-                <button type="button" class="theme-pill-btn" id="btn-theme-toggle" onclick="toggleThemeMode()" title="အလင်း / အမှောင် ပြောင်းရန်" data-i18n-title="theme_toggle_title" data-i18n-aria="btn_theme_aria" aria-label="Toggle Light / Dark theme" aria-pressed="false" data-theme-state="light">
-                    <span class="btn-icon theme-ico-wrap" aria-hidden="true">
-                        <svg class="vcp-ico vcp-ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                        <svg class="vcp-ico vcp-ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-                    </span>
-                </button>
-                <button type="button" class="theme-pill-btn lite-pill-btn" id="btn-lite-toggle" onclick="toggleLiteMode()" title="Lite Mode (ပေါ့ပါးသက်သာစနစ်)" data-i18n-title="lite_toggle_title" data-i18n-aria="btn_lite_aria" aria-label="Toggle Lite Mode" aria-pressed="false">
-                    <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
-                </button>
-                <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်" data-i18n-title="tut_guide_title">
-                    <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
-                    <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
-                </button>
-                <button type="button" class="theme-pill-btn" id="btn-top-history" onclick="openHistoryHub()" title="မှတ်တမ်း" data-i18n-title="history_title" aria-label="History"><span class="btn-icon" aria-hidden="true">⏱️</span></button>
                 <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()" title="ဘာသာစကား ပြောင်းရန်" data-i18n-title="lang_toggle_title"><span class="lang-flag" aria-hidden="true">🇲🇲</span><span class="lang-btn-text" id="lang-btn-text">မြန်မာ</span></button>
+                <button type="button" class="theme-pill-btn header-more-btn" id="btn-header-more" onclick="toggleHeaderMoreMenu(event)" title="အခြားရွေးချယ်စရာများ" data-i18n-title="header_more_title" aria-label="More options" aria-expanded="false">⋯</button>
+                <div class="header-more-menu hidden" id="header-more-menu">
+                    <button type="button" class="theme-pill-btn" id="btn-theme-toggle" onclick="toggleThemeMode()" title="အလင်း / အမှောင် ပြောင်းရန်" data-i18n-title="theme_toggle_title" data-i18n-aria="btn_theme_aria" aria-label="Toggle Light / Dark theme" aria-pressed="false" data-theme-state="light">
+                        <span class="btn-icon theme-ico-wrap" aria-hidden="true">
+                            <svg class="vcp-ico vcp-ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                            <svg class="vcp-ico vcp-ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                        </span>
+                    </button>
+                    <button type="button" class="theme-pill-btn lite-pill-btn" id="btn-lite-toggle" onclick="toggleLiteMode()" title="Lite Mode (ပေါ့ပါးသက်သာစနစ်)" data-i18n-title="lite_toggle_title" data-i18n-aria="btn_lite_aria" aria-label="Toggle Lite Mode" aria-pressed="false">
+                        <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+                    </button>
+                    <button type="button" class="theme-pill-btn" id="btn-top-history" onclick="openHistoryHub()" title="မှတ်တမ်း" data-i18n-title="history_title" aria-label="History"><span class="btn-icon" aria-hidden="true">⏱️</span></button>
+                    <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်" data-i18n-title="tut_guide_title">
+                        <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
+                        <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
+                    </button>
+                </div>
             </div>
 
             <div class="user-pill" id="user-pill">
-                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="switchTab('tab-vip')" role="button" tabindex="0">FREE</span>
+                <button type="button" class="header-bal-summary-btn" id="btn-header-balances" onclick="toggleHeaderBalances(event)" aria-expanded="false" aria-controls="user-pill">
+                    <span id="header-bal-summary-text">···</span>
+                    <span class="header-bal-caret" aria-hidden="true">▾</span>
+                </button>
+                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">FREE</span>
                 <span class="live-dot" title="Live" data-i18n-title="live_badge_title"><span class="live-dot-pulse"></span>LIVE</span>
                 <div class="balance-chips">
-                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title" onclick="switchTab('tab-vip')" role="button" tabindex="0">🎙️ —</span>
-                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title" onclick="switchTab('tab-vip')" role="button" tabindex="0">🎬 —</span>
+                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">🎙️ —</span>
+                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">🎬 —</span>
                     <!-- Batch BZ: today's TTS spendable (referral + daily
                          quota remainder, from /api/me) — a button so the
                          chip itself is the one-tap route to the TTS tab;
                          switchTab runs the quota hook on entry. Neutral —
                          until the profile paints, like the other chips. -->
-                    <button type="button" class="bal-chip tts" id="user-tts-bal" title="TTS left today" data-i18n-title="bal_chip_tts_title" onclick="switchTab('tab-tts')">🎧 —</button>
+                    <button type="button" class="bal-chip tts" id="user-tts-bal" title="TTS left today" data-i18n-title="bal_chip_tts_title" onclick="closeHeaderPopovers(); switchTab('tab-tts')">🎧 —</button>
                 </div>
             </div>
         </header>
@@ -465,7 +472,13 @@
                                     <button type="button" class="filter-chip" data-filter="male" onclick="filterPersonas('male')" data-i18n="persona_filter_male">👨 ယောက်ျားလေး</button>
                                     <button type="button" class="filter-chip" data-filter="female" onclick="filterPersonas('female')" data-i18n="persona_filter_female">👩 မိန်းကလေး</button>
                                 </div>
-                                <div class="personas-grid" id="personas-grid">
+                                <div class="persona-select-row mt-2" id="voice-persona-select-row">
+                                    <select id="voice-persona-select" class="studio-select glass-dropdown" data-i18n-aria="voice_step2_select" aria-label="Select Persona Voice"></select>
+                                    <button type="button" class="btn secondary-btn mini-btn" id="btn-voice-persona-preview" onclick="previewSelectedVoiceTabPersona(event)">
+                                        <span data-i18n="btn_preview_short">▶ နားထောင်</span>
+                                    </button>
+                                </div>
+                                <div class="personas-grid hidden" id="personas-grid">
                                     <!-- Populated dynamically via JS with all 12 personas -->
                                 </div>
                             </div>
@@ -491,10 +504,14 @@
                                 <span class="vcp-clone-req-item" data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 50 MB)</span>
                                 <span class="vcp-clone-req-item" data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</span>
                             </div>
-                            <p class="ref-desc" data-i18n="custom_ref_desc">Clone လုပ်လိုသော အသံပိုင်ရှင်၏ အသံနမူနာ (10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် — ပိုရှည်ပါက ပထမ 45 စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်၊ WAV/MP3) တင်ပါ။ မတင်ပါက မူလ မြန်မာ AI အသံဖြင့် ထုတ်ပေးပါမည်။</p>
+                            <p class="ref-desc" data-i18n="custom_ref_desc">မိမိအသံ 10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် (MP3, WAV, M4A, OGG — max 20 MB) တင်ပြီး အသံပုံစံတူ ဖန်တီးနိုင်ပါသည်။</p>
                             <div class="vcp-saved-voice-bar hidden" id="saved-custom-voice-bar">
                                 <span id="saved-custom-voice-label"></span>
-                                <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToVoice()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
+                                <div class="vcp-saved-voice-actions">
+                                    <button type="button" class="mini-chip" id="btn-saved-custom-voice-preview" onclick="previewSavedCustomVoice(event)" data-i18n="btn_preview_short">▶ နားထောင်</button>
+                                    <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToVoice()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
+                                    <button type="button" class="mini-chip text-danger" id="btn-saved-custom-voice-delete" onclick="deleteSavedCustomVoice()" data-i18n="saved_custom_voice_delete">🗑️ ဖျက်မည်</button>
+                                </div>
                             </div>
                             <div class="ref-upload-row">
                                 <label class="btn-file-upload" for="ref-audio-input">
@@ -641,6 +658,7 @@
                     </div>
                     <div class="control-row mt-2" id="tts-gemini-voice-row">
                         <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
+                        <div class="tts-voice-select-flex">
                         <select id="tts-gemini-voice-select" class="studio-select glass-dropdown">
                             <option value="Charon" data-i18n="gem_voice_charon">ကိုသီဟ (ကျား)</option>
                             <option value="Algenib" data-i18n="gem_voice_algenib">ကိုအာကာ (ကျား)</option>
@@ -653,9 +671,14 @@
                             <option value="Gacrux" data-i18n="gem_voice_gacrux">မသီရိ (မ)</option>
                             <option value="Achernar" data-i18n="gem_voice_achernar">မသွန်းရည် (မ)</option>
                         </select>
+                        <button type="button" class="btn secondary-btn mini-btn" id="btn-tts-gemini-preview" onclick="previewSelectedTtsVoice(event)">
+                            <span data-i18n="btn_preview_short">▶ နားထောင်</span>
+                        </button>
+                        </div>
                     </div>
                     <div class="control-row mt-2 hidden" id="tts-edge-voice-row">
                         <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
+                        <div class="tts-voice-select-flex">
                         <select id="tts-edge-voice-select" class="studio-select glass-dropdown">
                             <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (မြန်မာ · ကျား)</option>
                             <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မြန်မာ · မ)</option>
@@ -666,6 +689,10 @@
                             <option value="emma" data-i18n="tts_edge_emma">မအမ်မာ (Multilingual · မ · သွက်လက်)</option>
                             <option value="vivienne" data-i18n="tts_edge_vivienne">မဗီဗီယန် (Multilingual · မ · ငြိမ့်ညောင်း)</option>
                         </select>
+                        <button type="button" class="btn secondary-btn mini-btn" id="btn-tts-edge-preview" onclick="previewSelectedTtsVoice(event)">
+                            <span data-i18n="btn_preview_short">▶ နားထောင်</span>
+                        </button>
+                        </div>
                     </div>
                     <p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ &amp; Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်</p>
                     <p class="ref-desc" id="tts-balance-line" data-i18n="tts_balance_loading">လက်ကျန် စစ်ဆေးနေသည်…</p>
@@ -930,6 +957,10 @@
                     <span class="mini-tag" id="recap-info-platform">YouTube</span>
                     <span class="mini-tag text-green" id="recap-info-sub" data-i18n="recap_info_ready">✅ Recap အတွက် အဆင်သင့်</span>
                 </div>
+                <div class="recap-fast-path-bar" id="recap-fast-path-bar">
+                    <button type="button" class="btn gold-gradient-btn" id="btn-recap-fast-skip" onclick="skipRecapToGenerate()" data-i18n="recap_fast_skip_btn">⚡ ဖန်တီးရန်သို့ ကျော်မည် →</button>
+                    <button type="button" class="btn secondary-btn" id="btn-recap-fast-customize" onclick="customizeRecapFromStep1()" data-i18n="recap_fast_custom_btn">⚙️ စိတ်ကြိုက်ပြင်မည် →</button>
+                </div>
             </div>
         </div>
 
@@ -1006,13 +1037,13 @@
                         <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 85%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
                             <div class="box-resize-handle top"></div>
                             <div class="box-resize-handle left"></div>
-                            <span class="drag-grip-icon">🌫️ ⠿</span>
+                            <span class="drag-grip-icon">🌫️ ⠿ <span data-i18n="blur_handle_short">Blur</span></span>
                             <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
                             <div class="box-resize-handle right"></div>
                             <div class="box-resize-handle bottom"></div>
                         </div>
                         <div class="preview-sub-box draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
-                            <span class="drag-grip-icon sub-grip">📝 ⠿</span>
+                            <span class="drag-grip-icon sub-grip">📝 ⠿ <span data-i18n="sub_box_short_label">Subtitle</span></span>
                         </div>
                     </div>
                 </div>
@@ -1062,11 +1093,11 @@
                     </button>
                 </div>
 
-                <!-- Category 1: Master Presets + Save as My Preset -->
+                <!-- Category 1: Master Presets (compact 1-line cards at top of Step 2) -->
                 <div class="vcp-step2-cat-panel mt-2" id="recap-cat-preset" data-step2-panel="preset">
                     <div class="style-lbl mb-1" data-i18n="recap_master_presets_title">⚡ အသင့်သုံး Master Presets:</div>
                     <div class="vcp-preset-grid" id="recap-master-presets-grid">
-                        <button type="button" class="vcp-preset-card active" data-master-preset="tiktok" onclick="applyRecapMasterPreset('tiktok')">
+                        <button type="button" class="vcp-preset-card" data-master-preset="tiktok" onclick="applyRecapMasterPreset('tiktok')">
                             <span class="vcp-preset-icon">📱</span>
                             <span class="vcp-preset-name" data-i18n="preset_tiktok_name">TikTok / Reels 9:16</span>
                             <span class="vcp-preset-desc" data-i18n="preset_tiktok_desc">9:16 Blur · Classic Gold · Standard</span>
@@ -1087,23 +1118,10 @@
                             <span class="vcp-preset-desc" data-i18n="preset_strict_safe_desc">9:16 Blur · Band · Strong Protection</span>
                         </button>
                     </div>
-
-                    <div class="vcp-my-presets-box mt-3" id="recap-my-presets-section">
-                        <div class="card-header-row">
-                            <span class="style-lbl" data-i18n="recap_my_presets_title">💾 ကိုယ်ပိုင် Preset (အများဆုံး ၃ ခု):</span>
-                            <span class="vcp-badge vcp-badge-gold" id="recap-my-presets-vip-badge" data-i18n="badge_vip">👑 VIP</span>
-                        </div>
-                        <div class="vcp-my-preset-save-row mt-1">
-                            <input type="text" id="input-my-preset-name" class="vcp-input sm" maxlength="32" data-i18n-ph="recap_my_preset_ph" placeholder="Preset အမည် ရေးပါ (ဥပမာ - My TikTok)">
-                            <button type="button" class="vcp-btn vcp-btn-glass sm" id="btn-save-my-preset" onclick="saveCurrentAsMyRecapPreset()">
-                                <span data-i18n="btn_save_my_preset">💾 Save as My Preset</span>
-                            </button>
-                        </div>
-                        <div class="vcp-my-presets-list mt-2" id="recap-my-presets-list"></div>
-                    </div>
                 </div>
+                <div class="recap-step2-summary mt-2" id="recap-step2-summary" aria-live="polite"></div>
 
-                <!-- Category 2: Frame / Crop -->
+                <!-- Row 1: Layout (Ratio & Fill & Crop) -->
                 <div class="recap-dock-section hidden dd-acc-group" id="recap-preview-ratio-group" data-acc-title-key="recap_ratio_label">
                     <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား:</div>
                     <div class="ratio-pills-grid" id="recap-ratio-picker">
@@ -1197,12 +1215,12 @@
                     </div><!-- /#recap-crop-detail -->
                 </div>
 
-                <div class="recap-fine mt-3">
-                    <button type="button" class="recap-fine-header" id="btn-toggle-recap-fine" onclick="toggleRecapFineSettings()" aria-expanded="false">
+                <div class="recap-fine mt-2">
+                    <button type="button" class="recap-fine-header hidden" id="btn-toggle-recap-fine" onclick="toggleRecapFineSettings()" aria-expanded="false">
                         <span class="recap-fine-title" data-i18n="recap_fine_title">အသေးစိတ် ပြင်ရန်</span>
                         <span class="recap-fine-chevron" id="recap-fine-chevron">▼</span>
                     </button>
-                    <div class="recap-fine-body hidden" id="recap-fine-body">
+                    <div class="recap-fine-body" id="recap-fine-body">
                     <div class="recap-detail-group dd-acc-group" id="recap-subtitle-group" data-acc-title-key="recap_subtitle_group_title">
                         <div class="recap-detail-group-title" data-i18n="recap_subtitle_group_title">📝 စာတန်း ဆက်တင်များ</div>
                         <div class="overlays-toggle-row mt-2">
@@ -1264,7 +1282,8 @@
                                     <span class="vcp-sub-card-name" data-i18n="sub_style_mint">🟢 Mint Green (ပူစီနံစိမ်း)</span>
                                 </button>
                             </div>
-                            <select id="sub-style-picker" class="studio-select glass-dropdown sr-only mt-2" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
+                            <div class="recap-sub-style-select-row mt-1">
+                            <select id="sub-style-picker" class="studio-select glass-dropdown" data-i18n-aria="sub_style_label" aria-label="စာတန်း စတိုင်လ်:">
                                 <option value="cinematic" data-i18n="sub_style_cinematic">🎬 Cinematic White (ရုပ်ရှင်အဖြူ)</option>
                                 <option value="glass" data-i18n="sub_style_glass">🪟 Modern Clean (မှန်ကြည်)</option>
                                 <option value="yellow" data-i18n="sub_style_yellow">🟡 Classic Gold (အဝါ)</option>
@@ -1278,6 +1297,8 @@
                                 <option value="orange" data-i18n="sub_style_orange">🟠 Sunset Orange (လိမ္မော်ရောင်)</option>
                                 <option value="mint" data-i18n="sub_style_mint">🟢 Mint Green (ပူစီနံစိမ်း)</option>
                             </select>
+                            <span class="recap-sub-live-badge sample-cinematic" id="recap-sub-style-live-preview" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
+                            </div>
                         </div>
                         <div class="style-selector-grid-2 mt-2">
                             <div class="spec-col-half">
@@ -1302,7 +1323,7 @@
                             <div class="pill-group sm" id="recap-sub-render-mode">
                                 <button type="button" class="pill-btn active" data-sub-mode="timeline" data-i18n="sub_mode_timeline">🖼️ Timeline (PNG)</button>
                                 <button type="button" class="pill-btn" data-sub-mode="ass" data-i18n="sub_mode_ass">⚡ Vector (ASS)</button>
-                                <button type="button" class="pill-btn" data-sub-mode="karaoke" data-i18n="sub_mode_karaoke">🎤 Karaoke (Active)</button>
+                                <button type="button" class="pill-btn" data-sub-mode="karaoke" data-i18n="sub_mode_karaoke">🎤 Karaoke</button>
                                 <button type="button" class="pill-btn" data-sub-mode="soft" data-i18n="sub_mode_soft">📺 Soft CC (MP4)</button>
                                 <button type="button" class="pill-btn" data-sub-mode="png" data-i18n="sub_mode_png">🎬 Classic PNG</button>
                             </div>
@@ -1323,10 +1344,10 @@
                         <div class="slider-group mt-2">
                             <div class="slider-header">
                                 <span data-i18n="recap_sub_size_label">စာလုံးအရွယ် (Size):</span>
-                                <span class="slider-sub-est" id="val-font-chars-est">~24 chars/line</span>
-                                <span class="slider-val" id="val-font-size">16pt</span>
+                                <span class="slider-sub-est" id="val-font-chars-est">~32 chars/line</span>
+                                <span class="slider-val" id="val-font-size">13pt</span>
                             </div>
-                            <input type="range" min="10" max="26" step="0.1" value="16" class="studio-slider" id="slider-font-size">
+                            <input type="range" min="10" max="26" step="0.1" value="13" class="studio-slider" id="slider-font-size">
                             <div class="slider-ticks" id="slider-font-size-ticks" aria-hidden="true"><span>13</span><span>16</span><span>19</span><span>22</span></div>
                         </div>
                         <div class="style-selector-row mt-2">
@@ -1424,7 +1445,7 @@
                             </div>
                         </div>
                         <label class="script-review-row mt-2" for="recap-blur-autodetect-toggle">
-                            <input type="checkbox" id="recap-blur-autodetect-toggle" checked>
+                            <input type="checkbox" id="recap-blur-autodetect-toggle">
                             <span class="script-review-main-text">
                                 <span data-i18n="recap_blur_autodetect_label">🔍 မူရင်းစာတန်း အလိုအလျောက် ရှာပြီး Blur လုပ်မည်</span>
                                 <span class="script-review-hint" data-i18n="recap_blur_autodetect_hint">ပိတ်ထားလျှင် ကိုယ်တိုင် ဆွဲထားသော Blur နေရာကိုသာ Blur လုပ်ပါမည်</span>
@@ -1486,7 +1507,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="recap-detail-group dd-acc-group" id="recap-logo-group" data-acc-title-key="recap_logo_group_title">
+                    <div class="recap-detail-group dd-acc-group" id="recap-logo-group" data-acc-title-key="recap_logo_group_title" data-acc-vip-key="recap_badge_vip_only">
                         <div class="overlays-toggle-row">
                             <button class="mini-toggle active" id="btn-toggle-logo">
                                 <span class="t-lbl" data-i18n="recap_logo_toggle_label">⭐ Logo:</span>
@@ -1540,8 +1561,8 @@
                             <span class="style-lbl" data-i18n="recap_protection_label">🛡️ ကာကွယ်မှု အဆင့်:</span>
                             <div class="pill-group sm" id="recap-protection-picker">
                                 <button type="button" class="pill-btn" data-protection="off" data-i18n="recap_protection_off">ပိတ်မည်</button>
-                                <button type="button" class="pill-btn active" data-protection="standard" data-i18n="recap_protection_standard">စံနှုန်း</button>
-                                <button type="button" class="pill-btn" data-protection="strong" data-i18n="recap_protection_strong">အပြင်းစား</button>
+                                <button type="button" class="pill-btn" data-protection="standard" data-i18n="recap_protection_standard">စံနှုန်း</button>
+                                <button type="button" class="pill-btn active" data-protection="strong" data-i18n="recap_protection_strong">အပြင်းစား</button>
                             </div>
                         </div>
                         <div class="anticopyright-grid mt-2">
@@ -1562,6 +1583,20 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Row 6: My Presets (collapsed accordion row) -->
+                    <div class="vcp-my-presets-box mt-2 dd-acc-group" id="recap-my-presets-section" data-acc-title-key="recap_my_presets_title" data-acc-vip-key="badge_vip">
+                        <div class="card-header-row">
+                            <span class="style-lbl" data-i18n="recap_my_presets_title">💾 ကိုယ်ပိုင် Preset (အများဆုံး ၃ ခု):</span>
+                            <span class="vcp-badge vcp-badge-gold" id="recap-my-presets-vip-badge" data-i18n="badge_vip">👑 VIP</span>
+                        </div>
+                        <div class="vcp-my-preset-save-row mt-1">
+                            <input type="text" id="input-my-preset-name" class="vcp-input sm" maxlength="32" data-i18n-ph="recap_my_preset_ph" placeholder="Preset အမည် ရေးပါ (ဥပမာ - My TikTok)">
+                            <button type="button" class="vcp-btn vcp-btn-glass sm" id="btn-save-my-preset" onclick="saveCurrentAsMyRecapPreset()">
+                                <span data-i18n="btn_save_my_preset">💾 Save as My Preset</span>
+                            </button>
+                        </div>
+                        <div class="vcp-my-presets-list mt-2" id="recap-my-presets-list"></div>
+                    </div>
                     <div class="reset-row mt-2">
                         <button type="button" class="mini-btn-seek sm" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title" data-i18n="btn_reset_layout">
                             🔄 မူလနေရာ ပြန်ထားမည် (Reset Layout)
@@ -1571,7 +1606,6 @@
                 </div>
             </div>
         </div>
-        <div class="recap-step2-summary mt-3" id="recap-step2-summary" aria-live="polite"></div>
         <div class="recap-step-next-row mt-3">
             <button type="button" class="btn secondary-btn recap-step-next" data-step-next="3"><span data-i18n="recap_step_continue">ဆက်လုပ်မည်</span> →</button>
         </div>
@@ -1593,7 +1627,7 @@
                                                 <button type="button" class="pill-btn capsule-seg active" data-engine="voxcpm"><span class="seg-short" aria-hidden="true">🎙️</span><span class="seg-full" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</span></button>
                                                 <button type="button" class="pill-btn capsule-seg" data-engine="gemini"><span class="seg-short" aria-hidden="true">✨</span><span class="seg-full" data-i18n="recap_engine_gemini">✨ Gemini AI</span></button>
                                                 <button type="button" class="pill-btn capsule-seg" data-engine="edge"><span class="seg-short" aria-hidden="true">🎧</span><span class="seg-full" data-i18n="recap_engine_edge">🎧 Edge TTS</span></button>
-                                                <button type="button" class="pill-btn capsule-seg" data-engine="none"><span class="seg-short" aria-hidden="true">📝</span><span class="seg-full" data-i18n="recap_engine_none">📝 No Voice</span></button>
+                                                <button type="button" class="pill-btn capsule-seg hidden" data-engine="none"><span class="seg-short" aria-hidden="true">📝</span><span class="seg-full" data-i18n="recap_engine_none">📝 No Voice</span></button>
                                             </div>
         <p class="vcp-engine-billing-hint" id="recap-engine-billing-hint" data-i18n="recap_engine_hint_voxcpm">🎙️ Persona 12 သံကို FREE / VIP အားလုံး သုံးနိုင်ပါတယ် (Recap Credit + Voice မိနစ် ပူးတွဲကုန်ကျပါမယ်) • ကိုယ်ပိုင်အသံက VIP အတွက်သာ ဖြစ်ပါတယ်</p>
         </div>
@@ -1625,8 +1659,66 @@
                                 <div class="vcp-persona-head-row">
                                     <span class="vcp-billing-badge" id="recap-voice-billing-badge" data-i18n="recap_badge_credit_plus_min">Credit + မိနစ်</span>
                                 </div>
-                                <!-- Top 4 Popular Voice Cards -->
-                                <div class="recap-top-voices-grid mt-2" id="recap-top-voices">
+
+                                <!-- FIRST: My Voice (Own-voice custom upload / saved voice) -->
+                                <div class="recap-own-voice-wrap hidden mt-2" id="recap-own-voice-wrap">
+                                    <div class="voice-card" id="recap-own-voice-card" role="button" tabindex="0" aria-pressed="false">
+                                        <div class="v-avatar">🎙️</div>
+                                        <div class="v-info">
+                                            <span class="v-name" data-i18n="recap_own_voice_name">ကိုယ်ပိုင်အသံ</span>
+                                            <span class="v-desc" data-i18n="recap_own_voice_desc">တင်ထားတဲ့ ကိုယ့်အသံနဲ့ ဇာတ်လမ်းပြောမည်</span>
+                                        </div>
+                                        <span class="vcp-billing-badge is-vip" id="recap-own-voice-vip-tag" data-i18n="recap_badge_vip_only">👑 VIP သီးသန့်</span>
+                                        <span class="own-voice-lock-badge hidden" id="recap-own-voice-lock-badge" aria-hidden="true">🔒</span>
+                                    </div>
+                                    <div class="vcp-own-voice-upsell-row">
+                                        <p class="recap-own-voice-locked-hint hidden" id="recap-own-voice-locked-hint" data-i18n="recap_own_voice_locked_hint">🔒 ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</p>
+                                        <button type="button" class="vcp-own-voice-vip-btn hidden" id="btn-recap-own-voice-vip" onclick="switchTab('tab-vip')" data-i18n="recap_own_voice_vip_cta">👑 VIP ရယူမည်</button>
+                                    </div>
+                                    <div class="vcp-saved-voice-bar hidden" id="recap-saved-voice-bar">
+                                        <span id="recap-saved-voice-label"></span>
+                                        <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToRecap()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
+                                    </div>
+                                    <div class="recap-own-voice-body hidden" id="recap-own-voice-body">
+                                        <p class="ref-desc" data-i18n="recap_own_voice_hint">ကိုယ်ပိုင်အသံ နမူနာ (၁၀–၃၀ စက္ကန့် အကောင်းဆုံး၊ အများဆုံး ၅၀ စက္ကန့်) တင်ပါ။ ၅၀ စက္ကန့်ထက် ရှည်ရင် ပထမ ၄၅ စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်။</p>
+                                        <div class="ref-upload-row">
+                                            <label class="btn-file-upload" for="recap-own-voice-input" id="recap-own-voice-upload-btn">
+                                                <span id="recap-own-voice-file-label" data-i18n="recap_own_voice_upload_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
+                                            </label>
+                                            <input type="file" id="recap-own-voice-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
+                                            <button class="mini-chip hidden" id="btn-recap-own-voice-play" type="button" onclick="previewRecapOwnVoice(event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
+                                            <button class="mini-chip text-danger hidden" id="btn-clear-recap-own-voice" type="button" onclick="clearRecapOwnVoice()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
+                                        </div>
+                                        <p class="recap-own-voice-status hidden" id="recap-own-voice-status"></p>
+                                    </div>
+                                </div>
+
+                                <!-- SECOND: Persona Voices Dropdown + Inline Preview Button -->
+                                <div class="mt-2" id="recap-persona-select-row">
+                                    <span class="spec-lbl" data-i18n="recap_persona_select_label">Persona အသံများ:</span>
+                                    <div class="persona-select-row mt-1">
+                                        <select id="recap-persona-select" class="studio-select glass-dropdown" data-i18n-aria="recap_persona_select_label" aria-label="Persona Voices">
+                                            <option value="komin" data-i18n="voice_komin_name">ကိုမင်း (Ko Min) 🔥</option>
+                                            <option value="kozayar" data-i18n="voice_kozayar_name">ကိုဇေယျာ (Ko Zayar)</option>
+                                            <option value="koaung" data-i18n="voice_koaung_name">ကိုအောင် (Ko Aung)</option>
+                                            <option value="mahnin" data-i18n="voice_mahnin_name">မနှင်း (Ma Hnin)</option>
+                                            <option value="kothura" data-i18n="voice_kothura_name">ကိုသူရ (Ko Thura)</option>
+                                            <option value="komyat" data-i18n="voice_komyat_name">ကိုမြတ် (Ko Myat)</option>
+                                            <option value="kophone" data-i18n="voice_kophone_name">ကိုဘုန်း (Ko Phone)</option>
+                                            <option value="manadi" data-i18n="voice_manadi_name">မနဒီ (Ma Nadi)</option>
+                                            <option value="mamay" data-i18n="voice_mamay_name">မမေ (Ma May)</option>
+                                            <option value="mayoon" data-i18n="voice_mayoon_name">မယွန်း (Ma Yoon)</option>
+                                            <option value="machaw" data-i18n="voice_machaw_name">မချော (Ma Chaw)</option>
+                                            <option value="mathiri" data-i18n="voice_mathiri_name">မသီရိ (Ma Thiri)</option>
+                                        </select>
+                                        <button type="button" class="btn secondary-btn mini-btn" id="btn-recap-persona-preview" onclick="previewSelectedRecapPersona(event)">
+                                            <span data-i18n="btn_preview_short">▶ နားထောင်</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Hidden compatibility grids for legacy persona card wiring & tests -->
+                                <div class="recap-top-voices-grid hidden mt-2" id="recap-top-voices">
                                     <div class="voice-card active" data-voice="komin">
                                         <div class="v-avatar">👨‍💼</div>
                                         <div class="v-info">
@@ -1661,45 +1753,8 @@
                                     </div>
                                 </div>
 
-                                <!-- Batch BV: own-voice narration — the user's uploaded
-                                     sample clones via the Persona Voice engine. The wrap
-                                     shows only on that engine (syncRecapEngineAreas);
-                                     the card is locked for FREE profiles
-                                     (refreshRecapEngineLock), mirroring the engine pill. -->
-                                <div class="recap-own-voice-wrap hidden mt-2" id="recap-own-voice-wrap">
-                                    <div class="voice-card" id="recap-own-voice-card" role="button" tabindex="0" aria-pressed="false">
-                                        <div class="v-avatar">🎙️</div>
-                                        <div class="v-info">
-                                            <span class="v-name" data-i18n="recap_own_voice_name">ကိုယ်ပိုင်အသံ</span>
-                                            <span class="v-desc" data-i18n="recap_own_voice_desc">တင်ထားတဲ့ ကိုယ့်အသံနဲ့ ဇာတ်လမ်းပြောမည်</span>
-                                        </div>
-                                        <span class="vcp-billing-badge is-vip" id="recap-own-voice-vip-tag" data-i18n="recap_badge_vip_only">👑 VIP သီးသန့်</span>
-                                        <span class="own-voice-lock-badge hidden" id="recap-own-voice-lock-badge" aria-hidden="true">🔒</span>
-                                    </div>
-                                    <div class="vcp-own-voice-upsell-row">
-                                        <p class="recap-own-voice-locked-hint hidden" id="recap-own-voice-locked-hint" data-i18n="recap_own_voice_locked_hint">🔒 ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</p>
-                                        <button type="button" class="vcp-own-voice-vip-btn hidden" id="btn-recap-own-voice-vip" onclick="switchTab('tab-vip')" data-i18n="recap_own_voice_vip_cta">👑 VIP ရယူမည်</button>
-                                    </div>
-                                    <div class="vcp-saved-voice-bar hidden" id="recap-saved-voice-bar">
-                                        <span id="recap-saved-voice-label"></span>
-                                        <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToRecap()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
-                                    </div>
-                                    <div class="recap-own-voice-body hidden" id="recap-own-voice-body">
-                                        <p class="ref-desc" data-i18n="recap_own_voice_hint">ကိုယ်ပိုင်အသံ နမူနာ (၁၀–၃၀ စက္ကန့် အကောင်းဆုံး၊ အများဆုံး ၅၀ စက္ကန့်) တင်ပါ။ ၅၀ စက္ကန့်ထက် ရှည်ရင် ပထမ ၄၅ စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်။</p>
-                                        <div class="ref-upload-row">
-                                            <label class="btn-file-upload" for="recap-own-voice-input" id="recap-own-voice-upload-btn">
-                                                <span id="recap-own-voice-file-label" data-i18n="recap_own_voice_upload_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
-                                            </label>
-                                            <input type="file" id="recap-own-voice-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
-                                            <button class="mini-chip hidden" id="btn-recap-own-voice-play" type="button" onclick="previewRecapOwnVoice(event)" title="နမူနာနားထောင်မည်" data-i18n-title="voice_preview_title">🔊</button>
-                                            <button class="mini-chip text-danger hidden" id="btn-clear-recap-own-voice" type="button" onclick="clearRecapOwnVoice()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
-                                        </div>
-                                        <p class="recap-own-voice-status hidden" id="recap-own-voice-status"></p>
-                                    </div>
-                                </div>
-
-                                <!-- All 12 Voices Dropdown Expander -->
-                                <div class="more-voices-expander mt-2">
+                                <!-- All 12 Voices Dropdown Expander (hidden compat node) -->
+                                <div class="more-voices-expander hidden mt-2">
                                     <button type="button" class="btn-text-link" id="btn-toggle-all-voices" onclick="toggleAllRecapVoices()">
                                         <span id="all-voices-toggle-text" data-i18n="voices_show_all">အခြားအသံများ ရွေးချယ်ရန် (Show all voices) ▼</span>
                                     </button>
@@ -1776,11 +1831,12 @@
 
                                 </div><!-- /#recap-persona-area -->
 
-        <div class="story-style-block mt-3">
+        <div class="dd-acc-group recap-step3-acc mt-3" id="recap-story-style-acc" data-acc-title-key="recap_style_label">
+        <div class="story-style-block">
                                             <div class="card-label story-style-label" data-i18n="recap_style_label">ဇာတ်လမ်းပြော စတိုင်လ်:</div>
                                             <div class="style-pills-grid seg-capsule" id="story-style-picker-quick">
                                                 <span class="seg-capsule-pill" aria-hidden="true"></span>
-                                                <button type="button" class="style-select-pill capsule-seg active" data-story="viral">
+                                                <button type="button" class="style-select-pill capsule-seg" data-story="viral">
                                                     <span class="pill-main" data-i18n="style_viral">ချက်ချင်းစွဲဆောင်</span>
                                                 </button>
                                                 <button type="button" class="style-select-pill capsule-seg" data-story="dramatic">
@@ -1789,7 +1845,7 @@
                                                 <button type="button" class="style-select-pill capsule-seg" data-story="funny">
                                                     <span class="pill-main" data-i18n="style_funny">ပေါ့ပါးဟာသ</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill capsule-seg" data-story="pov">
+                                                <button type="button" class="style-select-pill capsule-seg active" data-story="pov">
                                                     <span class="pill-main" data-i18n="style_pov">ကိုယ်တွေ့ ရှုထောင့်</span>
                                                 </button>
                                                 <button type="button" class="style-select-pill capsule-seg" data-story="standard">
@@ -1797,6 +1853,8 @@
                                                 </button>
                                             </div>
                                         </div><!-- /.story-style-block -->
+        </div>
+        <div class="dd-acc-group recap-step3-acc mt-2" id="recap-pace-acc" data-acc-title-key="recap_pace_acc_title">
         <div class="recap-adv-group hidden" id="recap-preview-speed-group">
             <div class="card-label" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း:</div>
             <div class="speed-capsule" id="recap-speed-picker">
@@ -1808,7 +1866,9 @@
                 <button class="speed-seg" data-speed="+25%"><span class="seg-short">+25%</span><span class="seg-full" data-i18n="speed_25">+25% အထူးမြန်</span></button>
             </div>
         </div>
-        <div class="recap-lang-block mt-3">
+        </div>
+        <div class="dd-acc-group recap-step3-acc mt-2" id="recap-lang-acc" data-acc-title-key="recap_lang_acc_title">
+        <div class="recap-lang-block">
                                             <div class="vcp-lang-head-row">
                                                 <span class="spec-lbl" data-i18n="recap_lang_label">မူရင်းဗီဒီယို ဘာသာစကား:</span>
                                                 <button type="button" class="vcp-lang-sheet-btn" id="btn-open-recap-lang-sheet" onclick="openRecapLangSheet()" data-i18n="recap_lang_sheet_btn">🌐 ဘာသာစကား အမြန်ရွေးမည်</button>
@@ -1839,13 +1899,16 @@
                                                 <option value="tr" data-lang="tr" data-i18n="recap_lang_tr">Turkish (တူရကီ)</option>
                                             </select>
                                         </div>
-        <label class="script-review-row recap-script-review-main vcp-script-review-card mt-3" for="recap-script-review-toggle">
+        </div>
+        <div class="dd-acc-group recap-step3-acc mt-2" id="recap-review-acc" data-acc-title-key="recap_review_acc_title">
+        <label class="script-review-row recap-script-review-main vcp-script-review-card" for="recap-script-review-toggle">
             <input type="checkbox" id="recap-script-review-toggle">
             <span class="script-review-main-text">
                 <span data-i18n="recap_script_review_label">📝 Script ကို အရင် စစ်ပြင်မည် (အသံ မထုတ်ခင်)</span>
                 <span class="script-review-hint" data-i18n="recap_script_review_hint">အသံမထုတ်ခင် Script ကို ကိုယ်တိုင် စစ်ပြီး ပြင်နိုင်ပါတယ်</span>
             </span>
         </label>
+        </div>
         <div class="recap-step-next-row mt-3">
             <button type="button" class="btn secondary-btn recap-step-next" data-step-next="4"><span data-i18n="recap_step_continue">ဆက်လုပ်မည်</span> →</button>
         </div>
@@ -1912,19 +1975,22 @@
             </div>
             <span class="vcp-quality-surcharge-tag" id="recap-quality-max-surcharge-tag" data-i18n="recap_max_surcharge_badge">Max = +1 Credit</span>
         </div>
-        <label class="script-review-row mt-3" for="recap-split-toggle">
-                                            <input type="checkbox" id="recap-split-toggle">
-                                            <span data-i18n="recap_split_label">✂️ ဗီဒီယိုကို အပိုင်းခွဲ ထုတ်မည်</span>
-                                        </label>
-        <div class="pill-group sm hidden mt-2" id="recap-split-minutes-wrap">
-            <span class="spec-lbl" data-i18n="recap_split_minutes_label">တစ်ပိုင်း ကြာချိန်:</span>
-            <span id="recap-split-minutes-picker">
-                <button type="button" class="pill-btn" data-split-min="2" data-i18n="recap_split_min_2">2 မိနစ်</button>
-                <button type="button" class="pill-btn active" data-split-min="3" data-i18n="recap_split_min_3">3 မိနစ်</button>
-                <button type="button" class="pill-btn" data-split-min="5" data-i18n="recap_split_min_5">5 မိနစ်</button>
-            </span>
-        </div>
-        <p id="recap-split-cost-hint" class="hidden mt-2 recap-cost-hint"></p>
+        <details class="recap-step4-more-options mt-3">
+            <summary><span data-i18n="recap_more_options_label">⚙️ အခြားရွေးချယ်စရာများ</span><span aria-hidden="true">▾</span></summary>
+            <label class="script-review-row mt-2" for="recap-split-toggle">
+                <input type="checkbox" id="recap-split-toggle">
+                <span data-i18n="recap_split_label">✂️ ဗီဒီယိုကို အပိုင်းခွဲ ထုတ်မည်</span>
+            </label>
+            <div class="pill-group sm hidden mt-2" id="recap-split-minutes-wrap">
+                <span class="spec-lbl" data-i18n="recap_split_minutes_label">တစ်ပိုင်း ကြာချိန်:</span>
+                <span id="recap-split-minutes-picker">
+                    <button type="button" class="pill-btn" data-split-min="2" data-i18n="recap_split_min_2">2 မိနစ်</button>
+                    <button type="button" class="pill-btn active" data-split-min="3" data-i18n="recap_split_min_3">3 မိနစ်</button>
+                    <button type="button" class="pill-btn" data-split-min="5" data-i18n="recap_split_min_5">5 မိနစ်</button>
+                </span>
+            </div>
+            <p id="recap-split-cost-hint" class="hidden mt-2 recap-cost-hint"></p>
+        </details>
         <div class="vcp-insuf-min-card hidden" id="recap-insufficient-minutes-box" role="alert">
             <div class="vcp-insuf-min-title" id="recap-insuf-min-title" data-i18n="recap_insuf_min_title">⚠️ Voice မိနစ် မလုံလောက်သေးပါ</div>
             <p class="vcp-insuf-min-desc" id="recap-insuf-min-desc"></p>
@@ -2031,29 +2097,32 @@
     <p id="recap-retry-upload-missing" class="hidden mt-2" style="font-size:12px; opacity:0.85;" data-i18n="recap_retry_upload_missing">📁 မူရင်း တင်ထားတဲ့ ဗီဒီယိုဖိုင် မရှိတော့ပါ — ဖိုင်ကို ပြန်တင်ပြီးမှ ပြန်စမ်းနိုင်ပါမယ်။</p>
 </div>
                 </div>
-<p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ ဒီ App က အသံအသစ်၊ ဘာသာပြန် Script နှင့် ပုံစံပြောင်း Render ဖြင့် ဗီဒီယိုကို ပြောင်းလဲပေးပါသည် — သို့သော် မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
+                <details class="recap-notes-collapse mt-3">
+                    <summary><span data-i18n="recap_step1_notes_toggle">ℹ️ သတိပြုရန်နှင့် ကန့်သတ်ချက်များ</span><span aria-hidden="true">▾</span></summary>
+                    <p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ ဒီ App က အသံအသစ်၊ ဘာသာပြန် Script နှင့် ပုံစံပြောင်း Render ဖြင့် ဗီဒီယိုကို ပြောင်းလဲပေးပါသည် — သို့သော် မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
 
-                <!-- 🌟 AUTO-SLIDING STUDIO ANNOUNCEMENT & POLICY CAROUSEL (CLEAN & COMPACT) 🌟 -->
-                <div class="studio-alert-carousel" id="studio-alert-carousel">
-                    <div class="carousel-track" id="carousel-track">
-                        <!-- Slide 0: Telegram Background Delivery -->
-                        <div class="carousel-slide active" data-slide="0">
-                            <span class="slide-text" data-i18n="telegram_bg_assurance">✨ ဒီမှာ စောင့်နေစရာ မလိုပါ — Render ပြီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ပေးပါမည်။</span>
+                    <!-- 🌟 AUTO-SLIDING STUDIO ANNOUNCEMENT & POLICY CAROUSEL (CLEAN & COMPACT) 🌟 -->
+                    <div class="studio-alert-carousel" id="studio-alert-carousel">
+                        <div class="carousel-track" id="carousel-track">
+                            <!-- Slide 0: Telegram Background Delivery -->
+                            <div class="carousel-slide active" data-slide="0">
+                                <span class="slide-text" data-i18n="telegram_bg_assurance">✨ ဒီမှာ စောင့်နေစရာ မလိုပါ — Render ပြီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ပေးပါမည်။</span>
+                            </div>
+                            <!-- Slide 1: Tier Limit & Watermark Policy -->
+                            <div class="carousel-slide" data-slide="1" id="recap-limit-pill">
+                                <span class="slide-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 Free: အများဆုံး ၂ မိနစ် (Watermark ပါမည်) • VIP: ၁၀ မိနစ်အထိ (Watermark မပါ)</span>
+                            </div>
                         </div>
-                        <!-- Slide 1: Tier Limit & Watermark Policy -->
-                        <div class="carousel-slide" data-slide="1" id="recap-limit-pill">
-                            <span class="slide-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 Free: အများဆုံး ၂ မိနစ် (Watermark ပါမည်) • VIP: ၁၀ မိနစ်အထိ (Watermark မပါ)</span>
+                        <div class="carousel-nav-bar">
+                            <button type="button" class="carousel-arrow prev" id="btn-carousel-prev" data-i18n-aria="carousel_prev_aria" aria-label="Previous Slide">‹</button>
+                            <div class="carousel-dots" id="carousel-dots">
+                                <span class="carousel-dot active" data-slide-idx="0"></span>
+                                <span class="carousel-dot" data-slide-idx="1"></span>
+                            </div>
+                            <button type="button" class="carousel-arrow next" id="btn-carousel-next" data-i18n-aria="carousel_next_aria" aria-label="Next Slide">›</button>
                         </div>
                     </div>
-                    <div class="carousel-nav-bar">
-                        <button type="button" class="carousel-arrow prev" id="btn-carousel-prev" data-i18n-aria="carousel_prev_aria" aria-label="Previous Slide">‹</button>
-                        <div class="carousel-dots" id="carousel-dots">
-                            <span class="carousel-dot active" data-slide-idx="0"></span>
-                            <span class="carousel-dot" data-slide-idx="1"></span>
-                        </div>
-                        <button type="button" class="carousel-arrow next" id="btn-carousel-next" data-i18n-aria="carousel_next_aria" aria-label="Next Slide">›</button>
-                    </div>
-                </div>
+                </details>
 
 
                 <!-- History now lives in the dedicated History tab -->
@@ -2979,7 +3048,7 @@
                             <div class="form-row-2 mt-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_tutorial_link">Tutorial Link (အရန်)</label>
-                                    <input type="text" id="adm-set-tutorial-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/30">
+                                    <input type="text" id="adm-set-tutorial-link" class="studio-input" placeholder="https://t.me/VoiceClonePro/28">
                                 </div>
                                 <div class="toggle-control-col">
                                     <label class="input-label" data-i18n="settings_maintenance">Maintenance Mode</label>

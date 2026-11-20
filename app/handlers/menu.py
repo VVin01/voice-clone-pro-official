@@ -103,7 +103,7 @@ async def render_main_menu(
 
     category_raw = getattr(user.account_category, "value", str(user.account_category)).upper()
     if is_admin:
-        category_badge = f"👑 SYSTEM ADMIN ({category_raw})"
+        category_badge = "👑 SYSTEM ADMIN"
     elif category_raw == "PURCHASED":
         category_badge = "⭐ VIP"  # R40 canon: user-facing name is VIP
     else:
@@ -265,7 +265,11 @@ async def handle_menu_refer_earn(callback: CallbackQuery):
         pass
 
 
-async def render_help_settings_content(session: AsyncSession, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+async def render_help_settings_content(
+    session: AsyncSession,
+    user_id: int,
+    section: str | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
     user, _ = await get_or_create_user(session, user_id)
     lang = user.language_code
 
@@ -284,22 +288,24 @@ async def render_help_settings_content(session: AsyncSession, user_id: int) -> t
     free_min_val = settings.free_monthly_allowance_seconds / 60
     free_min_str = f"{free_min_val:.1f}" if free_min_val % 1 != 0 else f"{int(free_min_val)}"
 
+    _section_key_map = {
+        "voice": "help_sec_voice",
+        "recap": "help_sec_recap",
+        "downloader": "help_sec_downloader",
+        "plans": "help_sec_plans",
+        "refer": "help_sec_refer",
+        "lang": "help_sec_lang",
+    }
+    _tpl_key = _section_key_map.get(section or "", "help_menu_summary")
+
     guide_text = t(
-        "help_settings_guide",
+        _tpl_key,
         lang,
         free_min=free_min_str,
         free_sec=settings.free_monthly_allowance_seconds,
         char_free=f"{settings.character_limit_free:,}",
         char_purchased=f"{settings.character_limit_purchased:,}",
-        # Batch BX: the guide's old {daily_limit} named the legacy
-        # job-COUNT limit where users expect the per-day MINUTE caps
-        # — the guide now names voice/TTS minutes per tier + the
-        # FREE recap length cap, straight off the live settings.
-        # Batch BZ: the FREE voice day is rendered as a CLAUSE — at
-        # the retired default (0 = no daily cap; the monthly wallet
-        # governs) the guide says exactly that, and an admin-set cap
-        # re-appears as a number, so the sentence is true at any
-        # configured value.
+        # Batch BX / BZ: keep FREE voice daily clause live from settings.
         voice_daily_free_clause=(
             t(
                 "guide_voice_daily_free_capped",
@@ -320,8 +326,29 @@ async def render_help_settings_content(session: AsyncSession, user_id: int) -> t
     )
 
     text = f"{t('help_settings_title', lang)}\n━━━━━━━━━━━━━━━━━━━\n\n{guide_text}{video_status_note}"
-    kb = help_settings_kb(video_link=current_link, is_video_enabled=is_enabled, lang=lang)
+    kb = help_settings_kb(
+        video_link=current_link,
+        is_video_enabled=is_enabled,
+        lang=lang,
+        active_section=section if section in _section_key_map else None,
+    )
     return text, kb
+
+
+@menu_router.callback_query(F.data.startswith("help_sec:"))
+async def handle_help_section(callback: CallbackQuery, session: AsyncSession | None = None):
+    section = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    if session is not None:
+        text, kb = await render_help_settings_content(session, callback.from_user.id, section=section)
+    else:
+        async with AsyncSessionLocal() as s:
+            text, kb = await render_help_settings_content(s, callback.from_user.id, section=section)
+
+    await safe_edit_message(callback, text, reply_markup=kb, parse_mode="HTML")
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @menu_router.callback_query(F.data.in_({"menu:help_settings", "menu:tutorial"}))
@@ -398,9 +425,14 @@ async def handle_help_command(message: Message, session: AsyncSession | None = N
 # User History (Audio Jobs, Minute Inflow & Outflow, Clear History)
 # ---------------------------------------------------------------------------
 
-async def render_history_overview_content(session: AsyncSession, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+async def render_history_overview_content(
+    session: AsyncSession,
+    user_id: int,
+    tg_user: Any = None,
+) -> tuple[str, InlineKeyboardMarkup]:
     user, _ = await get_or_create_user(session, user_id)
     lang = user.language_code
+    is_admin = settings.is_admin(user_id)
     balance = await get_minute_balance(session, user_id)
 
     jobs = await get_user_history_jobs(session, user_id, limit=5)
@@ -409,12 +441,23 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
     all_events = await get_user_history_ledger_events(session, user_id, limit=50)
     models_map = await get_models_map_for_jobs(session, jobs)
 
-    u_handle = f"@{html.escape(user.username)}" if user.username else f"User {user.id}"
-    u_name = html.escape(user.first_name or "")
+    tg_username = getattr(tg_user, "username", None) or user.username
+    u_handle = f"@{html.escape(tg_username)}" if tg_username else f"User {user.id}"
+    raw_first = (user.first_name or "").strip()
+    if not raw_first or raw_first.lower() == "voice clone pro":
+        raw_first = (getattr(tg_user, "first_name", None) or "").strip()
+    if raw_first.lower() == "voice clone pro":
+        raw_first = ""
+    u_name = html.escape(raw_first)
     user_display = f"{u_name} ({u_handle})" if u_name else u_handle
 
     cat_raw = getattr(user.account_category, "value", str(user.account_category)).upper()
-    tier_badge = "⭐ VIP" if cat_raw == "PURCHASED" else t("hist_tier_free", lang)
+    if is_admin:
+        tier_badge = "👑 SYSTEM ADMIN"
+    elif cat_raw == "PURCHASED":
+        tier_badge = "⭐ VIP"
+    else:
+        tier_badge = t("hist_tier_free", lang)
 
     # Batch AW: the overview totals are the CLONE-SPENDABLE balance;
     # referral seconds are TTS-only and are neither folded into the
@@ -485,25 +528,35 @@ async def render_history_overview_content(session: AsyncSession, user_id: int) -
 
     activity_content = "".join(activity_lines)
 
-    summary_text = t(
-        "hist_overview_summary",
-        lang,
-        user_display=user_display,
-        tier_badge=tier_badge,
-        total_min=total_usable_min,
-        total_sec=total_usable_sec,
-        purchased_min=purchased_min,
-        free_min=free_min,
-        consumed_min=consumed_min,
-        activity_content=activity_content,
-    )
-    if (balance.referral_seconds or 0) > 0:
-        summary_text += "\n" + t(
-            "menu_tts_balance_line",
+    if is_admin:
+        summary_text = t(
+            "hist_overview_summary_admin",
             lang,
-            tts_min=balance.referral_seconds / 60.0,
-            tts_sec=balance.referral_seconds,
+            user_display=user_display,
+            tier_badge=tier_badge,
+            consumed_min=consumed_min,
+            activity_content=activity_content,
         )
+    else:
+        summary_text = t(
+            "hist_overview_summary",
+            lang,
+            user_display=user_display,
+            tier_badge=tier_badge,
+            total_min=total_usable_min,
+            total_sec=total_usable_sec,
+            purchased_min=purchased_min,
+            free_min=free_min,
+            consumed_min=consumed_min,
+            activity_content=activity_content,
+        )
+        if (balance.referral_seconds or 0) > 0:
+            summary_text += "\n" + t(
+                "menu_tts_balance_line",
+                lang,
+                tts_min=balance.referral_seconds / 60.0,
+                tts_sec=balance.referral_seconds,
+            )
 
     text = f"{t('history_overview_title', lang)}\n\n{summary_text}"
     kb = user_history_kb(job_count=len(all_jobs), ledger_count=len(all_events), lang=lang)
@@ -557,6 +610,7 @@ async def render_history_jobs_content(session: AsyncSession, user_id: int) -> tu
 async def render_history_ledger_content(session: AsyncSession, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     user, _ = await get_or_create_user(session, user_id)
     lang = user.language_code
+    is_admin = settings.is_admin(user_id)
     balance = await get_minute_balance(session, user_id)
     events = await get_user_history_ledger_events(session, user_id, limit=15)
 
@@ -567,24 +621,33 @@ async def render_history_ledger_content(session: AsyncSession, user_id: int) -> 
     consumed_min = balance.consumed_seconds / 60.0
 
     lines = [t("history_ledger_title", lang)]
-    lines.append(
-        t(
-            "hist_ledger_header",
-            lang,
-            total_min=total_usable_min,
-            total_sec=total_usable_sec,
-            consumed_min=consumed_min,
-        )
-    )
-    if (balance.referral_seconds or 0) > 0:
+    if is_admin:
         lines.append(
             t(
-                "menu_tts_balance_line",
+                "hist_ledger_header_admin",
                 lang,
-                tts_min=balance.referral_seconds / 60.0,
-                tts_sec=balance.referral_seconds,
+                consumed_min=consumed_min,
             )
         )
+    else:
+        lines.append(
+            t(
+                "hist_ledger_header",
+                lang,
+                total_min=total_usable_min,
+                total_sec=total_usable_sec,
+                consumed_min=consumed_min,
+            )
+        )
+        if (balance.referral_seconds or 0) > 0:
+            lines.append(
+                t(
+                    "menu_tts_balance_line",
+                    lang,
+                    tts_min=balance.referral_seconds / 60.0,
+                    tts_sec=balance.referral_seconds,
+                )
+            )
 
     if not events:
         lines.append(f"\n{t('history_empty', lang)}")
@@ -632,10 +695,10 @@ async def handle_menu_history(callback: CallbackQuery, session: AsyncSession | N
     await _answer_callback_first(callback)
     try:
         if session is not None:
-            text, kb = await render_history_overview_content(session, callback.from_user.id)
+            text, kb = await render_history_overview_content(session, callback.from_user.id, tg_user=callback.from_user)
         else:
             async with AsyncSessionLocal() as s:
-                text, kb = await render_history_overview_content(s, callback.from_user.id)
+                text, kb = await render_history_overview_content(s, callback.from_user.id, tg_user=callback.from_user)
         result = await safe_edit_message(
             callback, text, reply_markup=kb, parse_mode="HTML",
             report_unmodified=True,
@@ -725,10 +788,10 @@ async def handle_history_clear_confirm(callback: CallbackQuery, session: AsyncSe
 @menu_router.message(Command("history"), F.chat.type == "private")
 async def handle_history_command(message: Message, session: AsyncSession | None = None):
     if session is not None:
-        text, kb = await render_history_overview_content(session, message.from_user.id)
+        text, kb = await render_history_overview_content(session, message.from_user.id, tg_user=message.from_user)
     else:
         async with AsyncSessionLocal() as s:
-            text, kb = await render_history_overview_content(s, message.from_user.id)
+            text, kb = await render_history_overview_content(s, message.from_user.id, tg_user=message.from_user)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 

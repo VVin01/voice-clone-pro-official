@@ -100,8 +100,20 @@ def help_settings_kb(
     video_link: str | None = None,
     is_video_enabled: bool = True,
     lang: str = "my",
+    active_section: str | None = None,
 ) -> InlineKeyboardMarkup:
-    buttons = []
+    buttons = [
+        [
+            InlineKeyboardButton(text=t("help_btn_voice", lang), callback_data="help_sec:voice"),
+            InlineKeyboardButton(text=t("help_btn_recap", lang), callback_data="help_sec:recap"),
+            InlineKeyboardButton(text=t("help_btn_downloader", lang), callback_data="help_sec:downloader"),
+        ],
+        [
+            InlineKeyboardButton(text=t("help_btn_plans", lang), callback_data="help_sec:plans"),
+            InlineKeyboardButton(text=t("help_btn_refer", lang), callback_data="help_sec:refer"),
+            InlineKeyboardButton(text=t("help_btn_lang", lang), callback_data="help_sec:lang"),
+        ],
+    ]
     if is_video_enabled and video_link:
         buttons.append([
             InlineKeyboardButton(text=t("btn_watch_tutorial", lang), url=video_link)
@@ -117,9 +129,15 @@ def help_settings_kb(
         InlineKeyboardButton(text=my_badge, callback_data="user_lang:my"),
         InlineKeyboardButton(text=en_badge, callback_data="user_lang:en"),
     ])
-    buttons.append([
-        InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home")
-    ])
+    if active_section:
+        buttons.append([
+            InlineKeyboardButton(text=t("help_btn_back_guide", lang), callback_data="menu:help_settings"),
+            InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home"),
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home")
+        ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

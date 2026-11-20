@@ -644,7 +644,7 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
                 ["all", L("အားလုံး (All Active)", "All Active")],
                 ["vip", "👑 VIP"],
                 ["free", "🆓 Free"],
-                ["expiring_7d", L("⏳ ၇ ရက်အတွင်းကုန်မည့်သူ", "⏳ Expiring ≤7d")],
+                ["expiring_7d", L("⏳ 7 ရက်အတွင်းကုန်မည့်သူ", "⏳ Expiring ≤7d")],
                 ["active_7d", L("🔥 7D Active", "🔥 Active 7d")],
                 ["active_30d", L("📅 30D Active", "📅 Active 30d")],
             ];
@@ -766,23 +766,33 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
             ex.id = "admp-users-extra-row";
             ex.className = "admp-row mt-2";
             const flts = [
-                ["", L("အားလုံး", "All Flags")],
                 ["EXPIRING_7D", "⏳ ≤7d"],
                 ["BANNED", "🚫 Banned"],
                 ["BOT_BLOCKED", "🔕 Bot Blocked"],
                 ["BYOK", "🔑 BYOK"],
                 ["TEST", "🧪 Test"],
             ];
-            ex.innerHTML = flts.map(([k, lbl]) => `<button type="button" class="mini-chip ${k === "" ? "active" : ""}" data-u-flt="${k}">${esc(lbl)}</button>`).join("")
+            ex.innerHTML = flts.map(([k, lbl]) => `<button type="button" class="mini-chip" data-u-flt="${k}">${esc(lbl)}</button>`).join("")
                 + `<select id="admp-u-sort" class="studio-input text-xs" style="min-width:134px;width:auto;margin-left:auto"><option value="recent">${esc(L("အသစ်ဆုံး", "Newest"))}</option><option value="balance">${esc(L("Voice အများဆုံး", "Top Voice"))}</option><option value="recap">${esc(L("Recap အများဆုံး", "Top Recap"))}</option></select>`;
             row.parentElement.insertBefore(ex, row.nextSibling);
             ex.querySelectorAll("[data-u-flt]").forEach(btn => {
                 btn.onclick = () => {
+                    const wasActive = btn.classList.contains("active");
                     ex.querySelectorAll("[data-u-flt]").forEach(b => b.classList.remove("active"));
-                    btn.classList.add("active");
-                    P.userFilter = btn.dataset.uFlt || "";
+                    if (wasActive) {
+                        P.userFilter = "";
+                    } else {
+                        btn.classList.add("active");
+                        P.userFilter = btn.dataset.uFlt || "";
+                    }
                     loadFilteredUsers();
                 };
+            });
+            row.addEventListener("click", (ev) => {
+                const chip = ev.target && ev.target.closest ? ev.target.closest("[data-cat]") : null;
+                if (!chip) return;
+                P.userFilter = "";
+                ex.querySelectorAll("[data-u-flt]").forEach(b => b.classList.remove("active"));
             });
             document.getElementById("admp-u-sort").onchange = (e) => {
                 P.userSort = e.target.value || "recent";

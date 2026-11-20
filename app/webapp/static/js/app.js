@@ -18,7 +18,6 @@ function showStudioToast(message, type = 'info', duration = 3500) {
     toast.id = 'studio-toast-el';
     toast.className = `studio-toast ${type}`;
     // Batch AZ-12: the close button's aria-label resolves through
-    // i18n like every other UI string (was a hardcoded "Close").
     const closeLabel = typeof t === "function" ? t("toast_close") : "Close";
     toast.innerHTML = `
         <span class="toast-icon">${icons[type] || icons.info}</span>
@@ -27,9 +26,6 @@ function showStudioToast(message, type = 'info', duration = 3500) {
         <span class="toast-progress" aria-hidden="true"></span>
     `;
     // The message is COPY, never markup (hunt X2): it is rendered via
-    // textContent so no caller- or server-supplied string can inject
-    // HTML into the toast. Caller audit: all ~86 call sites pass plain
-    // i18n copy — none relied on markup in the message.
     message = (typeof localizeServerText === "function") ? localizeServerText(message) : message;
     toast.querySelector('.toast-msg').textContent = message;
 
@@ -114,28 +110,10 @@ function mapErrorToToast(raw, flow = 'generic') {
     const s = rawStr.toLowerCase();
     const has = (...needles) => needles.some(n => s.includes(n));
     // Pass-through families (E2 fix 2026-10-31): a NARROW exception to
-    // the never-display rule, for strings that are verifiably OUR OWN
-    // localized user-facing copy. These details are closed-set Burmese
-    // sentences produced by api.py itself; collapsing them into the
-    // flow generic both destroys information the user needs (the exact
-    // recap top-up count) and asserts a refund that never happened
-    // (pre-charge rejections charged nothing). Matching is on
-    // distinctive marker phrases of that closed set — any raw,
-    // foreign or technical string still falls through to the generics
-    // below, unchanged.
-    //
-    // (a) Recap insufficient-credits: the segmented shortfall message
-    // (worker _RecapInsufficientCreditsError and the submit-time
-    // segmented pre-check share the markers). The exact total matters.
     if (flow === 'recap' && has('စုစုပေါင်း') && has('credits လိုအပ်ပါတယ်')) {
         return typeof localizeServerText === "function" ? localizeServerText(rawStr) : rawStr;
     }
     // (c) Recap SUBMIT-time rejections that happen BEFORE any charge
-    // (R40 item 11): the no-credit gate, the duration-cap message and
-    // the concurrency rejection are all raised by /recap/generate
-    // before the deduction — none of them may wear err_recap_failed's
-    // "Credit refunded" copy (a 2026-11-02 session showed exactly
-    // that false refund toast with no job and no credit movement).
     if (flow === 'recap' && has(
         'credit မလုံလောက်တော့ပါ',
         'ကန့်သတ်ချက် (အများဆုံး',
@@ -163,13 +141,10 @@ function mapErrorToToast(raw, flow = 'generic') {
     // Suspended account (api.py require gate raises USER_BANNED: …).
     if (has('user_banned')) return t('err_banned');
     // Membership gate codes: the fetch interceptor already raises the
-    // join reminder for MEMBERSHIP_REQUIRED / GATE_NOT_CONFIGURED; keep
-    // the same user-facing copy here for non-intercepted paths.
     if (has('membership_required', 'gate_not_configured', 'gate_')) return t('gate_required_toast');
     // File too large (coded detail + the 413 wording, both languages).
     if (has('file_too_large', 'file size exceeds', 'too large', '413')) return t('err_too_large');
     // Voice engine quota / capacity: stored job errors mention ZeroGPU
-    // quota or HF 402s when the pool is exhausted.
     if (has('quota', 'zerogpu', '402', 'gpu')) {
         return flow === 'recap' ? t('err_recap_failed') : t('err_engine_busy');
     }
@@ -307,7 +282,6 @@ function setCardThumb(img, url) {
 window.setCardThumb = setCardThumb;
 
 // showErrorToast(err, flow): console keeps the diagnostic, the user
-// only ever sees the mapped premium copy.
 function showErrorToast(err, flow = 'generic') {
     try { console.warn('Flow error (' + flow + '):', err); } catch (e) {}
     const raw = err && err.message ? err.message : err;
@@ -415,28 +389,24 @@ const state = {
     recapCropRight: 0,
     recapSyncCrop: true,
     recapMirror: true,
-    recapZoom: 1.0,
+    recapZoom: 1.1,
     recapSpeed: "+12%",
-    recapStoryStyle: "viral",
+    recapStoryStyle: "pov",
     recapBurnSubs: true,
     recapBlurSubs: true,
-    // Batch BI: source-subtitle auto-detect blur switch — ON by
-    // default (the historical behaviour); OFF skips the detector so
-    // only the user's own blur box / plate is blurred.
-    recapBlurAutoDetect: true,
+    // Batch BI: source-subtitle auto-detect blur switch.
+    recapBlurAutoDetect: false,
     recapLogo: true,
     recapLogoPos: "top-right",
     recapLogoScale: 0.16,
     recapLogoOpacity: 0.70,
     // Custom channel logo (paid-only, owner decision 2026-11-02):
-    // canUse/has come from /api/user/me; logoUrl (signed preview URL)
-    // comes from GET /api/user/logo.
     logoCanUse: false,
     logoHas: false,
     logoUrl: null,
-    recapSubStyle: "yellow",
+    recapSubStyle: "cinematic",
     recapSubFont: "padauk",
-    recapFontSize: 16,
+    recapFontSize: 13,
     recapLines: 1,
     recapSubRenderMode: "timeline",
     recapSubEffect: "none",
@@ -444,31 +414,17 @@ const state = {
     savedCustomVoiceId: "",
     savedCustomVoiceName: "",
     // Batch AA: true once the user DELIBERATELY sets the blur box
-    // (Blur Y/H sliders, box drag, resize handles) for the current
-    // source. Rides the submit payload as blur_box_explicit: an
-    // explicit box is authoritative at render. Reset by
-    // resetBlurBoxForNewSource() whenever a NEW source loads.
     recapBlurBoxTouched: false,
     // Batch AG: free 2-axis adjustment defaults — blur box left /
-    // width and subtitle centre / wrap width, all percents of the
-    // PICTURE width. The sliders are the live source of truth; these
-    // mirror them for the snapshot / prefs / payload fallbacks.
     recapBlurX: 4,
     recapBlurW: 92,
     recapSubX: 50,
     recapSubW: 92,
     // Batch AK: the subtitle's vertical anchor is the BOTTOM-EDGE
-    // margin (percent of the picture height; 5% default, the
-    // Recapter standard). state.recapSubY survives only as the
-    // derived centre-% the canvas drag math works in.
     recapSubMargin: 5,
-    recapSettingsVersion: 2,
+    recapSettingsVersion: 3,
     // Batch DD: Step-2 rebuild state — protection level, free
-    // subtitle-style controls, the manual blur-box LIST (percents
-    // of the picture: {x: left, y: centre, w, h, strength}), the
-    // custom-font handle and the subtitle position band. The title
-    // overlay state is GONE with the feature.
-    recapProtection: "standard",
+    recapProtection: "strong",
     recapTextColor: "",
     recapOutlineColor: "",
     recapBgColor: "",
@@ -482,23 +438,14 @@ const state = {
     recapSubFontCustomName: "",
     recapSubPosBand: "bottom",
     // Batch AA: identity of the last successfully loaded source
-    // ("url:<url>" / "file:<server path>") — the new-source reset
-    // fires only when a success event brings a DIFFERENT source.
     recapLoadedSourceKey: null,
     recapSplitMinutes: 3,
     recapSourceLanguage: "auto",
     recapRenderQuality: "standard",
-    // Batch BX: the pre-profile default is the FREE-safe engine —
-    // a FREE user's first paint no longer shows the locked clone
-    // engine as if it were selected (the tier lock still re-syncs
-    // the picker from the profile once it lands).
     recapTtsEngine: "gemini",
     recapGeminiVoice: "",
     recapVoice: "komin",
     // Batch BV: own-voice narration. Per-job state only — it is
-    // deliberately NOT collected into the persisted recap settings
-    // or the account prefs: an uploaded sample belongs to one job,
-    // never to the account.
     recapOwnVoiceSelected: false,
     recapOwnVoiceRefId: null,
     recapOwnVoiceFile: null,
@@ -509,6 +456,7 @@ const state = {
     recapScriptReadyJobId: null,
     alertDismissTimer: null,
 };
+state.recapTtsEngine = "voxcpm";
 
 // ── Telegram WebApp Initialization & Native Integrations (Phase 1) ─────────
 function initLitePerformanceMode() {
@@ -613,6 +561,74 @@ function toggleThemeMode() {
     return resolved;
 }
 window.toggleThemeMode = toggleThemeMode;
+
+function closeHeaderPopovers() {
+    const moreMenu = document.getElementById("header-more-menu");
+    const moreBtn = document.getElementById("btn-header-more");
+    if (moreMenu) moreMenu.classList.add("hidden");
+    if (moreBtn) moreBtn.setAttribute("aria-expanded", "false");
+    const userPill = document.getElementById("user-pill");
+    const balBtn = document.getElementById("btn-header-balances");
+    if (userPill) userPill.classList.remove("is-open");
+    if (balBtn) balBtn.setAttribute("aria-expanded", "false");
+}
+function toggleHeaderMoreMenu(ev) {
+    if (ev) ev.stopPropagation();
+    haptic("light");
+    const menu = document.getElementById("header-more-menu");
+    const btn = document.getElementById("btn-header-more");
+    const userPill = document.getElementById("user-pill");
+    const balBtn = document.getElementById("btn-header-balances");
+    if (userPill) userPill.classList.remove("is-open");
+    if (balBtn) balBtn.setAttribute("aria-expanded", "false");
+    if (!menu) return;
+    const isOpen = !menu.classList.toggle("hidden");
+    if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+function toggleHeaderBalances(ev) {
+    if (ev) ev.stopPropagation();
+    haptic("light");
+    const moreMenu = document.getElementById("header-more-menu");
+    const moreBtn = document.getElementById("btn-header-more");
+    if (moreMenu) moreMenu.classList.add("hidden");
+    if (moreBtn) moreBtn.setAttribute("aria-expanded", "false");
+    const userPill = document.getElementById("user-pill");
+    const balBtn = document.getElementById("btn-header-balances");
+    if (!userPill) return;
+    const isOpen = userPill.classList.toggle("is-open");
+    if (balBtn) balBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+function updateHeaderBalanceSummary(data) {
+    const el = document.getElementById("header-bal-summary-text");
+    if (!el || !data) return;
+    if (data.is_admin) {
+        el.innerText = "👑 ∞";
+        return;
+    }
+    const vBal = data.balance_minutes != null ? data.balance_minutes : 0;
+    const rBal = typeof _fmtCreditNum === "function"
+        ? _fmtCreditNum(data.available_recap_credits ?? data.recap_credits ?? 0)
+        : (data.available_recap_credits ?? data.recap_credits ?? 0);
+    el.innerText = `🎙️ ${vBal}m · 🎬 ${rBal}c`;
+}
+window.closeHeaderPopovers = closeHeaderPopovers;
+window.toggleHeaderMoreMenu = toggleHeaderMoreMenu;
+window.toggleHeaderBalances = toggleHeaderBalances;
+window.updateHeaderBalanceSummary = updateHeaderBalanceSummary;
+if (typeof document !== "undefined" && !window.__vcpHeaderOutsideWired) {
+    window.__vcpHeaderOutsideWired = true;
+    document.addEventListener("click", (e) => {
+        const tgt = e && e.target;
+        if (!tgt) return;
+        if (tgt.closest && tgt.closest("#btn-top-history, #btn-tutorial-top, #btn-lang-toggle")) {
+            closeHeaderPopovers();
+            return;
+        }
+        if (tgt.closest && !tgt.closest(".top-actions") && !tgt.closest("#user-pill")) {
+            closeHeaderPopovers();
+        }
+    });
+}
 
 /**
  * setSectionState(sectionOrId, stateName, options)
@@ -888,9 +904,6 @@ function initTelegram() {
 
 function haptic(type = "light") {
     // Route each semantic type to the correct Telegram HapticFeedback API:
-    // success/error/warning are NOT impact styles — they belong to
-    // notificationOccurred(); "selection" belongs to selectionChanged().
-    // Everything is feature-detected so non-Telegram contexts never break.
     try {
         const hf = state.tg?.HapticFeedback;
         if (!hf) return;
@@ -915,12 +928,8 @@ function haptic(type = "light") {
 window.haptic = haptic;
 
 // ── Fetch with timeout (premium polish) ────────────────────────────────
-// Data loaders use this so a hung connection ends in the loader's error
-// state (with Retry) instead of an endless spinner.
 const FETCH_TIMEOUT_MS = 12000;
 // Telegram sends are different: the server uploads up to 50 MB to
-// Telegram before it can answer, so the send-telegram call gets a
-// generous-but-finite cap instead of spinning forever (Batch AF).
 const TELEGRAM_SEND_TIMEOUT_MS = 180000;
 async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
     const ctrl = new AbortController();
@@ -1002,19 +1011,12 @@ window.setVoiceStage = setVoiceStage;
 window.setRecapStage = setRecapStage;
 
 // ── Sticky create CTAs (premium polish) ────────────────────────────────
-// Mirror bars for the Voice / Recap primary actions. A bar appears only
-// while its tab is active AND the real in-flow button is scrolled out of
-// view; clicks forward to the real button (no duplicate logic), and the
-// disabled state mirrors the real button.
 const STICKY_CTA_PAIRS = [
     { tab: "tab-voice", bar: "sticky-cta-voice", src: "btn-generate-voice", btn: "btn-generate-voice-sticky" },
     { tab: "tab-recap", bar: "sticky-cta-recap", src: "btn-start-recap", btn: "btn-start-recap-sticky" },
 ];
 const stickyCtaInView = {};
 // Batch AK (Addition C, owner's direct order 2026-11-05): while the
-// user has an unfinished recap job, EVERY "1-Click" create CTA is
-// hidden — the job-status bar is the progress surface (and the
-// backend already allows only one active recap job per user).
 function recapJobActive() {
     try {
         if (LiveJobs.activeJobs().some(j => j.kind === "recap")) return true;
@@ -1122,8 +1124,6 @@ function setupSamplePlayers() {
 }
 
 // ── Home tutorials accordion (Batch AY + owner addendum): the
-// card's header row is the toggle; the full guide list unfolds in
-// place inside the card and collapses again on the next tap. ──────
 function toggleHomeTutorials() {
     const more = document.getElementById("home-tut-more");
     const btn = document.getElementById("home-tut-expand");
@@ -1146,15 +1146,6 @@ function getAuthHeaders(includeContentType = true) {
 window.getAuthHeaders = getAuthHeaders;
 
 // ── Batch AC: LiveJobs manager (global live layer) ─────────────────────
-// ONE global transport for job state: a single adaptive poll of
-// GET /api/jobs/live carrying every active job plus jobs that turned
-// terminal in the last ~10 minutes. It feeds the progress pill, the
-// jobs sheet and in-place History updates. The per-screen detail
-// pollers keep rendering their rich detail views (download URLs,
-// script editor, fallback segments — payloads the bulk endpoint
-// deliberately does not carry), but they render through the SAME
-// monotonic merge below, so a reconnect can never move a displayed
-// stage backwards (the old recap reset-to-1/4 bug).
 const LIVE_JOB_TERMINAL_STATUSES = ["SUCCESS", "FAILED", "CANCELLED"];
 function liveJobsIsTerminal(status) {
     return LIVE_JOB_TERMINAL_STATUSES.includes(String(status || "").toUpperCase());
@@ -1332,8 +1323,6 @@ window.LiveJobs = LiveJobs;
 function liveJobStageText(job) {
     if (!job) return "";
     // Batch AK (Addition C): a terminal job reports its OUTCOME, not
-    // the last in-progress step — finished rows and the app-top
-    // status line used to keep stale step text after completion.
     if (liveJobsIsTerminal(job.status)) {
         if (job.status === "SUCCESS") return t("live_job_status_success");
         if (job.status === "FAILED") return t("live_job_status_failed");
@@ -1347,7 +1336,6 @@ function liveJobStageText(job) {
     }
     if (job.status === "SCRIPT_READY") return t("hist_script_ready_badge");
     // Batch DP: a parked job is waiting on its owner's voice choice
-    // (bot prompt) — name that state instead of a stale stage label.
     if (job.status === "WAITING_CHOICE") return t("live_job_status_waiting_choice");
     if (job.progress_stage) {
         const stageText = t("recap_stage_" + job.progress_stage);
@@ -1358,9 +1346,6 @@ function liveJobStageText(job) {
     return t("recap_processing_msg");
 }
 // Batch CB Item 4: the overrun status sentence — composed from the
-// store job itself (its stage text + its elapsed counter, the same
-// values the pill/sheet/form already render) so every surface says
-// the identical sentence when the server flags eta_overrun.
 function liveJobOverrunText(job) {
     if (!job) return "";
     const stage = liveJobStageText(job);
@@ -1369,8 +1354,6 @@ function liveJobOverrunText(job) {
     return tf("recap_eta_overrun", { stage, elapsed });
 }
 // Batch AK (Addition C): the status bar can be dismissed; the
-// dismissal is keyed to the current active set + lead stage, so
-// any state change (a new job, a stage change) shows it again.
 let liveJobsPillDismissedSig = "";
 function liveJobsPillSignature(active) {
     const lead = [...active].sort((a, b) => (b.progress_percent || 0) - (a.progress_percent || 0))[0];
@@ -1462,7 +1445,6 @@ function renderLiveJobsPill() {
     const fillEl = document.getElementById("live-jobs-pill-fill");
     if (countEl) countEl.innerText = tf("live_jobs_count", { count: active.length });
     // Batch CB Item 4: an overrunning lead job replaces the pill's
-    // stage text with the honest overrun sentence.
     if (stageEl) stageEl.innerText = LiveJobs.reconnecting
         ? t("poll_reconnecting")
         : (lead.eta_overrun && !liveJobsIsTerminal(lead.status) ? liveJobOverrunText(lead) : liveJobStageText(lead));
@@ -1545,11 +1527,6 @@ function closeLiveJobsSheet() {
 window.closeLiveJobsSheet = closeLiveJobsSheet;
 
 // ── Batch BC-3: income detail sheet ────────────────────────────────
-// Opened from the Admin income card (header chip = all-time, each
-// mini-card = its own period). The period total at the top comes from
-// the SAME endpoint rows the card sums, so it reconciles by
-// construction; test payments are display-only (badged TEST, muted)
-// and never included in that total, toggle or not.
 let _incomeDetailPeriod = "all";
 function openIncomeDetail(period) {
     _incomeDetailPeriod = period || "all";
@@ -1688,11 +1665,6 @@ window.liveJobOpen = function(jobId, kind) {
 };
 
 // ── Batch AC: the studio survives submit ───────────────────────────────
-// Submitting NEVER tears the workspace down: no control is reset, the
-// canvas is untouched, and nothing scrolls the user away. Progress
-// lives on the pill/sheet; the studio keeps only a slim inline status
-// line. The detailed progress view opens BY CHOICE (inline line, pill
-// sheet, History) and its Back button returns to the untouched studio.
 state.voiceDetailOpen = false;
 state.recapDetailOpen = false;
 function showStudioInlineStatus(kind, text) {
@@ -1749,8 +1721,6 @@ window.backToStudio = function(kind) {
 };
 function showLiveSubmitLimit(kind) {
     // The server concurrency rule (1 active job per user) explained IN
-    // PLACE: the workspace stays exactly as it is, the running job is
-    // one tap away in the sheet, and nothing is a dead end.
     showStudioToast(t("live_submit_limit_title") + " — " + t("live_submit_limit_body"), "warning", 6000);
     showStudioInlineStatus(kind, t("live_submit_limit_title"));
     openLiveJobsSheet();
@@ -1758,11 +1728,6 @@ function showLiveSubmitLimit(kind) {
 window.showLiveSubmitLimit = showLiveSubmitLimit;
 
 // ── Batch AC: duplicate-submit guard + confirmation hand-off ──────────
-// Owner-chosen pattern (over a silent stay in the studio): a
-// successful submit hands off to a confirmation the user exits by
-// choice, and the Create/Generate button cannot re-submit an
-// UNCHANGED configuration — it re-arms only when the user changes
-// any setting/input (a deliberate variation).
 function createSubmitGuard() {
     return { inFlight: false, submittedFingerprint: null, _fp: null };
 }
@@ -1877,7 +1842,6 @@ function setupSubmitGuards() {
         ["input", "change", "click"].forEach(evt => tab.addEventListener(evt, check));
     });
     // The guard stays authoritative over the detail pollers' legacy
-    // button re-enables: any live update re-applies the guard state.
     LiveJobs.subscribe(() => {
         setSubmitButtonState("voice");
         setSubmitButtonState("recap");
@@ -1886,9 +1850,6 @@ function setupSubmitGuards() {
 }
 
 // The confirmation itself: success indication, the cost actually
-// charged stated plainly, and a compact live progress snippet fed by
-// LiveJobs. Exactly two actions — Watch the job / Back to studio —
-// and nothing auto-navigates.
 state.submitConfirmJob = null;
 function renderSubmitConfirmSnippet(job) {
     const stageEl = document.getElementById("submit-confirm-stage");
@@ -1922,7 +1883,6 @@ window.submitConfirmWatch = function() {
 };
 window.submitConfirmBack = function() {
     // Back to the preserved studio — exactly as the user left it;
-    // the workspace underneath was never torn down.
     const card = document.getElementById("submit-confirm");
     if (card) card.classList.add("hidden");
     state.submitConfirmJob = null;
@@ -1933,9 +1893,6 @@ LiveJobs.subscribe((job) => {
 });
 
 // History cards for tracked jobs update IN PLACE: the cached row's
-// status flips, the row's badge/border/live line follow, and on a
-// terminal flip ONE history reload swaps in the real result actions
-// (download/send buttons) — never a manual Refresh.
 let liveHistoryReloadPending = false;
 function applyLiveJobToHistory(job) {
     if (!job || typeof hubHistoryCache === "undefined" || !Array.isArray(hubHistoryCache)) return;
@@ -1974,17 +1931,9 @@ function applyLiveJobToHistory(job) {
 LiveJobs.subscribe((job) => { applyLiveJobToHistory(job); });
 
 // ── Batch AC: account-bound preferences ────────────────────────────────
-// Server wins over localStorage; localStorage is a write-through cache
-// for instant paint. If the server is unreachable the app works from
-// cache and syncs on the next launch — the user is never blocked.
 const USER_PREFS_CACHE_KEY = "vcp_user_prefs_cache";
 let userPrefsSaveTimer = null;
 // Batch AK: JS mirror of core.sub_centre_to_bottom_margin —
-// converts a legacy centre-% subtitle position (percent of the
-// PICTURE height) into the bottom-edge margin (same basis),
-// plate-height-aware so the subtitle stays where it was. The
-// reference picture height (608) matches core's
-// SUB_MARGIN_CONVERT_REF_PICTURE_H.
 function subtitleFontFractionOfPicture(sizePt, lines) {
     const pts = [[13, 4.0], [16, 5.0], [19, 6.0], [22, 7.0]];
     let pt = parseFloat(sizePt);
@@ -2018,10 +1967,6 @@ function convertSubCentreToMargin(centrePct, fontSizePt, lines) {
 }
 window.convertSubCentreToMargin = convertSubCentreToMargin;
 // Batch DD: the Step-2 rebuild's payload fields, shared by the
-// submit payload and the preview-composite payload so both send
-// the SAME normalised values (preview == render). Fields are
-// omitted when unset, so a job with no custom choices parses to
-// exactly the pre-DD config.
 function ddConfigExtras() {
     const out = {};
     const boxes = Array.isArray(state.recapBlurBoxes) ? state.recapBlurBoxes : [];
@@ -2032,7 +1977,7 @@ function ddConfigExtras() {
             strength: Math.max(4, Math.min(40, parseInt(b.strength) || 18)),
         }));
     }
-    out.protection_level = state.recapProtection || "standard";
+    out.protection_level = state.recapProtection || "strong";
     out.sub_render_mode = state.recapSubRenderMode || "timeline";
     out.sub_effect = state.recapSubEffect || "none";
     out.embed_soft_subs = state.recapEmbedSoftSubs !== false;
@@ -2079,23 +2024,14 @@ function collectAccountPrefs() {
         recapCropBottom: state.recapCropBottom || 0,
         recapCropLeft: state.recapCropLeft || 0,
         recapCropRight: state.recapCropRight || 0,
-        recapFontSize: state.recapFontSize || 16,
+        recapFontSize: state.recapFontSize || 13,
         recapLines: state.recapLines || 1,
         recapSplitMinutes: state.recapSplitMinutes || 3,
-        // Batch AK: the slider under the historical slider-sub-y id
-        // is the BOTTOM-EDGE margin now; recapSubY (centre-%) is no
-        // longer collected — the margin + schema version are the
-        // stored anchor.
         recapSubMargin: sy ? parseInt(sy.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5),
-        recapSettingsVersion: 2,
-        // Batch AG: sub_x / sub_w are account preferences like
-        // recapSubY (NOT per-source — the blur box's horizontal
-        // geometry stays out, exactly like its vertical geometry).
+        recapSettingsVersion: 3,
         recapSubX: sxEl ? parseInt(sxEl.value) : (state.recapSubX || 50),
         recapSubW: swEl ? parseInt(swEl.value) : (state.recapSubW || 92),
-        // Batch DD: protection + free style controls + blur-box
-        // list + custom font are account preferences now.
-        recapProtection: state.recapProtection || "standard",
+        recapProtection: state.recapProtection || "strong",
         recapTextColor: state.recapTextColor || "",
         recapOutlineColor: state.recapOutlineColor || "",
         recapBgColor: state.recapBgColor || "",
@@ -2133,10 +2069,6 @@ function cacheAccountPrefs(prefs) {
 function applyAccountPrefs(prefs) {
     if (!prefs || typeof prefs !== "object") return;
     // Batch AK migration (client mirror of the server rule): a
-    // pre-AK payload carries recapSubY (centre-%) with no margin
-    // and no version — convert it plate-height-aware so this
-    // device's subtitle does not jump on the first launch after
-    // the update. Runs once: the converted payload is stamped v2.
     if ((prefs.recapSettingsVersion || 0) < 2 && prefs.recapSubMargin == null
         && typeof prefs.recapSubY === "number") {
         prefs = { ...prefs };
@@ -2192,14 +2124,6 @@ function applyAccountPrefs(prefs) {
     }
     cacheAccountPrefs(prefs);
     // Batch AM (M8ii): the recap controls were synced at boot from
-    // the LOCAL snapshot; the server prefs above may differ (another
-    // device, an admin-side change). Re-run the restore's control
-    // sync — it re-reads the snapshot cacheAccountPrefs has just
-    // rewritten from these same prefs — so toggles, pills and
-    // sliders can never display one thing while payloads use
-    // another. Guarded + idempotent: local reads only, no fetch,
-    // and the hook exists once the recap editor has been set up
-    // (boot order: setupRecapVisualEditor before loadAccountPrefs).
     if (typeof window.resyncRecapControlsAfterPrefs === "function") {
         try { window.resyncRecapControlsAfterPrefs(); } catch (e) {}
     }
@@ -2236,13 +2160,6 @@ function showPrefsSavedNote() {
     } catch (e) {}
 }
 // Batch BB-8: the prefs saver is triggered by DELEGATED listeners on
-// the whole Recap/Voice tabs (setupAccountPrefs), so EVERY click —
-// including pure wizard step navigation — used to schedule a save,
-// and every successful PUT toasted "settings saved" even when the
-// payload was byte-identical to the last save. The toast (and the
-// PUT itself) now fires only when a value actually changed: the
-// collected payload is compared against the last saved snapshot,
-// seeded when server prefs are applied (applyAccountPrefs).
 let userPrefsLastSavedJson = null;
 function prefsSnapshotJson(prefs) {
     try { return JSON.stringify(prefs); } catch (e) { return null; }
@@ -2301,11 +2218,7 @@ function setupAccountPrefs() {
     }
 }
 
-
 // -- 401 "Open via Telegram" modal (security audit round 2) --
-// Previously a 401 from /api/user/me was silently ignored and other
-// calls surfaced a raw error or left the UI blank. Now the first 401
-// shows a friendly modal instead of breaking the app.
 let openViaTelegramShown = false;
 function showOpenViaTelegramModal() {
     if (openViaTelegramShown) return;
@@ -2368,13 +2281,6 @@ function isAuthFailure(res) {
 window.isAuthFailure = isAuthFailure;
 
 // -- 403 membership gate: turn a dead-end API error into the join reminder --
-// Gated writes return 403 MEMBERSHIP_REQUIRED (or GATE_NOT_CONFIGURED).
-// Before this, app.js had NO handling for them: generate/recap surfaced
-// the raw English server detail as an error toast with no way forward.
-// Now any such 403 refreshes the gate banner (the server committed fresh
-// live-check flags together with the 403, so the per-chat chips are
-// accurate), scrolls it into view and points the user at the join +
-// re-check actions. The response itself is returned untouched.
 let gateNoticeAt = 0;
 async function showGateReminder() {
     const now = Date.now();
@@ -2382,7 +2288,6 @@ async function showGateReminder() {
     gateNoticeAt = now;
     try { await loadUserProfile(); } catch (e) { /* banner refresh is best-effort */ }
     // A gated write just 403'd: re-run the LIVE entry check too — if the
-    // user left a chat, the whole app re-locks, not just a banner nudge.
     if (window.runEntryGateCheck) runEntryGateCheck("gate-403");
     const banner = document.getElementById("gate-banner");
     if (banner) {
@@ -2566,13 +2471,6 @@ function brandedDlName(kind, ext, label, jobId, part) {
 }
 
 // Over-50MB delivery rule (2026-11-03): when the server reports the
-// output cannot ride the Telegram bot (telegram_sendable === false in
-// the status payload), the result screens do not offer "Send to
-// Telegram" at all — the premium Download action stands alone, with a
-// short note in the send button's place. Any other value (true, or
-// the flag absent) restores the normal two-action layout. For voice,
-// the Download button is promoted to the premium gold style while it
-// is the only delivery action and restored afterwards.
 function applyTelegramSendable(kind, sendable) {
     const isRecap = kind === "recap";
     const btnTg = document.getElementById(isRecap ? "btn-recap-send-telegram" : "btn-voice-send-telegram");
@@ -2595,9 +2493,6 @@ window.applyTelegramSendable = applyTelegramSendable;
 
 function urlCarriesStreamToken(url) {
     // A stream-token URL authenticates itself (a scoped HMAC rides in
-    // ?t=), so it can be handed to the device browser as-is. The
-    // check is purely syntactic — token VALIDITY is the server's
-    // business, decided when the URL is opened.
     if (!url || typeof url !== "string") return false;
     const q = url.split("?", 2)[1];
     if (!q) return false;
@@ -2696,15 +2591,8 @@ async function openAuthFile(url) {
 window.openAuthFile = openAuthFile;
 
 // Delegated handlers: anchors carrying data-dl-url are authenticated
-// downloads and anchors carrying data-open-url are authenticated
-// view-in-tab links — neither may navigate to the raw API URL.
 document.addEventListener("click", (e) => {
     // Batch CK: anchors inside the admin media modal carry their own
-    // direct listeners (see openAdminMediaModal) because the modal's
-    // content wrapper stops click propagation before it can reach this
-    // delegated handler. Those listeners flag the event so that if the
-    // wrapper's stopPropagation is ever removed, a click can never fire
-    // both paths and download twice.
     if (e.__dlHandled) return;
     const a = e.target && e.target.closest ? e.target.closest("a[data-dl-url], a[data-open-url]") : null;
     if (!a) return;
@@ -2741,9 +2629,6 @@ const TUTORIAL_LINKS = {
 window.TUTORIAL_LINKS = TUTORIAL_LINKS;
 
 // Built-in default titles (mirrors of the server-side defaults). When the
-// configured title is one of these, the banner label is owned by i18n so
-// the EN UI never shows a Myanmar leftover; an admin-customised title is
-// always respected as-is.
 const TUTORIAL_DEFAULT_TITLES = [
     "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
     "🎙️ Voice Clone ပြုလုပ်နည်း လမ်းညွှန်",
@@ -2756,8 +2641,6 @@ function tutorialDisplayTitle(configTitle, i18nKey) {
 }
 
 // Admin-settings key behind each remaining registry tutorial. "bot"
-// shares the main video slot (tutorialConfig.fallbackUrl); voice/recap
-// keep their dedicated slots in tutorialConfig.
 const TUTORIAL_SETTING_KEYS = {
     index: "tutorial_index_link",
     plans: "tutorial_plans_link",
@@ -2771,7 +2654,6 @@ const TUTORIAL_SETTING_KEYS = {
 let tutorialLinkOverrides = {};
 
 // Settings-first resolution for every tutorial key; the registry
-// default is the fallback when no admin value is set.
 function resolveTutorialLink(type) {
     if (type === "voice") return tutorialConfig.voice.url || TUTORIAL_LINKS.voice;
     if (type === "recap") return tutorialConfig.recap.url || TUTORIAL_LINKS.recap;
@@ -2810,8 +2692,6 @@ function updateTutorialUI(data) {
     }
 
     // Batch L: recap demo slot — visible only while the admin has a
-    // demo asset configured (Telegram file_id or URL); the value is
-    // kept on state for the watch handler (watchRecapDemo).
     if (data.recap_demo_asset !== undefined) {
         state.recapDemoAsset = data.recap_demo_asset || "";
         const demoCard = document.getElementById("recap-demo-card");
@@ -2841,8 +2721,6 @@ function updateTutorialUI(data) {
     }
 
     // Batch AV: the Recap Step-1 mini tutorial button was removed as a
-    // duplicate of the header guide (btn-tutorial-top, which honours
-    // the same enabled flags below) — its management block went with it.
 
     // Apply visibility to Top Nav Button
     const topTutBtn = document.getElementById("btn-tutorial-top");
@@ -2924,10 +2802,6 @@ window.shareReferralLink = shareReferralLink;
 function openSupportContact() {
     haptic("light");
     // Batch BB-6: the support destination is a Telegram ACCOUNT (the
-    // admin), not a web page — openLink() punted users out to a
-    // browser tab / t.me landing page. openTelegramLink keeps them
-    // inside Telegram, straight in the admin chat. Scoped to this
-    // handler only: tutorial links keep the shared openTutorialUrl.
     const url = _supportLink;
     if (!url) return;
     const wa = window.Telegram?.WebApp;
@@ -2942,10 +2816,9 @@ function openSupportContact() {
 window.openSupportContact = openSupportContact;
 
 function openTutorialVideo(type = "auto") {
+    if (typeof closeHeaderPopovers === "function") closeHeaderPopovers();
     haptic("light");
     // Registry tutorials (premium polish): index (msg 38), plans,
-    // customvoice, downloader, scriptedit, recapadvanced, refer, support,
-    // bot — resolved settings-first via resolveTutorialLink().
     if (type && type !== "auto" && type !== "voice" && type !== "recap" && type !== "video"
         && Object.prototype.hasOwnProperty.call(TUTORIAL_LINKS, type)) {
         openTutorialUrl(resolveTutorialLink(type));
@@ -3067,12 +2940,6 @@ function closeFloatingAlert() {
 window.closeFloatingAlert = closeFloatingAlert;
 
 // ── Batch AZ-4: sliding liquid nav pill + tab-enter ─────────────
-// ONE pill sits behind the active nav item; the mover is
-// data-driven — it reads whichever .nav-item currently carries
-// .active and matches the pill to that item's own box, so a future
-// nav item (e.g. AW's TTS tab) joins with no code change. If the
-// active item has no layout yet (pre-paint, hidden nav), the pill
-// keeps its last position under the previous item.
 function moveNavPill() {
     const pill = document.getElementById("nav-active-pill");
     const active = document.querySelector(".bottom-nav .nav-item.active");
@@ -3093,14 +2960,6 @@ function moveNavPill() {
 window.moveNavPill = moveNavPill;
 
 // ── Batch BB-2: liquid segmented capsule (speed selectors) ──────
-// Same data-driven measurement as moveNavPill: ONE gradient pill per
-// .speed-capsule, matched to whichever .speed-seg currently carries
-// .active. Segments do not transition their flex (the pill's spring
-// carries the motion), so the target geometry is final the moment
-// .active moves and can be measured synchronously. A capsule with no
-// layout yet (hidden pane / collapsed group) keeps its last position
-// and is re-measured on tab show / resize / language switch / the
-// preview surface sync that unhides its group.
 function moveSpeedPill(capsule) {
     if (!capsule) return;
     const pill = capsule.querySelector(".speed-capsule-pill");
@@ -3200,6 +3059,7 @@ function pauseInactiveTabMedia(activeTabId) {
 }
 
 function switchTab(tabId) {
+    if (typeof closeHeaderPopovers === "function") closeHeaderPopovers();
     pauseInactiveTabMedia(tabId);
     const navButtons = document.querySelectorAll(".nav-item");
     const targetBtn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
@@ -3243,6 +3103,7 @@ window.switchTab = switchTab;
 
 // ── Language Toggle (i18n) ─────────────────────────────────────────────────
 async function toggleLanguage() {
+    if (typeof closeHeaderPopovers === "function") closeHeaderPopovers();
     haptic("medium");
     const nextLang = currentLang === "my" ? "en" : "my";
     setLanguage(nextLang);
@@ -3252,9 +3113,11 @@ async function toggleLanguage() {
     if (avTxt && avWrap) avTxt.innerText = avWrap.classList.contains("hidden") ? t("voices_show_all") : t("voices_hide_all");
     loadCuratedVoices();
     loadUserProfile();
+    if (state && state.user && typeof paintHomeTilePeriods === "function") {
+        paintHomeTilePeriods(state.user, window._lastTtsQuota || null);
+    }
+    if (typeof refreshPlanPrices === "function") refreshPlanPrices();
     updateRecapSplitCostHint();
-    // Recap step-1 info chips are painted from the analyze payload,
-    // not data-i18n — repaint them in the new language (round-6 P7).
     if (typeof window.refreshRecapInfoMetaLanguage === "function") window.refreshRecapInfoMetaLanguage();
 }
 
@@ -3307,6 +3170,8 @@ async function loadUserProfile() {
         refreshRecapEngineLock();
         paintVoiceTtsBalanceLine(data);
         paintTtsTodaySurfaces(data);
+        if (typeof updateHeaderBalanceSummary === "function") updateHeaderBalanceSummary(data);
+        if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
         // Batch BW: repaint the TTS counter now the per-user limit is
         // known (init painted it before the profile arrived).
         updateTtsCharCount();
@@ -3334,7 +3199,7 @@ async function loadUserProfile() {
         const vipBadge = document.getElementById("vip-status-badge");
         const voiceBalChip = document.getElementById("user-voice-bal");
         const recapBalChip = document.getElementById("user-recap-bal");
-        
+
         const catTag = document.getElementById("profile-category-tag");
         const charCount = document.getElementById("char-count");
         const adminNavBtn = document.getElementById("nav-btn-admin");
@@ -3414,12 +3279,11 @@ async function loadUserProfile() {
 
     } catch (err) {
         console.warn("User profile fetch error:", err);
-        // No endless spinner: show a clear error + Retry on Home.
         setHomeLoadErrorVisible(true);
+    } finally {
+        if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
     }
 }
-
-
 
 // ── API: Curated Voices (12 VoxCPM Personas) ───────────────────────────────
 state.personaFilter = "all";
@@ -3483,6 +3347,29 @@ function renderCuratedVoices() {
         grid.appendChild(card);
     });
 
+    const voiceSel = document.getElementById("voice-persona-select");
+    if (voiceSel) {
+        voiceSel.innerHTML = "";
+        (filtered.length ? filtered : state.curatedVoices).forEach(v => {
+            const opt = document.createElement("option");
+            opt.value = v.id;
+            const shortNm = personaShortName(v.name) || v.name;
+            const catNm = personaCategoryName(v.name);
+            opt.textContent = `${v.avatar || "🎙️"} ${shortNm}${catNm ? " — " + catNm : ""}`;
+            voiceSel.appendChild(opt);
+        });
+        const hasVal = Array.from(voiceSel.options).some(o => o.value === state.selectedPersona);
+        if (hasVal) voiceSel.value = state.selectedPersona;
+        if (!voiceSel.dataset.vcpWired) {
+            voiceSel.dataset.vcpWired = "1";
+            voiceSel.addEventListener("change", () => {
+                haptic("selection");
+                state.selectedPersona = voiceSel.value || "komin";
+                renderCuratedVoices();
+            });
+        }
+    }
+
     const countBadge = document.getElementById("personas-count");
     if (countBadge) {
         countBadge.innerText = tf("personas_count_fmt", { n: filtered.length });
@@ -3504,8 +3391,6 @@ function personaShortName(name) {
 
 function personaCategoryName(name) {
     // Batch BG (§15): the parenthetical descriptor personaShortName
-    // strips — rendered by the persona card as its own smaller line
-    // under the name, never wrapped inline inside parentheses again.
     const m = String(name || "").match(/[\(（]([^\)）]*)[\)）]\s*$/);
     return m ? m[1].trim() : "";
 }
@@ -3529,8 +3414,6 @@ function setPersonaPickerOpen(open) {
     if (!card) return;
     card.classList.toggle("picker-collapsed", !open);
     // The picker now expands in place under the summary row, so the
-    // row's own Change button is the toggle and carries the aria state
-    // (the standalone picker toggle row was removed with the move).
     const toggle = document.getElementById("btn-change-voice");
     if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
 }
@@ -3562,7 +3445,6 @@ async function loadCuratedVoices() {
 // ── API: Legacy Models Loader (removed) ──
 async function loadLegacyModels() {
     // Voice v2: legacy engine removed — VoxCPM2 only. Kept as a no-op stub
-    // so existing init calls do not break.
     return;
 }
 
@@ -3582,9 +3464,10 @@ function stopCurrentVoicePreview() {
         currentPreviewButton.classList.remove("playing");
         const icon = currentPreviewButton.querySelector(".preview-btn-icon, .preview-icon");
         if (icon) icon.innerText = currentPreviewButton.classList.contains("preview-recap-voice-btn") ? "🔊" : "▶️";
-        const label = currentPreviewButton.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        const label = currentPreviewButton.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
         if (label) {
-            label.innerText = currentPreviewButton.classList.contains("mini") ? t("preview_voice") : t("btn_preview_voice");
+            const k = label.getAttribute("data-i18n");
+            label.innerText = k === "btn_preview_short" ? t("btn_preview_short") : (currentPreviewButton.classList.contains("mini") ? t("preview_voice") : t("btn_preview_voice"));
         }
         currentPreviewButton = null;
     }
@@ -3602,25 +3485,18 @@ async function playVoicePreview(voiceId, buttonEl) {
     stopCurrentVoicePreview();
 
     // /api/voices/sample requires the Telegram auth header (privacy
-    // fix, hunt #2 V2), which a plain Audio() load cannot send — fetch
-    // the sample with auth and play the resulting blob URL, the same
-    // pattern as fetchAuthImageUrl for protected images.
     const seq = ++previewFetchSeq;
     const audioUrl = `/api/voices/sample/${encodeURIComponent(voiceId)}`;
     // Loading state NOW (upload-ux pass): the authenticated blob fetch
-    // can take seconds, and the button used to look completely
-    // untouched until the audio was ready — taps looked ignored, and a
-    // failed fetch ended in total silence. Show the load on the button
-    // immediately and surface failures.
     currentPreviewButton = buttonEl;
     if (buttonEl) {
         const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
         if (icon) icon.innerText = "⏳";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
         if (label) label.innerText = t("preview_loading");
     }
     const authUrl = await fetchAuthImageUrl(audioUrl);
-    if (seq !== previewFetchSeq) return; // a newer tap superseded this one
+    if (seq !== previewFetchSeq) return;
     if (!authUrl) {
         stopCurrentVoicePreview();
         showStudioToast(t("preview_load_failed"), 'error');
@@ -3634,7 +3510,7 @@ async function playVoicePreview(voiceId, buttonEl) {
         buttonEl.classList.add("playing");
         const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
         if (icon) icon.innerText = "⏸️";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
         if (label) label.innerText = t("preview_playing");
     }
 
@@ -3654,13 +3530,6 @@ async function playVoicePreview(voiceId, buttonEl) {
 }
 
 // ── Gemini TTS Voice Previews ──────────────────────────────────────
-// One owner-approved static sample per engine voice ships with the
-// app (static/audio/gemini/preview_<voice>.mp3). Playback mirrors
-// playVoicePreview exactly — the same shared player state
-// (currentVoiceAudio / currentPreviewButton / previewFetchSeq) and
-// the same fetch→blob helper — so a persona preview and a Gemini
-// preview stop each other, and the button runs the same
-// loading → playing → reset cycle via stopCurrentVoicePreview.
 const GEMINI_VOICE_PREVIEW_DIR = "/static/audio/gemini";
 
 function resolveGeminiPreviewVoice() {
@@ -3668,7 +3537,6 @@ function resolveGeminiPreviewVoice() {
     const chosen = (sel && sel.value) || state.recapGeminiVoice || "";
     if (chosen) return chosen;
     // Auto: mirror the API (app/webapp/api.py) — the recap persona's
-    // gender resolves Kore for a female persona, Charon otherwise.
     const slug = state.recapVoice || "komin";
     const entry = (state.curatedVoices || []).find(v => v.id === slug);
     const isFemale = entry ? entry.gender === "female"
@@ -3690,16 +3558,15 @@ async function playGeminiVoicePreview(voiceName, buttonEl) {
     const seq = ++previewFetchSeq;
     const audioUrl = `${GEMINI_VOICE_PREVIEW_DIR}/preview_${voiceName.toLowerCase()}.mp3`;
     // Loading state NOW, same as playVoicePreview: show the tap on
-    // the button immediately and surface failures instead of silence.
     currentPreviewButton = buttonEl;
     if (buttonEl) {
         const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
         if (icon) icon.innerText = "⏳";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
         if (label) label.innerText = t("preview_loading");
     }
     const authUrl = await fetchAuthImageUrl(audioUrl);
-    if (seq !== previewFetchSeq) return; // a newer tap superseded this one
+    if (seq !== previewFetchSeq) return;
     if (!authUrl) {
         stopCurrentVoicePreview();
         showStudioToast(t("preview_load_failed"), 'error');
@@ -3713,7 +3580,7 @@ async function playGeminiVoicePreview(voiceName, buttonEl) {
         buttonEl.classList.add("playing");
         const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
         if (icon) icon.innerText = "⏸️";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice']");
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
         if (label) label.innerText = t("preview_playing");
     }
 
@@ -3736,6 +3603,81 @@ function previewSelectedGeminiVoice() {
     const btn = document.getElementById("btn-preview-gemini-voice");
     playGeminiVoicePreview(resolveGeminiPreviewVoice(), btn);
 }
+
+window.previewSelectedVoiceTabPersona = function(e) {
+    if (e) e.stopPropagation();
+    const sel = document.getElementById("voice-persona-select");
+    const id = (sel && sel.value) || state.selectedPersona || "komin";
+    const btn = document.getElementById("btn-voice-persona-preview") || (e && e.currentTarget) || null;
+    playVoicePreview(id, btn);
+};
+
+window.previewSelectedRecapPersona = function(e) {
+    if (e) e.stopPropagation();
+    const sel = document.getElementById("recap-persona-select");
+    const id = (sel && sel.value) || state.recapVoice || "komin";
+    const btn = document.getElementById("btn-recap-persona-preview") || (e && e.currentTarget) || null;
+    playVoicePreview(id, btn);
+};
+
+window.previewSelectedTtsVoice = function(e) {
+    if (e) e.stopPropagation();
+    const eng = (typeof ttsState !== "undefined" && ttsState.engine) || "gemini";
+    if (eng === "edge") {
+        const eSel = document.getElementById("tts-edge-voice-select");
+        const eVal = (eSel && eSel.value) || "thiha";
+        const sampleId = eVal === "nilar" ? "mahnin" : "komin";
+        const btn = document.getElementById("btn-tts-edge-preview") || (e && e.currentTarget) || null;
+        playVoicePreview(sampleId, btn);
+        return;
+    }
+    const gSel = document.getElementById("tts-gemini-voice-select");
+    const gVal = (gSel && gSel.value) || "Charon";
+    const btn = document.getElementById("btn-tts-gemini-preview") || (e && e.currentTarget) || null;
+    playGeminiVoicePreview(gVal, btn);
+};
+
+window.previewSavedCustomVoice = function(e) {
+    if (e) e.stopPropagation();
+    const file = state.recapOwnVoiceFile || state.selectedReferenceFile;
+    if (!file) {
+        showStudioToast(t("preview_load_failed"), "info");
+        return;
+    }
+    haptic("light");
+    if (recapOwnVoiceAudio) {
+        stopRecapOwnVoicePreview();
+        return;
+    }
+    stopCurrentVoicePreview();
+    recapOwnVoiceObjectUrl = URL.createObjectURL(file);
+    const audio = new Audio(recapOwnVoiceObjectUrl);
+    recapOwnVoiceAudio = audio;
+    const btn = document.getElementById("btn-saved-custom-voice-preview");
+    if (btn) btn.innerText = "⏸️ " + t("preview_playing");
+    const resetBtn = () => {
+        stopRecapOwnVoicePreview();
+        if (btn) btn.innerText = t("btn_preview_short");
+    };
+    audio.onended = resetBtn;
+    audio.onerror = resetBtn;
+    audio.play().catch(resetBtn);
+};
+
+window.deleteSavedCustomVoice = function() {
+    haptic("light");
+    const oldId = state.savedCustomVoiceId;
+    state.savedCustomVoiceId = "";
+    state.savedCustomVoiceName = "";
+    state.savedCustomVoiceActiveId = "";
+    if (oldId && state.recapOwnVoiceRefId === oldId && typeof clearRecapOwnVoice === "function") {
+        clearRecapOwnVoice();
+    }
+    if (typeof syncSavedCustomVoiceUi === "function") syncSavedCustomVoiceUi();
+    if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
+    else if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
+    showStudioToast(t("recap_my_preset_deleted_toast"), "info");
+};
 
 // ── Voice Studio Controls & Sub-Modes ──────────────────────────────────────
 function switchVoxCPMSubMode(mode) {
@@ -3902,7 +3844,6 @@ function clearVoiceText() {
     }
 }
 
-
 // Per-chat status chips inside the gate banner: "📢 Channel · ✓ Joined"
 // vs "👥 Group · Not joined yet", so the user can see exactly which one
 // they still miss instead of guessing (join-reminder UX, 2026-10-30).
@@ -3923,15 +3864,7 @@ function renderGateChips(channelOk, groupOk) {
 window.renderGateChips = renderGateChips;
 
 // ── UI/UX (2026-10-29): gate banner + generate preflight ──────────────────
-// Gate banner uses only fields /api/user/me already returns (gate branch);
-// it never changes job logic. GATE_NOT_CONFIGURED is a server-config error,
-// not a "you have not joined" message, so it is shown differently.
 // ── Home welcome strip (one-time, first-run only) ──────────────────
-// Shown ONLY when every condition holds: Free plan (not VIP, not
-// admin), ZERO completed jobs (server count on /api/user/me), and not
-// dismissed on this device (localStorage). Values come from the same
-// profile payload the header balance chips render, so the strip can
-// never promise more than the configured grants.
 function refreshWelcomeStrip() {
     const strip = document.getElementById("home-welcome-strip");
     if (!strip) return;
@@ -4021,23 +3954,7 @@ async function verifyMembershipFromBanner() {
 window.verifyMembership = verifyMembershipFromBanner; // compat: old voice2 verify name
 
 // ── Mini App ENTRY GATE LOCK (entry-gate, 2026-10-30) ────────────────────
-// The banner above only warns; this lock ENFORCES at entry. The page
-// loads already locked (body.gate-locked + #gate-lock visible) and the
-// app unlocks only when a LIVE POST /api/user/verify-membership check
-// returns verified=true — never from the cached /api/user/me flags.
-// The check re-runs when the app regains visibility/focus (returning
-// from Telegram after joining — or after leaving) and every 60s while
-// open, so join-then-leave re-locks an already-open app. Admins are
-// never locked: the verify endpoint treats them as verified, and a
-// /api/user/me admin flag force-unlocks as a belt-and-braces guard.
-// GATE_NOT_CONFIGURED stays a distinct lock (contact admin), it never
-// silently unlocks. A failed check (network/401) also stays locked —
-// fail-closed, mirroring the server's gated writes.
 // Batch AR (2026-11-05): the lock also renders the MAINTENANCE screen
-// (mode "maintenance") — while maintenance mode is on, the server
-// refuses every non-admin call with MAINTENANCE_MODE, the boot path
-// checks /api/config before any cached unlock, and the screen shows
-// only the maintenance title + the admin's note.
 const entryGate = { locked: true, checking: false, lastCheckAt: 0, mode: "member" };
 
 function lockEntryGate() {
@@ -4139,7 +4056,6 @@ function applyEntryGateVerdict(data, reason) {
     if (!data) return;
     const status = document.getElementById("gate-lock-status");
     // Banned users never unlock, even when their membership verifies —
-    // the suspension outranks the join gate (writes also 403 server-side).
     if (state.user && state.user.is_banned && !(state.user && state.user.is_admin)) {
         setEntryGateMode("banned", data);
         if (status) status.innerText = "";
@@ -4147,7 +4063,6 @@ function applyEntryGateVerdict(data, reason) {
         return;
     }
     // Admins never stay locked (verify already returns verified for them;
-    // the /me flag is the second guard if it landed first).
     if (data.verified === true || (state.user && state.user.is_admin)) {
         const wasLocked = entryGate.locked;
         unlockEntryGate();
@@ -4175,10 +4090,6 @@ function applyEntryGateVerdict(data, reason) {
 let maintenanceLockFetchAt = 0;
 async function enterMaintenanceLock() {
     // Batch AR: swap the entry gate to the maintenance screen and
-    // lock. The note is re-read from /api/config (the one endpoint
-    // that stays open) so an admin edit to the note reaches
-    // already-open apps on their next refused call; a short re-fetch
-    // window keeps a burst of refused calls from refetching it.
     const now = Date.now();
     if (entryGate.mode === "maintenance" && now - maintenanceLockFetchAt < 5000) {
         lockEntryGate();
@@ -4255,23 +4166,10 @@ async function verifyEntryGate() {
 window.verifyEntryGate = verifyEntryGate;
 
 // ── Cached profile boot paint (journey audit 2026-11-02, item 6) ────
-// Every successful /api/user/me is cached (see loadUserProfile). On
-// the next open the cached payload paints the header instantly and a
-// known verified member starts UNLOCKED — no join-gate flash, no
 // 0.0m/0c flash. The live startup verify still runs and locks ONLY
-// on a confirmed non-member verdict; a network failure changes
-// nothing either way. First-ever opens (no cache) keep the
-// fail-closed locked start below.
 const USER_ME_CACHE_KEY = "vcp_user_me_cache";
 
 // R40 item 8: the profile cache must be keyed to the Telegram user
-// who owns it. Telegram Web keeps ONE localStorage across account
-// switches, so an unkeyed cache painted the previous account's
-// profile at boot — an admin's cache flashed "∞ / ∞" balances to a
-// finite user (and vice versa). The envelope records the owner's id
-// from initData; a cache whose owner differs (or a legacy unkeyed
-// cache) is ignored, leaving the neutral static placeholders until
-// the live profile lands.
 function currentTelegramUserId() {
     try {
         const u = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe
@@ -4350,7 +4248,6 @@ function paintVipPlanBalances(data) {
 window.paintVipPlanBalances = paintVipPlanBalances;
 
 // Mirrors the header/profile paint in loadUserProfile for the same
-// payload shape — keep the two in step when the header changes.
 function paintCachedUserHeader(data) {
     const vipBadge = document.getElementById("vip-status-badge");
     const voiceBalChip = document.getElementById("user-voice-bal");
@@ -4373,7 +4270,6 @@ function paintCachedUserHeader(data) {
         charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
     }
     // Logo flags ride the same cached payload (older caches simply
-    // lack the keys → treated as Free until the fresh profile lands).
     state.logoCanUse = !!data.can_use_logo;
     state.logoHas = !!data.has_custom_logo;
     refreshLogoUi();
@@ -4382,18 +4278,11 @@ function paintCachedUserHeader(data) {
     if (typeof renderMyRecapPresets === "function") renderMyRecapPresets();
     paintVoiceTtsBalanceLine(data);
     paintTtsTodaySurfaces(data);
+    if (typeof updateHeaderBalanceSummary === "function") updateHeaderBalanceSummary(data);
+    if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
 }
 
 // Custom channel logo (paid-only, owner decision 2026-11-02): the
-// single painter for every logo UI surface — canvas preview chip,
-// toggle/position lock state, upload controls, VIP hint and the
-// status line. Free users see the toggle + position picker locked
-// with a VIP hint and NO upload controls; paid users get upload /
-// replace / remove plus a thumbnail of their stored logo. The chip
-// shows only when a logo will actually render (paid + uploaded +
-// toggle on), so its state can never promise a stamp that the
-// server will not draw. The server enforces the same gate on upload
-// and on the generate path regardless of what the client sends.
 function refreshLogoUi() {
     const u = state.user || {};
     const canUse = !!(u.is_admin || u.is_vip || state.logoCanUse);
@@ -4448,11 +4337,6 @@ function refreshLogoUi() {
 }
 
 // Batch AU: render quality follows the same purchased-or-admin tier
-// as the custom-logo gate. /user/me carries the authoritative
-// account_category; while that profile is unknown the picker is left
-// untouched (the server clamp is the enforcement), and once a FREE
-// profile is known its High/Max pills are disabled and any restored
-// high/max preference resolves to Standard.
 function canUseRecapRenderQuality() {
     const u = state.user || {};
     return !!(u.is_admin || u.account_category === "PURCHASED");
@@ -4477,7 +4361,6 @@ function refreshRecapQualityLock() {
         btn.classList.toggle("active", quality === state.recapRenderQuality);
     });
     // Batch BE: if the lock just resolved a saved Max preference to
-    // Standard, the quote must drop the surcharge it may have shown.
     if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
 }
 window.refreshRecapQualityLock = refreshRecapQualityLock;
@@ -4538,7 +4421,6 @@ function refreshRecapEngineLock() {
     moveSegPill(document.getElementById("recap-engine-picker"));
     syncRecapEngineAreas();
     // Batch BV / Phase 5: Own Clone Voice remains VIP + Admin only, so
-    // a FREE profile still sees #recap-own-voice-card locked with upsell.
     const owCard = document.getElementById("recap-own-voice-card");
     if (owCard) {
         const owLocked = tierKnown && !canUse;
@@ -4559,11 +4441,6 @@ function refreshRecapEngineLock() {
 window.refreshRecapEngineLock = refreshRecapEngineLock;
 
 // ── Batch BV: own-voice narration card ───────────────────────────────
-// The user uploads ONE sample for THIS job (upload-on-pick to
-// /api/recap/upload_voice_ref, the recap twin of the voice tab's
-// streamed save); the submit then references it by handle. Selecting
-// a persona card deselects own-voice and vice versa; the picked
-// persona stays meaningful — it is the per-segment fallback voice.
 let recapOwnVoiceAudio = null;
 let recapOwnVoiceObjectUrl = null;
 
@@ -4719,7 +4596,6 @@ function initRecapOwnVoice() {
 window.initRecapOwnVoice = initRecapOwnVoice;
 
 // Fetch the authoritative logo state (the profile payload carries
-// the flags but not the signed preview URL).
 async function fetchLogoState() {
     try {
         const res = await fetchWithTimeout("/api/user/logo", { headers: getAuthHeaders(false) });
@@ -4734,9 +4610,6 @@ async function fetchLogoState() {
 window.refreshLogoUi = refreshLogoUi;
 
 // R40 deck I4: the plan "how it works" line states both character
-// limits via placeholders, painted from the profile payload's live
-// values (never hardcoded in copy). Repainted on profile load and on
-// every language switch (setLanguage calls the window hook).
 function paintPlanHowText() {
     const el = document.querySelector('[data-i18n="plan_how_text1"]');
     if (!el) return;
@@ -4751,7 +4624,6 @@ function paintPlanHowText() {
 window.paintPlanHowText = paintPlanHowText;
 
 // Returns true when the cached profile is a known verified member
-// (or admin) who may start unlocked pending the live check.
 function bootFromCachedProfile() {
     const data = readCachedUserProfile();
     if (!data) return false;
@@ -4763,18 +4635,8 @@ function bootFromCachedProfile() {
 
 async function initEntryGate() {
     // Batch BX: enter the neutral "checking" state first — the
-    // statically-shipped lock copy (join text + zero balances) must
-    // never paint before the membership answer arrives.
     setEntryGateMode("checking");
     // Batch AR: maintenance is checked BEFORE the cached-profile
-    // unlock. While maintenance is on, a non-admin must land on the
-    // maintenance screen directly — the page already loads locked,
-    // and a cached "verified" paint must not flash the app first.
-    // /api/config is unauthenticated, so this works before any
-    // identity call; if the fetch fails, boot falls back to the
-    // normal path (the startup gate check below still runs, and the
-    // server refuses every authenticated call anyway). Admins are
-    // recognised by that startup check and unlock as always.
     let maintenanceCfg = null;
     try {
         const cfgRes = await fetchWithTimeout("/api/config", { headers: getAuthHeaders() });
@@ -4797,7 +4659,6 @@ async function initEntryGate() {
 window.initEntryGate = initEntryGate;
 
 // Preflight: show cost/limit BEFORE the user taps Generate, so there is no surprise.
-// Uses only /api/user/me fields (balance_minutes, character_limit, is_vip).
 function updateVoicePreflight() {
     const box = document.getElementById("voice-preflight");
     const input = document.getElementById("voice-text-input");
@@ -4817,12 +4678,8 @@ function updateVoicePreflight() {
 // ── Submit Voice Job & Live Polling ─────────────────────────────────────────
 async function handleVoiceGenerate() {
     // Batch AC duplicate-submit guard: the button disables on the
-    // first tap; an in-flight double-tap is exactly one submit, and
-    // an UNCHANGED configuration cannot resubmit after success.
     if (!studioSubmitBegin("voice")) return;
     // Batch AC: a second submit while a job is active is explained IN
-    // PLACE (the server gate counts all active jobs for this user) —
-    // the studio is never evicted and there is no dead end.
     if (LiveJobs.hasActiveJob() && !(state.user && state.user.is_admin)) {
         studioSubmitFailure("voice");
         showLiveSubmitLimit("voice");
@@ -4868,8 +4725,6 @@ async function handleVoiceGenerate() {
     const btnGen = document.getElementById("btn-generate-voice");
 
     // Batch AC: the studio survives submit — the detail progress box
-    // opens only by choice (state.voiceDetailOpen); the workspace,
-    // its text and every control stay exactly as the user left them.
     if (progressBox && state.voiceDetailOpen) progressBox.classList.remove("hidden");
     if (resultBox) resultBox.classList.add("hidden");
     if (btnGen) btnGen.disabled = true;
@@ -4948,10 +4803,7 @@ async function handleVoiceGenerate() {
 }
 
 // Batch O: persistent fallback disclosure on the voice result card.
-// The completion toast alone was easy to miss; when the status payload
-// says the backup engine voiced the job, the note stays on the card.
 // Batch BU: the same card also carries the reference auto-trim note
-// (payload reference_trimmed) — the two disclosures share the element.
 function renderVoiceFallbackNote(data) {
     const noteEl = document.getElementById("voice-fallback-note");
     if (!noteEl) return;
@@ -4975,11 +4827,6 @@ function startJobPolling(jobId) {
     let voiceMaxRank = 0; // Batch AC: monotonic status rank (never backwards)
     const pollStartedAt = Date.now();
     // Poll-death honesty (upload-ux pass): the old loop swallowed every
-    // failure and, at its 4-minute cap, stopped silently — leaving a
-    // frozen progress box that looked exactly like a stuck job. Now
-    // repeated failures surface a "reconnecting" note, and the cap
-    // closes the box with an explanation (the job itself keeps running
-    // server-side and lands in History).
     const stopPollingTimedOut = () => {
         clearInterval(state.pollTimer);
         state.pollTimer = null;
@@ -5143,11 +4990,6 @@ window.cancelVoiceJob = function() {
 };
 
 // ── Recap duration caps ────────────────────────────────────────────────
-// The per-job cap mirrors the server and is NEVER raised: free 2 min,
-// VIP 10 min (admins exempt). A VIP source over the cap goes through
-// the split path instead: the server cuts the source into ≤10-min
-// parts and processes each part (see _recap_submit_duration_decision
-// in api.py). The client only steers: auto-enable split, keep Start on.
 function recapNormalMaxSeconds() {
     return state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
 }
@@ -5184,8 +5026,6 @@ function recapDurationGateState(durationSeconds, maxSeconds, isVip, isAdmin) {
     if (isAdmin) return "clear";
     const dur = Number(durationSeconds) || 0;
     // Unknown duration (not learned yet, or a local <video> reporting
-    // Infinity for streamed WebM) never gates — the server-measured
-    // duration re-evaluates when it lands.
     if (!isFinite(dur) || dur <= 0) return "clear";
     if (dur <= (Number(maxSeconds) || 0)) return "clear";
     return isVip ? "vip-notice" : "free-blocked";
@@ -5199,8 +5039,6 @@ function recapGateDurationText(durationSeconds) {
 }
 
 // The Step-1 / Step-4 notice copy: the same facts the server's
-// recap_over_limit_message states (actual duration, tier, max) plus
-// the tier's way forward (VIP upsell / split guidance).
 function recapOverLimitNoticeText(durationSeconds, maxSeconds, isVip) {
     return tf("recap_over_limit_notice", {
         duration: recapGateDurationText(durationSeconds),
@@ -5211,8 +5049,6 @@ function recapOverLimitNoticeText(durationSeconds, maxSeconds, isVip) {
 }
 
 // A server duration rejection the client could not pre-empt (a link
-// source whose duration was never learned) is kept here by the
-// submit catch and rendered persistently under the Step-4 CTA.
 let recapSubmitRejectText = "";
 
 function updateRecapDurationGate() {
@@ -5265,11 +5101,6 @@ function updateRecapDurationGate() {
 window.updateRecapDurationGate = updateRecapDurationGate;
 
 // Segmented (over-cap) recaps are charged 1 credit PER PART. This
-// mirrors the server's planning (_recap_estimate_part_count in api.py
-// → plan_parts over the same target): parts of min(split, cap−30s),
-// with a tiny tail joining the previous part instead of becoming its
-// own. Real cuts move only later (narration pauses), so the actual
-// count can be lower than this estimate, never higher.
 function estimateRecapSegmentParts(durationSec, splitMinutes) {
     if (!durationSec || durationSec <= 0) return 1;
     const target = Math.min((splitMinutes || 3) * 60, recapNormalMaxSeconds() - 30);
@@ -5327,8 +5158,6 @@ function updateRecapSplitCostHint() {
 }
 
 // Batch K: setLanguage's static sweep resets the CTA label — this
-// window hook (same pattern as paintPlanHowText) repaints the live
-// segmented estimate in the new language.
 window.repaintRecapCtaPrice = updateRecapSplitCostHint;
 
 // ── Recap Live Preview visibility state machine ─────────────────────────
@@ -5370,12 +5199,6 @@ function setRecapPreviewState(mode) {
     }
     if (hint) hint.classList.toggle("hidden", !ready);
     // R40 item 5 (complaint diagnosis D): the Style/Subtitle/Blur
-    // controls group was gated on Analyze SUCCESS, so a user whose
-    // link failed verification (or who never pressed Analyze) could
-    // not reach the subtitle/blur controls at all — and stale saved
-    // positions (e.g. sub_y=67) stayed invisible and unfixable. The
-    // controls now follow SOURCE PRESENCE; the canvas mockup above
-    // stays preview-gated.
     if (controlsGroup) controlsGroup.classList.toggle("hidden", !(ready || recapHasSource()));
     if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
     if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
@@ -5384,18 +5207,13 @@ function setRecapPreviewState(mode) {
         applyActiveRecapStep2Category();
     }
     // Batch BB-2: the speed capsule lives inside speedGroup — when it
-    // unhides, the sliding pill measures against real layout.
     if (ready) requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     // Batch AV: when a source becomes ready, Step 1 checks off and
-    // collapses to its summary strip and Step 2 opens for the user.
     syncRecapStepsWithSource(ready);
 }
 window.setRecapPreviewState = setRecapPreviewState;
 
 // True when a source is present in any form: a typed URL, a picked or
-// uploaded file, a link thumbnail, or a live local <video> preview.
-// (R40 item 5: widened from preview-only signals — the controls group
-// keys off presence, not off a successful Analyze.)
 function recapHasSource() {
     const cv = document.getElementById("canvas-video-player");
     const urlInput = document.getElementById("recap-url-input");
@@ -5421,20 +5239,11 @@ function recapStepEls(n) {
 }
 
 // Kept name from Batch AV (call sites: setRecapPreviewState, the
-// MutationObserver below). In the wizard, "open" means "is the
-// current step".
 function isRecapStepOpen(n) {
     return recapCurrentStep === n;
 }
 
 // Indicator (Batch AZ-9): one liquid segmented capsule. The
-// current segment expands into the gradient pill and shows its
-// step name (a static data-i18n span in the markup — the i18n
-// sweep keeps it in the UI language); completed segments show ✓
-// via markRecapStepDone. The AX-2R track/fill/caption are gone:
-// progress reads from the tinted ✓ segments + the expanded one.
-// This refresh only re-paints the state classes — session-truth
-// (AX-3R) lives in RECAP_STEP_DONE and its earners, untouched.
 function recapFirstIncompleteBefore(n) {
     for (let m = 1; m < n; m++) { if (!RECAP_STEP_DONE[m]) return m; }
     return null;
@@ -5457,10 +5266,6 @@ window.refreshRecapStepIndicator = refreshRecapStepIndicator;
 function showRecapStep(n) {
     if (!document.getElementById("recap-step-" + n)) return;
     // Batch CI: a FREE source over the duration cap may not advance
-    // past Step 1 — the persistent notice on Step 1 carries the full
-    // reason, and this toast repeats it for a tap that went nowhere.
-    // VIP (split path) and admins are never blocked here; the server
-    // submit check remains the backstop for every tier.
     if (n > 1 && n !== recapCurrentStep
         && recapDurationGateState(state.recapSourceDuration || 0, recapNormalMaxSeconds(), !!state.user?.is_vip, !!state.user?.is_admin) === "free-blocked") {
         showStudioToast(tf("toast_recap_over_limit", {
@@ -5481,8 +5286,6 @@ function showRecapStep(n) {
         if (els.card) els.card.classList.toggle("hidden", m !== n);
     });
     // Batch DH: entering Step 2 re-fits the 9:16 preview frame — the
-    // boot-time fit runs while the pane is hidden (parent width 0), so
-    // the real fit must happen once the step is actually visible.
     if (n === 2 && typeof window.__ddFitPreviewFrame === "function") {
         requestAnimationFrame(() => window.__ddFitPreviewFrame());
     }
@@ -5490,30 +5293,21 @@ function showRecapStep(n) {
         if (typeof window.scheduleRecapCompositeRefresh === "function") window.scheduleRecapCompositeRefresh();
         if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
     }
+    if (n === 3) {
+        const spdGrp = document.getElementById("recap-preview-speed-group");
+        if (spdGrp) spdGrp.classList.remove("hidden");
+        if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
+    }
     refreshRecapStepIndicator();
-    // Batch BO: every step change re-applies the sticky-CTA step
-    // gate — the 1-Click CTA bar may show only while Step 4 is the
-    // current step (see refreshStickyCtas). This is the one door,
-    // so boot (initRecapSteps), Continue buttons, chip taps and
-    // the source-flow auto-advance all pass through it.
     refreshStickyCtas();
-    // Advance animation (AZ-9): the newly-current segment pops once
-    // as it expands into the gradient pill.
     const currentBtn = document.querySelector('#recap-steps-nav [data-step-toggle="' + n + '"]');
     if (currentBtn) {
         currentBtn.classList.remove("pop");
         void currentBtn.offsetWidth;
         currentBtn.classList.add("pop");
     }
-    // Batch CF: entering Step 4 also refreshes the honest ETA line —
-    // CB wired it only into the cost hint + engine picker, so a
-    // navigation/restored-session entry left #recap-step4-eta empty.
-    // The refresh is cache-keyed + sequence-guarded, so this extra
-    // call is a no-op when the shape has not changed.
     if (n === 4) { refreshRecapStep4Output(); refreshRecapStep4Eta(); }
-    if (n === 4) { updateRecapSplitCostHint(); }
-    // Batch BB-2: the incoming step card may hold the speed capsule —
-    // re-measure its pill now that the card has layout.
+    if (n === 4) { refreshRecapStep4Choices(); updateRecapSplitCostHint(); }
     requestAnimationFrame(() => { try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     const nav = document.getElementById("recap-steps-nav");
     if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -5521,9 +5315,24 @@ function showRecapStep(n) {
 }
 window.showRecapStep = showRecapStep;
 
+window.skipRecapToGenerate = function() {
+    haptic("medium");
+    if (typeof recapHasSource === "function" && recapHasSource()) {
+        [1, 2, 3].forEach(s => markRecapStepDone(s, true));
+    }
+    showRecapStep(4);
+};
+
+window.customizeRecapFromStep1 = function() {
+    haptic("light");
+    if (typeof recapHasSource === "function" && recapHasSource()) {
+        [1].forEach(s => markRecapStepDone(s, true));
+    }
+    showRecapStep(2);
+};
+
 function markRecapStepDone(n, done) {
     // Session-truth (AX-3R): Step 4 never shows ✓, and completion is
-    // only ever earned in this session (see the callers).
     if (n === 4) done = false;
     RECAP_STEP_DONE[n] = !!done;
     document.querySelectorAll('[data-step-pill="' + n + '"]')
@@ -5541,9 +5350,6 @@ function syncRecapStepsWithSource(ready) {
 }
 
 // Step 4 choices line (AX-4): source title · voice name · aspect —
-// the summary information the AV strips carried, in one compact,
-// never-overflowing line. Purely informational; editing is via the
-// indicator chips.
 function refreshRecapStep4Choices() {
     const line = document.getElementById("recap-step4-choices");
     if (!line) return;
@@ -5567,7 +5373,11 @@ function refreshRecapStep4Choices() {
         } else if (state.recapOwnVoiceSelected && state.recapTtsEngine === "voxcpm") {
             voiceLine = t("recap_own_voice_display");
         } else {
-            voiceLine = "🎙️ " + (voiceCard ? voiceCard.textContent.trim() : "");
+            const selEl = document.getElementById("recap-persona-select");
+            const selLabel = selEl && selEl.selectedOptions && selEl.selectedOptions[0]
+                ? selEl.selectedOptions[0].textContent.trim() : "";
+            const picked = voiceCard ? voiceCard.textContent.trim() : (selLabel || state.recapVoice || "komin");
+            voiceLine = "🎙️ " + picked;
             if (state.recapTtsEngine === "edge") {
                 const activeCard = voiceCard ? voiceCard.closest(".voice-card") : null;
                 const slug = activeCard ? activeCard.getAttribute("data-voice") : "";
@@ -5718,7 +5528,6 @@ function setRecapStep4Quote(credits, breakdownText) {
     const el = document.getElementById("recap-step4-quote-credits");
     if (el) el.textContent = _fmtCreditNum(cost);
     // Batch BE: the optional breakdown line under the Step-4 total
-    // (band + Max surcharge) — shown only when a breakdown applies.
     const bd = document.getElementById("recap-step4-quote-breakdown");
     if (bd) {
         bd.textContent = breakdownText || "";
@@ -5731,11 +5540,6 @@ function setRecapStep4Quote(credits, breakdownText) {
 window.setRecapStep4Quote = setRecapStep4Quote;
 
 // ── Batch CB: honest ETA text + the Step-4 estimate ─────────────
-// ONE formatter for every ETA surface: a RANGE in whole minutes
-// (low floored, high ceiled), the under-a-minute wording ONLY when
-// the range's high bound is genuinely < 90 s, and NO 1-minute floor
-// anywhere — the pre-CB Math.max(1, ...) paint is what let a job
-// 50 minutes in claim "~1 min" for tens of minutes.
 function formatEtaRangeText(range, mode) {
     if (!Array.isArray(range) || range.length < 2) return "";
     const low = Number(range[0]), high = Number(range[1]);
@@ -5748,11 +5552,6 @@ function formatEtaRangeText(range, mode) {
 }
 
 // The Step-4 estimate: the wizard knows duration + engine + quality
-// before submit, so it asks the server for THAT shape's total range
-// (GET /api/recap/eta-estimate) whenever the shape changes — the
-// quote refresh hub (updateRecapSplitCostHint) and the engine
-// picker both land here. A null range hides the line: no number is
-// ever invented client-side.
 let recapStep4EtaSeq = 0;
 let recapStep4EtaKey = "";
 async function refreshRecapStep4Eta() {
@@ -5790,10 +5589,6 @@ window.refreshRecapStep4Eta = refreshRecapStep4Eta;
 
 function refreshRecapStep4Thumb() {
     // AX-4R: the Step 4 frame is the SAME engine composite the
-    // Step 2 stage shows (state.recapCompositeUrl), at full card
-    // width in the chosen aspect — a fixed aspect box means the
-    // swap never jumps the layout, and the previous frame stays
-    // until the new one is assigned (no blank flash).
     const thumb = document.getElementById("recap-step4-thumb");
     if (!thumb) return;
     const empty = document.getElementById("recap-step4-output-empty");
@@ -5825,7 +5620,6 @@ function refreshRecapStep4Thumb() {
 window.refreshRecapStep4Thumb = refreshRecapStep4Thumb;
 
 // Output facts chips (AX-4R): every value is derived from the live
-// config/state at refresh time — nothing is hard-coded per job.
 function refreshRecapStep4Facts() {
     const set = (id, text) => {
         const el = document.getElementById(id);
@@ -5860,10 +5654,6 @@ function refreshRecapStep4Facts() {
 window.refreshRecapStep4Facts = refreshRecapStep4Facts;
 
 // Step 4 entry (AX-4R): re-request the composite with the CURRENT
-// full config and refresh every summary surface. The composite
-// helper hash-guards its fetch — an unchanged config is already
-// the frame on record; a changed one fetches fresh and the success
-// path swaps the Step 4 frame in when it lands.
 function refreshRecapStep4Output() {
     if (recapHasSource() && typeof window.refreshRecapCompositePreview === "function") {
         try { window.refreshRecapCompositePreview(); } catch (e) { /* keep the current frame */ }
@@ -5884,17 +5674,11 @@ function toggleRecapFineSettings(force) {
     const btn = document.getElementById("btn-toggle-recap-fine");
     if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
     // The transform group syncs its own visibility from the preview
-    // state machine; expanding the fine panel is the user asking for
-    // it — reveal the group while the panel is open (Batch AK gating
-    // for the collapsed state is unchanged).
     if (open) {
         const tg = document.getElementById("recap-preview-transform-group");
         if (tg && recapHasSource()) tg.classList.remove("hidden");
     }
     // F1 (Batch AV rewire): the blur box's label is an editing
-    // affordance — it paints while the detail panel holding the blur
-    // group is open (previously: while the Mask toolbar tab was
-    // active; the tabs are gone, the behaviour is preserved).
     const blurBox = document.getElementById("preview-blur-box");
     if (blurBox) blurBox.classList.toggle("label-on", open);
 }
@@ -5926,9 +5710,6 @@ function initRecapSteps() {
             .observe(img, { attributes: true, attributeFilter: ["src"] });
     }
     // Session-truth (AX-3R, supersedes AX-3): saved prefs pre-fill
-    // control VALUES only — they NEVER mark a step complete. On load
-    // no step shows ✓, fresh or returning; every ✓ is earned in this
-    // session (Step 1 on resolve, Steps 2/3 on their Continue).
     showRecapStep(1);
 }
 window.initRecapSteps = initRecapSteps;
@@ -5936,11 +5717,8 @@ window.initRecapSteps = initRecapSteps;
 // ── TAB 2: Recap Studio Configuration & Visual Mockup ──────────────────────
 function setupRecapVisualEditor() {
     // Batch DD: blur-chip / extras render signatures. Declared at the
-    // TOP of this scope: the composite-refresh path (defined and first
-    // invoked far above the blur-list editor section) reads them, and
     // a `let` declared mid-function throws a TDZ error on that early
     // call (seen live 2026-11-10: "Cannot access 'ddChipsSig' before
-    // initialization" on page load).
     let ddChipsSig = "";
     let ddExtrasSig = "";
     const sliderBlurY = document.getElementById("slider-blur-y");
@@ -5963,7 +5741,6 @@ function setupRecapVisualEditor() {
 
     const previewBlur = document.getElementById("preview-blur-box");
     // Batch AK: the CSS plate element is gone — the composited
-    // frame carries the engine's real plate (see S2).
     const previewSub = document.getElementById("preview-sub-box");
     const previewLogo = document.getElementById("preview-logo");
     const canvas = document.getElementById("video-bg-canvas");
@@ -6077,12 +5854,6 @@ function setupRecapVisualEditor() {
     }
 
     // ── Recap file upload (upload-ux pass) ─────────────────────────────
-    // XMLHttpRequest is used on purpose: fetch() exposes no upload
-    // progress events, which is how the old UI ended up frozen on a
-    // hardcoded "40%" for the whole transfer. Phases stay honest: real
-    // byte % while sending, then an indeterminate "server is preparing"
-    // phase once the bytes are gone but the response (media probe +
-    // thumbnail) is still pending.
     let recapUploadXhr = null;
     let recapUploadTimer = null;
 
@@ -6101,17 +5872,6 @@ function setupRecapVisualEditor() {
     }
 
     // The info card must never claim a server-side Ready the server
-    // has not confirmed for the CURRENT pick. States: "pending" (file
-    // picked / uploading — neutral duration, not-on-server label),
-    // "failed" (upload error — duration cleared, failure label), and
-    // "ready" (ONLY from onRecapUploadSuccess; restores the Ready
-    // line — the duration chip itself stays owned by the
-    // success/analyze writers, which hold the real server metadata).
-    // Paint the analyze info card's duration/subtitle chips from an
-    // extract payload. Split out (round-6 P7) so a language toggle can
-    // repaint the SAME chips in the new language — they used to be
-    // baked once, in whichever language was active at analyze time,
-    // and the subtitle chip was hardcoded English in both modes.
     function paintRecapInfoMeta(data, isOverLimit, maxAllowed) {
         const durSpan = document.getElementById("recap-info-dur");
         const subSpan = document.getElementById("recap-info-sub");
@@ -6135,12 +5895,6 @@ function setupRecapVisualEditor() {
     }
 
     // R39 (Analyze honesty, mirroring the R38 Downloader fix): when
-    // the current URL source's duration could NOT be verified, a
-    // warning line sits by the 1-Click CTA — the job may fail or
-    // turn out to exceed the duration cap, and direct upload is the
-    // reliable route. Advisory only: the CTA is never blocked by it.
-    // Verified durations (and uploaded files, whose duration the
-    // server measured itself) never show it.
     function paintRecapUnverifiedWarning() {
         const el = document.getElementById("recap-unverified-warning");
         if (!el) return;
@@ -6152,10 +5906,6 @@ function setupRecapVisualEditor() {
     window.paintRecapUnverifiedWarning = paintRecapUnverifiedWarning;
 
     // R39: clear the analyze info card + cached payload at Analyze
-    // start, so the PREVIOUS source's title/duration never stands in
-    // for the new one while the new Analyze is still running (the
-    // stale-card half of the same honesty fix). The settle paths
-    // repaint from the new payload only.
     function clearRecapInfoCard() {
         const box = document.getElementById("recap-video-info-box");
         if (box) box.classList.add("hidden");
@@ -6641,12 +6391,6 @@ function setupRecapVisualEditor() {
     window.refreshRecapFramePreview = refreshRecapFramePreview;
 
     // ── Batch AK: engine-composited preview ─────────────────────
-    // The canvas's picture is the ENGINE's own composite (POST
-    // /api/recap/preview-composite) for the CURRENT settings — all
-    // seven subtitle styles with engine plate sizing, the title
-    // badge, and (once a script exists) the real first cue as the
-    // sample. The CSS boxes over it are placement handles only;
-    // the hand-mirrored JS renderer no longer draws subtitles.
     let recapCompositeSeq = 0;
     let recapCompositeTimer = null;
     let recapCompositeHash = "";
@@ -6704,7 +6448,6 @@ function setupRecapVisualEditor() {
         };
     }
     // Batch DD: with a blur-box list present, the legacy
-    // single-box flag must not ride along (the list supersedes it).
     function ddCompositePayload() {
         const p = recapCompositePayload();
         if (Array.isArray(p.blur_boxes) && p.blur_boxes.length) p.blur_box_explicit = false;
@@ -6763,7 +6506,6 @@ function setupRecapVisualEditor() {
         }
     }
     // Batch AM (M3 residual): the canvas's explicit preparing state,
-    // shown only while the first engine composite is in flight.
     function setRecapPreviewLoading(on) {
         const el = document.getElementById("canvas-preview-loading");
         if (el) el.classList.toggle("hidden", !on);
@@ -6885,7 +6627,6 @@ function setupRecapVisualEditor() {
     }
 
     // S3: plate height fraction matching core._plate_height_px with font sized
-    // off the shorter picture side min(pw, ph) relative to picture height.
     function subtitlePlateHeightFracOfPicture() {
         const PH = 608;
         const r = recapPictureRect();
@@ -6901,8 +6642,6 @@ function setupRecapVisualEditor() {
         return (textH + 2 * pad) / PH;
     }
     // The subtitle centre-% (picture basis) implied by a bottom
-    // margin — the value the canvas drag math works in. The slider
-    // under the historical slider-sub-y id IS the margin.
     function subCentrePercentFromMargin(marginPct) {
         return 100 - marginPct - subtitlePlateHeightFracOfPicture() * 50;
     }
@@ -6924,7 +6663,6 @@ function setupRecapVisualEditor() {
     }
 
     // Batch AG: subtitle wrap width (sub_w, percent of the PICTURE
-    // width) as a fraction of the canvas width.
     function subtitleWidthCanvasFrac(subWPercent) {
         const r = recapPictureRect();
         const sw = Math.max(0, Math.min(100, subWPercent)) / 100.0;
@@ -6932,11 +6670,6 @@ function setupRecapVisualEditor() {
     }
 
     // Batch AA/AG: the blur box's canvas geometry from its
-    // PICTURE-relative percents — the exact mirror of
-    // core.user_blur_box_to_canvas_box (centre = oy + y × ph,
-    // left = ox + x × pw), so the box the user drags is the box
-    // the render blurs. x/w default to the legacy centred box
-    // (4% / 92%) when not supplied.
     function blurBoxCanvasGeom(yPercent, hPercent, xPercent, wPercent) {
         const r = recapPictureRect();
         const y = Math.max(0, Math.min(100, parseFloat(yPercent) || 0)) / 100.0;
@@ -6952,10 +6685,6 @@ function setupRecapVisualEditor() {
     }
 
     // History re-run prefill does NOT go through here (it restores a
-    // job's own settings on purpose), and a page reload restoring
-    // the same session's snapshot is untouched: this is called only
-    // from the new-source success hooks (Analyze success for a
-    // different URL, upload success for a new file).
     function resetBlurBoxForNewSource() {
         state.recapBlurY = 85;
         state.recapBlurH = 7;
@@ -7054,8 +6783,6 @@ function setupRecapVisualEditor() {
     }
 
     // Batch AK: fitBlurPlateToCaption and its plate element are
-    // GONE — the engine-composited frame carries the real plate at
-    // the engine's own size, so there is no CSS plate left to fit.
 
     function syncSubBoxVisual() {
         if (!previewSub) return;
@@ -7105,9 +6832,6 @@ function setupRecapVisualEditor() {
     }
 
     // Batch AG: the horizontal blur sliders are deliberate sets too
-    // (same explicit marker as Y/H). X and W clamp against each
-    // other so the box always stays inside the picture: widening W
-    // past the right edge pulls X back, and X stops at 100 − W.
     if (sliderBlurX && previewBlur && valBlurX) {
         sliderBlurX.addEventListener("input", () => {
             state.recapBlurBoxTouched = true;
@@ -7265,14 +6989,7 @@ function setupRecapVisualEditor() {
     }
 
     // Batch AG: horizontal twin of enableVerticalDrag — same
-    // deliberate-grab rules (mouse anywhere on the box, touch only
-    // via the ⠿ grip), with the delta measured against the canvas
-    // WIDTH and scaled by 1/pw on pillarboxed layouts so the box
-    // follows the finger 1:1, mirroring the vertical 1/ph rule.
     // Attached alongside the vertical drag, a diagonal drag moves
-    // both axes at once. getClampRange returns [min, max] percents
-    // for the axis value (blur_x is a left edge clamped by the
-    // width; sub_x is a centre clamped to [10, 90]).
     function enableHorizontalDrag(boxElement, onUpdateX, getInitialX, getDeltaScaleX, getClampRange) {
         if (!boxElement || !canvas) return;
 
@@ -7362,9 +7079,6 @@ function setupRecapVisualEditor() {
 
     // Attach dragging to Subtitle Box
     // Batch AK: the slider is the bottom MARGIN now — dragging the
-    // box DOWN must DECREASE the margin, so the delta scale is
-    // negative (the box still follows the finger 1:1 through the
-    // margin-derived centre); the clamp is the margin range.
     enableVerticalDrag(previewSub, (y) => {
         if (sliderSubY) sliderSubY.value = y;
         syncSubBoxVisual();
@@ -7378,9 +7092,6 @@ function setupRecapVisualEditor() {
     }, () => [0, 60]);
 
     // Batch AG: horizontal drag for both boxes (2-axis with the
-    // vertical drags above). The blur box's left edge clamps
-    // against its width; the subtitle centre clamps to [10, 90] —
-    // the same ranges the API enforces.
     enableHorizontalDrag(previewBlur, (x) => {
         // Dragging the box sideways is a deliberate set.
         state.recapBlurBoxTouched = true;
@@ -7553,15 +7264,8 @@ function setupRecapVisualEditor() {
     syncSubBoxVisual();
 
     // Batch AV: the compact-toolbar tab binding was retired with the
-    // tab nav itself — the seek panel is always visible, and the
-    // mask/style controls live in the fine expandable. The F1
-    // blur-label behaviour moved to toggleRecapFineSettings: the
-    // label paints while the detail panel (which holds the blur
-    // group) is open.
 
     // ── Helper: Real-time Live Canvas Mockup Visual Updater ──
-    // Exposed on window for the top-level callers (Batch AV retired
-    // the accordion caller; the exposure stays for the others).
     window.updateCanvasMockupVisuals = updateCanvasMockupVisuals;
 
     // Batch AS (AS-2): ONE stage-shape authority. The preview stage
@@ -7639,7 +7343,7 @@ function setupRecapVisualEditor() {
         const fillBadge = document.getElementById("mockup-fill-badge");
         const origSub = document.getElementById("mockup-orig-sub");
         const hasActiveMedia = Boolean(state.recapThumbnailUrl || state.recapFrameUrl || state.uploadedVideoPath || (canvasVideo && !canvasVideo.classList.contains("hidden")));
-        
+
         // Hide mock English subtitles if user has loaded a video/thumbnail
         if (origSub) {
             origSub.style.display = hasActiveMedia ? "none" : "";
@@ -8001,10 +7705,6 @@ function setupRecapVisualEditor() {
     }
 
     // Batch AK (S4/S5/N5): the fill picker's honesty layer — the
-    // picker greys out when the fill cannot change anything (ratio
-    // "Original", or the picture already covers the canvas), shows
-    // "the whole picture is kept" for Blur/Black, and shows the
-    // cropped-away share for Center Crop.
     function syncFillPickerState() {
         const note = document.getElementById("recap-fill-note");
         const picker = document.getElementById("recap-fill-picker");
@@ -8255,6 +7955,7 @@ function setupRecapVisualEditor() {
             state.recapSpeed = btn.getAttribute("data-speed") || "+12%";
             moveSpeedPill(document.getElementById("recap-speed-picker"));
             if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
+            if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
         });
     });
 
@@ -8279,17 +7980,9 @@ function setupRecapVisualEditor() {
     }
 
     // Batch AH: the Batch K twin-toggle sync is gone — there is
-    // exactly ONE script-review checkbox (#recap-script-review-toggle,
-    // the main-area row with the hint text), and every read site
-    // (fingerprint, submit payload, History prefill) reads it
-    // directly. No mirroring remains to disagree.
 
     // 6c. Source language (auto = detect; else a Whisper code).
     // Batch AZ-11: ONE compact dropdown lists all 18 values — the
-    // AX-5 frequent pills are retired. The write path is unchanged:
-    // ONE state (state.recapSourceLanguage), written only through
-    // setRecapSourceLanguage; the sync paints the one control, so a
-    // saved value (any of the 18) displays correctly on load.
     const langSel = document.getElementById("recap-lang-more");
     function renderRecapLangSheetGrid() {
         const grid = document.getElementById("recap-lang-sheet-grid");
@@ -8338,6 +8031,7 @@ function setupRecapVisualEditor() {
     function setRecapSourceLanguage(code) {
         state.recapSourceLanguage = code || "auto";
         syncRecapLangViews();
+        if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
     }
     window.setRecapSourceLanguage = setRecapSourceLanguage;
     if (langSel) {
@@ -8408,13 +8102,14 @@ function setupRecapVisualEditor() {
             state.recapStoryStyle = chosenStory;
             storyPills.forEach(p => p.classList.toggle("active", p.getAttribute("data-story") === chosenStory));
             moveSegPill(document.getElementById("story-style-picker-quick"));
+            if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
         });
     });
 
     // Reset Layout Helper (Blur Y/H, Sub Y, Crop, Zoom)
     function resetRecapCanvasLayout() {
         haptic("medium");
-        if (sliderBlurY) sliderBlurY.value = "85";
+        if (sliderBlurY) sliderBlurY.value = "76";
         if (sliderBlurH) sliderBlurH.value = "7";
         // Batch AG: the layout reset also returns the horizontal
         // geometry to the centred defaults (sub_w is a style width,
@@ -8450,9 +8145,9 @@ function setupRecapVisualEditor() {
             b.classList.toggle("active", b.getAttribute("data-crop") === "full");
         });
 
-        state.recapZoom = 1.0;
+        state.recapZoom = 1.1;
         document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-zoom") === "1.00");
+            b.classList.toggle("active", parseFloat(b.getAttribute("data-zoom")) === 1.1);
         });
         updateCanvasMockupVisuals();
     }
@@ -8513,8 +8208,6 @@ function setupRecapVisualEditor() {
 
     // 9. Subtitle Style Presets (Yellow, White, Boxed, Neon, …)
     // Batch AZ-11: the 7 chips are ONE compact dropdown now (a
-    // <select> carrying the picker's id). The write path is the
-    // same: state.recapSubStyle + a composite refresh.
     const styleSel = document.getElementById("sub-style-picker");
     if (styleSel) {
         styleSel.addEventListener("change", () => {
@@ -8535,13 +8228,14 @@ function setupRecapVisualEditor() {
 
     // 10. Subtitle Live Preview Renderer
     function updateSubtitleVisualPreview() {
-        // Batch AK: retired — the CSS sample renderer is gone. The
-        // subtitle (style, font, size, sample text) renders inside
-        // the engine-composited frame; nothing here draws it.
+        const badge = document.getElementById("recap-sub-style-live-preview");
+        if (badge) {
+            const st = state.recapSubStyle || "cinematic";
+            badge.className = "vcp-sub-sample recap-sub-live-badge sample-" + st;
+        }
         return;
     }
     // 11. Font Size — Batch DD: ONE full-width slider (10–26pt)
-    // with a numeric readout + live cluster capacity indicator.
     function estimateSubtitleCharsPerLine(fontSize, lines, subW) {
         const fs = parseFloat(fontSize) || 16;
         const nLines = Math.max(1, parseInt(lines) || 1);
@@ -8674,8 +8368,6 @@ function setupRecapVisualEditor() {
     });
 
     // ── Batch DD wiring (Step-2 rebuild) ─────────────────────────
-    // (0) Blur auto-detect re-bind — its original binding sat in
-    // the block removed with the title controls.
     const ddAutoDetectEl = document.getElementById("recap-blur-autodetect-toggle");
     if (ddAutoDetectEl) {
         ddAutoDetectEl.addEventListener("change", () => {
@@ -8687,15 +8379,15 @@ function setupRecapVisualEditor() {
 
     // (1) Summary strip + accordion header values.
     function refreshRecapStep2Summary() {
-        const styleName = t("sub_style_" + (state.recapSubStyle || "yellow"));
-        const prot = t("recap_protection_" + (state.recapProtection || "standard"));
+        const styleName = t("sub_style_" + (state.recapSubStyle || "cinematic"));
+        const prot = t("recap_protection_" + (state.recapProtection || "strong"));
         const strip = document.getElementById("recap-step2-summary");
         const mTag = state.recapMirror !== false ? "🪞 " + t("recap_fact_mirror_on") : "";
         if (strip) {
             strip.innerText = [
                 state.recapRatio || "9:16",
                 state.recapRatioFill || "blur",
-                `${state.recapFontSize || 16}pt`,
+                `${state.recapFontSize || 13}pt`,
                 styleName,
                 `🛡️ ${prot}`,
                 mTag,
@@ -8707,22 +8399,40 @@ function setupRecapVisualEditor() {
             if (v) v.innerText = txt;
         };
         setVal("recap-preview-ratio-group", `${state.recapRatio || "9:16"} · ${state.recapRatioFill || "blur"}`);
-        setVal("recap-subtitle-group", `${state.recapFontSize || 16}pt · ${styleName} · ${state.recapLines || 1} · ${state.recapSubRenderMode || "timeline"}`);
+        setVal("recap-subtitle-group", `${state.recapFontSize || 13}pt · ${styleName} · ${state.recapLines || 1}`);
         const nBoxes = (state.recapBlurBoxes || []).length;
-        setVal("recap-blur-group", `${state.recapBlurAutoDetect !== false ? t("toggle_on") : t("toggle_off")} · ×${nBoxes}`);
+        const blurVal = state.recapBlurSubs === false
+            ? t("toggle_off")
+            : (state.recapBlurAutoDetect !== false ? "Auto" : `Manual · ×${Math.max(1, nBoxes)}`);
+        setVal("recap-blur-group", blurVal);
         setVal("recap-logo-group", `${state.recapLogo !== false ? t("toggle_on") : t("toggle_off")} · ${state.recapLogoPos || "top-right"}`);
-        setVal("recap-preview-transform-group", [`🛡️ ${prot}`, `${state.recapZoom || 1}x`, mTag].filter(Boolean).join(" · "));
+        setVal("recap-preview-transform-group", [`🛡️ ${prot}`, `${state.recapZoom || 1.1}x`, mTag].filter(Boolean).join(" · "));
+        const savedPresetCnt = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.length : 0;
+        setVal("recap-my-presets-section", savedPresetCnt ? `${savedPresetCnt}/3` : "0/3");
+        const storyKey = state.recapStoryStyle || "pov";
+        const storyPill = document.querySelector(`#story-style-picker-quick [data-story="${storyKey}"]`);
+        setVal("recap-story-style-acc", storyPill ? storyPill.textContent.trim() : storyKey);
+        setVal("recap-pace-acc", state.recapSpeed || "+12%");
+        const langOpt = document.querySelector(`#recap-lang-more option[value="${state.recapSourceLanguage || "auto"}"]`);
+        setVal("recap-lang-acc", langOpt ? langOpt.textContent.trim() : (state.recapSourceLanguage || "auto"));
+        const srToggle = document.getElementById("recap-script-review-toggle");
+        setVal("recap-review-acc", (srToggle && srToggle.checked) ? t("toggle_on") : t("toggle_off"));
     }
     window.refreshRecapStep2Summary = refreshRecapStep2Summary;
 
+    const srBoxEl = document.getElementById("recap-script-review-toggle");
+    if (srBoxEl && !srBoxEl.dataset.vcpSummaryWired) {
+        srBoxEl.dataset.vcpSummaryWired = "1";
+        srBoxEl.addEventListener("change", refreshRecapStep2Summary);
+    }
+
     // (2) Accordion: every .dd-acc-group gets a header (title +
-    // current values + chevron) and a collapsible body; ALL groups
-    // start collapsed, subtitle included.
     function setupRecapAccordion() {
         document.querySelectorAll(".dd-acc-group").forEach(group => {
             if (group.dataset.accReady) return;
             group.dataset.accReady = "1";
             const titleKey = group.getAttribute("data-acc-title-key") || "";
+            const vipKey = group.getAttribute("data-acc-vip-key") || "";
             const head = document.createElement("button");
             head.type = "button";
             head.className = "dd-acc-head vcp-acc-head";
@@ -8731,12 +8441,19 @@ function setupRecapVisualEditor() {
             titleSpan.className = "dd-acc-title";
             if (titleKey) titleSpan.setAttribute("data-i18n", titleKey);
             titleSpan.textContent = titleKey ? t(titleKey) : "";
+            head.appendChild(titleSpan);
+            if (vipKey) {
+                const vipSpan = document.createElement("span");
+                vipSpan.className = "dd-acc-vip-tag";
+                vipSpan.setAttribute("data-i18n", vipKey);
+                vipSpan.textContent = t(vipKey);
+                head.appendChild(vipSpan);
+            }
             const valSpan = document.createElement("span");
             valSpan.className = "dd-acc-val";
             const chev = document.createElement("span");
             chev.className = "dd-acc-chevron";
             chev.textContent = "▸";
-            head.appendChild(titleSpan);
             head.appendChild(valSpan);
             head.appendChild(chev);
             const body = document.createElement("div");
@@ -8757,10 +8474,6 @@ function setupRecapVisualEditor() {
     }
 
     // (3) Blur-box LIST editor: sliders + the drag box edit the
-    // SELECTED box; chips select; add/delete manage the list (≤5).
-    // Other boxes paint as outline overlays (click selects).
-    // (ddChipsSig / ddExtrasSig are declared at the top of
-    // setupRecapVisualEditor — see the note there.)
     function ddBoxes() {
         if (!Array.isArray(state.recapBlurBoxes)) state.recapBlurBoxes = [];
         return state.recapBlurBoxes;
@@ -8878,7 +8591,6 @@ function setupRecapVisualEditor() {
     });
 
     // (5) Free style controls. A preset SEEDS them (ddSeedStyleControls,
-    // called from the style dropdown); the user can still tweak.
     const DD_PRESET_SEED = {
         cinematic: { text: "#ffffff", outline: "#000000", ow: 2.5, bg: null, bgOp: null, shadow: true },
         glass: { text: "#ffffff", outline: "#000000", ow: 1.0, bg: "#000000", bgOp: 58, shadow: false },
@@ -8990,8 +8702,6 @@ function setupRecapVisualEditor() {
     });
 
     // (7) Custom subtitle font: upload -> handle in state; the
-    // engine-composited preview renders with the uploaded file
-    // server-side; FontFace registration covers CSS-side samples.
     function ddSyncCustomFontUi() {
         const status = document.getElementById("sub-font-custom-status");
         const has = !!state.recapSubFontCustomId;
@@ -9039,10 +8749,9 @@ function setupRecapVisualEditor() {
     });
 
     // (8) Restore-path control sync (called from restoreRecapSettings
-    // and applyAccountPrefs' resync).
     window.ddSyncControlsFromState = function () {
         document.querySelectorAll("#recap-protection-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-protection") === (state.recapProtection || "standard"));
+            b.classList.toggle("active", b.getAttribute("data-protection") === (state.recapProtection || "strong"));
         });
         const setColor = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
         setColor("input-sub-text-color", state.recapTextColor);
@@ -9083,14 +8792,6 @@ function setupRecapVisualEditor() {
     };
 
     // (9) Batch DG: the 9:16 preview is sized WIDTH-first — its
-    // natural design width (300px max, or the card width) with the
-    // height following the aspect. The old DD rule capped it by a
-    // percentage of the screen HEIGHT (36%, shrinking to 22% on
-    // scroll), which on tall/desktop webviews squeezed the frame
-    // to ~110px wide — too small to read subtitles or place blur
-    // boxes, and it shrank while the user was working. Now only a
-    // SHORT viewport (<640px) gets a height guard (44%); there is
-    // no scroll shrink.
     function ddFitPreviewFrame() {
         const frame = document.getElementById("recap-mockup-frame");
         if (!frame) return;
@@ -9181,8 +8882,6 @@ function setupRecapVisualEditor() {
     applyLogoPreviewStyle();
 
     // 12b. Custom Logo Upload / Remove (paid-only — the server
-    // enforces the tier gate; these handlers only wire the controls
-    // that refreshLogoUi shows to paid users).
     const btnLogoUpload = document.getElementById("btn-logo-upload");
     const inputLogoFile = document.getElementById("input-logo-file");
     if (btnLogoUpload && inputLogoFile) {
@@ -9511,19 +9210,34 @@ function setupRecapVisualEditor() {
     }
 
     // Wire up Voice Cards (top-4 grid + the all-12 grid in the expander
-    // render the SAME 12 voices as cards; one handler keeps both grids'
-    // active states in sync — there is no second <select> picker).
     const voiceCards = document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card");
+    const recapPersonaSel = document.getElementById("recap-persona-select");
+    function resyncRecapPersonaSelect() {
+        const chosen = state.recapVoice || "komin";
+        if (recapPersonaSel) {
+            const has = Array.from(recapPersonaSel.options).some(o => o.value === chosen);
+            if (has) recapPersonaSel.value = chosen;
+        }
+        voiceCards.forEach(c => c.classList.toggle("active", c.getAttribute("data-voice") === chosen));
+        if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
+    }
+    window.resyncRecapPersonaSelect = resyncRecapPersonaSelect;
+    if (recapPersonaSel && !recapPersonaSel.dataset.vcpWired) {
+        recapPersonaSel.dataset.vcpWired = "1";
+        recapPersonaSel.addEventListener("change", () => {
+            haptic("selection");
+            state.recapVoice = recapPersonaSel.value || "komin";
+            deselectRecapOwnVoice();
+            resyncRecapPersonaSelect();
+        });
+    }
     voiceCards.forEach(card => {
         card.addEventListener("click", () => {
             haptic("selection");
             const voice = card.getAttribute("data-voice");
             state.recapVoice = voice;
-            // Batch BV: picking a persona deselects own-voice (the
-            // persona becomes the narration voice again, not merely
-            // the fallback).
             deselectRecapOwnVoice();
-            voiceCards.forEach(c => c.classList.toggle("active", c.getAttribute("data-voice") === voice));
+            resyncRecapPersonaSelect();
         });
     });
 
@@ -9533,17 +9247,9 @@ function setupRecapVisualEditor() {
         btnRecap.addEventListener("click", handleStartRecap);
     }
 
-
     // ── Recap settings persistence (overnight hands-on fix, 2026-11-02) ──
     // Every Recap setting used to live only in `state`, so closing and
     // reopening the Mini App silently reset the whole panel (ratio, fill,
-    // subtitle style, voice, engine, split…) to defaults — verified live:
-    // ratio 16:9 + fill crop reverted to 9:16 + blur after one reload.
-    // Persist the settings slice to localStorage (same pattern as
-    // vcp_active_recap_job_id / vcp_welcome_dismissed) and restore it
-    // here, after every control handler above has been registered.
-    // Restore is defensive: only known enum values, booleans and ranged
-    // integers are accepted; anything else keeps the shipped default.
     const RECAP_SETTINGS_KEY = "vcp_recap_settings";
     const RECAP_SETTING_ENUMS = {
         recapRatio: ["9:16", "16:9", "1:1", "Original"],
@@ -9561,7 +9267,6 @@ function setupRecapVisualEditor() {
         recapSubEffect: ["none", "fade", "pop", "karaoke"],
     };
     // Batch DD: the title keys are gone with the feature — legacy
-    // snapshots carrying them are simply never applied.
     const RECAP_SETTING_BOOLS = ["recapSyncCrop", "recapMirror", "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapBlurBoxTouched", "recapSubShadow", "recapSubBold", "recapEmbedSoftSubs"];
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
@@ -9589,13 +9294,11 @@ function setupRecapVisualEditor() {
         const bh = document.getElementById("slider-blur-h");
         const bs = document.getElementById("slider-blur-strength");
         const sy = document.getElementById("slider-sub-y");
-        snap.recapBlurY = by ? parseInt(by.value) : 85;
+        snap.recapBlurY = by ? parseInt(by.value) : 76;
         snap.recapBlurH = bh ? parseInt(bh.value) : 7;
         snap.recapBlurStrength = bs ? parseInt(bs.value) : 18;
-        // Batch AK: the slider is the bottom margin now — the
-        // snapshot stores the margin + the schema version.
         snap.recapSubMargin = sy ? parseInt(sy.value) : 5;
-        snap.recapSettingsVersion = 2;
+        snap.recapSettingsVersion = 3;
         const bx = document.getElementById("slider-blur-x");
         const bw = document.getElementById("slider-blur-w");
         const sx = document.getElementById("slider-sub-x");
@@ -9621,7 +9324,6 @@ function setupRecapVisualEditor() {
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snapshotRecapSettings())); } catch (e) {}
     }
     // Phase 4: My Presets read the live settings slice through the
-    // SAME snapshot the persistence path writes (no forked key list).
     window.__snapshotRecapSettings = snapshotRecapSettings;
     window.__saveRecapSettingsNow = saveRecapSettings;
     let recapSaveTimer = null;
@@ -9643,12 +9345,6 @@ function setupRecapVisualEditor() {
         if (val) val.innerText = on ? t("toggle_on") : t("toggle_off");
     }
     // Batch AM (S9 cosmetic): while the source-subtitle Blur toggle
-    // is OFF, the geometry/strength sliders cannot affect anything —
-    // the submit payload sends blur_subtitles=false and the engine's
-    // master gate turns that into ZERO boxes (recap_pipeline) — so
-    // grey them out instead of letting the panel assert live values.
-    // Display-only: slider values, state and payloads are untouched,
-    // and the sliders keep their values for when the toggle returns.
     function syncBlurSlidersEnabled() {
         const off = state.recapBlurSubs === false;
         ["slider-blur-y", "slider-blur-h", "slider-blur-x",
@@ -9663,6 +9359,16 @@ function setupRecapVisualEditor() {
         let saved = null;
         try { saved = JSON.parse(localStorage.getItem(RECAP_SETTINGS_KEY) || "null"); } catch (e) {}
         if (!saved || typeof saved !== "object") return;
+        if ((parseInt(saved.recapSettingsVersion) || 0) < 3) {
+            if (saved.recapSubStyle === "yellow") saved.recapSubStyle = "cinematic";
+            if (parseInt(saved.recapFontSize) === 16) saved.recapFontSize = 13;
+            if (saved.recapStoryStyle === "viral") saved.recapStoryStyle = "pov";
+            if (saved.recapProtection === "standard") saved.recapProtection = "strong";
+            if (parseFloat(saved.recapZoom) === 1 || parseFloat(saved.recapZoom) === 1.0) saved.recapZoom = 1.1;
+            if (saved.recapTtsEngine === "gemini") saved.recapTtsEngine = "voxcpm";
+            saved.recapBlurAutoDetect = false;
+            saved.recapSettingsVersion = 3;
+        }
         // Batch Q font choice: legacy snapshot values from before the
         // four-key registry are migrated on restore ("Serif" was
         // Noto Serif Myanmar and keeps that meaning; "Default" was
@@ -9764,7 +9470,8 @@ function setupRecapVisualEditor() {
             p.classList.toggle("active", p.getAttribute("data-story") === state.recapStoryStyle);
         });
         moveSegPills();
-        document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card").forEach(c => {
+        if (typeof resyncRecapPersonaSelect === "function") resyncRecapPersonaSelect();
+        else document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card").forEach(c => {
             c.classList.toggle("active", c.getAttribute("data-voice") === state.recapVoice);
         });
         syncToggleBtn("btn-toggle-subs", state.recapBurnSubs);
@@ -9837,15 +9544,35 @@ function setupRecapVisualEditor() {
             recapTabEl.addEventListener(evt, saveRecapSettingsSoon));
     }
     restoreRecapSettings();
+    (function syncInitialRecapDefaultsUi() {
+        syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine);
+        if (typeof syncRecapEngineAreas === "function") syncRecapEngineAreas();
+        const subStyleSel = document.getElementById("sub-style-picker");
+        if (subStyleSel && state.recapSubStyle) subStyleSel.value = state.recapSubStyle;
+        if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
+        syncSubtitleFontSize(state.recapFontSize || 13);
+        document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
+            b.classList.toggle("active", parseFloat(b.getAttribute("data-zoom")) === state.recapZoom);
+        });
+        document.querySelectorAll("#story-style-picker-quick .style-select-pill").forEach(p => {
+            p.classList.toggle("active", p.getAttribute("data-story") === state.recapStoryStyle);
+        });
+        moveSegPills();
+        const autoEl = document.getElementById("recap-blur-autodetect-toggle");
+        if (autoEl) autoEl.checked = state.recapBlurAutoDetect !== false;
+        if (!state.recapBlurBoxTouched) {
+            const by = document.getElementById("slider-blur-y");
+            if (by && !localStorage.getItem(RECAP_SETTINGS_KEY)) {
+                by.value = 76;
+                syncBlurBoxVisual();
+            }
+        }
+        if (typeof ddSyncControlsFromState === "function") ddSyncControlsFromState();
+        if (typeof resyncRecapPersonaSelect === "function") resyncRecapPersonaSelect();
+        if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
+    })();
 
     // Batch AM (M8ii): account prefs land AFTER this boot restore
-    // (loadAccountPrefs resolves async). applyAccountPrefs calls
-    // this hook after overwriting state from the server and writing
-    // the same values through into the snapshot, so re-running the
-    // restore re-syncs every recap control from the merged result.
-    // Idempotent by construction: it performs exactly the reads and
-    // control syncs the boot restore already performed — no fetch,
-    // no submit, no state writes beyond the restore's own.
     window.__RECAP_SETTINGS_KEY = RECAP_SETTINGS_KEY;
     window.restoreRecapSettings = restoreRecapSettings;
     window.__ddFitPreviewFrame = typeof ddFitPreviewFrame === "function" ? ddFitPreviewFrame : null;
@@ -9856,13 +9583,6 @@ function setupRecapVisualEditor() {
     };
 
     // Batch L: "Re-run with these settings" (History detail) — map a
-    // stored RecapConfigRequest back into the settings-snapshot space
-    // and run it through the SAME restore path as the persisted panel
-    // state (so validation + control sync are shared, not forked),
-    // then restore the source: the URL field for link jobs, or the
-    // uploaded-path state for upload jobs whose file is still on the
-    // server. PREFILL ONLY — nothing is submitted until the user
-    // taps Start themselves.
     window.prefillRecapFromHistory = function(cfg, item) {
         if (!cfg || typeof cfg !== "object") return;
         const snap = {
@@ -9999,8 +9719,6 @@ window.toggleRecapCropDetail = function() {
 };
 
 // Batch AV: window.toggleAdvancedRecapStudio was retired with the
-// advanced accordion — its sections now live inside Steps 2–4 and the
-// accordion's only caller (its header button) is gone from the markup.
 
 // A recap job is active while its status-polling timer runs: the
 // timer is created in startRecapJobPolling and cleared on every
@@ -10021,8 +9739,6 @@ function recapJobIsActive() {
 
 async function handleStartRecap() {
     // Batch AC: a parallel submit is explained IN PLACE (limit text +
-    // the jobs sheet with the running job) — never a silent dead end,
-    // and the workspace is never evicted.
     if (recapJobIsActive()) showLiveSubmitLimit("recap");
     if (recapJobIsActive()) return; // a recap job is already running
     // Hard guard: a picked file whose upload has not succeeded is NOT
@@ -10032,16 +9748,11 @@ async function handleStartRecap() {
         return;
     }
     // Batch DF: an uploaded file with no audio track can never be
-    // recapped — block here with the exact reason (the CTA is already
-    // disabled; this covers every other path to this handler, and the
-    // server refuses it too, before any credit moves).
     if (state.recapNoAudio) {
         showStudioToast(t("recap_no_audio"), 'warning');
         return;
     }
     // Batch BV: same rule for the own-voice sample — a selected
-    // own-voice card whose upload is still in flight (or failed)
-    // must not silently submit as a persona job.
     if (state.recapOwnVoiceSelected && state.recapTtsEngine === "voxcpm"
         && state.recapOwnVoiceStatus !== "ready") {
         showStudioToast(t("recap_own_voice_pending_error"), 'warning');
@@ -10062,8 +9773,6 @@ async function handleStartRecap() {
     const btn = document.getElementById("btn-start-recap");
 
     // Enforce the per-job cap: free 2 min, VIP 10 min, admins exempt.
-    // A >10 min VIP source is NOT blocked: it takes the split path
-    // (auto-enable split; the server segments the source into parts).
     const maxRecapSec = recapNormalMaxSeconds();
     if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
         && state.user?.is_vip && !state.user?.is_admin) {
@@ -10111,9 +9820,6 @@ async function handleStartRecap() {
     const failedBoxOnStart = document.getElementById("recap-failed-box");
     if (failedBoxOnStart) failedBoxOnStart.classList.add("hidden");
     // Batch AC: the studio survives submit — no scroll-away and the
-    // detail progress box stays closed; a slim inline status line in
-    // the studio plus the global pill carry the job from here. The
-    // canvas, preview and every control value are left untouched.
     showStudioInlineStatus("recap", t("recap_stage1_status"));
     if (progressFill) paintProgressBarFill(progressFill, { status: "QUEUED", progress_percent: 0 });
     setRecapStage("1/4", null);
@@ -10123,18 +9829,8 @@ async function handleStartRecap() {
     if (statusMsg) statusMsg.innerText = t("recap_stage1_status");
 
     // Batch CB Item 3: the hardcoded submit-time estimate
-    // ("1.5 - 2.5" / "3 - 4" minutes for every job) is GONE — it was
-    // fiction unrelated to the job's shape. The honest range the
-    // wizard fetched for Step 4 rides the submit response
-    // (eta_range_seconds); the store renderer + detail poller paint
-    // the live lines from real server estimates from here on, and
-    // when no estimate exists the line simply carries no number.
 
     // Batch AC duplicate-submit guard, engaged at the last moment
-    // before the request (after every auto-adjustment, e.g. the
-    // split auto-enable, has settled the real configuration): an
-    // in-flight double-tap is one submit, and an UNCHANGED
-    // configuration cannot resubmit after a successful submit.
     if (!studioSubmitBegin("recap")) {
         if (btn) btn.disabled = false;
         return;
@@ -10154,7 +9850,7 @@ async function handleStartRecap() {
             url: url,
             title: state.recapVideoTitle || null,
             voice_slug: state.recapVoice || "komin",
-            story_style: state.recapStoryStyle || "viral",
+            story_style: state.recapStoryStyle || "pov",
             ratio: state.recapRatio || "9:16",
             ratio_fill: state.recapRatioFill || "blur",
             crop_top: state.recapCropTop || 0,
@@ -10162,7 +9858,7 @@ async function handleStartRecap() {
             crop_left: state.recapCropLeft || 0,
             crop_right: state.recapCropRight || 0,
             mirror_video: state.recapMirror !== false,
-            zoom_factor: state.recapZoom || 1.0,
+            zoom_factor: state.recapZoom || 1.1,
             voice_speed: state.recapSpeed || "+12%",
             blur_subtitles: state.recapBlurSubs !== false,
             blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
@@ -10190,8 +9886,8 @@ async function handleStartRecap() {
             // width percents), mirroring sub_y's centre semantics.
             sub_x: sliderSubX ? parseInt(sliderSubX.value) : 50,
             sub_w: sliderSubW ? parseInt(sliderSubW.value) : 92,
-            sub_style: state.recapSubStyle || "yellow",
-            sub_font_size: state.recapFontSize || 16,
+            sub_style: state.recapSubStyle || "cinematic",
+            sub_font_size: state.recapFontSize || 13,
             sub_font: state.recapSubFont || "padauk",
             sub_lines: state.recapLines || 1,
             include_logo: state.recapLogo !== false,
@@ -10302,16 +9998,6 @@ async function handleStartRecap() {
 }
 
 // ── Batch BR: the recap form's progress lines render from the
-// LiveJobs store — the SAME monotonic-merged job object the progress
-// pill renders (renderLiveJobsPill via liveJobStageText) — so the
-// form and the pill can never show different step text for the same
-// job again. (The detail poller's private response used to paint
-// these lines on its own cadence, with its own clamp, and the two
-// surfaces routinely sat one step apart.) The detail poller keeps
-// only what the bulk endpoint does not carry: result/download URLs,
-// the script editor, failure/refund handling — plus the ETA extra,
-// which it caches below for this renderer. Monotonicity comes from
-// liveJobsMergeJob, the one merge both surfaces share.
 let recapFormJobId = null;      // the job the detail form tracks
 let recapFormEtaRange = null;   // ETA range extra, fed by the detail poller (Batch CB)
 let recapFormEtaOverrun = false; // overrun flag, fed by the detail poller (Batch CB)
@@ -10413,21 +10099,16 @@ function startRecapJobPolling(jobId) {
     const progressBox = document.getElementById("recap-progress-box");
     const resultBox = document.getElementById("recap-result-box");
     // Batch BR: no progressFill handle here any more — the fill is
-    // painted by the store renderer (renderRecapFormProgress).
     const statusMsg = document.getElementById("recap-status-msg");
     const stepText = document.getElementById("recap-step-text");
     const btn = document.getElementById("btn-start-recap");
 
     // Batch AC: the detail view opens BY CHOICE only — polling never
-    // evicts the studio, and the poller never locks Start (a parallel
-    // submit is explained in place by handleStartRecap).
     if (progressBox && state.recapDetailOpen) progressBox.classList.remove("hidden");
     const failedBoxOnPoll = document.getElementById("recap-failed-box");
     if (failedBoxOnPoll) failedBoxOnPoll.classList.add("hidden");
 
     // Batch BR: this poller's job is the form's tracked job — the
-    // store subscription paints its progress lines from here on
-    // (an already-known store job paints immediately).
     recapFormJobId = jobId;
     recapFormEtaRange = null;
     recapFormEtaOverrun = false;
@@ -10452,13 +10133,6 @@ function startRecapJobPolling(jobId) {
     let recapPollNotFound = 0;
     let recapPollTicks = 0;
     // Batch BR: the Batch AC monotonic guard that used to live here
-    // (recapPollMaxStep / recapPollMaxPercent clamping this poller's
-    // private response) is gone — the displayed stage/percent now
-    // come from the LiveJobs store, whose merge (liveJobsMergeJob)
-    // is monotonic by construction for every surface at once.
-    // Tick budget in 2s units: 1800 = the 60-minute overall cap. After
-    // the backoff below each 5s tick counts 2.5 units, so the cap (and
-    // every stop condition) is unchanged.
     const RECAP_POLL_MAX_TICKS = 1800;
 
     function noteRecapPollFailure() {
@@ -10482,9 +10156,6 @@ function startRecapJobPolling(jobId) {
     }
 
     // Polling efficiency (audit fix 2026-11-03): ticks are skipped
-    // while the tab is hidden, and after the first 60s of polling the
-    // interval backs off from 2s to 5s (the callback is a named const
-    // so it can be re-armed at the slower interval).
     let recapPollBackedOff = false;
     const recapPollTick = async () => {
         if (document.hidden) return;
@@ -10854,9 +10525,6 @@ function startRecapJobPolling(jobId) {
 }
 
 // ── Recap job actions (batch L): cancel / retry / demo ───────────────
-// All three are thin clients over owner-only server endpoints; the
-// server re-checks ownership, state and source availability, so these
-// helpers only confirm, call, and refresh the surfaces.
 async function cancelRecapJobById(jobId) {
     if (!jobId) return;
     showStudioConfirm(t("recap_cancel_confirm"), async () => {
@@ -10953,7 +10621,6 @@ window.watchRecapDemo = async function() {
         return;
     }
     // A Telegram file_id cannot play inline in the Mini App — the
-    // server asks the bot to send it to the user's own chat instead.
     try {
         const res = await fetch("/api/recap/demo/send", {
             method: "POST",
@@ -11075,9 +10742,6 @@ async function renderRecapScript(jobId) {
 let dlCurrent = null; // { url, has_subtitles } from the last extract
 
 // P1 (premium round 2026-11-02): the Downloader extract failure
-// state is PERSISTENT — the error toast fades after a few seconds
-// and the tab used to settle back to a silent idle that reads as
-// "still working". The box stays until the next attempt or success.
 function dlShowExtractError() {
     const box = document.getElementById("dl-error-box");
     if (box) box.classList.remove("hidden");
@@ -11094,9 +10758,6 @@ function dlHideExtractError() {
 }
 
 // Journey audit 2026-11-02: the result card outlived its link —
-// clearing the input left a stale card (with live download buttons)
-// on screen. One helper clears card + delivery rows + state; it runs
-// when a new extraction starts and whenever the input is emptied.
 function dlClearResult() {
     const card = document.getElementById("dl-result-card");
     if (card) card.classList.add("hidden");
@@ -11180,8 +10841,6 @@ async function dlSendTelegram(downloadId, btn) {
 
 function formatDlSize(bytes) {
     // R39: prepared-file cards showed "0.0 MB" for small files
-    // (32768 B rendered through (b/1048576).toFixed(1)). Proper
-    // units: <1 MB in whole KB, MB/GB with 1–2 decimals above that.
     if (bytes == null || isNaN(bytes)) return "?";
     if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
     if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
@@ -11461,8 +11120,6 @@ function renderDynamicVipPlans(data) {
             const badgeHtml = p.badge
                 ? `<span class="vcp-plan-badge ${p.badge_key === "best_value" ? "vcp-badge-best" : ""}">${escapeHtml(p.badge)}</span>`
                 : "";
-            const feats = (Array.isArray(p.features) ? p.features.slice(0, 3) : [])
-                .map(f => `<li>✓ ${escapeHtml(f)}</li>`).join("");
             const btnCls = (p.badge_key === "popular" || p.badge_key === "best_value")
                 ? "btn gold-gradient-btn vcp-btn vcp-btn--gold mt-3"
                 : "btn secondary-gold-btn vcp-btn mt-3";
@@ -11479,10 +11136,14 @@ function renderDynamicVipPlans(data) {
                         <span class="price-val" data-price-for="${code}">${priceMm.toLocaleString("en-US")}</span>
                         <span class="currency">MMK</span>
                     </div>
-                    ${feats ? `<ul class="vcp-features-mini">${feats}</ul>` : ""}
                     <button type="button" class="${btnCls}" onclick="openPaymentDrawer('${code}', ${priceMm}, '${escapeHtml(String(p.name || code)).replace(/'/g, "\\'")}')">💳 ${priceMm.toLocaleString("en-US")} MMK</button>
                 </div>`;
         }).join("");
+        const sharedKey = "vip_shared_benefits_" + cat;
+        const sharedTxt = t(sharedKey);
+        if (sharedTxt && !sharedTxt.startsWith("vip_shared_benefits_")) {
+            grid.innerHTML = `<div class="vip-shared-benefits-bar">${escapeHtml(sharedTxt)}</div>` + grid.innerHTML;
+        }
     });
 }
 
@@ -11725,8 +11386,6 @@ function copyAccount(accNum) {
         return;
     }
     // No native prompt dialog anywhere in the Mini App: when the Clipboard
-    // API is unavailable, show the number in the premium modal with a
-    // copy button instead.
     const showNumberModal = () => showStudioInputModal({
         title: t("account_number_title"),
         initialValue: numToCopy,
@@ -11797,22 +11456,10 @@ async function sendVoiceToTelegram(targetJobId) {
 window.sendVoiceToTelegram = sendVoiceToTelegram;
 
 // ── Batch AW: standalone TTS tab ─────────────────────────────────────
-// Gemini AI or Edge voices under the tab's OWN billing (referral
-// bucket first, then the daily TTS allowance — never voice minutes or
-// recap credits; the server enforces it in tts_service.py). The flow
-// mirrors the voice flow: submit → poll /jobs/{id}/status → result
-// card with player, branded download and bot-chat delivery.
 const ttsState = { engine: "gemini", speed: "+12%", jobId: null, pollTimer: null };
 window.ttsState = ttsState;
 
 // Batch BZ: the two "today's TTS" surfaces — the header 🎧 chip and
-// the Home "Free today" card — painted from the /api/me BZ fields,
-// which the server computes through the same helpers the TTS submit
-// path enforces with, so the numbers can never disagree with the
-// gate. Admin → ∞ (the other chips' treatment). A null remaining
-// with a 0 daily limit means the tier's allowance is unlimited; a
-// null remaining for any other reason (quota read failed) falls back
-// to the referral figure, the most the client can state truthfully.
 function formatTtsTabBalanceLine(opts) {
     const isAdmin = !!(opts && opts.isAdmin);
     const isVip = !!(opts && opts.isVip);
@@ -11906,8 +11553,6 @@ function paintTtsTodaySurfaces(data) {
 }
 
 // The same two surfaces refreshed from a /api/tts/quota response —
-// the post-job and tab-entry refresh path (refreshTtsQuota), so the
-// chip/card follow a finished TTS job without a full profile reload.
 function paintTtsChipFromQuota(q) {
     if (!q) return;
     const chip = document.getElementById("user-tts-bal");
@@ -12029,15 +11674,12 @@ window.paintTtsCostHintTiered = paintTtsCostHintTiered;
 let ttsQuotaInFlight = false;
 async function refreshTtsQuota() {
     // BH-1: paint from the already-loaded profile first — this runs
-    // even while a previous (hung) chain holds the latch, because
-    // profile data needs no network.
     paintTtsQuotaInstant();
     if (ttsQuotaInFlight) return;
     if (!document.getElementById("tts-balance-line")) return;
     ttsQuotaInFlight = true;
     const runId = ++ttsQuotaRunCounter;
     // BH-3: hard watchdog for this run (disarmed by any paint from
-    // this run — see paintTtsBalanceLine).
     ttsQuotaWatchdogTimer = setTimeout(() => {
         if (runId !== ttsQuotaRunCounter) return;
         ttsQuotaWatchdogTimer = null;
@@ -12094,17 +11736,12 @@ let ttsQuotaWatchdogTimer = null;
 
 function paintTtsBalanceLine(runId, mutate) {
     // BH-2: re-query the node at paint time (never a captured node)
-    // and strip the i18n hook BEFORE writing, so no later
-    // setLanguage sweep can re-stamp the loading string over
-    // painted data; dataset.dynamic marks the line loader-owned
-    // (setLanguage re-triggers a refresh for dynamic lines).
     const line = document.getElementById("tts-balance-line");
     if (!line) return;
     line.removeAttribute("data-i18n");
     line.dataset.dynamic = "1";
     mutate(line);
     // BH-3: a paint from the CURRENT run disarms its watchdog; a
-    // late paint from a stale run must not disarm a newer run's.
     if (runId === ttsQuotaRunCounter && ttsQuotaWatchdogTimer) {
         clearTimeout(ttsQuotaWatchdogTimer);
         ttsQuotaWatchdogTimer = null;
@@ -12195,9 +11832,6 @@ function clearTtsText() {
 window.clearTtsText = clearTtsText;
 
 // ── Batch CG: BYOK Gemini key card, taste note, Item 3b prompt ──
-// The key VALUE is never painted anywhere: the card shows only the
-// server's masked view (•••• + last 4) from /api/tts/quota, and the
-// typed value is cleared from the input as soon as the save returns.
 let _cgQuotaCache = null;
 
 function paintTtsGeminiKeyState(q) {
@@ -12227,7 +11861,6 @@ function paintTtsTasteNote(q) {
     const u = (typeof state !== "undefined" && state && state.user) ? state.user : null;
     const isPrivileged = Boolean((q && q.is_admin) || (u && (u.is_admin || u.is_vip)));
     // Taste lines are FREE-only and pointless once an own key routes
-    // first — for everyone else the note stays hidden.
     if (isPrivileged || remaining === null || remaining === undefined || (q && q.has_own_key)) {
         note.classList.add("hidden");
         note.textContent = "";
@@ -12288,7 +11921,6 @@ async function deleteTtsGeminiKey() {
 
 async function _cgTasteBlocked() {
     // Item 3b gate, checked on a FRESH quota read at generate time
-    // (not the cached paint): FREE + no own key + taste spent.
     try {
         const res = await fetchWithTimeout("/api/tts/quota", { headers: getAuthHeaders() });
         if (!res.ok) return false;
@@ -12341,11 +11973,6 @@ function toggleTtsDetail(btn) {
 window.toggleTtsDetail = toggleTtsDetail;
 
 // Batch CN: engine-driven visibility for the whole TTS tab. The
-// Gemini-only surfaces (taste note + BYOK key card) exist only in
-// Gemini mode; the Edge voice hint explains the 10 → 2 voice list
-// in Edge mode. The taste note's own quota rules still decide its
-// Gemini-mode visibility (paintTtsTasteNote re-run on the cached
-// quota), so the two never fight.
 function applyTtsEngineVisibility() {
     const engine = ttsState.engine || "gemini";
     const gRow = document.getElementById("tts-gemini-voice-row");
@@ -12421,7 +12048,6 @@ function initTtsTab() {
         if (balLine.dataset.quotaError === "1") refreshTtsQuota();
     });
     // Batch CN: paint the engine-driven surfaces once at init so
-    // the tab opens consistent with the selected engine.
     applyTtsEngineVisibility();
 }
 if (document.readyState === "loading") {
@@ -12440,8 +12066,6 @@ async function generateTTS() {
         return;
     }
     // Batch BW: client-side tier guard mirroring the voice submit
-    // guard — the server enforces the same per-tier limit, this only
-    // spares the round trip.
     const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
     if (text.length > maxChars) {
         studioSubmitFailure("tts");
@@ -12454,9 +12078,6 @@ async function generateTTS() {
         return;
     }
     // Batch CG Item 3b: a FREE user who picked Gemini with the
-    // taste spent is NEVER silently switched to Edge — the prompt
-    // offers the own-key way to keep Gemini, or an explicit Edge
-    // continue (which re-enters here with Edge selected).
     if (ttsState.engine === "gemini" && await _cgTasteBlocked()) {
         studioSubmitFailure("tts");
         const modal = document.getElementById("tts-key-prompt-modal");
@@ -13307,8 +12928,6 @@ function openAdminMediaModal(jobId, jobType, downloadUrl, deliverablesJson, titl
     }
 
     // ONE availability decision for the whole card: the API only hands out
-    // media URLs when the output file is actually on the server, so "no
-    // URLs" means the media is gone — every control below follows this flag.
     const mediaAvailable = jobType === "RECAP"
         ? !!(deliverables.video || downloadUrl)
         : !!(deliverables.download || deliverables.audio || downloadUrl);
@@ -13462,10 +13081,6 @@ function closeAdminMediaModal() {
 }
 
 // Shared "media gone" panel for the admin media modal. The copy states the
-// real retention rule (files are kept on the server for 24 hours, then the
-// retention sweep removes them) — it must never blame deploys or disk
-// wipes: outputs live on the persistent disk and survive restarts.
-// Regenerate is the single primary action here.
 function mediaGonePanelHtml(jobId) {
     return `
         <div class="admin-media-err-banner mt-3 p-3 text-center" style="border-radius: 12px; border: 1px solid rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08);">
@@ -13513,9 +13128,6 @@ function handleAdminMediaLoaded(mediaEl) {
 }
 
 // Admin error toasts: localized premium prefix first; the raw server
-// detail is appended after " — " only when it adds diagnostic value
-// (audit A4). Generic placeholder details ("Failed"/"Error") are noise
-// and dropped.
 function adminErrorText(prefixKey, raw) {
     const prefix = t(prefixKey);
     const detail = (typeof localizeServerText === "function" ? localizeServerText(raw == null ? "" : String(raw)) : (raw == null ? "" : String(raw))).trim();
@@ -13618,12 +13230,9 @@ function _adminRequireBanReason() {
 
 function admUserRowHtml(u) {
     // First grapheme, not charAt(0): names starting with an emoji or a
-    // combining stack otherwise render a blank/broken avatar initial.
     const initial = escapeHtml((Array.from((u.first_name || "?").trim())[0] || "?").toUpperCase());
     const balFmt = Math.floor((u.balance_seconds || 0) / 60) + "m";
     // Sub-line as segments (same pattern as D-1): the "•" separators
-    // are CSS-generated between segments, so a wrapped line never
-    // strands one at a line end.
     const segs = [];
     if (u.username) segs.push(`@${escapeHtml(u.username)}`);
     segs.push(`ID: ${u.id}`);
@@ -13633,8 +13242,6 @@ function admUserRowHtml(u) {
     if (u.is_banned) segs.push("\ud83d\udeab");
     const subHtml = segs.map(s => `<span class="adm-sub-seg">${s}</span>`).join("");
     // Two-line row (full-app audit A-3/A-4/A-6): line 1 is the name
-    // (the only part allowed to ellipsize) beside badges that always
-    // render in full; line 2 carries @username + the ID/usage sub-line.
     return `<div class="adm-user-row adm-tap" onclick="openAdminUserDetail(${u.id})">
         <div class="adm-avatar">${initial}</div>
         <div class="adm-user-main">
@@ -13650,8 +13257,6 @@ function admUserRowHtml(u) {
 }
 
 // ── Admin Users list state (A-6): category filter + offset paging ──
-// The filter is applied SERVER-side via the endpoint's category param
-// (187+ users — filtering one fetched page client-side would lie).
 let admUsersCategory = "";   // "" | "FREE" | "PURCHASED"
 let admUsersOffset = 0;
 const ADM_USERS_PAGE = 20;
@@ -13841,8 +13446,6 @@ function admFmtSecs(total) {
 }
 
 // Batch CD Item 1: render the completed-detail sections (balance
-// buckets, TTS today, verification, referrals, recent jobs,
-// payments, ledger, recorded private-AI chats) from the payload.
 function renderAdminDetailExtras(u) {
     const row = (label, val) => `<div class="adm-bc-row"><span>${label}</span><strong>${val}</strong></div>`;
     const bb = u.balance_breakdown || {};
@@ -13935,7 +13538,6 @@ function renderAdminDetailExtras(u) {
 }
 
 // Batch CD Item 2: admin → this user direct message (inline confirm,
-// same grammar as the broadcast send).
 async function adminSendUserMessage() {
     const uid = admCurrentUserId;
     if (!uid) { showStudioToast(t("admin_no_user"), "warning"); return; }
@@ -13976,8 +13578,6 @@ async function adminSendUserMessage() {
 window.adminSendUserMessage = adminSendUserMessage;
 
 // Batch BC-1: set/unset the test-account flag (audited server-side).
-// On failure the toggle snaps back so the UI never claims a state the
-// server did not record.
 async function adminToggleTestFlag(checked) {
     const uid = admCurrentUserId;
     const toggle = document.getElementById("adm-test-flag-toggle");
@@ -14160,7 +13760,6 @@ async function loadAdminUserJobs(uid) {
     }
 }
 window.loadAdminUserJobs = loadAdminUserJobs;
-
 
 // ── Broadcast ────────────────────────────────────────────────────────
 
@@ -14554,7 +14153,6 @@ function escapeHtml(str) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 }
-
 
 let adminHistFilter = {
     timeframe: "24h",
@@ -15177,8 +14775,6 @@ window.adminManualRefundJob = adminManualRefundJob;
 // ── Settings (loaders/savers preserved from the previous console) ────
 
 // [input element id, settings key] for the tutorial links beyond the
-// original video/voice/recap slots — one tidy block in the Tutorials
-// card of Admin → Settings; all ride the same settings save flow.
 const ADMIN_TUTORIAL_LINK_FIELDS = [
     ["adm-tut-index-link", "tutorial_index_link"],
     ["adm-tut-plans-link", "tutorial_plans_link"],
@@ -15191,15 +14787,6 @@ const ADMIN_TUTORIAL_LINK_FIELDS = [
 ];
 
 // Batch BY: admin-settings edit-clobber protection. loadAdminSettings()
-// repaints EVERY settings field from the server and runs on admin-tab
-// entry and on settings sub-tab entry, so a repaint landing between an
-// admin's edit and their Save silently reverted the field to the old
-// server value (the known repaint clobber vector). Fields the admin
-// has touched since the last load are tracked here and skipped by the
-// paint helpers below; the flags clear ONLY after a successful
-// saveAdminSettings(), whose post-save reload then paints server
-// truth. Programmatic paints never fire input/change events, so
-// painting itself never marks a field dirty.
 const adminSettingsDirty = new Set();
 let _adminSettingsDirtyBound = false;
 let _adminSettingsSavedSnapshot = {};
@@ -15483,8 +15070,6 @@ async function loadAdminSettings() {
 
 function setSelectOrCustom(selectId, customInputId, val) {
     // Batch BY: same dirty guard as the rest of the settings pane —
-    // never repaint a model select (or its custom-value input) that
-    // the admin has edited since the last load.
     if (adminSettingsDirty.has(selectId) || adminSettingsDirty.has(customInputId)) return;
     const sel = document.getElementById(selectId);
     const custom = document.getElementById(customInputId);
@@ -16008,9 +15593,6 @@ window.saveGroupAiKnowledgeSheet = saveGroupAiKnowledgeSheet;
 window.resetGroupAiKnowledgeSheet = resetGroupAiKnowledgeSheet;
 
 // ── Dedicated History Hub ────────────────────────────────────────────────
-// One unified, newest-first list of ALL the user's jobs (voice + recap),
-// served by the existing GET /api/history endpoint (payload unchanged).
-// The per-studio history lists were removed; studios link here instead.
 let hubHistoryFilter = "all";
 let hubHistoryCache = null;      // last fetched history array (null = not loaded yet)
 let hubHistoryError = false;     // last fetch failed
@@ -16098,7 +15680,9 @@ function computeHistoryExpiryState(j) {
     if (!j.created_at) {
         return { expired: false, expiresSoon: false, hoursLeft: null, minsLeft: null, timeText: "" };
     }
-    const createdMs = Date.parse(j.created_at);
+    const rawTs = String(j.created_at).trim();
+    const isoTs = /Z$|[+-]\d{2}:?\d{2}$/i.test(rawTs) ? rawTs : (rawTs + "Z");
+    const createdMs = Date.parse(isoTs);
     if (Number.isNaN(createdMs)) {
         return { expired: false, expiresSoon: false, hoursLeft: null, minsLeft: null, timeText: "" };
     }
@@ -16107,7 +15691,7 @@ function computeHistoryExpiryState(j) {
     if (remainingMs <= 0) {
         return { expired: true, expiresSoon: false, hoursLeft: 0, minsLeft: 0, timeText: "" };
     }
-    const hoursLeft = Math.max(0, Math.ceil(remainingMs / 3600000));
+    const hoursLeft = remainingMs >= 3600000 ? Math.floor(remainingMs / 3600000) : Math.max(0, Math.ceil(remainingMs / 3600000));
     const minsLeft = Math.max(1, Math.ceil(remainingMs / 60000));
     const expiresSoon = ageMs >= 22 * 3600000;
     let timeText = "";
@@ -16125,8 +15709,6 @@ function computeHistoryExpiryState(j) {
 window.computeHistoryExpiryState = computeHistoryExpiryState;
 
 // Detail block shown when a hub row is tapped. It reuses the exact same
-// actions/handlers the old per-studio history cards offered (download,
-// send-to-Telegram, in-player view, live tracking) — nothing new invented.
 function hubHistoryDetailHtml(j) {
     const isRecap = j.job_type === "RECAP";
     const exp = computeHistoryExpiryState(j);
@@ -16152,9 +15734,6 @@ function hubHistoryDetailHtml(j) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_segmented_cost", { parts: j.parts_count, credits: (j.credits_charged ?? j.parts_count) }))}</div>`;
     }
     // Batch K: the per-job receipt — every completed recap shows the
-    // credits it was charged (segmented jobs carry it in the line
-    // above), and a failed job shows its refund marker when — and
-    // only when — the server record proves a refund was issued.
     if (isRecap && j.status === "SUCCESS" && !(j.parts_count > 1)
         && typeof j.credits_charged === "number" && j.credits_charged > 0) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_cost_charged_line", { credits: j.credits_charged }))}</div>`;
@@ -16281,7 +15860,6 @@ function hubHistoryDetailHtml(j) {
         inner += `<div class="hub-detail-player"><audio class="hub-detail-audio" controls preload="none" data-auth-src="${j.download_url}"></audio></div>`;
     }
     // Batch L: terminal SUCCESS/CANCELLED items also get re-run
-    // prefill (recap, when the stored config survived) and delete.
     if (j.status === "SUCCESS" || j.status === "CANCELLED") {
         if (isRecap && j.recap_config) {
             actions += ` <button type="button" onclick="rerunRecapFromHistory('${j.id}')" class="history-dl-link">${t("btn_rerun_recap")}</button>`;
@@ -16293,8 +15871,6 @@ function hubHistoryDetailHtml(j) {
 }
 
 // Batch L history actions: re-run prefill + owner delete. Both are
-// thin clients — the server re-checks ownership on delete, and the
-// prefill only fills the form (never auto-submits).
 window.rerunRecapFromHistory = function(jobId) {
     const item = (hubHistoryCache || []).find(h => h.id === jobId);
     if (!item || !item.recap_config) {
@@ -16344,8 +15920,6 @@ function hubStatusBadgeHtml(j) {
 function hubHistoryRowHtml(j) {
     const isRecap = j.job_type === "RECAP";
     // Batch BB-3: TTS jobs get their own label — they used to render
-    // as ordinary voice jobs (🎙️, no type tag) and were only
-    // recognisable by voice name.
     const isTts = j.job_type === "TTS";
     const open = hubOpenDetailId === j.id;
     const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
@@ -16389,7 +15963,7 @@ function hubHistoryRowHtml(j) {
                 <span class="hub-type-icon ${isRecap ? "recap" : isTts ? "tts" : "voice"}">${isRecap ? "🎬" : isTts ? "🎧" : "🎙️"}</span>
                 <span class="hub-row-text">
                     <span class="hub-row-title">${title}</span>
-                    <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} <span class="hub-time-ago">🕒 ${escapeHtml(j.time_ago || "")}</span><span class="hub-live-meta"></span></span>
+                    <span class="hub-row-meta">${isRecap ? escapeHtml(t("hist_type_recap")) + " • " : isTts ? escapeHtml(t("job_badge_tts")) + " • " : ""}${escapeHtml(j.voice_display || j.preset_voice || "")}${durText ? ` <span class="hub-duration-pill">⏱️ ${escapeHtml(durText)}</span>` : ""} <span class="hub-time-ago">🕒 ${escapeHtml((() => { try { if (!j.created_at) return j.time_ago || ""; const r = String(j.created_at).trim(); const ms = Date.parse(/Z$|[+-]\d{2}:?\d{2}$/i.test(r) ? r : r + "Z"); if (Number.isNaN(ms)) return j.time_ago || ""; const dSec = Math.max(0, Math.floor((Date.now() - ms) / 1000)); if (dSec < 60) return t("time_ago_just_now"); if (dSec < 3600) return tf("time_ago_m", { n: Math.floor(dSec / 60) }); if (dSec < 86400) return tf("time_ago_h", { n: Math.floor(dSec / 3600) }); return tf("time_ago_d", { n: Math.floor(dSec / 86400) }); } catch (e) { return j.time_ago || ""; } })())}</span><span class="hub-live-meta"></span></span>
                     ${(j.status === "FAILED" && j.error_message) ? `<span class="hub-row-error text-danger text-xs">${escapeHtml(displayJobError(j.error_message))}</span>` : ""}
                 </span>
                 <span class="hub-chevron">${open ? "⌃" : "›"}</span>
@@ -16470,7 +16044,6 @@ function renderHistoryHub() {
 
     container.innerHTML = jobs.map(hubHistoryRowHtml).join("");
     // A re-render can restore an open detail (hubOpenDetailId) — wire
-    // its player too, not just fresh toggle clicks.
     const openRow = container.querySelector(".hub-row.open");
     if (openRow) wireHubDetailAudio(openRow);
 }
@@ -16912,16 +16485,6 @@ function downloadDeliverable(url, defaultFilename) {
 }
 
 // NOTE (audit fix 2026-11-03): the four recap result-screen download
-// anchors (btn-recap-dl-video/audio/srt/script) used to ALSO get
-// element-level click listeners here (setupDeliverablesDownloads)
-// that fired downloadDeliverable()/Telegram openLink on the very same
-// tap the delegated document handler (a[data-dl-url] →
-// downloadAuthFile) already handled — one tap, two downloads with two
-// different code paths. The delegated handler is now the single owner
-// of these buttons, exactly like every other download anchor in the
-// app; the render sites set both data-dl-url (tokenized server-side)
-// and data-dl-name (brandedDlName) for them. downloadDeliverable()
-// above remains available for genuine non-anchor callers.
 
 // ── Alert Boxes Auto-Sliding Carousel ───────────────────────────────────────
 function setupAlertCarousel() {
@@ -17023,9 +16586,6 @@ function setupAlertCarousel() {
 }
 
 // ── App Startup ────────────────────────────────────────────────────────────
-// CQ: on Telegram Desktop the OS file picker never opens from a tap in
-// the webview (CL/CP), while drag-and-drop works. Show the drag hint in
-// the Recap drop zone only on that platform; hidden everywhere else.
 function applyDesktopDropHint() {
     try {
         var platform = (window.Telegram && Telegram.WebApp && Telegram.WebApp.platform) || "";
@@ -17046,7 +16606,8 @@ function paintHomeStatusStrip(data) {
     const greetEl = document.getElementById("home-greeting-text");
     if (greetEl) {
         const tgFirst = state.tg && state.tg.initDataUnsafe && state.tg.initDataUnsafe.user && state.tg.initDataUnsafe.user.first_name;
-        const displayName = data.first_name || data.username || tgFirst || "";
+        const cleanName = (n) => (n && !/^voice\s*clone\s*pro$/i.test(String(n).trim())) ? String(n).trim() : "";
+        const displayName = cleanName(data.first_name) || cleanName(data.username) || cleanName(tgFirst) || "";
         greetEl.textContent = displayName
             ? tf("home_greeting_named", { name: displayName })
             : t("home_greeting_default");
@@ -17099,8 +16660,6 @@ function paintHomeStatusStripFromQuota(q) {
 }
 
 // Plays the pre-generated static sample audio (/api/voices/sample/komin)
-// via the existing #sample-btn-voice / #sample-audio-voice element.
-// Never calls any generation API or consumes user quota.
 function playWelcomeTrySample() {
     haptic("light");
     const sampleBtn = document.getElementById("sample-btn-voice");
@@ -17503,7 +17062,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setLanguage(currentLang);
     setupTabs();
     // AZ-4: park the sliding nav pill under the initially-active
-    // item once first layout exists.
     requestAnimationFrame(() => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
     setupVoiceStudio();
     setupRecapVisualEditor();
@@ -17639,39 +17197,34 @@ function applyActiveRecapStep2Category() {
     const ratioGroup = document.getElementById("recap-preview-ratio-group");
     if (ratioGroup) {
         ratioGroup.classList.remove("hidden");
-        setAccOpen("recap-preview-ratio-group", true);
     }
 
     const presetPanel = document.getElementById("recap-cat-preset");
-    if (presetPanel) presetPanel.classList.toggle("hidden", cat !== "preset");
+    if (presetPanel) presetPanel.classList.remove("hidden");
 
-    const inFine = cat === "subtitle" || cat === "blur" || cat === "protection" || cat === "preset";
     const fineWrap = document.querySelector("#recap-step-2 .recap-fine");
     const fineHeader = document.querySelector("#recap-step-2 .recap-fine-header");
-    if (fineWrap) fineWrap.classList.toggle("hidden", !inFine);
-    if (fineHeader) fineHeader.classList.toggle("vcp-tab-mode-hidden", inFine);
+    if (fineWrap) fineWrap.classList.remove("hidden");
+    if (fineHeader) fineHeader.classList.add("vcp-tab-mode-hidden");
 
     if (typeof toggleRecapFineSettings === "function") {
-        toggleRecapFineSettings(inFine);
+        toggleRecapFineSettings(true);
     }
 
-    // Core 3 tabs: Subtitle, Blur, Logo (protection) — Anti-Copyright Transform lives in Advanced (preset)
-    const groupCatMap = {
-        "recap-subtitle-group": "subtitle",
-        "recap-blur-group": "blur",
-        "recap-logo-group": "protection",
-        "recap-preview-transform-group": "preset",
-    };
-    Object.keys(groupCatMap).forEach(id => {
+    [
+        "recap-preview-ratio-group",
+        "recap-subtitle-group",
+        "recap-blur-group",
+        "recap-logo-group",
+        "recap-preview-transform-group",
+        "recap-my-presets-section",
+    ].forEach(id => {
         const grp = document.getElementById(id);
-        if (!grp) return;
-        const show = groupCatMap[id] === cat;
-        grp.classList.toggle("hidden", !show);
-        if (show) setAccOpen(id, true);
+        if (grp) grp.classList.remove("hidden");
     });
 
     const blurBox = document.getElementById("preview-blur-box");
-    if (blurBox) blurBox.classList.toggle("label-on", cat === "blur");
+    if (blurBox) blurBox.classList.add("label-on");
 
     if (typeof moveSegPills === "function" || typeof window.__ddFitPreviewFrame === "function") {
         requestAnimationFrame(() => {
@@ -17905,12 +17458,16 @@ window.deleteMyRecapPreset = deleteMyRecapPreset;
 
 function syncRecapSubStyleCards() {
     const sel = document.getElementById("sub-style-picker");
-    const cur = state.recapSubStyle || (sel ? sel.value : "yellow") || "yellow";
+    const cur = state.recapSubStyle || (sel ? sel.value : "cinematic") || "cinematic";
     document.querySelectorAll("#sub-style-cards-grid [data-style-card]").forEach(btn => {
         const match = btn.getAttribute("data-style-card") === cur;
         btn.classList.toggle("active", match);
         btn.setAttribute("aria-pressed", match ? "true" : "false");
     });
+    const liveBadge = document.getElementById("recap-sub-style-live-preview");
+    if (liveBadge) {
+        liveBadge.className = "vcp-sub-sample recap-sub-live-badge sample-" + cur;
+    }
 }
 window.syncRecapSubStyleCards = syncRecapSubStyleCards;
 
@@ -18022,6 +17579,12 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (state && state.user && typeof paintTtsTodaySurfaces === "function") {
             paintTtsTodaySurfaces(state.user);
+        }
+        if (state && state.user && typeof paintHomeTilePeriods === "function") {
+            paintHomeTilePeriods(state.user, window._lastTtsQuota || null);
+        }
+        if (typeof refreshPlanPrices === "function") {
+            refreshPlanPrices();
         }
         if (typeof paintTtsCostHintTiered === "function") {
             paintTtsCostHintTiered(window._lastTtsQuota || null, (state && state.user) || null);
