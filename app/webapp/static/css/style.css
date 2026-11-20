@@ -170,10 +170,10 @@ a { color: var(--gold-2); }
     box-shadow: 0 0 0 1px rgba(10, 95, 215, 0.22), 0 2px 6px rgba(10, 40, 80, 0.18);
 }
 .brand-text { min-width: 0; flex: 1; }
-.brand-title-wrap { display: flex; align-items: center; gap: var(--s2); }
+.brand-title-wrap { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; white-space: nowrap; }
 .brand-title-wrap h1 {
     font-size: 15px; font-weight: 800; letter-spacing: 0.2px; line-height: 1.25;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; flex-shrink: 0;
 }
 .pro-tag {
     background: linear-gradient(135deg, var(--gold-2), var(--gold-deep));
@@ -3915,17 +3915,7 @@ select.studio-input {
     .studio-toast .toast-progress { animation: none; }
 }
 
-/* ════════════════════════════════════════════════════════════════════
-   BATCH BA (2026-11-06) — Header phone-width fit (BA-1)
-   At ≤430px the .top-nav overflowed: row 1 (brand + actions) ran
-   ~4px over at 360px and the user-pill row ran over whenever the
-   balance values were long (a 4-digit minute balance pushed it to
-   ~383px), cutting the 🎬 chip at the right edge and the language
-   label mid-text. Compaction only — no element removed, no id,
-   behaviour, payload or navigation change; full labelled form
-   returns above 430px. Nothing here may cut a glyph: text spans
-   hide whole or not at all.
-   ════════════════════════════════════════════════════════════════════ */
+/* BATCH BA: Header phone-width fit (BA-1) */
 @media (max-width: 430px) {
     /* Header side padding tightens one step on the spacing scale. */
     .top-nav { padding-inline: var(--s2); }
@@ -7286,11 +7276,17 @@ html:not(.lite) body::before {
 .top-nav .brand-crest {
     box-shadow: 0 3px 10px rgba(15, 23, 42, 0.14), 0 0 0 1.5px rgba(255, 255, 255, 0.85);
 }
+.top-nav .brand { flex-shrink: 0; }
+.top-nav .brand-title-wrap { flex-shrink: 0; white-space: nowrap; }
 .top-nav .brand-title-wrap h1 {
     color: var(--vcp-text-primary) !important;
     text-shadow: none !important;
-    font-size: 14.5px;
+    font-size: 14px;
     letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    flex-shrink: 0;
 }
 .top-nav .sub-brand {
     color: var(--vcp-text-secondary) !important;
@@ -7373,7 +7369,7 @@ html:not(.lite) body::before {
     color: #0F766E !important;
 }
 
-@media (max-width: 430px) {
+@media (max-width: 540px) {
     .top-nav {
         top: 0;
         margin: 0 0 4px;
@@ -7381,6 +7377,7 @@ html:not(.lite) body::before {
         border-radius: 0 0 20px 20px;
         gap: 6px;
     }
+    .top-nav .sub-brand { display: none; }
     .top-nav .top-actions { gap: 4px; flex-shrink: 0; }
     .theme-pill-btn,
     .top-nav .tutorial-pill-btn,
@@ -7395,15 +7392,40 @@ html:not(.lite) body::before {
         justify-content: center;
         flex-shrink: 0;
     }
-    .top-nav .brand { gap: 6px; flex: 1 1 auto; min-width: 0; }
+    .top-nav .brand { gap: 6px; flex-shrink: 0; }
     .top-nav .brand-crest,
     .top-nav .brand-logo-img { width: 28px; height: 28px; flex-shrink: 0; }
-    .top-nav .brand-title-wrap { gap: 4px; flex-wrap: nowrap; }
-    .top-nav .brand-title-wrap h1 { font-size: 12px; letter-spacing: -0.02em; }
+    .top-nav .brand-title-wrap { gap: 4px; flex-wrap: nowrap; flex-shrink: 0; }
+    .top-nav .brand-title-wrap h1 {
+        font-size: 12px;
+        letter-spacing: -0.02em;
+        white-space: nowrap;
+        overflow: visible;
+        text-overflow: clip;
+        flex-shrink: 0;
+    }
     .top-nav .pro-tag { font-size: 8.5px; padding: 1px 5px; flex-shrink: 0; }
     .top-nav .user-pill { padding: 5px 8px; gap: 4px; }
     .top-nav .balance-chips { gap: 4px; }
     .top-nav .bal-chip { padding: 3px 7px !important; font-size: 11px; min-height: 28px !important; }
+}
+@media (max-width: 360px) {
+    .top-nav { padding: 6px 6px !important; }
+    .top-nav .brand { gap: 4px; }
+    .top-nav .brand-crest,
+    .top-nav .brand-logo-img { width: 24px; height: 24px; }
+    .top-nav .brand-title-wrap h1 { font-size: 11px; }
+    .top-nav .pro-tag { font-size: 7.5px; padding: 1px 4px; }
+    .top-nav .top-actions { gap: 3px; }
+    .theme-pill-btn,
+    .top-nav .tutorial-pill-btn,
+    .top-nav .lang-pill-btn,
+    .top-nav .lite-pill-btn {
+        width: 27px;
+        min-width: 27px;
+        height: 27px;
+        min-height: 27px;
+    }
 }
 
 /* ── Floating iOS 26 Capsule Bottom Dock (.bottom-nav) ───────────────────── */
