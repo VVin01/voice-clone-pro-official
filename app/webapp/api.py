@@ -13179,7 +13179,7 @@ async def get_admin_overview(
         "queued_jobs": queued_jobs,
         "running_jobs": running_jobs,
         "waiting_choice_jobs": jobs_by_status.get(JobStatus.WAITING_CHOICE.value, 0),
-        "cloud_worker_status": "ONLINE (Render Cloud)",
+        "cloud_worker_status": "ONLINE (VPS Server)",
         "failed_jobs_24h": failed_24h,
         "jobs_by_status": jobs_by_status,
         "banned_users": banned_users,
@@ -14244,8 +14244,20 @@ async def get_admin_fleet_status(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Inspect VPS Worker Node status & Render Cloud services."""
+    """Inspect VPS Worker Node status & VPS Web Service status."""
     worker = await _get_laptop_worker_status(db)
+    vps_web_info = {
+        "is_online": True,
+        "status_code": "ONLINE",
+        "status_text": "Online 🟢 (VPS Web Service)",
+        "host": "vmi3759442.contaboserver.net",
+        "workloads": [
+            "Fast Web HTTP API & Telegram Webhook (/telegram/webhook)",
+            "Mini App UI & Static Asset Delivery",
+            "PostgreSQL / SQLite Database Session Pool",
+            "Edge-TTS Synthesis Fallback & Instant Bot Notifications",
+        ],
+    }
     return {
         "success": True,
         "vps_worker": {
@@ -14257,18 +14269,8 @@ async def get_admin_fleet_status(
                 "Cloudflare WARP Egress & YouTube POT Sidecar (:4416)",
             ],
         },
-        "render_cloud": {
-            "is_online": True,
-            "status_code": "ONLINE",
-            "status_text": "Online 🟢 (Web Service)",
-            "host": "voice-clone-studio-teuq.onrender.com",
-            "workloads": [
-                "Fast Web HTTP API & Telegram Webhook (/telegram/webhook)",
-                "Mini App UI & Static Asset Delivery (CDN)",
-                "PostgreSQL / SQLite Database Session Pool",
-                "Edge-TTS Synthesis Fallback & Instant Bot Notifications",
-            ],
-        },
+        "vps_web": vps_web_info,
+        "render_cloud": vps_web_info,
     }
 
 

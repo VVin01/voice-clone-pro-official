@@ -12685,7 +12685,7 @@ function renderAdminOverview(stats) {
     const worker = document.getElementById("adm-worker-line");
     if (worker) {
         const rawWorker = stats.cloud_worker_status || "";
-        const workerText = (!rawWorker || /online.*render cloud/i.test(rawWorker))
+        const workerText = (!rawWorker || /online/i.test(rawWorker))
             ? t("adm_worker_online")
             : localizeServerText(rawWorker);
         worker.innerText = "☁️ " + workerText;
