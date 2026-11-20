@@ -479,3 +479,20 @@ def test_group_ai_tokens_and_webapp_audit_fixes():
     analytics_block = app_js[analytics_start:analytics_start + 2200]
     assert " Ks" not in analytics_block and " MMK" in analytics_block
     assert len(css.encode("utf-8")) + len(app_js.encode("utf-8")) + len(i18n_js.encode("utf-8")) <= 1_650_000
+
+
+@pytest.mark.asyncio
+async def test_serve_index_auto_cache_busts_immutable_assets():
+    from app.webapp.server import serve_index, _get_static_asset_cache_tag
+
+    disk_html = (REPO_ROOT / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
+    assert disk_html.count("?v=20261118_r164") == 4
+
+    tag = _get_static_asset_cache_tag()
+    assert tag.startswith("20261120_") and len(tag) == 19
+
+    resp = await serve_index()
+    body = resp.body.decode("utf-8")
+    assert body.count(f"?v={tag}") == 4
+    assert "?v=20261118_r164" not in body
+    assert resp.headers.get("cache-control") == "no-cache, no-store, must-revalidate, max-age=0"

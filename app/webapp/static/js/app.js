@@ -3163,7 +3163,8 @@ function syncTabAdminLifecycle(tabId) {
         if (!window._adminProRequested && state.user && state.user.is_admin) {
             window._adminProRequested = true;
             const s = document.createElement("script");
-            s.src = "/static/js/admin_pro.js?v=20261119_p1";
+            const _av = (document.querySelector('script[src*="/static/js/app.js"]')?.src.match(/[?&]v=([^&]+)/) || [])[1] || "20261120_p1";
+            s.src = "/static/js/admin_pro.js?v=" + _av;
             s.defer = true;
             document.head.appendChild(s);
         }
@@ -16524,6 +16525,7 @@ async function openRecapInPlayer(recapJobId) {
 
             if (resultBox) {
                 resultBox.classList.remove("hidden");
+                refreshStickyCtas();
                 resultBox.scrollIntoView({ behavior: "smooth" });
             }
             if (player && data.download_urls?.video) {

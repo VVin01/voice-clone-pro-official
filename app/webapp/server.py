@@ -6,6 +6,7 @@ Hosts frontend Single Page Application (SPA) and REST API endpoints.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -814,13 +815,40 @@ webapp_app.add_middleware(SmartGZipMiddleware, minimum_size=500)
 webapp_app.add_middleware(StaticFloodShieldMiddleware)
 
 
+_STATIC_ASSET_TAG: str | None = None
+
+
+def _get_static_asset_cache_tag() -> str:
+    """Compute a deterministic content-hash cache token for immutable static assets."""
+    global _STATIC_ASSET_TAG
+    if _STATIC_ASSET_TAG is not None:
+        return _STATIC_ASSET_TAG
+    h = hashlib.sha256()
+    for rel in (
+        "css/style.css",
+        "js/i18n.js",
+        "js/app.js",
+        "js/admin_pro.js",
+        "img/brand-logo.svg",
+    ):
+        p = STATIC_DIR / rel
+        if p.is_file():
+            h.update(p.read_bytes())
+    _STATIC_ASSET_TAG = f"20261120_{h.hexdigest()[:10]}"
+    return _STATIC_ASSET_TAG
+
+
 @webapp_app.get("/")
 async def serve_index():
     """Serve the Mini App main SPA interface with strict anti-caching headers."""
     index_file = STATIC_DIR / "index.html"
     if index_file.is_file():
-        return FileResponse(
-            index_file,
+        html = index_file.read_text(encoding="utf-8").replace(
+            "?v=20261118_r164",
+            f"?v={_get_static_asset_cache_tag()}",
+        )
+        return HTMLResponse(
+            html,
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
                 "Pragma": "no-cache",

@@ -1415,14 +1415,14 @@ async def run_worker_loop(
                         await set_dynamic_setting(
                             hb_session, "worker_laptop_engine", str(engine_filter or "all")
                         )
-                        if not getattr(settings, "worker_laptop_host", ""):
-                            import os as _os
-                            import socket
-                            host_str = (
-                                _os.getenv("VPS_PUBLIC_HOST", "").strip()
-                                or socket.gethostname()
-                                or "vps-worker"
-                            )
+                        import os as _os
+                        import socket
+                        host_str = (
+                            _os.getenv("VPS_PUBLIC_HOST", "").strip()
+                            or socket.gethostname()
+                            or "vps-worker"
+                        )
+                        if host_str and host_str != getattr(settings, "worker_laptop_host", ""):
                             await set_dynamic_setting(hb_session, "worker_laptop_host", host_str)
                         await hb_session.commit()
                 except Exception as hb_exc:
