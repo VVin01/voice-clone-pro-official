@@ -6571,6 +6571,10 @@ function setupRecapVisualEditor() {
         const knownTotal = state.recapSourceDuration > 0 ? (totalSec || state.recapSourceDuration) : 0;
         const totStr = knownTotal > 0 ? formatSecToMMSS(knownTotal) : "--:--";
         seekBadge.innerText = `⏱️ ${curStr}s / ${totStr}s`;
+        seekPills.forEach(pill => {
+            const pSec = parseFloat(pill.getAttribute("data-sec") || 0);
+            pill.disabled = knownTotal > 0 && pSec > knownTotal;
+        });
     }
 
     function seekCanvasFrame(targetSec) {
@@ -16479,6 +16483,7 @@ async function loadUserHistory() {
         const res = await fetchWithTimeout("/api/history", {
             headers: getAuthHeaders(),
         });
+        if (res.status === 403) { hubHistoryCache = []; hubHistoryError = false; renderHistoryHub(); return; }
         if (!res.ok) throw new Error(`history ${res.status}`);
 
         const data = await res.json();

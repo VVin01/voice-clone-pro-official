@@ -473,6 +473,8 @@ def test_group_ai_tokens_and_webapp_audit_fixes():
     assert "Unknown" not in app_js or "unknown|weba|webk|tdesktop|macos" in app_js
     assert 'setRecapStage("4/4", job.status)' in app_js
     assert "window._lastReferralStats" in app_js
+    assert "pill.disabled = knownTotal > 0 && pSec > knownTotal" in app_js
+    assert "if (res.status === 403) { hubHistoryCache = [];" in app_js
     analytics_start = app_js.index("async function loadAdminAnalytics")
     analytics_block = app_js[analytics_start:analytics_start + 2200]
     assert " Ks" not in analytics_block and " MMK" in analytics_block
