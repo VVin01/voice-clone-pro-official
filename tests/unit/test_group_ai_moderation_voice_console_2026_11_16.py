@@ -482,7 +482,7 @@ async def test_admin_console_endpoints(db_session, monkeypatch):
     # 1. GET initial status (built-in default)
     status = await get_admin_group_ai_console(admin=admin_user, db=db_session)
     assert status["is_custom"] is False
-    assert status["char_limit"] == 8000
+    assert status["char_limit"] == 20000
     assert "budgets" in status
     assert "recent_actions" in status
 
@@ -533,8 +533,8 @@ async def test_knowledge_sheet_hard_cap_8000(monkeypatch):
         )
     assert exc.value.status_code == 400
 
-    # Over 8000 chars rejected
-    long_sheet = "A" * 8001
+    # Over 20000 chars rejected
+    long_sheet = "A" * 20001
     with pytest.raises(HTTPException) as exc:
         await update_group_ai_knowledge_sheet(
             GroupAiKnowledgeSheetPayload(sheet=long_sheet),

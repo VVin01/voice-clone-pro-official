@@ -15282,7 +15282,7 @@ async def get_admin_group_ai_console(
         "last_saved_at": last_saved_at,
         "last_saved_by": last_saved_by,
         "char_count": len(effective_sheet),
-        "char_limit": 8000,
+        "char_limit": 20000,
         "budgets": budgets,
         "recent_actions": recent_actions,
     }
@@ -15294,17 +15294,17 @@ async def update_group_ai_knowledge_sheet(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Save an edited knowledge sheet for the Group AI (hard cap 8,000 chars)."""
+    """Save an edited knowledge sheet for the Group AI (hard cap 20,000 chars)."""
     sheet = str(payload.sheet or "").strip()
     if not sheet:
         raise HTTPException(
             status_code=400,
             detail="Knowledge sheet cannot be empty. Use reset to restore default.",
         )
-    if len(sheet) > 8000:
+    if len(sheet) > 20000:
         raise HTTPException(
             status_code=400,
-            detail=f"Knowledge sheet exceeds 8,000 character limit (length: {len(sheet)}).",
+            detail=f"Knowledge sheet exceeds 20,000 character limit (length: {len(sheet)}).",
         )
 
     now_iso = utc_now().isoformat()
@@ -15380,7 +15380,7 @@ async def reset_group_ai_knowledge_sheet(
         "success": True,
         "knowledge_sheet": built_in,
         "char_count": len(built_in),
-        "char_limit": 8000,
+        "char_limit": 20000,
         "is_custom": False,
         "last_saved_at": "",
         "last_saved_by": "",
@@ -16396,7 +16396,8 @@ async def get_admin_analytics(
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days > 0 else None
 
-    # 1. Revenue & Package Sales
+    # 1. Revenue & Package Sales (exclude test-flagged accounts, matching Overview)
+    _test_user_ids = await _test_flagged_user_ids(db)
     pr_stmt = select(PaymentRequest)
     if cutoff is not None:
         pr_stmt = pr_stmt.where(PaymentRequest.created_at >= cutoff)
@@ -16414,6 +16415,8 @@ async def get_admin_analytics(
     daily_revenue: dict[str, dict[str, Any]] = {}
 
     for pr in all_orders:
+        if pr.user_id in _test_user_ids:
+            continue
         if pr.status == PaymentStatus.PENDING.value:
             pending_orders += 1
         elif pr.status == PaymentStatus.REJECTED.value:

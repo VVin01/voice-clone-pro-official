@@ -1045,6 +1045,7 @@ function refreshStickyCtas() {
         // forward nav, back nav and chip taps all obey it.
         const recapStepGate = p.src === "btn-start-recap" && recapCurrentStep !== 4;
         bar.classList.toggle("hidden", recapBlocked || recapStepGate || !(tabActive && stickyCtaInView[p.src] === false));
+        if (p.src === "btn-start-recap" && !document.getElementById("recap-result-box")?.classList.contains("hidden")) bar.classList.add("hidden");
     });
 }
 window.refreshStickyCtas = refreshStickyCtas;
@@ -2634,19 +2635,10 @@ async function downloadAuthFile(url, filename, el) {
         };
     }
     try {
-        // Batch BJ: inside the Telegram WebApp, a URL carrying its
-        // own scoped stream token is self-authenticating — hand it
-        // to Telegram openLink so the device browser performs a real
-        // download. The blob path below cannot save inside mobile
-        // WebViews: the programmatic <a download> click on an object
-        // URL is silently dropped there (no blob-download handler;
-        // iOS WKWebView worst), which left the result and History
-        // download buttons dead on phones even though the fetch and
-        // its progress paint succeeded. openLink throwing or being
-        // unavailable falls through to the blob path unchanged, as
-        // do tokenless URLs and plain-browser contexts. The finally
-        // below restores the button's AF progress state immediately.
-        if (urlCarriesStreamToken(url) && window.Telegram?.WebApp?.openLink) {
+        // Skip Telegram.openLink on web/desktop clients where it drops downloads; mobile WebViews only.
+        const tgPlat = window.Telegram?.WebApp?.platform || "";
+        const allowTgOpen = !/^(unknown|weba|webk|tdesktop|macos)$/i.test(tgPlat);
+        if (urlCarriesStreamToken(url) && window.Telegram?.WebApp?.openLink && allowTgOpen) {
             const absUrl = url.startsWith("http") ? url : (window.location.origin + url);
             let opened = false;
             try {
@@ -2679,17 +2671,7 @@ window.downloadAuthFile = downloadAuthFile;
 async function openAuthFile(url) {
     if (!url) return;
     try {
-        // Batch CJ: a URL carrying its own scoped stream token is
-        // self-authenticating — hand it to Telegram openLink so the
-        // device browser opens it, exactly like downloadAuthFile
-        // (Batch BJ). The blob + target=_blank path below is silently
-        // dropped by mobile WebViews, which left the "Browser Tab"
-        // button dead on phones even for token-carrying URLs (the
-        // admin media modal's URLs are signed since Batch CJ).
-        // openLink throwing or being unavailable falls through to
-        // the blob path unchanged, as do tokenless URLs and
-        // plain-browser contexts.
-        if (urlCarriesStreamToken(url) && window.Telegram?.WebApp?.openLink) {
+        if (urlCarriesStreamToken(url) && window.Telegram?.WebApp?.openLink && !/^(unknown|weba|webk|tdesktop|macos)$/i.test(window.Telegram.WebApp.platform || "")) {
             const absUrl = url.startsWith("http") ? url : (window.location.origin + url);
             try {
                 window.Telegram.WebApp.openLink(absUrl);
@@ -2890,6 +2872,7 @@ let _supportLink = "https://t.me/VoiceCloneProAdmin";
 
 function updateReferUI(data) {
     if (!data) return;
+    window._lastReferralStats = data;
     _referralLink = data.referral_link || "";
     if (data.support_link) _supportLink = data.support_link;
     const lt = document.getElementById("referral-link-text");
@@ -3262,15 +3245,7 @@ async function toggleLanguage() {
     haptic("medium");
     const nextLang = currentLang === "my" ? "en" : "my";
     setLanguage(nextLang);
-    // Persist BEFORE the profile re-read below: /api/user/me echoes
-    // the stored language_code and loadUserProfile adopts it, so an
-    // un-awaited POST lets the stale value win the race and the
-    // toggle silently reverts (journey audit 2026-10-31: the toggle
-    // appeared completely dead while the server kept the new value,
-    // leaving a mixed-language UI on the next cold start).
     try { await window.__langPersistPromise; } catch (e) {}
-    // The voices expander label is state-dependent (show vs hide), so
-    // re-apply the correct variant after the generic i18n pass.
     const avTxt = document.getElementById("all-voices-toggle-text");
     const avWrap = document.getElementById("all-voices-dropdown-wrap");
     if (avTxt && avWrap) avTxt.innerText = avWrap.classList.contains("hidden") ? t("voices_show_all") : t("voices_hide_all");
@@ -6630,14 +6605,6 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // ── R40 item 9: server-grabbed preview frames for link sources ──
-    // The endpoint downloads the verified source once (server-side
-    // cache) and returns a real frame at the requested second. The
-    // frame then flows through the SAME canvas treatment as the
-    // thumbnail (ratio fit, mirror class, backdrop blur, CSS blur /
-    // subtitle boxes on top), so Mirror/Ratio/Style/Blur changes keep
-    // reflecting live. Failures are silent on purpose: the thumbnail
-    // or mockup stays, and we do not retry in a loop.
     let recapFrameTimer = null;
     let recapFrameSeq = 0;
     function scheduleRecapFrameRefresh(sec) {
@@ -10402,6 +10369,7 @@ function renderRecapFormProgress(job) {
         }
     }
     setRecapStage(`${job.stage_index || 0}/${job.stage_total || 4}`, job.status);
+    if (job.progress_stage === "sync" || job.progress_stage === "png") setRecapStage("4/4", job.status);
 }
 
 function ensureRecapFormStoreSubscription() {
@@ -10606,9 +10574,7 @@ function startRecapJobPolling(jobId) {
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
-                    // Batch AC: no scroll hijack on completion — the
-                    // pill/sheet announce the result and the user
-                    // opens it by choice; the studio stays put.
+                    refreshStickyCtas();
                 }
 
                 const btnTg = document.getElementById("btn-recap-send-telegram");
@@ -15123,10 +15089,10 @@ async function loadAdminAnalytics(days = 30) {
         ).join("");
         body.innerHTML = `
             <div class="adm-analytics-grid">
-                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(tf("adm_rev_lbl", { n: rev.approved_orders || 0 }))}</span><span class="stat-num text-gold">${(rev.total_approved_mmk || 0).toLocaleString()} Ks</span></div>
-                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_profit_lbl"))}</span><span class="stat-num ${(c.estimated_gross_profit_mmk || 0) >= 0 ? "text-green" : "text-danger"}">${(c.estimated_gross_profit_mmk || 0).toLocaleString()} Ks</span></div>
-                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_cost_lbl"))}</span><span class="stat-num">$${(c.total_cost_usd || 0).toFixed(3)} (${(c.total_cost_mmk || 0).toLocaleString()} Ks)</span></div>
-                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_arpu_lbl"))}</span><span class="stat-num" style="font-size:13px;">${(c.arpu_mmk || 0).toLocaleString()} / ${(c.avg_cost_job_mmk ?? c.avg_cost_per_job_mmk ?? 0).toLocaleString()} Ks</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(tf("adm_rev_lbl", { n: rev.approved_orders || 0 }))}</span><span class="stat-num text-gold">${(rev.total_approved_mmk || 0).toLocaleString()} MMK</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_profit_lbl"))}</span><span class="stat-num ${(c.estimated_gross_profit_mmk || 0) >= 0 ? "text-green" : "text-danger"}">${(c.estimated_gross_profit_mmk || 0).toLocaleString()} MMK</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_cost_lbl"))}</span><span class="stat-num">$${(c.total_cost_usd || 0).toFixed(3)} (${(c.total_cost_mmk || 0).toLocaleString()} MMK)</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_arpu_lbl"))}</span><span class="stat-num" style="font-size:13px;">${(c.arpu_mmk || 0).toLocaleString()} / ${(c.avg_cost_job_mmk ?? c.avg_cost_per_job_mmk ?? 0).toLocaleString()} MMK</span></div>
             </div>
             <div class="mt-2 text-xs text-muted">Jobs: ${usg.total_jobs || 0} (✓${usg.success_jobs || 0} / ✗${usg.failed_jobs || 0}) • ${_fmtCreditNum(usg.total_recap_credits_consumed || 0)} Cr, ${_fmtCreditNum(usg.total_voice_minutes_consumed || 0)}m • Refunds: ${_fmtCreditNum(usg.refunded_recap_credits || 0)} Cr</div>
             <div class="adm-cost-row mt-2"><span>${escapeHtml(t("adm_exp_lbl"))} (≤7d: <b>${exp.expiring_7d_count || 0}</b> lots)</span><b>-${_fmtCreditNum(exp.expired_recap_credits || 0)} Cr · -${_fmtCreditNum(exp.expired_voice_minutes || 0)}m</b></div>
@@ -15986,8 +15952,8 @@ async function saveGroupAiKnowledgeSheet() {
         showStudioToast(t("err_generic"), "error");
         return;
     }
-    if (sheet.length > 8000) {
-        showStudioToast("Knowledge sheet exceeds 8,000 characters", "error");
+    if (sheet.length > 20000) {
+        showStudioToast("Knowledge sheet exceeds 20,000 characters", "error");
         return;
     }
     try {
@@ -18083,6 +18049,9 @@ function refreshPhase1to4LanguageSurfaces() {
             updateRecapDurationGate();
         }
         refreshAdminLanguageSurfaces();
+        if (window._lastReferralStats && typeof updateReferUI === "function") {
+            updateReferUI(window._lastReferralStats);
+        }
         if (typeof renderHomeRecentProjects === "function") {
             renderHomeRecentProjects();
         }

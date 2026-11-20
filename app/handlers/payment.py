@@ -90,36 +90,19 @@ async def handle_buy_minutes_menu(callback: CallbackQuery, state: FSMContext):
         elif badge_key == "best_value":
             tag = t("pay_tag_best_value", lang)
 
+        rc = int(cr or 0)
         if is_topup:
-            if mins > 0 and cr <= 0:
-                btn_text = f"⚡ {name} (+{mins}m) — {p.price_mmk:,} MMK"
+            if mins > 0 and rc <= 0:
+                btn_text = f"⚡ +{mins}m · {p.price_mmk:,} MMK"
             else:
-                btn_text = f"⚡ {name} (+{cr} Cr) — {p.price_mmk:,} MMK"
+                btn_text = f"⚡ +{rc}c · {p.price_mmk:,} MMK"
         elif cat == "combo":
-            btn_text = t(
-                "pay_package_combined_btn",
-                lang,
-                minutes=mins,
-                credits=cr,
-                price=f"{p.price_mmk:,}",
-            ) + tag
+            icon = "👑" if "master" in p.code else "🎁"
+            btn_text = f"{icon} {mins}m+{rc}c · {p.price_mmk:,} MMK"
         elif cat == "recap":
-            btn_text = t(
-                "pay_package_recap_btn",
-                lang,
-                credits=cr,
-                price=f"{p.price_mmk:,}",
-            ) + tag
+            btn_text = f"🎬 {rc}c · {p.price_mmk:,} MMK"
         else:
-            badge_icon = "💎" if mins <= 10 else ("⭐" if mins <= 45 else "👑")
-            btn_text = t(
-                "pay_package_btn",
-                lang,
-                badge=badge_icon,
-                minutes=mins,
-                price=f"{p.price_mmk:,}",
-                tag=tag,
-            )
+            btn_text = f"🎙️ {mins}m · {p.price_mmk:,} MMK"
 
         plan_btns.append(
             InlineKeyboardButton(
@@ -250,11 +233,7 @@ async def handle_package_selected(callback: CallbackQuery, state: FSMContext):
         or plan_meta.get("name")
         or ""
     ).strip()
-    pkg_display = (
-        f"{friendly_name} ({pkg_code})"
-        if friendly_name and friendly_name != pkg_code
-        else pkg_code
-    )
+    pkg_display = friendly_name or pkg_code
 
     text = t(
         "pay_invoice_text",

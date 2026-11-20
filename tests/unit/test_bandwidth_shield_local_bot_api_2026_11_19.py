@@ -434,14 +434,46 @@ async def test_bot_buy_menu_is_two_columns_mmk_and_invoice_shows_validity(db_ses
     kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
     # 22 plans paired 2-per-row (11 rows) + 1 Back row = 12 rows total
     assert len(kb.inline_keyboard) == 12
-    assert all(" Ks" not in btn.text for row in kb.inline_keyboard for btn in row)
+    plan_texts = [
+        btn.text
+        for row in kb.inline_keyboard
+        for btn in row
+        if (btn.callback_data or "").startswith("buy_pkg:")
+    ]
+    assert len(plan_texts) == 22
+    assert all(" Ks" not in txt and "MMK" in txt and len(txt) <= 28 for txt in plan_texts)
 
-    cb.data = "buy_pkg:MIN_10"
+    cb.data = "buy_pkg:voice_mini"
     cb.message.edit_text.reset_mock()
     await handle_package_selected(cb, state)
     inv_text = cb.message.edit_text.call_args.args[0]
-    assert "MIN_10" in inv_text
+    assert "Mini" in inv_text
+    assert "(voice_mini)" not in inv_text
     assert "30 days from approval" in inv_text
 
     en_msgs = json.loads((REPO_ROOT / "locales" / "en" / "messages.json").read_text(encoding="utf-8"))
     assert en_msgs["referral_title"] == "🎁 <b>Refer Friends & Earn</b>"
+
+
+def test_group_ai_tokens_and_webapp_audit_fixes():
+    import re
+    gai = (REPO_ROOT / "app" / "services" / "group_ai_admin.py").read_text(encoding="utf-8")
+    assert '"max_output_tokens": 4096' in gai
+    assert '"max_output_tokens": 2048' in gai
+
+    api_src = (REPO_ROOT / "app" / "webapp" / "api.py").read_text(encoding="utf-8")
+    assert '"char_limit": 20000' in api_src
+    assert 'len(sheet) > 20000' in api_src
+
+    app_js = (REPO_ROOT / "app" / "webapp" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    css = (REPO_ROOT / "app" / "webapp" / "static" / "css" / "style.css").read_text(encoding="utf-8")
+    i18n_js = (REPO_ROOT / "app" / "webapp" / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+    assert "max-height: 62vh;" in css
+    assert "#tab-recap .ratio-btn.active .ratio-sub" in css
+    assert "Unknown" not in app_js or "unknown|weba|webk|tdesktop|macos" in app_js
+    assert 'setRecapStage("4/4", job.status)' in app_js
+    assert "window._lastReferralStats" in app_js
+    analytics_start = app_js.index("async function loadAdminAnalytics")
+    analytics_block = app_js[analytics_start:analytics_start + 2200]
+    assert " Ks" not in analytics_block and " MMK" in analytics_block
+    assert len(css.encode("utf-8")) + len(app_js.encode("utf-8")) + len(i18n_js.encode("utf-8")) <= 1_650_000

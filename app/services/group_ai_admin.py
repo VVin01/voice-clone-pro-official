@@ -1614,7 +1614,7 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
             attempts += 1
             try:
                 cfg_kwargs = (
-                    {"temperature": 0.25, "max_output_tokens": 700}
+                    {"temperature": 0.25, "max_output_tokens": 4096}
                     if is_v2_prompts()
                     else None
                 )
@@ -3077,7 +3077,7 @@ async def transcribe_voice_gemini(
                         client.models.generate_content,
                         model=model,
                         contents=[audio_part, prompt],
-                        config_kwargs={"temperature": 0.1, "max_output_tokens": 500} if v2 else None,
+                        config_kwargs={"temperature": 0.1, "max_output_tokens": 2048} if v2 else None,
                     )
                     raw_text = str(getattr(response, "text", "") or "").strip()
                     if raw_text:

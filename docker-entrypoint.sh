@@ -76,7 +76,7 @@ if [ -x "$WARP_BIN" ]; then
         (
             while true; do
                 echo "[entrypoint] starting usque WARP SOCKS5 (--http2) on 127.0.0.1:${WARP_PORT}"
-                "$WARP_BIN" --config "$WARP_CONFIG" socks --http2 --bind 127.0.0.1 --port "$WARP_PORT"
+                "$WARP_BIN" --config "$WARP_CONFIG" socks --http2 --bind 127.0.0.1 --port "$WARP_PORT" 2>&1 | grep -v --line-buffered "failed during negotiation: Invalid Version"
                 echo "[entrypoint] usque WARP exited (rc=$?) — restarting in 5s"
                 sleep 5
             done
@@ -84,7 +84,7 @@ if [ -x "$WARP_BIN" ]; then
 
         warp_up=0
         for _ in $(seq 1 30); do
-            if (exec 3<>"/dev/tcp/127.0.0.1/${WARP_PORT}") 2>/dev/null; then
+            if (exec 3<>"/dev/tcp/127.0.0.1/${WARP_PORT}" && printf '\x05\x01\x00' >&3) 2>/dev/null; then
                 exec 3>&- 3<&-
                 warp_up=1
                 break

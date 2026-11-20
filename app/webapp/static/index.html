@@ -3081,9 +3081,9 @@
                                 <span class="text-xs text-muted" id="adm-group-ai-sheet-meta" data-i18n="adm_group_ai_sheet_default">မူလ Sheet (Batch DL Ground Truth)</span>
                             </div>
                             <p class="text-xs text-muted mb-2" data-i18n="adm_group_ai_sheet_desc">Group AI အသုံးပြုသည့် အချက်အလက်များကို တိုက်ရိုက် ပြင်ဆင်နိုင်ပါသည်။ အသစ် သိမ်းဆည်းလိုက်သည်နှင့် နောက်လာမည့် မက်ဆေ့ခ်ျများတွင် ချက်ချင်း အကျိုးသက်ရောက်မည် ဖြစ်ပါသည်။</p>
-                            <textarea id="adm-group-ai-sheet" class="studio-input w-full font-mono text-xs" rows="10" maxlength="8000" placeholder="Knowledge sheet content..." oninput="document.getElementById('adm-group-ai-sheet-chars').textContent = this.value.length"></textarea>
+                            <textarea id="adm-group-ai-sheet" class="studio-input w-full font-mono text-xs" rows="10" maxlength="20000" placeholder="Knowledge sheet content..." oninput="document.getElementById('adm-group-ai-sheet-chars').textContent = this.value.length"></textarea>
                             <div class="flex-between mt-1 mb-2 text-xs text-muted">
-                                <span><span id="adm-group-ai-sheet-chars">0</span> / 8000</span>
+                                <span><span id="adm-group-ai-sheet-chars">0</span> / 20000</span>
                                 <div class="btn-group-sm">
                                     <button type="button" id="adm-group-ai-sheet-reset" class="btn btn-secondary btn-sm" onclick="resetGroupAiKnowledgeSheet()" data-i18n="adm_group_ai_reset_sheet">မူလအတိုင်း ပြန်ထားမည်</button>
                                     <button type="button" id="adm-group-ai-sheet-save" class="btn btn-primary btn-sm" onclick="saveGroupAiKnowledgeSheet()" data-i18n="adm_group_ai_save_sheet">Sheet သိမ်းဆည်းမည်</button>
