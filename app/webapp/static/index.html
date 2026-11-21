@@ -33,54 +33,40 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261118_r164" alt="Voice Clone Pro logo" width="36" height="36">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261118_r164" alt="Voice Clone Pro logo" width="28" height="28">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
                         <h1 data-i18n="brand_title">VOICE CLONE</h1>
                         <span class="pro-tag">PRO</span>
                     </div>
-                    <span class="sub-brand" data-i18n="brand_subtitle">STUDIO</span>
                 </div>
             </div>
 
             <div class="top-actions">
+                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">FREE</span>
                 <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()" title="ဘာသာစကား ပြောင်းရန်" data-i18n-title="lang_toggle_title"><span class="lang-flag" aria-hidden="true">🇲🇲</span><span class="lang-btn-text" id="lang-btn-text">မြန်မာ</span></button>
                 <button type="button" class="theme-pill-btn header-more-btn" id="btn-header-more" onclick="toggleHeaderMoreMenu(event)" title="အခြားရွေးချယ်စရာများ" data-i18n-title="header_more_title" aria-label="More options" aria-expanded="false">⋯</button>
-                <div class="header-more-menu hidden" id="header-more-menu">
-                    <button type="button" class="theme-pill-btn" id="btn-theme-toggle" onclick="toggleThemeMode()" title="အလင်း / အမှောင် ပြောင်းရန်" data-i18n-title="theme_toggle_title" data-i18n-aria="btn_theme_aria" aria-label="Toggle Light / Dark theme" aria-pressed="false" data-theme-state="light">
+                <div class="header-more-menu hidden" id="header-more-menu" role="menu">
+                    <button type="button" class="header-more-item" id="btn-theme-toggle" role="menuitem" onclick="toggleThemeMode()" title="အလင်း / အမှောင် ပြောင်းရန်" data-i18n-title="theme_toggle_title" data-i18n-aria="btn_theme_aria" aria-label="Toggle Light / Dark theme" aria-pressed="false" data-theme-state="light">
                         <span class="btn-icon theme-ico-wrap" aria-hidden="true">
                             <svg class="vcp-ico vcp-ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                             <svg class="vcp-ico vcp-ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
                         </span>
+                        <span class="header-more-label" data-i18n="header_more_theme">အလင်း / အမှောင်</span>
                     </button>
-                    <button type="button" class="theme-pill-btn lite-pill-btn" id="btn-lite-toggle" onclick="toggleLiteMode()" title="Lite Mode (ပေါ့ပါးသက်သာစနစ်)" data-i18n-title="lite_toggle_title" data-i18n-aria="btn_lite_aria" aria-label="Toggle Lite Mode" aria-pressed="false">
+                    <button type="button" class="header-more-item" id="btn-lite-toggle" role="menuitem" onclick="toggleLiteMode()" title="Lite Mode (ပေါ့ပါးသက်သာစနစ်)" data-i18n-title="lite_toggle_title" data-i18n-aria="btn_lite_aria" aria-label="Toggle Lite Mode" aria-pressed="false">
                         <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+                        <span class="header-more-label" data-i18n="header_more_lite">Lite Mode</span>
                     </button>
-                    <button type="button" class="theme-pill-btn" id="btn-top-history" onclick="openHistoryHub()" title="မှတ်တမ်း" data-i18n-title="history_title" aria-label="History"><span class="btn-icon" aria-hidden="true">⏱️</span></button>
-                    <button class="tutorial-pill-btn" id="btn-tutorial-top" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်" data-i18n-title="tut_guide_title">
+                    <button type="button" class="header-more-item" id="btn-top-history" role="menuitem" onclick="openHistoryHub()" title="မှတ်တမ်း" data-i18n-title="history_title" aria-label="History">
+                        <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
+                        <span class="header-more-label" data-i18n="header_more_history">မှတ်တမ်း</span>
+                    </button>
+                    <button type="button" class="header-more-item" id="btn-tutorial-top" role="menuitem" onclick="openTutorialVideo('auto')" title="အသုံးပြုနည်း လမ်းညွှန်" data-i18n-title="tut_guide_title">
                         <span class="btn-icon" aria-hidden="true"><svg class="vcp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
-                        <span class="tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
+                        <span class="header-more-label tutorial-btn-text" data-i18n="btn_tutorial">လမ်းညွှန်</span>
                     </button>
-                </div>
-            </div>
-
-            <div class="user-pill" id="user-pill">
-                <button type="button" class="header-bal-summary-btn" id="btn-header-balances" onclick="toggleHeaderBalances(event)" aria-expanded="false" aria-controls="user-pill">
-                    <span id="header-bal-summary-text">···</span>
-                    <span class="header-bal-caret" aria-hidden="true">▾</span>
-                </button>
-                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">FREE</span>
-                <span class="live-dot" title="Live" data-i18n-title="live_badge_title"><span class="live-dot-pulse"></span>LIVE</span>
-                <div class="balance-chips">
-                    <span class="bal-chip" id="user-voice-bal" title="Voice Minutes" data-i18n-title="bal_chip_voice_title" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">🎙️ —</span>
-                    <span class="bal-chip recap" id="user-recap-bal" title="Recap Credits" data-i18n-title="bal_chip_recap_title" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">🎬 —</span>
-                    <!-- Batch BZ: today's TTS spendable (referral + daily
-                         quota remainder, from /api/me) — a button so the
-                         chip itself is the one-tap route to the TTS tab;
-                         switchTab runs the quota hook on entry. Neutral —
-                         until the profile paints, like the other chips. -->
-                    <button type="button" class="bal-chip tts" id="user-tts-bal" title="TTS left today" data-i18n-title="bal_chip_tts_title" onclick="closeHeaderPopovers(); switchTab('tab-tts')">🎧 —</button>
                 </div>
             </div>
         </header>
@@ -120,8 +106,7 @@
                 <div class="card glass vcp-hero-card" id="home-hero-card" data-tier="free">
                     <div class="vcp-card home-status-strip vcp-hero-top" id="home-status-strip" onclick="switchTab('tab-vip')" role="button" tabindex="0">
                         <div class="home-status-left vcp-hero-ident">
-                            <span class="home-greeting-text" id="home-greeting-text" data-i18n="home_greeting_default">မင်္ဂလာပါ 👋</span>
-                            <span class="vcp-hero-tagline" data-i18n="home_hero_tagline">မြန်မာ AI အသံ &amp; Movie Recap စတူဒီယို</span>
+                            <span class="home-greeting-text" id="home-greeting-text" data-i18n="home_greeting_default">မင်္ဂလာပါ</span>
                         </div>
                         <div class="home-status-right vcp-hero-badges">
                             <span class="vcp-hero-ready-chip"><span class="vcp-pulse-dot" aria-hidden="true"></span><span data-i18n="home_status_ready">အဆင်သင့်</span></span>

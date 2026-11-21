@@ -567,54 +567,18 @@ function closeHeaderPopovers() {
     const moreBtn = document.getElementById("btn-header-more");
     if (moreMenu) moreMenu.classList.add("hidden");
     if (moreBtn) moreBtn.setAttribute("aria-expanded", "false");
-    const userPill = document.getElementById("user-pill");
-    const balBtn = document.getElementById("btn-header-balances");
-    if (userPill) userPill.classList.remove("is-open");
-    if (balBtn) balBtn.setAttribute("aria-expanded", "false");
 }
 function toggleHeaderMoreMenu(ev) {
     if (ev) ev.stopPropagation();
     haptic("light");
     const menu = document.getElementById("header-more-menu");
     const btn = document.getElementById("btn-header-more");
-    const userPill = document.getElementById("user-pill");
-    const balBtn = document.getElementById("btn-header-balances");
-    if (userPill) userPill.classList.remove("is-open");
-    if (balBtn) balBtn.setAttribute("aria-expanded", "false");
     if (!menu) return;
     const isOpen = !menu.classList.toggle("hidden");
     if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
 }
-function toggleHeaderBalances(ev) {
-    if (ev) ev.stopPropagation();
-    haptic("light");
-    const moreMenu = document.getElementById("header-more-menu");
-    const moreBtn = document.getElementById("btn-header-more");
-    if (moreMenu) moreMenu.classList.add("hidden");
-    if (moreBtn) moreBtn.setAttribute("aria-expanded", "false");
-    const userPill = document.getElementById("user-pill");
-    const balBtn = document.getElementById("btn-header-balances");
-    if (!userPill) return;
-    const isOpen = userPill.classList.toggle("is-open");
-    if (balBtn) balBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
-}
-function updateHeaderBalanceSummary(data) {
-    const el = document.getElementById("header-bal-summary-text");
-    if (!el || !data) return;
-    if (data.is_admin) {
-        el.innerText = "👑 ∞";
-        return;
-    }
-    const vBal = data.balance_minutes != null ? data.balance_minutes : 0;
-    const rBal = typeof _fmtCreditNum === "function"
-        ? _fmtCreditNum(data.available_recap_credits ?? data.recap_credits ?? 0)
-        : (data.available_recap_credits ?? data.recap_credits ?? 0);
-    el.innerText = `🎙️ ${vBal}m · 🎬 ${rBal}c`;
-}
 window.closeHeaderPopovers = closeHeaderPopovers;
 window.toggleHeaderMoreMenu = toggleHeaderMoreMenu;
-window.toggleHeaderBalances = toggleHeaderBalances;
-window.updateHeaderBalanceSummary = updateHeaderBalanceSummary;
 if (typeof document !== "undefined" && !window.__vcpHeaderOutsideWired) {
     window.__vcpHeaderOutsideWired = true;
     document.addEventListener("click", (e) => {
@@ -624,7 +588,7 @@ if (typeof document !== "undefined" && !window.__vcpHeaderOutsideWired) {
             closeHeaderPopovers();
             return;
         }
-        if (tgt.closest && !tgt.closest(".top-actions") && !tgt.closest("#user-pill")) {
+        if (tgt.closest && !tgt.closest(".top-actions")) {
             closeHeaderPopovers();
         }
     });
@@ -3170,7 +3134,6 @@ async function loadUserProfile() {
         refreshRecapEngineLock();
         paintVoiceTtsBalanceLine(data);
         paintTtsTodaySurfaces(data);
-        if (typeof updateHeaderBalanceSummary === "function") updateHeaderBalanceSummary(data);
         if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
         // Batch BW: repaint the TTS counter now the per-user limit is
         // known (init painted it before the profile arrived).
@@ -3197,8 +3160,6 @@ async function loadUserProfile() {
         }
 
         const vipBadge = document.getElementById("vip-status-badge");
-        const voiceBalChip = document.getElementById("user-voice-bal");
-        const recapBalChip = document.getElementById("user-recap-bal");
 
         const catTag = document.getElementById("profile-category-tag");
         const charCount = document.getElementById("char-count");
@@ -3208,12 +3169,6 @@ async function loadUserProfile() {
         if (vipBadge) {
             vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
             vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 VIP" : "FREE");
-        }
-        if (voiceBalChip) {
-            voiceBalChip.innerText = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
-        }
-        if (recapBalChip) {
-            recapBalChip.innerText = data.is_admin ? "🎬 ∞" : `🎬 ${data.recap_credits || 0}c`;
         }
 
         if (catTag) {
@@ -4250,16 +4205,12 @@ window.paintVipPlanBalances = paintVipPlanBalances;
 // Mirrors the header/profile paint in loadUserProfile for the same
 function paintCachedUserHeader(data) {
     const vipBadge = document.getElementById("vip-status-badge");
-    const voiceBalChip = document.getElementById("user-voice-bal");
-    const recapBalChip = document.getElementById("user-recap-bal");
     const catTag = document.getElementById("profile-category-tag");
     const charCount = document.getElementById("char-count");
     if (vipBadge) {
         vipBadge.className = data.is_vip ? "vip-badge vip" : "vip-badge free";
         vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 VIP" : "FREE");
     }
-    if (voiceBalChip) voiceBalChip.innerText = data.is_admin ? "🎙️ ∞" : `🎙️ ${data.balance_minutes}m`;
-    if (recapBalChip) recapBalChip.innerText = data.is_admin ? "🎬 ∞" : `🎬 ${_fmtCreditNum(data.available_recap_credits ?? data.recap_credits)}c`;
     if (catTag) {
         catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
         catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
@@ -4278,7 +4229,6 @@ function paintCachedUserHeader(data) {
     if (typeof renderMyRecapPresets === "function") renderMyRecapPresets();
     paintVoiceTtsBalanceLine(data);
     paintTtsTodaySurfaces(data);
-    if (typeof updateHeaderBalanceSummary === "function") updateHeaderBalanceSummary(data);
     if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
 }
 
@@ -11514,13 +11464,6 @@ function paintHomeTilePeriods(data, quota) {
 function paintTtsTodaySurfaces(data) {
     if (!data) return;
     const rem = data.tts_today_remaining_seconds;
-    const chip = document.getElementById("user-tts-bal");
-    if (chip) {
-        if (data.is_admin) chip.innerText = "🎧 ∞";
-        else if (typeof rem === "number") chip.innerText = `🎧 ${(rem / 60).toFixed(1)}m`;
-        else if (data.tts_daily_limit_seconds === 0) chip.innerText = "🎧 ∞";
-        else if (typeof data.tts_balance_seconds === "number") chip.innerText = `🎧 ${(data.tts_balance_seconds / 60).toFixed(1)}m`;
-    }
     const ttsVal = document.getElementById("home-free-tts-value");
     if (ttsVal) {
         if (data.is_admin) ttsVal.innerText = "∞";
@@ -11555,14 +11498,11 @@ function paintTtsTodaySurfaces(data) {
 // The same two surfaces refreshed from a /api/tts/quota response —
 function paintTtsChipFromQuota(q) {
     if (!q) return;
-    const chip = document.getElementById("user-tts-bal");
     const ttsVal = document.getElementById("home-free-tts-value");
     if (q.is_admin || q.unlimited) {
-        if (chip) chip.innerText = "🎧 ∞";
         if (ttsVal) ttsVal.innerText = q.is_admin ? "∞" : t("unlimited");
     } else {
         const total = (q.referral_seconds || 0) + (q.remaining_seconds || 0);
-        if (chip) chip.innerText = `🎧 ${(total / 60).toFixed(1)}m`;
         if (ttsVal) ttsVal.innerText = tf("home_free_value_min", { min: (total / 60).toFixed(1) });
     }
     window._lastTtsQuota = q;
