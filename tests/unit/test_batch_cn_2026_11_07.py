@@ -210,16 +210,10 @@ def test_cn2_toggle_pattern_css_and_js():
 
 # ── CN-3: Edge-mode declutter + voice hint ──────────────────────────
 
-def test_cn3_edge_voice_hint_element_and_copy():
-    assert _i18n_values("tts_edge_voice_hint") == [
-        "Edge မှာ မြန်မာ & Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်",
-        "Edge offers 8 Burmese-fluent Neural voices (4 Male · 4 Female)",
-    ]
-    pane = _tts_pane()
-    hint = '<p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ &amp; Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်</p>'
-    assert hint in pane
-    # It sits with the Edge voice row it explains inside the engine card.
-    assert pane.index('id="tts-edge-voice-row"') < pane.index('id="tts-edge-voice-hint"') < pane.index('id="tts-cost-hint-toggle"')
+def test_cn3_edge_voice_hint_retired_in_round8_1():
+    # Round 8.1 Item 1: #tts-edge-voice-hint and tts_edge_voice_hint removed
+    assert 'id="tts-edge-voice-hint"' not in HTML
+    assert "tts_edge_voice_hint" not in I18N_JS
 
 
 def test_cn3_visibility_painter_covers_all_surfaces():
@@ -227,10 +221,10 @@ def test_cn3_visibility_painter_covers_all_surfaces():
     for el_id in (
         "tts-gemini-voice-row",
         "tts-edge-voice-row",
-        "tts-edge-voice-hint",
         "tts-taste-note",
     ):
         assert f'getElementById("{el_id}")' in fn, el_id
+    assert "tts-edge-voice-hint" not in fn
     # Gemini-only surfaces keyed on the engine, both directions.
     assert 'classList.toggle("hidden", engine !== "gemini")' in fn
     assert 'classList.toggle("hidden", engine !== "edge")' in fn
@@ -285,10 +279,10 @@ class El {
 }
 
 const ids = ["tts-gemini-voice-row", "tts-edge-voice-row",
-             "tts-edge-voice-hint", "tts-taste-note", "tts-cost-hint-more", "profile-key-guide-body"];
+             "tts-taste-note", "tts-cost-hint-more", "profile-key-guide-body"];
 const els = {};
 ids.forEach(id => { els[id] = new El(id); });
-["tts-edge-voice-row", "tts-edge-voice-hint", "tts-taste-note", "tts-cost-hint-more", "profile-key-guide-body"]
+["tts-edge-voice-row", "tts-taste-note", "tts-cost-hint-more", "profile-key-guide-body"]
     .forEach(id => els[id].classList.add("hidden"));
 
 const window = {};
@@ -304,15 +298,15 @@ const H = id => els[id].classList.contains("hidden");
 const results = {};
 applyTtsEngineVisibility();
 results.initial = { gRow: H("tts-gemini-voice-row"),
-                    eRow: H("tts-edge-voice-row"), hint: H("tts-edge-voice-hint"), taste: H("tts-taste-note") };
+                    eRow: H("tts-edge-voice-row"), taste: H("tts-taste-note") };
 ttsState.engine = "edge";
 applyTtsEngineVisibility();
-results.edge = { taste: H("tts-taste-note"), hint: H("tts-edge-voice-hint"),
+results.edge = { taste: H("tts-taste-note"),
                  gRow: H("tts-gemini-voice-row"), eRow: H("tts-edge-voice-row") };
 ttsState.engine = "gemini";
 _cgQuotaCache = { gemini_taste_remaining_seconds: 120, has_own_key: false };
 applyTtsEngineVisibility();
-results.gemini = { hint: H("tts-edge-voice-hint"), taste: H("tts-taste-note"),
+results.gemini = { taste: H("tts-taste-note"),
                    tasteText: els["tts-taste-note"].textContent };
 // Expanders: open → close round trip on both blocks.
 function fakeBtn(target) {
@@ -343,9 +337,8 @@ def test_cn_behaviour_under_node():
     )
     assert out.returncode == 0, out.stderr
     r = json.loads(out.stdout.strip().splitlines()[-1])
-    assert r["initial"] == {"gRow": False, "eRow": True, "hint": True, "taste": True}
-    assert r["edge"] == {"taste": True, "hint": False, "gRow": True, "eRow": False}
-    assert r["gemini"]["hint"] is True
+    assert r["initial"] == {"gRow": False, "eRow": True, "taste": True}
+    assert r["edge"] == {"taste": True, "gRow": True, "eRow": False}
     assert r["gemini"]["taste"] is False and "tts_taste_remaining" in r["gemini"]["tasteText"]
     assert r["costOpen"] == {"body": False, "aria": "true", "open": True}
     assert r["costClosed"] == {"body": True, "aria": "false"}

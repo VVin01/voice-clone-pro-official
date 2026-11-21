@@ -126,6 +126,8 @@ _RETIRED_VIP_STATIC_IDS = {
     "tts-byok-advanced-body", "tts-byok-advanced-toggle", "tts-gemini-key-card",
     "tts-key-active-badge", "tts-key-guide-body", "tts-key-guide-toggle",
     "tts-key-input", "tts-key-state",
+    # Round 8.1: #tts-edge-voice-hint removed from #tab-tts
+    "tts-edge-voice-hint",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",

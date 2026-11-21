@@ -384,7 +384,6 @@ const translations = {
         tts_cost_hint_more_vip: "VIP — တစ်နေ့ TTS 60 မိနစ် · တစ်ကြိမ် စာလုံး {max_chars} အထိ။",
         tts_cost_hint_more_vip_ref: "VIP — တစ်နေ့ TTS 60 မိနစ် · တစ်ကြိမ် စာလုံး {max_chars} အထိ။",
         tts_details_toggle: "အသေးစိတ် ကြည့်ရန်",
-        tts_edge_voice_hint: "Edge မှာ မြန်မာ & Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
         tts_key_card_title: "🔑 ကိုယ်ပိုင် Gemini Key",
         tts_key_state_none: "Key မထည့်ရသေးပါ",
@@ -2154,7 +2153,6 @@ const translations = {
         tts_cost_hint_more_vip: "VIP — 60 min/day TTS · Up to {max_chars} characters per generation.",
         tts_cost_hint_more_vip_ref: "VIP — 60 min/day TTS · Up to {max_chars} characters per generation.",
         tts_details_toggle: "View details",
-        tts_edge_voice_hint: "Edge offers 8 Burmese-fluent Neural voices (4 Male · 4 Female)",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
         tts_key_card_title: "🔑 Your Own Gemini Key",
         tts_key_state_none: "No key saved yet",

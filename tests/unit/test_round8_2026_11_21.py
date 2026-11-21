@@ -134,6 +134,7 @@ def test_round8_part_b_retired_markers_and_keys_removed():
         "tts_balance_line_paid",
         "tts_balance_line_free_daily",
         "voice_tts_balance_line",
+        "tts_edge_voice_hint",
     )
     for key in removed_keys:
         assert key not in tr["my"], f"Dead i18n key in my: {key}"
@@ -142,6 +143,7 @@ def test_round8_part_b_retired_markers_and_keys_removed():
 
     for dead_html_id in (
         'id="tts-balance-line"',
+        'id="tts-edge-voice-hint"',
         'id="tts-gemini-key-card"',
         'id="tts-byok-advanced-toggle"',
         'id="tts-byok-advanced-body"',
@@ -170,6 +172,7 @@ def test_round8_part_b_retired_markers_and_keys_removed():
         "paintVoiceTtsBalanceLine",
         "voice-tts-balance-line",
         "tts-balance-line",
+        "tts-edge-voice-hint",
         "tts-gemini-key-card",
         "saveTtsGeminiKey",
         "deleteTtsGeminiKey",
@@ -611,3 +614,191 @@ async def test_round8_part_c_curated_preset_and_upload_flow_unchanged(db_session
     job_up = await db_session.get(Job, resp_up["job_id"])
     assert job_up is not None
     assert job_up.source_audio_path and Path(job_up.source_audio_path).is_file()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_round8_1_tts_button_resets_on_success_failure_and_cancel_under_node():
+    """Round 8.1 Item 2: verify #btn-generate-tts immediately returns from busy
+    ('✓ ဖန်တီးနေပါပြီ', disabled) to idle ('🎧 အသံ ထုတ်မည် (~0.1 မိနစ်)', enabled)
+    on TTS terminal states (SUCCESS, FAILED, CANCELLED) without user interaction.
+    """
+    fn_names = (
+        "createSubmitGuard",
+        "guardBegin",
+        "guardSuccess",
+        "guardFailure",
+        "guardRearmCheck",
+        "studioConfigFingerprint",
+        "setSubmitButtonState",
+        "studioSubmitBegin",
+        "studioSubmitSuccess",
+        "studioSubmitFailure",
+        "_resetTtsSubmitControls",
+        "syncTtsTerminalState",
+        "syncTtsStateFromLiveJobs",
+        "syncTtsExcessAndCost",
+        "pollTtsJob",
+    )
+    bundle = "\n".join(_extract_fn(APP_JS, name) for name in fn_names)
+    script = f"""
+const vm = require('vm');
+function mkEl(id, extra = {{}}) {{
+    const s = new Set(extra._classes || []);
+    return Object.assign({{
+        id,
+        value: '',
+        textContent: '',
+        innerText: '',
+        disabled: false,
+        dataset: {{}},
+        attrs: {{}},
+        style: {{}},
+        classList: {{
+            add: (...c) => c.forEach(x => s.add(x)),
+            remove: (...c) => c.forEach(x => s.delete(x)),
+            toggle: (c, f) => {{ const w = f === undefined ? !s.has(c) : !!f; if (w) s.add(c); else s.delete(c); return w; }},
+            contains: c => s.has(c),
+        }},
+        setAttribute(k, v) {{ this.attrs[k] = String(v); }},
+        getAttribute(k) {{ return this.attrs[k] ?? null; }},
+        querySelector() {{ return null; }},
+        load() {{}},
+        play() {{ return Promise.resolve(); }},
+    }}, extra);
+}}
+
+const span = mkEl('tts-btn-text', {{ innerText: '🎧 အသံ ထုတ်မည်', attrs: {{ 'data-i18n': 'tts_generate_btn' }} }});
+const est = mkEl('tts-btn-est-cost', {{ textContent: '' }});
+const btn = mkEl('btn-generate-tts', {{
+    querySelector(sel) {{ return sel === '.btn-text' ? span : (sel === '.vcp-btn-est-cost' ? est : null); }},
+}});
+const els = {{
+    'btn-generate-tts': btn,
+    'tts-btn-est-cost': est,
+    'tts-text-input': mkEl('tts-text-input', {{ value: 'မင်္ဂလာပါ စမ်းသပ်မှု' }}),
+    'tts-progress-box': mkEl('tts-progress-box', {{ _classes: ['hidden'] }}),
+    'tts-progress-fill': mkEl('tts-progress-fill'),
+    'tts-result-box': mkEl('tts-result-box', {{ _classes: ['hidden'] }}),
+    'tts-failed-box': mkEl('tts-failed-box', {{ _classes: ['hidden'] }}),
+    'tts-failed-msg': mkEl('tts-failed-msg'),
+    'btn-cancel-tts-job': mkEl('btn-cancel-tts-job', {{ _classes: ['hidden'] }}),
+    'tts-audio-player': mkEl('tts-audio-player'),
+    'btn-download-tts': mkEl('btn-download-tts'),
+    'btn-tts-send-telegram': mkEl('btn-tts-send-telegram'),
+    'tts-oversize-note': mkEl('tts-oversize-note', {{ _classes: ['hidden'] }}),
+}};
+
+let statusPayload = {{ status: 'QUEUED' }};
+let intervalCb = null;
+const dict = {{
+    tts_generate_btn: '🎧 အသံ ထုတ်မည်',
+    submit_already_creating: '✓ ဖန်တီးနေပါပြီ',
+    est_cost_min_badge: '(~{{min}} မိနစ်)',
+    voice_cancelled_toast: 'Cancelled',
+    tts_failed: 'Failed',
+    voice_wait_timeout: 'Timeout',
+}};
+
+const ctx = {{
+    window: {{}},
+    state: {{ user: {{ is_admin: true, is_vip: true, character_limit: 5000 }} }},
+    ttsState: {{ engine: 'gemini', speed: '+12%', jobId: null, pollTimer: null }},
+    localStorage: {{ removeItem: () => {{}}, setItem: () => {{}}, getItem: () => null }},
+    document: {{ getElementById: (id) => els[id] || null }},
+    liveJobsIsTerminal: (s) => ['SUCCESS', 'FAILED', 'CANCELLED'].includes(String(s || '').toUpperCase()),
+    LiveJobs: {{ jobs: new Map(), track: (j) => ctx.LiveJobs.jobs.set(j.id, j) }},
+    setInterval: (fn) => {{ intervalCb = fn; return 77; }},
+    clearInterval: () => {{ intervalCb = null; }},
+    fetch: async () => ({{ ok: true, json: async () => statusPayload }}),
+    getAuthHeaders: () => ({{}}),
+    estimateSpeechMinutesFromText: () => '0.1',
+    paintProgressBarFill: () => {{}},
+    haptic: () => {{}},
+    setAuthMediaSource: async () => false,
+    brandedDlName: () => 'tts.wav',
+    refreshTtsQuota: () => {{}},
+    loadUserProfile: () => {{}},
+    loadUserHistory: () => {{}},
+    showStudioToast: () => {{}},
+    mapErrorToToast: (m) => m || 'err',
+    t: (k) => dict[k] || k,
+    tf: (k, v) => (dict[k] || k).replace('{{min}}', v && v.min),
+}};
+ctx.ttsSubmitGuard = null;
+vm.runInNewContext({json.dumps(bundle)} + '; const ttsSubmitGuard = createSubmitGuard(); globalThis.ttsSubmitGuard = ttsSubmitGuard;', ctx);
+
+async function runCase(jobId, terminalStatus) {{
+    ctx.syncTtsExcessAndCost(els['tts-text-input'].value.length, 5000);
+    const began = ctx.studioSubmitBegin('tts');
+    ctx.studioSubmitSuccess('tts');
+    ctx.ttsState.jobId = jobId;
+    const whileBusy = {{
+        began,
+        disabled: btn.disabled,
+        label: (span.innerText + est.textContent).trim(),
+        estHidden: est.classList.contains('hidden'),
+        fp: ctx.ttsSubmitGuard.submittedFingerprint,
+    }};
+
+    statusPayload = terminalStatus === 'SUCCESS'
+        ? {{ status: 'SUCCESS', output_audio_url: '/api/jobs/' + jobId + '/audio', telegram_sendable: true }}
+        : {{ status: terminalStatus, error_message: 'boom' }};
+    ctx.pollTtsJob(jobId);
+    await intervalCb();
+
+    // Also simulate late profile/LiveJobs button repaint with no user input
+    ctx.setSubmitButtonState('tts');
+    const afterSettle = {{
+        disabled: btn.disabled,
+        label: (span.innerText + est.textContent).trim(),
+        estHidden: est.classList.contains('hidden'),
+        fp: ctx.ttsSubmitGuard.submittedFingerprint,
+        canResubmitImmediately: ctx.studioSubmitBegin('tts'),
+    }};
+    ctx.studioSubmitFailure('tts'); // reset before next case
+    return {{ whileBusy, afterSettle }};
+}}
+
+(async () => {{
+    const s = await runCase('tts_ok', 'SUCCESS');
+    const f = await runCase('tts_fail', 'FAILED');
+    const c = await runCase('tts_cancel', 'CANCELLED');
+
+    // Also test LiveJobs catch-up helper when LiveJobs sees a terminal job before pollTtsJob finishes
+    ctx.studioSubmitBegin('tts');
+    ctx.studioSubmitSuccess('tts');
+    ctx.ttsState.jobId = 'tts_lj';
+    ctx.LiveJobs.jobs.set('tts_lj', {{ id: 'tts_lj', kind: 'tts', status: 'SUCCESS' }});
+    ctx.syncTtsStateFromLiveJobs({{ id: 'tts_lj', kind: 'tts', status: 'SUCCESS' }});
+    const afterLiveJobs = {{
+        disabled: btn.disabled,
+        label: (span.innerText + est.textContent).trim(),
+        estHidden: est.classList.contains('hidden'),
+        fp: ctx.ttsSubmitGuard.submittedFingerprint,
+    }};
+
+    console.log(JSON.stringify({{ s, f, c, afterLiveJobs }}));
+}})().catch(e => {{ console.error(e); process.exit(1); }});
+"""
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, proc.stderr
+    res = json.loads(proc.stdout.strip().splitlines()[-1])
+    for key in ("s", "f", "c"):
+        assert res[key]["whileBusy"]["began"] is True
+        assert res[key]["whileBusy"]["disabled"] is True
+        assert res[key]["whileBusy"]["label"] == "✓ ဖန်တီးနေပါပြီ"
+        assert res[key]["whileBusy"]["estHidden"] is True
+        assert res[key]["whileBusy"]["fp"] is not None
+
+        assert res[key]["afterSettle"]["disabled"] is False
+        assert res[key]["afterSettle"]["label"] == "🎧 အသံ ထုတ်မည် (~0.1 မိနစ်)"
+        assert res[key]["afterSettle"]["estHidden"] is False
+        assert res[key]["afterSettle"]["fp"] is None
+        assert res[key]["afterSettle"]["canResubmitImmediately"] is True
+
+    assert res["afterLiveJobs"] == {
+        "disabled": False,
+        "label": "🎧 အသံ ထုတ်မည် (~0.1 မိနစ်)",
+        "estHidden": False,
+        "fp": None,
+    }

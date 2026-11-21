@@ -1182,6 +1182,7 @@ const LiveJobs = {
         }
         syncRecapStateFromLiveJobs();
         if (typeof syncVoiceStateFromLiveJobs === "function") syncVoiceStateFromLiveJobs();
+        if (typeof syncTtsStateFromLiveJobs === "function") syncTtsStateFromLiveJobs();
         renderLiveJobsPill();
         renderLiveJobsSheet();
     },
@@ -1552,15 +1553,10 @@ window.liveJobCancel = function(jobId, kind) {
                     if (btn) btn.disabled = false;
                     if (typeof setSubmitButtonState === "function") setSubmitButtonState("voice");
                 }
-                if (typeof ttsState !== "undefined" && ttsState.jobId === jobId) {
-                    if (ttsState.pollTimer) clearInterval(ttsState.pollTimer);
-                    ttsState.pollTimer = null;
-                    const tBox = document.getElementById("tts-progress-box");
-                    if (tBox) tBox.classList.add("hidden");
-                    const tCancel = document.getElementById("btn-cancel-tts-job");
-                    if (tCancel) tCancel.classList.add("hidden");
-                    const tBtn = document.getElementById("btn-generate-tts");
-                    if (tBtn) tBtn.disabled = false;
+                if (kind === "tts" || (typeof ttsState !== "undefined" && ttsState.jobId === jobId)) {
+                    const cancelledTts = { id: jobId, kind: "tts", status: "CANCELLED", progress_percent: 0 };
+                    if (typeof syncTtsTerminalState === "function") syncTtsTerminalState(cancelledTts);
+                    LiveJobs.track(cancelledTts);
                 }
                 LiveJobs.fetchNow();
                 loadUserHistory();
@@ -1890,6 +1886,9 @@ LiveJobs.subscribe((job) => {
     if (job && job.kind === "voice" && liveJobsIsTerminal(job.status)) {
         syncVoiceStateFromLiveJobs(job);
     }
+    if (job && job.kind === "tts" && liveJobsIsTerminal(job.status)) {
+        syncTtsStateFromLiveJobs(job);
+    }
 });
 
 // ── Round 7 Item 2: Voice detail view terminal-state sync (reusing LiveJobs) ──
@@ -2007,6 +2006,51 @@ function syncVoiceStateFromLiveJobs(changedJob) {
     } catch (e) {}
 }
 window.syncVoiceStateFromLiveJobs = syncVoiceStateFromLiveJobs;
+
+function _resetTtsSubmitControls() {
+    if (typeof ttsSubmitGuard !== "undefined") {
+        ttsSubmitGuard.inFlight = false;
+        ttsSubmitGuard.submittedFingerprint = null;
+        ttsSubmitGuard._fp = null;
+    }
+    const btn = document.getElementById("btn-generate-tts");
+    if (btn) btn.disabled = false;
+    const tInp = document.getElementById("tts-text-input");
+    if (tInp && typeof syncTtsExcessAndCost === "function") {
+        const u = (typeof state !== "undefined" && state && state.user) || {};
+        const maxC = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+        syncTtsExcessAndCost((tInp.value || "").length, maxC);
+    }
+    if (typeof setSubmitButtonState === "function") setSubmitButtonState("tts");
+}
+
+function syncTtsTerminalState(job) {
+    if (!job || !liveJobsIsTerminal(job.status)) return;
+    const isCurrent = typeof ttsState === "undefined" || !ttsState.jobId || ttsState.jobId === job.id;
+    if (isCurrent && typeof ttsState !== "undefined" && ttsState.pollTimer) {
+        clearInterval(ttsState.pollTimer);
+        ttsState.pollTimer = null;
+    }
+    if (!isCurrent) return;
+    try { localStorage.removeItem("vcp_active_tts_job_id"); } catch (e) {}
+    const progressBox = document.getElementById("tts-progress-box");
+    if (progressBox) progressBox.classList.add("hidden");
+    const cancelBtn = document.getElementById("btn-cancel-tts-job");
+    if (cancelBtn) cancelBtn.classList.add("hidden");
+    _resetTtsSubmitControls();
+}
+window.syncTtsTerminalState = syncTtsTerminalState;
+
+function syncTtsStateFromLiveJobs(changedJob) {
+    try {
+        const targetId = (typeof ttsState !== "undefined" && ttsState.jobId) || (changedJob && changedJob.kind === "tts" ? changedJob.id : null);
+        if (!targetId || typeof LiveJobs === "undefined" || !LiveJobs.jobs) return;
+        const tracked = LiveJobs.jobs.get(targetId);
+        if (!tracked || tracked.kind !== "tts" || !liveJobsIsTerminal(tracked.status)) return;
+        _resetTtsSubmitControls();
+    } catch (e) {}
+}
+window.syncTtsStateFromLiveJobs = syncTtsStateFromLiveJobs;
 
 // History cards for tracked jobs update IN PLACE: the cached row's
 let liveHistoryReloadPending = false;
@@ -12082,8 +12126,6 @@ function applyTtsEngineVisibility() {
     const eRow = document.getElementById("tts-edge-voice-row");
     if (gRow) gRow.classList.toggle("hidden", engine !== "gemini");
     if (eRow) eRow.classList.toggle("hidden", engine !== "edge");
-    const edgeHint = document.getElementById("tts-edge-voice-hint");
-    if (edgeHint) edgeHint.classList.toggle("hidden", engine !== "edge");
     const tasteNote = document.getElementById("tts-taste-note");
     if (tasteNote) {
         if (engine !== "gemini") tasteNote.classList.add("hidden");
@@ -12228,13 +12270,10 @@ function pollTtsJob(jobId) {
             if (data.status === "QUEUED" || data.status === "RUNNING") {
                 if (fill) paintProgressBarFill(fill, { status: data.status, progress_percent: 0 });
             } else if (data.status === "SUCCESS") {
-                try { localStorage.removeItem("vcp_active_tts_job_id"); } catch (e) {}
-                clearInterval(ttsState.pollTimer);
-                ttsState.pollTimer = null;
-                if (cancelBtn) cancelBtn.classList.add("hidden");
+                const terminalJob = { id: jobId, kind: "tts", status: "SUCCESS", progress_percent: 100, stage_index: 1, stage_total: 1 };
+                syncTtsTerminalState(terminalJob);
+                if (typeof LiveJobs !== "undefined" && typeof LiveJobs.track === "function") LiveJobs.track(terminalJob);
                 haptic("success");
-                if (progressBox) progressBox.classList.add("hidden");
-                if (btn) btn.disabled = false;
                 if (resultBox) resultBox.classList.remove("hidden");
                 const player = document.getElementById("tts-audio-player");
                 if (player && data.output_audio_url) {
@@ -12256,12 +12295,9 @@ function pollTtsJob(jobId) {
                 loadUserProfile();
                 loadUserHistory();
             } else if (data.status === "FAILED" || data.status === "CANCELLED") {
-                try { localStorage.removeItem("vcp_active_tts_job_id"); } catch (e) {}
-                clearInterval(ttsState.pollTimer);
-                ttsState.pollTimer = null;
-                if (cancelBtn) cancelBtn.classList.add("hidden");
-                if (progressBox) progressBox.classList.add("hidden");
-                if (btn) btn.disabled = false;
+                const terminalJob = { id: jobId, kind: "tts", status: data.status, progress_percent: 0 };
+                syncTtsTerminalState(terminalJob);
+                if (typeof LiveJobs !== "undefined" && typeof LiveJobs.track === "function") LiveJobs.track(terminalJob);
                 if (data.status !== "FAILED") {
                     haptic("light");
                     showStudioToast(t("voice_cancelled_toast"), 'info', 5000);
@@ -12281,7 +12317,7 @@ function pollTtsJob(jobId) {
                 ttsState.pollTimer = null;
                 if (cancelBtn) cancelBtn.classList.add("hidden");
                 if (progressBox) progressBox.classList.add("hidden");
-                if (btn) btn.disabled = false;
+                _resetTtsSubmitControls();
                 showStudioToast(t("voice_wait_timeout"), 'info', 6000);
             }
         } catch (e) {
@@ -12292,8 +12328,7 @@ function pollTtsJob(jobId) {
                 if (cancelBtn) cancelBtn.classList.add("hidden");
                 const progressBox = document.getElementById("tts-progress-box");
                 if (progressBox) progressBox.classList.add("hidden");
-                const btn = document.getElementById("btn-generate-tts");
-                if (btn) btn.disabled = false;
+                _resetTtsSubmitControls();
             }
         }
     }, 2000);
