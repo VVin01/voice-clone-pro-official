@@ -9729,11 +9729,11 @@ select.studio-select, select.studio-input, select.glass-dropdown {
 html[data-theme="light"] .sticky-cta-bar { background: rgba(255, 255, 255, 0.97) !important; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14); }
 .content-viewport,
 .tab-pane.active,
-#tab-recap.active,
 #tab-admin.active { padding-bottom: calc(var(--nav-h, 68px) + 148px + env(safe-area-inset-bottom, 0px)) !important; }
 #tab-home.active,
 #tab-voice.active,
 #tab-tts.active,
+#tab-recap.active,
 #tab-history.active,
 #tab-downloader.active,
 #tab-profile.active,
@@ -9741,6 +9741,7 @@ html[data-theme="light"] .sticky-cta-bar { background: rgba(255, 255, 255, 0.97)
 .content-viewport:has(#tab-home.active),
 .content-viewport:has(#tab-voice.active),
 .content-viewport:has(#tab-tts.active),
+.content-viewport:has(#tab-recap.active),
 .content-viewport:has(#tab-history.active),
 .content-viewport:has(#tab-downloader.active),
 .content-viewport:has(#tab-profile.active),
@@ -10532,4 +10533,92 @@ html[data-theme="dark"].lite #tab-voice .ref-sample-card {
 }
 #tab-tts > .hub-link {
     margin-top: 0;
+}
+/* 2026-11-22 Round 9 — Recap Step 1 source toggle/dropzone alignment & TTS voice bar */
+#tab-recap #recap-step-1 .source-tab-btn {
+    white-space: nowrap;
+    padding: 8px 8px;
+    font-size: 12.5px;
+}
+#tab-recap #recap-video-drop-zone {
+    border-radius: 14px;
+    border: 1px solid var(--border-strong, rgba(22, 40, 60, 0.16));
+    border-style: solid;
+    background: var(--vcp-flat-glass-bg, var(--surface));
+    padding: 10px 12px;
+    text-align: left;
+}
+#tab-recap #recap-video-drop-zone.dragover {
+    border-color: #7C3AED;
+    background: rgba(124, 58, 237, 0.10);
+}
+html.lite #tab-recap #recap-video-drop-zone {
+    background: #FFFFFF;
+}
+html[data-theme="dark"].lite #tab-recap #recap-video-drop-zone {
+    background: #141D33;
+}
+#tab-recap #recap-video-drop-zone .drop-zone-content {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 3px 8px;
+    text-align: left;
+}
+#tab-recap #recap-video-drop-zone .drop-icon {
+    font-size: 18px;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+#tab-recap #recap-video-drop-zone .drop-text {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#tab-recap #recap-video-drop-zone .drop-subtext,
+#tab-recap #recap-video-drop-zone .drop-limits,
+#tab-recap #recap-video-drop-zone .drop-desktop-hint {
+    flex: 0 0 100%;
+    width: 100%;
+    font-size: 11.5px;
+    line-height: 1.4;
+}
+#tab-recap #recap-video-drop-zone .drop-desktop-hint[hidden] {
+    display: none !important;
+}
+#tab-tts .voice-selected-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 16px;
+    background: rgba(248, 251, 255, 0.94);
+    border: 1px solid rgba(37, 99, 235, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+#tab-tts .voice-selected-row .tts-voice-select-flex {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+}
+html[data-theme="dark"] #tab-tts .voice-selected-row {
+    background: rgba(22, 33, 58, 0.92);
+    border-color: rgba(96, 165, 250, 0.24);
+    box-shadow: none;
+}
+html.lite #tab-tts .voice-selected-row {
+    background: #FFFFFF !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05) !important;
+}
+html[data-theme="dark"].lite #tab-tts .voice-selected-row {
+    background: #141D33 !important;
+    box-shadow: none !important;
 }

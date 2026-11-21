@@ -737,7 +737,7 @@ def test_aw_recap_step3_edge_pill_and_engine_lock():
 def test_aw_i18n_keys_exist_in_both_languages():
     keys = [
         "tab_tts", "tts_engine_label",
-        "tts_engine_gemini", "tts_engine_edge", "tts_voice_label",
+        "tts_engine_gemini", "tts_engine_edge",
         "tts_edge_thiha", "tts_edge_nilar", "tts_text_placeholder",
         "tts_cost_hint", "tts_generate_btn", "tts_queue_notice",
         "tts_status_generating", "tts_failed", "tts_empty_error",

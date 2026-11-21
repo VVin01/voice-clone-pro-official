@@ -532,8 +532,7 @@
                             <span class="seg-title" data-i18n="tts_engine_edge">🎧 Edge TTS</span>
                         </button>
                     </div>
-                    <div class="control-row mt-2" id="tts-gemini-voice-row">
-                        <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
+                    <div class="control-row voice-selected-row mt-2" id="tts-gemini-voice-row">
                         <div class="tts-voice-select-flex">
                         <select id="tts-gemini-voice-select" class="studio-select glass-dropdown">
                             <option value="Charon" data-i18n="gem_voice_charon">ကိုသီဟ (ကျား)</option>
@@ -552,8 +551,7 @@
                         </button>
                         </div>
                     </div>
-                    <div class="control-row mt-2 hidden" id="tts-edge-voice-row">
-                        <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
+                    <div class="control-row voice-selected-row mt-2 hidden" id="tts-edge-voice-row">
                         <div class="tts-voice-select-flex">
                         <select id="tts-edge-voice-select" class="studio-select glass-dropdown">
                             <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (ကျား)</option>
@@ -665,13 +663,6 @@
 
             <!-- ════ TAB 2: AI RECAP STUDIO ════ -->
             <section id="tab-recap" class="tab-pane">
-                <div class="pane-header">
-                    <div class="pane-title-row">
-                        <h2 data-i18n="recap_title">🎬 AI Movie Recap Maker</h2>
-                        <span class="badge-studio gold">PRO</span>
-                    </div>
-                    <p data-i18n="recap_subtitle">မည်သည့်ဗီဒီယိုကိုမဆို မြန်မာအသံ၊ စာတန်းနှင့် စမတ် Blur ပါသော Recap အဖြစ် ပြောင်းပါ</p>
-                </div>
 
 
                 <!-- ════ DEMO SAMPLE SLOT (batch L) ════
@@ -727,10 +718,10 @@
         <!-- Mode Selector: URL Link vs Direct File Upload -->
         <div class="source-mode-toggle mt-2">
             <button type="button" class="source-tab-btn active" id="btn-source-mode-url">
-                <span data-i18n="recap_source_tab_url">🔗 ဗီဒီယို Link (URL)</span>
+                <span data-i18n="recap_source_tab_url">🔗 ဗီဒီယို လင့်ခ်</span>
             </button>
             <button type="button" class="source-tab-btn" id="btn-source-mode-file">
-                <span data-i18n="recap_source_tab_file">📁 ဗီဒီယိုဖိုင် တင်ရန် (Upload MP4)</span>
+                <span data-i18n="recap_source_tab_file">📁 ဗီဒီယိုဖိုင် တင်ရန်</span>
             </button>
         </div>
 
@@ -740,8 +731,6 @@
                 <input type="url" id="recap-url-input" data-i18n-ph="recap_url_placeholder" placeholder="ဗီဒီယို Link ကူးထည့်ပါ">
                 <button class="btn mini-btn" id="btn-fetch-recap-info" data-i18n="btn_analyze">စစ်ဆေးမည်</button>
             </div>
-            <p class="link-source-help" data-i18n="link_help_recap">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်လို့ Link နဲ့ မရတာမျိုး ဖြစ်တတ်ပါတယ် — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်တာက အသေချာဆုံးပါ။</p>
-            <p class="link-source-help" data-i18n="recap_platforms_note">🔗 YouTube, TikTok, Facebook, Douyin (抖音) လင့်ခ်များ အသုံးပြုနိုင်ပါသည်</p>
         </div>
 
         <!-- Mode 2: Direct File Upload -->
@@ -1932,6 +1921,8 @@
                 <details class="recap-notes-collapse mt-3">
                     <summary><span data-i18n="recap_step1_notes_toggle">ℹ️ သတိပြုရန်နှင့် ကန့်သတ်ချက်များ</span><span aria-hidden="true">▾</span></summary>
                     <p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ ဒီ App က အသံအသစ်၊ ဘာသာပြန် Script နှင့် ပုံစံပြောင်း Render ဖြင့် ဗီဒီယိုကို ပြောင်းလဲပေးပါသည် — သို့သော် မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
+                    <p class="rights-note recap-rights-note" data-i18n="recap_platforms_note">🔗 YouTube, TikTok, Facebook, Douyin (抖音) လင့်ခ်များ အသုံးပြုနိုင်ပါသည်</p>
+                    <p class="rights-note recap-rights-note" data-i18n="link_help_recap">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်လို့ Link နဲ့ မရတာမျိုး ဖြစ်တတ်ပါတယ် — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်တာက အသေချာဆုံးပါ။</p>
 
                     <!-- 🌟 AUTO-SLIDING STUDIO ANNOUNCEMENT & POLICY CAROUSEL (CLEAN & COMPACT) 🌟 -->
                     <div class="studio-alert-carousel" id="studio-alert-carousel">
