@@ -174,8 +174,11 @@ def test_bt_voice_inline_status_flow_untouched():
     # Recap renderer scope: no voice elements, no voice writes.
     assert "voice-inline-status" not in body
     assert "voice-inline-status" not in _subscription_body()
-    # The voice studio still seeds its own inline line at submit.
-    assert 'showStudioInlineStatus("voice", t("preparing_msg"));' in APP_JS
+    # Round 7 Item 2: voice inline status strip was removed from Voice Studio
+    # (progress lives in the dedicated detail view & running-jobs bar only),
+    # while Recap's inline strip stays intact.
+    assert 'showStudioInlineStatus("voice", t("preparing_msg"));' not in APP_JS
+    assert 'if (kind === "voice") return;' in APP_JS
 
 
 def test_bt_submit_still_seeds_stage1_inline_text():

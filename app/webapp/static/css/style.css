@@ -4573,7 +4573,6 @@ input[type="range"]::-moz-range-thumb,
 #tab-voice > #voice-input-card { order: 3; }
 #tab-voice > #voxcpm-mode-section { order: 4; }
 #tab-voice > #voice-cta-block { order: 5; }
-#tab-voice > #voice-inline-status,
 #tab-voice > #voice-progress-box,
 #tab-voice > #voice-result-box,
 #tab-voice > .hub-link { order: 6; }
@@ -10033,8 +10032,7 @@ body.profile-loading .home-free-value { color: transparent !important; backgroun
 #tab-voice > .tutorial-banner-card { order: 1; }
 #tab-voice > #voice-progress-box,
 #tab-voice > #voice-failed-box,
-#tab-voice > #voice-result-box,
-#tab-voice > #voice-inline-status { order: 6; }
+#tab-voice > #voice-result-box { order: 6; }
 #tab-voice > .hub-link { order: 7; }
 .referral-banner-content .ref-desc { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; -webkit-line-clamp: unset !important; display: block !important; line-height: 1.5; }
 .persona-select-row,

@@ -785,6 +785,7 @@ const translations = {
         toast_copied: "ကူးယူပြီးပါပြီ!",
         toast_close: "ပိတ်မည်",
         toast_empty_text: "စာသား အရင် ရိုက်ထည့်ပေးပါ။",
+        toast_custom_voice_needs_sample: "အသံနမူနာ အရင် ရွေးချယ်ပါ — သို့မဟုတ် သိမ်းထားတဲ့ အသံကို ရွေးပါ",
         toast_empty_url: "Video URL အရင် ထည့်ပေးပါ။",
         toast_success_slip: "ပြေစာ တင်ပြီးပါပြီ — မကြာမီ စစ်ဆေးပေးပါမယ်။",
         btn_send_voice_telegram: "Telegram သို့ ပို့မည်",
@@ -930,7 +931,7 @@ const translations = {
         confirm_cost_none: "ကုန်ကျစရိတ်: Credit မဖြတ်ပါ။",
         confirm_watch_btn: "👀 အလုပ်ကို ကြည့်မည်",
         confirm_pill_hint: "💡 ဒီအလုပ်ကို အောက်ခြေက လုပ်နေဆဲ အလုပ်များ ခလုတ်ကနေလည်း အချိန်မရွေး ကြည့်နိုင်ပါတယ်။",
-        submit_already_creating: "✓ ဖန်တီးနေပါပြီ — ဆက်တင် တစ်ခုခု ပြင်ရင် နောက်တစ်ခု ထပ်လုပ်နိုင်ပါတယ်",
+        submit_already_creating: "✓ ဖန်တီးနေပါပြီ",
         gate_join_channel: "📢 Channel ကို Join မည်",
         gate_join_group: "👥 Group ကို Join မည်",
         gate_verify_btn: "✅ Join ပြီးပြီ — ပြန်စစ်မည်",
@@ -2566,6 +2567,7 @@ const translations = {
         toast_copied: "Copied!",
         toast_close: "Close",
         toast_empty_text: "Please enter your text first.",
+        toast_custom_voice_needs_sample: "Choose a voice sample first — or select a saved voice",
         toast_empty_url: "Please enter a video URL first.",
         toast_success_slip: "Slip submitted — we'll review it shortly.",
         btn_send_voice_telegram: "Send to Telegram",
@@ -2711,7 +2713,7 @@ const translations = {
         confirm_cost_none: "Cost: no credit charged.",
         confirm_watch_btn: "👀 Watch the job",
         confirm_pill_hint: "💡 You can also follow this job any time from the Jobs pill below.",
-        submit_already_creating: "✓ Already creating — change any setting to make another",
+        submit_already_creating: "✓ Creating…",
         gate_join_channel: "📢 Join the Channel",
         gate_join_group: "👥 Join the Group",
         gate_verify_btn: "✅ Joined — check again",
@@ -3757,6 +3759,7 @@ function localizeServerText(raw) {
     if (/ဆာဗာ သိုလှောင်နေရာ/.test(s)) return t("srv_disk_full");
     if (/ကိုယ်ပိုင် Logo ထည့်ခြင်းသည်/.test(s)) return t("srv_vip_logo_only");
     if (/ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည်/.test(s)) return t("srv_vip_clone_only");
+    if (/အသံနမူနာ အရင် ရွေးချယ်ပါ/.test(s)) return t("toast_custom_voice_needs_sample");
     if (/ရွေးထားတဲ့ အသံနမူနာ မမှန်ကန်ပါ|အသံနမူနာဖိုင် ရွေးချယ်ပေးပါ/.test(s)) return t("srv_invalid_sample");
     if (/ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ/.test(s)) return t("srv_invalid_voice");
     if (/Font ဖိုင် မမှန်ကန်ပါ|Font ဖိုင် ရွေးချယ်ပေးပါ|ရွေးထားတဲ့ Font မမှန်ကန်ပါ/.test(s)) return t("srv_invalid_font");

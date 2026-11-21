@@ -4324,6 +4324,17 @@ async def create_voice_job(
         except HTTPException:
             ref_audio_path = None
 
+    # Round 7 Item 3: VoxCPM requires either a curated preset_voice or a
+    # resolvable saved voice sample (source_audio_path). Rejecting missing
+    # samples here applies to admins too — a missing sample is a data error,
+    # not a billing gate — so a job can never silently fall back to a generic
+    # default voice.
+    if actual_engine == "voxcpm" and not req.preset_voice and not ref_audio_path:
+        raise HTTPException(
+            status_code=400,
+            detail="အသံနမူနာ အရင် ရွေးချယ်ပါ — သို့မဟုတ် သိမ်းထားတဲ့ အသံကို ရွေးပါ",
+        )
+
     try:
         job, _reason = await create_voice_clone_job(
             db,

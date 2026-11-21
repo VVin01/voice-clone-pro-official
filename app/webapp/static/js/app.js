@@ -1149,6 +1149,9 @@ const LiveJobs = {
         } else if (isNewTerminal && merged.status === "SUCCESS") {
             clearLiveJobsFailedToast();
         }
+        if (LiveJobs.started && liveJobsIsActive(merged.status) && !prev) {
+            LiveJobs.schedule();
+        }
         LiveJobs.notify(merged, { terminal: isNewTerminal });
     },
     applySnapshot(list) {
@@ -1178,6 +1181,7 @@ const LiveJobs = {
             }
         }
         syncRecapStateFromLiveJobs();
+        if (typeof syncVoiceStateFromLiveJobs === "function") syncVoiceStateFromLiveJobs();
         renderLiveJobsPill();
         renderLiveJobsSheet();
     },
@@ -1519,17 +1523,34 @@ window.liveJobCancel = function(jobId, kind) {
                     headers: getAuthHeaders(),
                 });
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data.detail || t("err_generic"));
+                if (!res.ok) {
+                    if (res.status === 409) {
+                        // Round 7 Item 2: job already ended on backend — reconcile
+                        // LiveJobs immediately so stale detail/dialog/pill finalize.
+                        LiveJobs.fetchNow();
+                    }
+                    throw new Error(data.detail || t("err_generic"));
+                }
                 showStudioToast(t("voice_cancelled_toast"), "info", 5000);
+                if (kind !== "tts") {
+                    state._voiceTerminalHandledJobId = jobId;
+                    if (typeof voiceSubmitGuard !== "undefined") voiceSubmitGuard.submittedFingerprint = null;
+                    if (typeof syncVoiceDetailTerminalState === "function") {
+                        syncVoiceDetailTerminalState({ id: jobId, kind: "voice", status: "CANCELLED", progress_percent: 0 });
+                    }
+                    LiveJobs.track({ id: jobId, kind: "voice", status: "CANCELLED", progress_percent: 0 });
+                }
                 if (state.activeJobId === jobId) {
                     if (state.pollTimer) clearInterval(state.pollTimer);
                     state.pollTimer = null;
+                    state["voiceDetailOpen"] = false;
                     const box = document.getElementById("voice-progress-box");
                     if (box) box.classList.add("hidden");
                     const cancelBtn = document.getElementById("btn-cancel-voice-job");
-                    if (cancelBtn) cancelBtn.classList.add("hidden");
+                    if (cancelBtn) { cancelBtn.classList.add("hidden"); cancelBtn.disabled = true; }
                     const btn = document.getElementById("btn-generate-voice");
                     if (btn) btn.disabled = false;
+                    if (typeof setSubmitButtonState === "function") setSubmitButtonState("voice");
                 }
                 if (typeof ttsState !== "undefined" && ttsState.jobId === jobId) {
                     if (ttsState.pollTimer) clearInterval(ttsState.pollTimer);
@@ -1588,6 +1609,9 @@ window.liveJobOpen = function(jobId, kind) {
 state.voiceDetailOpen = false;
 state.recapDetailOpen = false;
 function showStudioInlineStatus(kind, text) {
+    // Round 7 Item 2: Voice progress lives in the dedicated detail view and
+    // running-jobs bar only — never render an inline status strip in Voice Studio.
+    if (kind === "voice") return;
     const line = document.getElementById(kind + "-inline-status");
     const label = document.getElementById(kind + "-inline-status-text");
     if (label && text) label.innerText = text;
@@ -1597,14 +1621,42 @@ window.showStudioInlineStatus = showStudioInlineStatus;
 function openVoiceDetail(jobId) {
     const voiceTab = document.getElementById("tab-voice");
     if (voiceTab && !voiceTab.classList.contains("active")) switchTab("tab-voice");
+    const targetId = jobId || state.activeJobId;
+    const tracked = (targetId && typeof LiveJobs !== "undefined" && LiveJobs.jobs)
+        ? LiveJobs.jobs.get(targetId)
+        : null;
+    if (tracked && typeof liveJobsIsTerminal === "function" && liveJobsIsTerminal(tracked.status)) {
+        if (typeof syncVoiceDetailTerminalState === "function") syncVoiceDetailTerminalState(tracked);
+        if (tracked.status === "SUCCESS") {
+            state.voiceDetailOpen = false;
+            const box = document.getElementById("voice-progress-box");
+            if (box) box.classList.add("hidden");
+            const resultBox = document.getElementById("voice-result-box");
+            if (state._voiceResultRenderedJobId === targetId && resultBox && !resultBox.classList.contains("hidden")) {
+                resultBox.scrollIntoView({ behavior: "smooth" });
+            } else if (targetId && typeof loadCompletedVoiceJobResult === "function") {
+                loadCompletedVoiceJobResult(targetId, { scroll: true });
+            }
+            if (typeof syncTelegramBackButton === "function") syncTelegramBackButton();
+            return;
+        }
+        state.voiceDetailOpen = true;
+        const box = document.getElementById("voice-progress-box");
+        if (box) {
+            box.classList.remove("hidden");
+            box.scrollIntoView({ behavior: "smooth" });
+        }
+        if (typeof syncTelegramBackButton === "function") syncTelegramBackButton();
+        return;
+    }
     state.voiceDetailOpen = true;
     const box = document.getElementById("voice-progress-box");
     if (box) {
         box.classList.remove("hidden");
         box.scrollIntoView({ behavior: "smooth" });
     }
-    if (jobId && !state.pollTimer) startJobPolling(jobId);
-    syncTelegramBackButton();
+    if (targetId && !state.pollTimer) startJobPolling(targetId);
+    if (typeof syncTelegramBackButton === "function") syncTelegramBackButton();
 }
 window.openVoiceDetail = openVoiceDetail;
 function openRecapDetail(jobId) {
@@ -1692,6 +1744,7 @@ function studioConfigFingerprint(kind) {
             ref: state.selectedReferenceFile
                 ? (state.selectedReferenceFile.name + ":" + state.selectedReferenceFile.size)
                 : null,
+            savedVoice: state.savedCustomVoiceActiveId || null,
         });
     }
     const urlInput = document.getElementById("recap-url-input");
@@ -1720,11 +1773,35 @@ function setSubmitButtonState(kind) {
         ? (recapJobActive() || (typeof recapJobIsActive === "function" && recapJobIsActive()))
         : false;
     const gateBlocked = kind === "recap" && btn.getAttribute("data-ci-gate-disabled") === "1";
-    btn.disabled = !!(guard.inFlight || guard.submittedFingerprint || activeBlocked || gateBlocked);
+    const isCreating = !!(guard.submittedFingerprint || activeBlocked);
+    btn.disabled = !!(guard.inFlight || isCreating || gateBlocked);
     if (span) {
-        span.innerText = (guard.submittedFingerprint || activeBlocked)
-            ? t("submit_already_creating")
-            : (span.dataset.acOriginal || span.innerText);
+        if (isCreating) {
+            span.innerText = t("submit_already_creating");
+        } else if (kind === "voice" || kind === "tts") {
+            const key = span.getAttribute ? span.getAttribute("data-i18n") : null;
+            span.innerText = (key && typeof t === "function") ? t(key) : (span.dataset.acOriginal || span.innerText);
+        } else {
+            span.innerText = span.dataset.acOriginal || span.innerText;
+        }
+    }
+    // Round 7 Item 1: when the button shows the busy creating label, suppress
+    // the pre-submit minute-estimate badge so the rendered label is solely
+    // t("submit_already_creating").
+    const costBadge = btn.querySelector ? btn.querySelector(".vcp-btn-est-cost") : null;
+    if (costBadge) {
+        if (isCreating) {
+            if (costBadge.textContent && costBadge.dataset && !costBadge.dataset.estText) {
+                costBadge.dataset.estText = costBadge.textContent;
+            }
+            costBadge.textContent = "";
+            if (costBadge.classList && costBadge.classList.toggle) costBadge.classList.toggle("hidden", true);
+        } else {
+            if (costBadge.dataset && typeof costBadge.dataset.estText === "string") {
+                costBadge.textContent = costBadge.dataset.estText;
+            }
+            if (costBadge.classList && costBadge.classList.toggle) costBadge.classList.toggle("hidden", false);
+        }
     }
     if (kind === "recap" && typeof refreshStickyCtas === "function") refreshStickyCtas();
 }
@@ -1810,7 +1887,126 @@ window.submitConfirmBack = function() {
 LiveJobs.subscribe((job) => {
     const current = state.submitConfirmJob;
     if (current && job && job.id === current.id) renderSubmitConfirmSnippet(job);
+    if (job && job.kind === "voice" && liveJobsIsTerminal(job.status)) {
+        syncVoiceStateFromLiveJobs(job);
+    }
 });
+
+// ── Round 7 Item 2: Voice detail view terminal-state sync (reusing LiveJobs) ──
+function syncVoiceDetailTerminalState(job) {
+    if (!job || !liveJobsIsTerminal(job.status)) return;
+    const isCurrent = !state.activeJobId || state.activeJobId === job.id;
+    if (isCurrent && state.pollTimer) {
+        clearInterval(state.pollTimer);
+        state.pollTimer = null;
+    }
+    if (!isCurrent) return;
+    const spinner = document.getElementById("voice-spinner");
+    const statusMsg = document.getElementById("voice-status-msg");
+    const progressFill = document.getElementById("voice-progress-fill");
+    const etaText = document.getElementById("voice-eta-text");
+    const cancelBtn = document.getElementById("btn-cancel-voice-job");
+    if (spinner) {
+        spinner.innerText = job.status === "SUCCESS" ? "✅" : (job.status === "FAILED" ? "❌" : "⏹️");
+        if (spinner.classList) spinner.classList.remove("spinner-wave");
+    }
+    if (statusMsg) statusMsg.innerText = liveJobStageText(job);
+    if (job.status === "SUCCESS" && typeof setVoiceStage === "function") setVoiceStage("success");
+    if (progressFill) paintProgressBarFill(progressFill, job);
+    if (etaText) etaText.innerText = "";
+    if (cancelBtn) {
+        cancelBtn.classList.add("hidden");
+        cancelBtn.disabled = true;
+    }
+    if (typeof voiceSubmitGuard !== "undefined") voiceSubmitGuard.submittedFingerprint = null;
+    if (typeof setSubmitButtonState === "function") setSubmitButtonState("voice");
+}
+window.syncVoiceDetailTerminalState = syncVoiceDetailTerminalState;
+
+function renderVoiceJobResultCard(jobId, resData, opts) {
+    const resultBox = document.getElementById("voice-result-box");
+    const audioPlayer = document.getElementById("result-audio-player");
+    const btnDl = document.getElementById("btn-download-audio");
+    const btnTg = document.getElementById("btn-voice-send-telegram");
+    state.activeJobId = jobId;
+    state._voiceResultRenderedJobId = jobId;
+    if (typeof renderVoiceFallbackNote === "function") renderVoiceFallbackNote(resData);
+    if (resultBox) {
+        resultBox.classList.remove("hidden");
+        if (opts && opts.scroll) resultBox.scrollIntoView({ behavior: "smooth" });
+    }
+    if (state.selectedReferenceFile) {
+        if (typeof setCustomCloneStep === "function") setCustomCloneStep(4);
+        const saveBtn = document.getElementById("btn-save-custom-voice-from-result");
+        if (saveBtn) saveBtn.classList.remove("hidden");
+    }
+    if (btnTg) {
+        btnTg.disabled = false;
+        btnTg.classList.remove("sent");
+        btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_voice_telegram")}</span>`;
+    }
+    if (typeof applyTelegramSendable === "function") applyTelegramSendable("voice", resData && resData.telegram_sendable);
+    if (audioPlayer && resData && resData.output_audio_url && typeof setAuthMediaSource === "function") {
+        setAuthMediaSource(audioPlayer, resData.output_audio_url).then((ok) => {
+            if (ok) { audioPlayer.load(); audioPlayer.play().catch(() => {}); }
+        });
+    }
+    if (btnDl && resData && resData.output_audio_url) {
+        btnDl.setAttribute("data-dl-url", resData.output_audio_url);
+        btnDl.setAttribute("data-dl-name", brandedDlName("Voice", "wav", null, jobId));
+    }
+}
+
+async function loadCompletedVoiceJobResult(jobId, opts) {
+    if (!jobId) return;
+    try {
+        const res = await fetch(`/api/jobs/${jobId}/status`, { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const resData = await res.json();
+        if (resData.status === "SUCCESS") {
+            const box = document.getElementById("voice-progress-box");
+            if (box) box.classList.add("hidden");
+            state.voiceDetailOpen = false;
+            renderVoiceJobResultCard(jobId, resData, opts);
+        }
+    } catch (e) {}
+}
+
+function syncVoiceStateFromLiveJobs(changedJob) {
+    try {
+        const targetId = state.activeJobId || (changedJob && changedJob.kind === "voice" ? changedJob.id : null);
+        if (!targetId || typeof LiveJobs === "undefined" || !LiveJobs.jobs) return;
+        const tracked = LiveJobs.jobs.get(targetId);
+        if (!tracked || tracked.kind !== "voice" || !liveJobsIsTerminal(tracked.status)) return;
+        syncVoiceDetailTerminalState(tracked);
+        if (state._voiceTerminalHandledJobId !== tracked.id) {
+            state._voiceTerminalHandledJobId = tracked.id;
+            const box = document.getElementById("voice-progress-box");
+            if (box) box.classList.add("hidden");
+            state.voiceDetailOpen = false;
+            if (tracked.status === "SUCCESS") {
+                if (state._voiceResultRenderedJobId !== tracked.id) {
+                    loadCompletedVoiceJobResult(tracked.id, { scroll: false });
+                }
+            } else if (tracked.status === "FAILED") {
+                fetch(`/api/jobs/${tracked.id}/status`, { headers: getAuthHeaders() })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(resData => {
+                        if (!resData) return;
+                        const errText = mapErrorToToast(resData.error_message, "voice");
+                        const fMsg = document.getElementById("voice-failed-msg");
+                        if (fMsg) fMsg.textContent = errText;
+                        const fBox = document.getElementById("voice-failed-box");
+                        if (fBox) fBox.classList.remove("hidden");
+                    })
+                    .catch(() => {});
+            }
+            if (typeof loadUserProfile === "function") loadUserProfile();
+            if (typeof loadUserHistory === "function") loadUserHistory();
+        }
+    } catch (e) {}
+}
+window.syncVoiceStateFromLiveJobs = syncVoiceStateFromLiveJobs;
 
 // History cards for tracked jobs update IN PLACE: the cached row's
 let liveHistoryReloadPending = false;
@@ -3272,10 +3468,17 @@ async function loadUserProfile() {
             startRecapJobPolling(data.active_recap_job_id);
         }
         if (data.active_voice_job_id && !state.pollTimer) {
-            state.activeJobId = data.active_voice_job_id;
-            const vProg = document.getElementById("voice-progress-box");
-            if (vProg) vProg.classList.remove("hidden");
-            startJobPolling(data.active_voice_job_id);
+            const trackedVoice = (typeof LiveJobs !== "undefined" && LiveJobs.jobs)
+                ? LiveJobs.jobs.get(data.active_voice_job_id)
+                : null;
+            const voiceAlreadyDone = (trackedVoice && typeof liveJobsIsTerminal === "function" && liveJobsIsTerminal(trackedVoice.status))
+                || state._voiceTerminalHandledJobId === data.active_voice_job_id;
+            if (!voiceAlreadyDone) {
+                state.activeJobId = data.active_voice_job_id;
+                const vProg = document.getElementById("voice-progress-box");
+                if (vProg) vProg.classList.remove("hidden");
+                startJobPolling(data.active_voice_job_id);
+            }
         }
 
     } catch (err) {
@@ -3781,6 +3984,7 @@ function setupVoiceStudio() {
             const file = e.target.files && e.target.files[0];
             if (file) {
                 state.selectedReferenceFile = file;
+                state.savedCustomVoiceActiveId = "";
                 if (refLabel) refLabel.innerText = `🎵 ${file.name} (${Math.round(file.size / 1024)} KB)`;
                 if (btnClearRef) btnClearRef.classList.remove("hidden");
                 if (fileUploadBtn) fileUploadBtn.classList.add("has-file");
@@ -3813,6 +4017,7 @@ function setupVoiceStudio() {
 
 function clearRefAudio() {
     state.selectedReferenceFile = null;
+    state.savedCustomVoiceActiveId = "";
     const refFileInput = document.getElementById("ref-audio-input");
     const refLabel = document.getElementById("ref-audio-label");
     const btnClearRef = document.getElementById("btn-clear-ref-audio");
@@ -4694,6 +4899,19 @@ async function handleVoiceGenerate() {
         return;
     }
 
+    // Round 7 Item 3: My Voice (custom) mode requires either an uploaded sample
+    // or an applied saved voice. Applies to admins too (missing sample is a
+    // data error, not a billing gate).
+    if (
+        state.voxcpmSubMode === "custom"
+        && !state.selectedReferenceFile
+        && !state.savedCustomVoiceActiveId
+    ) {
+        studioSubmitFailure("voice");
+        showStudioToast(t("toast_custom_voice_needs_sample"), 'warning');
+        return;
+    }
+
     const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
     if (text.length > maxChars) {
         studioSubmitFailure("voice");
@@ -4779,20 +4997,29 @@ async function handleVoiceGenerate() {
         }
 
         state.activeJobId = data.job_id;
+        state._voiceResultRenderedJobId = null;
+        state._voiceTerminalHandledJobId = null;
         setVoiceStage("working");
+        const spinnerInit = document.getElementById("voice-spinner");
+        if (spinnerInit) {
+            spinnerInit.innerText = "⚡";
+            if (spinnerInit.classList) spinnerInit.classList.add("spinner-wave");
+        }
+        const cancelBtnStart = document.getElementById("btn-cancel-voice-job");
+        if (cancelBtnStart) {
+            cancelBtnStart.disabled = false;
+            cancelBtnStart.classList.remove("hidden");
+        }
         if (statusMsg) statusMsg.innerText = t("preparing_msg");
         if (progressFill) paintProgressBarFill(progressFill, { status: "QUEUED", progress_percent: 0 });
         if (etaText) etaText.innerText = t("calculating_eta");
 
-        startJobPolling(data.job_id);
-        // Batch AC confirmation hand-off: Generate stays in its
-        // disabled "already creating" state for THIS configuration
-        // (the guard re-arms only when a setting/input changes), a
-        // slim inline line carries the job, the pill tracks it, and
-        // the confirmation offers Watch / Back to studio.
-        studioSubmitSuccess("voice");
-        showStudioInlineStatus("voice", t("preparing_msg"));
+        // Round 7 Item 2: track in LiveJobs first so polling & confirmation
+        // dialog share the exact same live state; no inline status strip in
+        // Voice Studio (details live in the dedicated detail view & bar).
         LiveJobs.track({ id: data.job_id, kind: "voice", status: "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 1, title: text.slice(0, 70) });
+        startJobPolling(data.job_id);
+        studioSubmitSuccess("voice");
         showSubmitConfirmation("voice", data.job_id, t("confirm_cost_voice"));
 
     } catch (err) {
@@ -4818,23 +5045,50 @@ function renderVoiceFallbackNote(data) {
 function startJobPolling(jobId) {
     if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
     state.activeJobId = jobId;
+    const trackedInit = (typeof LiveJobs !== "undefined" && LiveJobs.jobs)
+        ? LiveJobs.jobs.get(jobId)
+        : null;
+    if (trackedInit && typeof liveJobsIsTerminal === "function" && liveJobsIsTerminal(trackedInit.status)) {
+        if (typeof syncVoiceDetailTerminalState === "function") syncVoiceDetailTerminalState(trackedInit);
+        if (trackedInit.status === "SUCCESS" && state._voiceResultRenderedJobId !== jobId && typeof loadCompletedVoiceJobResult === "function") {
+            loadCompletedVoiceJobResult(jobId, { scroll: false });
+        }
+        return;
+    }
     const failedBoxInit = document.getElementById("voice-failed-box");
     if (failedBoxInit) failedBoxInit.classList.add("hidden");
     const cancelBtnInit = document.getElementById("btn-cancel-voice-job");
-    if (cancelBtnInit) cancelBtnInit.classList.remove("hidden");
+    if (cancelBtnInit) {
+        if (trackedInit && typeof liveJobsIsActive === "function" && liveJobsIsActive(trackedInit.status)) {
+            cancelBtnInit.disabled = false;
+            cancelBtnInit.classList.remove("hidden");
+        } else {
+            cancelBtnInit.classList.add("hidden");
+            cancelBtnInit.disabled = true;
+        }
+    }
 
     let tick = 0;
     let failStreak = 0;
     let voiceMaxRank = 0; // Batch AC: monotonic status rank (never backwards)
+    let stopped = false;
+    let inFlight = false;
     const pollStartedAt = Date.now();
+    const stopTimer = () => {
+        stopped = true;
+        if (state.pollTimer) {
+            clearInterval(state.pollTimer);
+            state.pollTimer = null;
+        }
+    };
     // Poll-death honesty (upload-ux pass): the old loop swallowed every
     const stopPollingTimedOut = () => {
-        clearInterval(state.pollTimer);
-        state.pollTimer = null;
+        stopTimer();
         const cancelBtn = document.getElementById("btn-cancel-voice-job");
-        if (cancelBtn) cancelBtn.classList.add("hidden");
+        if (cancelBtn) { cancelBtn.classList.add("hidden"); cancelBtn.disabled = true; }
         const box = document.getElementById("voice-progress-box");
         if (box) box.classList.add("hidden");
+        state.voiceDetailOpen = false;
         const btn = document.getElementById("btn-generate-voice");
         if (btn) btn.disabled = false;
         showStudioToast(t("voice_wait_timeout"), 'info', 6000);
@@ -4847,7 +5101,9 @@ function startJobPolling(jobId) {
         }
         if (tick > 120) stopPollingTimedOut();
     };
-    state.pollTimer = setInterval(async () => {
+    const voicePollTick = async () => {
+        if (stopped || inFlight || state.activeJobId !== jobId) return;
+        inFlight = true;
         tick++;
         try {
             const res = await fetch(`/api/jobs/${jobId}/status`, { headers: getAuthHeaders() });
@@ -4858,6 +5114,7 @@ function startJobPolling(jobId) {
             }
             failStreak = 0;
             const data = await res.json();
+            if (stopped || state.activeJobId !== jobId) return;
 
             // Batch AC monotonic guard: a stale/replayed response with
             // an earlier status rank is dropped, never rendered.
@@ -4865,71 +5122,56 @@ function startJobPolling(jobId) {
             if (_voiceRank && _voiceRank < voiceMaxRank) return;
             if (_voiceRank) voiceMaxRank = _voiceRank;
 
+            const spinner = document.getElementById("voice-spinner");
             const statusMsg = document.getElementById("voice-status-msg");
             const progressFill = document.getElementById("voice-progress-fill");
             const etaText = document.getElementById("voice-eta-text");
             const progressBox = document.getElementById("voice-progress-box");
             const resultBox = document.getElementById("voice-result-box");
-            const audioPlayer = document.getElementById("result-audio-player");
-            const btnDl = document.getElementById("btn-download-audio");
+            const cancelBtn = document.getElementById("btn-cancel-voice-job");
             const btnGen = document.getElementById("btn-generate-voice");
 
             if (data.status === "QUEUED") {
                 setVoiceStage("working");
+                if (spinner) { spinner.innerText = "⚡"; if (spinner.classList) spinner.classList.add("spinner-wave"); }
+                if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.classList.remove("hidden"); }
                 if (progressFill) paintProgressBarFill(progressFill, { status: "QUEUED", progress_percent: 0 });
                 if (statusMsg) statusMsg.innerText = t("cloud_queue_waiting");
                 if (etaText) etaText.innerText = tf("voice_elapsed", { sec: Math.max(0, Math.round((Date.now() - pollStartedAt) / 1000)) });
+                LiveJobs.track({ id: jobId, kind: "voice", status: "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 1 });
             } else if (data.status === "WAITING_CHOICE") {
                 setVoiceStage("working");
                 if (progressFill) paintProgressBarFill(progressFill, { status: "WAITING_CHOICE", progress_percent: 0 });
                 if (statusMsg) statusMsg.innerText = t("live_job_status_waiting_choice");
                 if (etaText) etaText.innerText = t("recap_waiting_choice_bot_hint");
+                LiveJobs.track({ id: jobId, kind: "voice", status: "WAITING_CHOICE", progress_percent: 0, stage_index: 0, stage_total: 1 });
             } else if (data.status === "RUNNING") {
                 setVoiceStage("working");
+                if (spinner) { spinner.innerText = "⚡"; if (spinner.classList) spinner.classList.add("spinner-wave"); }
+                if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.classList.remove("hidden"); }
                 if (progressFill) paintProgressBarFill(progressFill, { status: "RUNNING", progress_percent: Number(data.progress_percent) || 0 });
                 if (statusMsg) statusMsg.innerText = t("voice_synthesizing");
                 if (etaText) etaText.innerText = tf("voice_elapsed", { sec: Math.max(0, Math.round((Date.now() - pollStartedAt) / 1000)) });
+                LiveJobs.track({ id: jobId, kind: "voice", status: "RUNNING", progress_percent: Number(data.progress_percent) || 0, stage_index: 0, stage_total: 1 });
             } else if (data.status === "SUCCESS") {
-                clearInterval(state.pollTimer);
-                state.pollTimer = null;
-                const cancelBtnDone = document.getElementById("btn-cancel-voice-job");
-                if (cancelBtnDone) cancelBtnDone.classList.add("hidden");
-                setVoiceStage("success");
+                stopTimer();
+                state._voiceTerminalHandledJobId = jobId;
+                const terminalJob = { id: jobId, kind: "voice", status: "SUCCESS", progress_percent: 100, stage_index: 1, stage_total: 1 };
+                syncVoiceDetailTerminalState(terminalJob);
+                LiveJobs.track(terminalJob);
                 haptic("success");
                 if (data.fallback_used) { try { showStudioToast(t("voice_fallback_notice"), 'info'); } catch (e) {} }
                 if (data.reference_trimmed) { try { showStudioToast(t("voice_ref_trim_notice"), 'info'); } catch (e) {} }
-                renderVoiceFallbackNote(data);
                 if (progressBox) progressBox.classList.add("hidden");
+                state.voiceDetailOpen = false;
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
                     // Batch AC: no scroll hijack on completion — the
                     // pill/sheet announce the result; the user opens
                     // it by choice and the studio stays where it was.
                 }
+                renderVoiceJobResultCard(jobId, data, { scroll: false });
                 if (btnGen) btnGen.disabled = false;
-                if (state.selectedReferenceFile) {
-                    setCustomCloneStep(4);
-                    const saveBtn = document.getElementById("btn-save-custom-voice-from-result");
-                    if (saveBtn) saveBtn.classList.remove("hidden");
-                }
-
-                const btnTg = document.getElementById("btn-voice-send-telegram");
-                if (btnTg) {
-                    btnTg.disabled = false;
-                    btnTg.classList.remove("sent");
-                    btnTg.innerHTML = `<span class="btn-icon">📱</span> <span>${t("btn_send_voice_telegram")}</span>`;
-                }
-                applyTelegramSendable("voice", data.telegram_sendable);
-
-                if (audioPlayer && data.output_audio_url) {
-                    setAuthMediaSource(audioPlayer, data.output_audio_url).then((ok) => {
-                        if (ok) { audioPlayer.load(); audioPlayer.play().catch(() => {}); }
-                    });
-                }
-                if (btnDl && data.output_audio_url) {
-                    btnDl.setAttribute("data-dl-url", data.output_audio_url);
-                    btnDl.setAttribute("data-dl-name", brandedDlName("Voice", "wav", null, jobId));
-                }
                 loadUserProfile();
                 loadUserHistory();
 
@@ -4943,10 +5185,11 @@ function startJobPolling(jobId) {
                 );
 
             } else if (data.status === "FAILED") {
-                clearInterval(state.pollTimer);
-                state.pollTimer = null;
-                const cancelBtnFail = document.getElementById("btn-cancel-voice-job");
-                if (cancelBtnFail) cancelBtnFail.classList.add("hidden");
+                stopTimer();
+                state._voiceTerminalHandledJobId = jobId;
+                const terminalJob = { id: jobId, kind: "voice", status: "FAILED", progress_percent: 0 };
+                syncVoiceDetailTerminalState(terminalJob);
+                LiveJobs.track(terminalJob);
                 haptic("error");
                 const errText = mapErrorToToast(data.error_message, 'voice');
                 showStudioToast(errText, 'error');
@@ -4955,17 +5198,20 @@ function startJobPolling(jobId) {
                 const fBox = document.getElementById("voice-failed-box");
                 if (fBox) fBox.classList.remove("hidden");
                 if (progressBox) progressBox.classList.add("hidden");
+                state.voiceDetailOpen = false;
                 if (btnGen) btnGen.disabled = false;
                 if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
             } else if (data.status === "CANCELLED") {
                 // Final-audit batch M: cancelled on another surface
                 // (admin console) — stop instead of polling to the
                 // timeout with a stale progress card.
-                clearInterval(state.pollTimer);
-                state.pollTimer = null;
-                const cancelBtnStop = document.getElementById("btn-cancel-voice-job");
-                if (cancelBtnStop) cancelBtnStop.classList.add("hidden");
+                stopTimer();
+                state._voiceTerminalHandledJobId = jobId;
+                const terminalJob = { id: jobId, kind: "voice", status: "CANCELLED", progress_percent: 0 };
+                syncVoiceDetailTerminalState(terminalJob);
+                LiveJobs.track(terminalJob);
                 if (progressBox) progressBox.classList.add("hidden");
+                state.voiceDetailOpen = false;
                 if (btnGen) btnGen.disabled = false;
                 if (state.selectedReferenceFile) setCustomCloneStep(2, state.selectedReferenceFile);
                 showStudioToast(t("voice_cancelled_toast"), 'info', 5000);
@@ -4980,8 +5226,12 @@ function startJobPolling(jobId) {
         } catch (e) {
             console.error(e);
             registerPollFailure();
+        } finally {
+            inFlight = false;
         }
-    }, 2000);
+    };
+    state.pollTimer = setInterval(voicePollTick, 2000);
+    voicePollTick();
 }
 
 window.cancelVoiceJob = function() {
@@ -16802,7 +17052,11 @@ function syncVoiceExcessAndCost(len, max) {
     const costBadge = document.getElementById("voice-btn-est-cost");
     if (costBadge) {
         const estMin = estimateSpeechMinutesFromText(len, state.speed || "+12%");
-        costBadge.textContent = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+        const estText = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+        if (costBadge.dataset) costBadge.dataset.estText = estText;
+        const busy = typeof voiceSubmitGuard !== "undefined" && !!voiceSubmitGuard.submittedFingerprint;
+        costBadge.textContent = busy ? "" : estText;
+        if (costBadge.classList && costBadge.classList.toggle) costBadge.classList.toggle("hidden", busy);
     }
 }
 window.syncVoiceExcessAndCost = syncVoiceExcessAndCost;
@@ -16942,7 +17196,11 @@ function syncTtsExcessAndCost(len, max) {
     const costBadge = document.getElementById("tts-btn-est-cost");
     if (costBadge) {
         const estMin = estimateSpeechMinutesFromText(len, (typeof ttsState !== "undefined" && ttsState.speed) || "+12%");
-        costBadge.textContent = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+        const estText = estMin ? " " + tf("est_cost_min_badge", { min: estMin }) : "";
+        if (costBadge.dataset) costBadge.dataset.estText = estText;
+        const busy = typeof ttsSubmitGuard !== "undefined" && !!ttsSubmitGuard.submittedFingerprint;
+        costBadge.textContent = busy ? "" : estText;
+        if (costBadge.classList && costBadge.classList.toggle) costBadge.classList.toggle("hidden", busy);
     }
 }
 window.syncTtsExcessAndCost = syncTtsExcessAndCost;
@@ -17585,6 +17843,21 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (typeof renderHistoryHub === "function" && Array.isArray(hubHistoryCache)) {
             renderHistoryHub();
+        }
+        if (typeof setSubmitButtonState === "function") {
+            setSubmitButtonState("voice");
+            setSubmitButtonState("recap");
+            setSubmitButtonState("tts");
+        }
+        if (state && state.submitConfirmJob && typeof renderSubmitConfirmSnippet === "function" && typeof LiveJobs !== "undefined" && LiveJobs.jobs) {
+            const scJob = LiveJobs.jobs.get(state.submitConfirmJob.id);
+            if (scJob) renderSubmitConfirmSnippet(scJob);
+        }
+        if (state && state.activeJobId && typeof syncVoiceDetailTerminalState === "function" && typeof LiveJobs !== "undefined" && LiveJobs.jobs) {
+            const vJob = LiveJobs.jobs.get(state.activeJobId);
+            if (vJob && typeof liveJobsIsTerminal === "function" && liveJobsIsTerminal(vJob.status)) {
+                syncVoiceDetailTerminalState(vJob);
+            }
         }
     } catch (e) {}
 }
