@@ -349,14 +349,14 @@
                     <div class="card glass" id="curated-personas-card-wrap">
                         <div class="step-badge-title mb-2">
                             <span class="step-num-pill">2</span>
-                            <span class="step-title" data-i18n="voice_step2_select">အသံ ရွေးချယ်ရန် (ကိုယ်ပိုင် / Persona)</span>
+                            <span class="step-title" data-i18n="voice_step2_select">အသံ ရွေးချယ်ရန်</span>
                         </div>
                         <div class="segmented-control sm mb-2">
                             <button class="seg-btn active" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
                                 <span class="seg-title" data-i18n="btn_mode_custom">🎙️ ကိုယ်ပိုင်အသံ</span>
                             </button>
                             <button class="seg-btn" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
-                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Persona ၁၂ မျိုး</span>
+                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Persona</span>
                             </button>
                         </div>
 
@@ -390,15 +390,6 @@
                         <div class="ref-audio-card" id="ref-audio-section">
                             <div class="card-header-row">
                                 <div class="card-label" data-i18n="custom_ref_title">🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)</div>
-                                <span class="hint-tag" data-i18n="custom_ref_optional">အဓိက</span>
-                            </div>
-                            <!-- Phase 3: Custom clone as 5 visible guided steps (upload → check → create → test-listen → save) -->
-                            <div class="vcp-clone-steps-bar" id="custom-clone-stepper">
-                                <span class="vcp-clone-step is-active" data-clone-step="1" data-i18n="clone_step_1_upload">၁။ ဖိုင်တင်</span>
-                                <span class="vcp-clone-step is-locked" data-clone-step="2" data-i18n="clone_step_2_check">၂။ စစ်ဆေး</span>
-                                <span class="vcp-clone-step is-locked" data-clone-step="3" data-i18n="clone_step_3_create">၃။ ဖန်တီး</span>
-                                <span class="vcp-clone-step is-locked" data-clone-step="4" data-i18n="clone_step_4_listen">၄။ နားထောင်</span>
-                                <span class="vcp-clone-step is-locked" data-clone-step="5" data-i18n="clone_step_5_save">၅။ သိမ်းဆည်း</span>
                             </div>
                             <div class="vcp-saved-voice-bar hidden" id="saved-custom-voice-bar">
                                 <span id="saved-custom-voice-label"></span>
@@ -415,7 +406,6 @@
                                 <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
                                 <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
                             </div>
-                            <div class="vcp-clone-check-status hidden" id="custom-clone-check-status"></div>
                             <details class="ref-notes-collapse" id="ref-notes-details">
                                 <summary class="ref-notes-summary">
                                     <span data-i18n="ref_notes_toggle">ℹ️ သတိပေးချက်များ</span>
@@ -427,6 +417,7 @@
                                     <li data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</li>
                                 </ul>
                             </details>
+                            <div class="vcp-clone-check-status hidden" id="custom-clone-check-status"></div>
                         </div>
                     </div>
                 </div><!-- Step 2: Unified Text Input & Speed Controls Card (Visually ordered 1st via Text-First layout) -->

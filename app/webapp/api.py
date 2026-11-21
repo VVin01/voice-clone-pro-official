@@ -1127,11 +1127,16 @@ async def _recap_active_job_count(db, user_id: int) -> int:
     the DB branch below already covers the normal path; the registry
     branch names it too so a registry-only job (whose DB insert failed
     at submit) cannot open a parallel-submit window either.
+
+    Round 6 Item 5: reconcile any registry-only candidate against the
+    shared ``jobs`` table so a job that reached a terminal state on a
+    worker process (RECAP_ON_QUEUE=1) or via another path never stays
+    stuck as active in RAM and never blocks new submissions.
     """
-    ids = set()
+    reg_ids = set()
     for job_id, entry in RECAP_JOBS_REGISTRY.items():
         if entry.get("user_id") == user_id and entry.get("status") in ("QUEUED", "RUNNING", "SCRIPT_READY"):
-            ids.add(job_id)
+            reg_ids.add(job_id)
     try:
         res = await db.execute(
             select(Job.id).where(
@@ -1140,7 +1145,19 @@ async def _recap_active_job_count(db, user_id: int) -> int:
                 Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
             )
         )
-        ids.update(str(row[0]) for row in res.all())
+        db_active_ids = {str(row[0]) for row in res.all()}
+        unconfirmed_reg_ids = reg_ids - db_active_ids
+        if unconfirmed_reg_ids:
+            rec_res = await db.execute(
+                select(Job).where(
+                    Job.id.in_(list(unconfirmed_reg_ids)),
+                    Job.user_id == user_id,
+                )
+            )
+            for db_job in rec_res.scalars().all():
+                _reconcile_recap_registry_with_db_job(str(db_job.id), db_job)
+                if db_job.status not in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+                    reg_ids.discard(str(db_job.id))
     except Exception as exc:
         # Batch AJ L13: silently swallowing a DB error here returned a
         # registry-only count — exactly while the database was
@@ -1149,7 +1166,7 @@ async def _recap_active_job_count(db, user_id: int) -> int:
         # user-row lock): fail the submit visibly instead.
         logger.warning("Recap active-job count failed for user %s: %s", user_id, exc)
         raise
-    return len(ids)
+    return len(reg_ids | db_active_ids)
 
 
 def _recap_job_config(job) -> Optional["RecapConfigRequest"]:
@@ -2774,6 +2791,7 @@ async def _fail_stranded_recap_job(job_id: str, user_id: int, state: dict) -> bo
                 job.error_message = _STRANDED_RESET_FAILURE_MESSAGE
                 job.finished_at = utc_now()
                 await session.commit()
+                _reconcile_recap_registry_with_db_job(job_id, job)
         except Exception as exc:
             logger.warning(
                 f"Could not mark stranded recap job {job_id} failed: {exc}"
@@ -3355,14 +3373,25 @@ async def _cancel_recap_job_core(
         _persisted_state["stranded_reset_count"] = 0
         _next_recap_config = json.dumps(_persisted_state, ensure_ascii=False)
 
-    await _claim_job_cancelled(
-        db,
-        job,
-        db_error_message=db_error_message,
-        recap_config_json=_next_recap_config,
-        conflict_status_code=conflict_status_code,
-        conflict_detail=conflict_detail,
-    )
+    try:
+        await _claim_job_cancelled(
+            db,
+            job,
+            db_error_message=db_error_message,
+            recap_config_json=_next_recap_config,
+            conflict_status_code=conflict_status_code,
+            conflict_detail=conflict_detail,
+        )
+    except HTTPException:
+        # Round 6 Item 5: if the row already moved to a terminal state
+        # in DB (e.g. finished on the worker process), reconcile RAM
+        # before reporting the conflict so the client immediately heals.
+        try:
+            await db.refresh(job)
+            _reconcile_recap_registry_with_db_job(job.id, job)
+        except Exception:
+            pass
+        raise
 
     try:
         entry = RECAP_JOBS_REGISTRY.get(job.id)
@@ -4906,6 +4935,88 @@ def _live_stage_from_step(step, status) -> tuple:
     return 0, 4
 
 
+def _reconcile_recap_registry_with_db_job(
+    job_id: str, db_job: Optional[Job]
+) -> Optional[Dict[str, Any]]:
+    """Reconcile an in-memory RECAP_JOBS_REGISTRY entry with the shared Job row.
+
+    Round 6 Item 5: when recap execution runs in a separate worker process
+    (RECAP_ON_QUEUE=1) or ends via a DB-only path (stranded-reset failure,
+    cross-process cancel, worker exception), the web process's RAM registry
+    can stay stuck at QUEUED / 0/4 even after the ``jobs`` table is terminal.
+
+    - Terminal DB state (SUCCESS / FAILED / CANCELLED) ALWAYS finalizes a
+      non-terminal registry entry (and promotes SUCCESS over non-SUCCESS).
+    - Non-terminal DB progression (QUEUED -> RUNNING / WAITING_CHOICE) advances
+      a stale PENDING/QUEUED registry entry without clobbering richer in-process
+      states like SCRIPT_READY.
+    - Legitimately QUEUED jobs whose DB row is still QUEUED are untouched
+      (RECAP_EXECUTION_SEMAPHORE behaviour is completely preserved).
+    """
+    entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if entry is None or db_job is None:
+        return entry
+    db_status = str(getattr(db_job, "status", "") or "")
+    reg_status = str(entry.get("status") or "")
+
+    if db_status in _LIVE_TERMINAL_STATUSES:
+        should_finalize = (
+            reg_status not in _LIVE_TERMINAL_STATUSES
+            or (db_status == JobStatus.SUCCESS.value and reg_status != JobStatus.SUCCESS.value)
+        )
+        if should_finalize:
+            entry["status"] = db_status
+            if db_status == JobStatus.SUCCESS.value:
+                entry["progress_percent"] = 100
+                entry["progress_step"] = "4/4"
+            else:
+                entry["progress_percent"] = 0
+                entry["progress_step"] = ""
+            entry["progress_stage"] = None
+            entry["progress_label"] = ""
+            if getattr(db_job, "error_message", None) and not entry.get("error_message"):
+                entry["error_message"] = db_job.error_message
+            if getattr(db_job, "finished_at", None) is not None:
+                try:
+                    entry["finished_at"] = db_job.finished_at.timestamp()
+                except Exception:
+                    pass
+            elif not entry.get("finished_at"):
+                entry["finished_at"] = time.time()
+            entry["_reconciled_terminal"] = True
+            _persisted = _load_persisted_recap_state(db_job)
+            if isinstance(_persisted, dict):
+                if _persisted.get("credit_refunded"):
+                    entry["credit_refunded"] = True
+                    entry["credits_refunded"] = _persisted.get(
+                        "credits_refunded", entry.get("credits_refunded") or 0
+                    )
+                if _persisted.get("voice_refunded"):
+                    entry["voice_refunded"] = True
+                    entry["voice_seconds_refunded"] = int(
+                        _persisted.get("voice_seconds_refunded") or 0
+                    )
+    elif (
+        db_status in _LIVE_ACTIVE_STATUSES
+        and reg_status in _LIVE_TERMINAL_STATUSES
+        and entry.get("_reconciled_terminal")
+        and getattr(db_job, "finished_at", None) is None
+    ):
+        # Cross-process admin retry reset the DB row back to active.
+        entry["status"] = db_status
+        entry["progress_percent"] = 0
+        entry["progress_step"] = "0/4"
+        entry["progress_stage"] = None
+        entry["progress_label"] = ""
+        entry["error_message"] = None
+        entry.pop("finished_at", None)
+        entry.pop("_reconciled_terminal", None)
+    elif db_status in (JobStatus.RUNNING.value, JobStatus.WAITING_CHOICE.value):
+        if reg_status in ("", "PENDING", "QUEUED"):
+            entry["status"] = db_status
+    return entry
+
+
 def _live_job_payload(job, registry_entry=None, now=None, medians=None) -> Dict[str, Any]:
     """Serialize one Job row (+ live recap registry entry) for the
     bulk live-jobs response. Pure apart from the registry read the
@@ -4932,15 +5043,41 @@ def _live_job_payload(job, registry_entry=None, now=None, medians=None) -> Dict[
     stage_index, stage_total = (1, 1) if status in _LIVE_TERMINAL_STATUSES else (0, 1)
 
     if is_recap and registry_entry is not None:
-        status = str(registry_entry.get("status") or status)
-        progress_percent = int(registry_entry.get("progress_percent") or 0)
-        progress_stage = registry_entry.get("progress_stage")
-        progress_label = str(registry_entry.get("progress_label") or "")
-        stage_index, stage_total = _live_stage_from_step(
-            registry_entry.get("progress_step"), status
-        )
-        if status in ("QUEUED", "RUNNING"):
-            queue_position = _recap_registry_queue_position(job.id, registry_entry)
+        if status in _LIVE_TERMINAL_STATUSES:
+            # Round 6 Item 5: a terminal DB row NEVER gets overwritten by a
+            # stale active registry entry (e.g. QUEUED 0/4 after worker fail).
+            if status == JobStatus.SUCCESS.value:
+                progress_percent, stage_index, stage_total = 100, 4, 4
+            else:
+                progress_percent, stage_index, stage_total = 0, 1, 1
+            progress_stage = None
+            progress_label = ""
+            queue_position = None
+        else:
+            reg_status = str(registry_entry.get("status") or status)
+            if reg_status in _LIVE_TERMINAL_STATUSES:
+                status = reg_status
+                if status == JobStatus.SUCCESS.value:
+                    progress_percent, stage_index, stage_total = 100, 4, 4
+                else:
+                    progress_percent, stage_index, stage_total = 0, 1, 1
+                progress_stage = None
+                progress_label = ""
+                queue_position = None
+            else:
+                if status in (JobStatus.RUNNING.value, JobStatus.WAITING_CHOICE.value) and reg_status in ("", "PENDING", "QUEUED"):
+                    # Worker progressed or parked the job in DB while web RAM still said QUEUED.
+                    status = status
+                else:
+                    status = reg_status
+                progress_percent = int(registry_entry.get("progress_percent") or 0)
+                progress_stage = registry_entry.get("progress_stage")
+                progress_label = str(registry_entry.get("progress_label") or "")
+                stage_index, stage_total = _live_stage_from_step(
+                    registry_entry.get("progress_step"), status
+                )
+                if status in ("QUEUED", "RUNNING"):
+                    queue_position = _recap_registry_queue_position(job.id, registry_entry)
     elif is_recap:
         if status == JobStatus.SUCCESS.value:
             progress_percent, stage_index, stage_total = 100, 4, 4
@@ -5036,9 +5173,12 @@ async def get_live_jobs(
         except Exception:
             live_medians = None
     for job in jobs:
-        entry = RECAP_JOBS_REGISTRY.get(job.id) if (
-            job.job_type == JobType.RECAP.value or str(job.id).startswith("rc_")
-        ) else None
+        is_rc_job = (
+            job.job_type == JobType.RECAP.value
+            or str(job.id).startswith("rc_")
+            or job.engine == "recap"
+        )
+        entry = _reconcile_recap_registry_with_db_job(job.id, job) if is_rc_job else None
         payload = _live_job_payload(job, entry, now=now, medians=live_medians)
         # Voice queue position: the shared truthful counter (older
         # active jobs ahead of this one, across kinds — the voice
@@ -5052,16 +5192,41 @@ async def get_live_jobs(
                 payload["queue_position"] = None
         out.append(payload)
 
-    # Registry-only recap jobs (their DB insert failed at submit):
+    # Round 6 Item 5: self-heal any caller-owned registry entries not
+    # returned by the primary query (for example, a job that finished on
+    # a worker process > LIVE_JOBS_RECENT_TERMINAL_MINUTES ago while its
+    # web-process RAM entry stayed QUEUED). Batch-load their Job rows so
+    # terminal DB rows are finalized in RAM and never emitted as active.
+    unseen_reg_ids = [
+        jid
+        for jid, ent in list(RECAP_JOBS_REGISTRY.items())
+        if jid not in seen_ids and ent.get("user_id") == user.id
+    ]
+    if unseen_reg_ids:
+        rec_res = await db.execute(
+            select(Job).where(
+                Job.id.in_(unseen_reg_ids),
+                Job.user_id == user.id,
+            )
+        )
+        for db_job in rec_res.scalars().all():
+            seen_ids.add(db_job.id)
+            reconciled_entry = _reconcile_recap_registry_with_db_job(db_job.id, db_job)
+            if db_job.status in _LIVE_ACTIVE_STATUSES and len(out) < LIVE_JOBS_LIMIT:
+                out.append(
+                    _live_job_payload(db_job, reconciled_entry, now=now, medians=live_medians)
+                )
+
+    # Registry-only recap jobs (no DB row — e.g. DB insert failed at submit):
     # still the user's live jobs, still tracked by the client.
-    for job_id, entry in RECAP_JOBS_REGISTRY.items():
+    for job_id, entry in list(RECAP_JOBS_REGISTRY.items()):
         if job_id in seen_ids or entry.get("user_id") != user.id:
             continue
         e_status = str(entry.get("status") or "")
-        e_created = entry.get("created_at")
+        e_ts = entry.get("finished_at") or entry.get("created_at")
         recent_terminal = False
-        if e_status in _LIVE_TERMINAL_STATUSES and isinstance(e_created, (int, float)):
-            recent_terminal = (time.time() - float(e_created)) <= LIVE_JOBS_RECENT_TERMINAL_MINUTES * 60
+        if e_status in _LIVE_TERMINAL_STATUSES and isinstance(e_ts, (int, float)):
+            recent_terminal = (time.time() - float(e_ts)) <= LIVE_JOBS_RECENT_TERMINAL_MINUTES * 60
         if e_status not in _LIVE_ACTIVE_STATUSES and e_status != "SCRIPT_READY" and not recent_terminal:
             continue
         stage_index, stage_total = _live_stage_from_step(entry.get("progress_step"), e_status)
@@ -5093,8 +5258,8 @@ async def get_live_jobs(
             "eta_range_seconds": e_eta["eta_range_seconds"],
             "eta_overrun": e_eta["eta_overrun"],
             "elapsed_seconds": (
-                max(0, int(time.time() - float(e_created)))
-                if isinstance(e_created, (int, float)) else None
+                max(0, int(time.time() - float(entry.get("created_at"))))
+                if isinstance(entry.get("created_at"), (int, float)) else None
             ),
             "title": str(entry.get("title") or "")[:70],
             "created_at": None,
@@ -10312,6 +10477,19 @@ async def create_recap_job(
                 phase="script" if req.script_review else "full",
             ))
         except Exception:
+            if job_id in RECAP_JOBS_REGISTRY:
+                RECAP_JOBS_REGISTRY[job_id]["status"] = "FAILED"
+                RECAP_JOBS_REGISTRY[job_id]["progress_percent"] = 0
+                RECAP_JOBS_REGISTRY[job_id]["progress_step"] = ""
+                RECAP_JOBS_REGISTRY[job_id]["error_message"] = "Recap task dispatch failed"
+                RECAP_JOBS_REGISTRY[job_id]["finished_at"] = time.time()
+            try:
+                db_job.status = JobStatus.FAILED.value
+                db_job.error_message = "Recap task dispatch failed"
+                db_job.finished_at = utc_now()
+                await db.commit()
+            except Exception:
+                pass
             if not settings.is_admin(user.id):
                 from app.services.billing import refund_or_release_job
                 await refund_or_release_job(db, user.id, job_id, reason="DISPATCH_FAILED")
@@ -10404,10 +10582,31 @@ async def get_recap_status(
     # like every other helper in this module.
     from app.db.session import AsyncSessionLocal
 
+    _reconciled_terminal_job = None
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if entry:
         if not _recap_registry_owner_ok(job_id, user):
             raise HTTPException(status_code=404, detail="Recap job not found")
+        if entry.get("status") not in _LIVE_TERMINAL_STATUSES:
+            # Round 6 Item 5: reconcile non-terminal RAM entry against the
+            # shared ``jobs`` table so a job finished on a worker process
+            # (RECAP_ON_QUEUE=1) or DB-only path immediately reports its true
+            # terminal state instead of staying stuck at QUEUED / 0/4.
+            _rec_db_job = None
+            try:
+                if db is not None:
+                    _rec_db_job = await db.get(Job, job_id)
+                else:
+                    async with AsyncSessionLocal() as _rec_session:
+                        _rec_db_job = await _rec_session.get(Job, job_id)
+            except Exception:
+                _rec_db_job = None
+            if _rec_db_job is not None:
+                _reconcile_recap_registry_with_db_job(job_id, _rec_db_job)
+                if _rec_db_job.status in _LIVE_TERMINAL_STATUSES:
+                    _reconciled_terminal_job = _rec_db_job
+
+    if entry and _reconciled_terminal_job is None:
         # Same over-50MB rule as the DB branch below: only a completed
         # job's result screen shows the send button, so only then is
         # the size worth stating.
@@ -10498,12 +10697,14 @@ async def get_recap_status(
             "stage_timings": entry.get("stage_timings") or {},
         }
 
-    # Cold path only (registry miss): open the one DB session this
-    # request actually needs, here, instead of holding a second
+    # Cold path (registry miss or reconciled DB terminal row): open the one DB
+    # session this request actually needs, here, instead of holding a second
     # dependency session for the registry-hit hot path above. The
     # job's loaded column attributes stay readable after the session
     # closes — everything below only reads them.
-    if db is not None:
+    if _reconciled_terminal_job is not None:
+        job = _reconciled_terminal_job
+    elif db is not None:
         job = await _require_job_owner(db, job_id, user)
     else:
         async with AsyncSessionLocal() as _session:
@@ -10880,11 +11081,19 @@ async def cancel_recap_job(
     if job is None and entry is None:
         raise HTTPException(status_code=404, detail="Recap job not found")
 
-    entry_status = str((entry or {}).get("status") or "")
-    cancellable = entry_status in ("QUEUED", "RUNNING", "SCRIPT_READY", "WAITING_CHOICE") or (
-        job is not None
-        and job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.WAITING_CHOICE.value)
-    )
+    if job is not None:
+        # Round 6 Item 5: reconcile RAM entry against DB truth so a job
+        # that already finished on another process self-heals immediately
+        # and cannot contradict the live-jobs tracker.
+        entry = _reconcile_recap_registry_with_db_job(job_id, job)
+        cancellable = job.status in (
+            JobStatus.QUEUED.value,
+            JobStatus.RUNNING.value,
+            JobStatus.WAITING_CHOICE.value,
+        )
+    else:
+        entry_status = str((entry or {}).get("status") or "")
+        cancellable = entry_status in ("QUEUED", "RUNNING", "SCRIPT_READY", "WAITING_CHOICE")
     if not cancellable:
         raise HTTPException(
             status_code=409,

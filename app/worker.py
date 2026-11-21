@@ -345,6 +345,7 @@ async def process_recap_job(
         _execute_recap_background_job,
         _load_persisted_recap_state,
         _recap_redispatch_plan,
+        _reconcile_recap_registry_with_db_job,
         _restore_script_ready_from_db,
     )
 
@@ -370,7 +371,9 @@ async def process_recap_job(
         if job.status != JobStatus.FAILED.value:
             job.status = JobStatus.FAILED.value
             job.error_message = f"Failed to build recap execution plan: {plan_err}"
+            job.finished_at = utc_now()
             await session.commit()
+        _reconcile_recap_registry_with_db_job(jid, job)
         return False
 
     RECAP_JOBS_REGISTRY[jid] = plan["entry"]
@@ -389,8 +392,19 @@ async def process_recap_job(
         )
     except Exception as exec_err:
         logger.error("Recap execution error for job %s: %s", jid, exec_err, exc_info=True)
+        await session.refresh(job)
+        if job.status not in (
+            JobStatus.SUCCESS.value,
+            JobStatus.FAILED.value,
+            JobStatus.CANCELLED.value,
+        ):
+            job.status = JobStatus.FAILED.value
+            job.error_message = job.error_message or f"Recap execution failed: {exec_err}"[:500]
+            job.finished_at = utc_now()
+            await session.commit()
 
     await session.refresh(job)
+    _reconcile_recap_registry_with_db_job(jid, job)
     return job.status == JobStatus.SUCCESS.value
 
 

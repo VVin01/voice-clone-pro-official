@@ -983,6 +983,10 @@ const stickyCtaInView = {};
 function recapJobActive() {
     try {
         if (LiveJobs.activeJobs().some(j => j.kind === "recap")) return true;
+        if (typeof state !== "undefined" && state && state.recapJobId && LiveJobs.jobs) {
+            const tracked = LiveJobs.jobs.get(state.recapJobId);
+            if (tracked && liveJobsIsTerminal(tracked.status)) return false;
+        }
         return typeof recapJobIsActive === "function" && recapJobIsActive();
     } catch (e) { return false; }
 }
@@ -1304,8 +1308,20 @@ function syncRecapStateFromLiveJobs() {
             }
         } else if (typeof state !== "undefined") {
             state.recapScriptReadyJobId = null;
+            const tracked = state.recapJobId ? LiveJobs.jobs.get(state.recapJobId) : null;
+            if (tracked && liveJobsIsTerminal(tracked.status)) {
+                try {
+                    if (localStorage.getItem("vcp_active_recap_job_id") === state.recapJobId) {
+                        localStorage.removeItem("vcp_active_recap_job_id");
+                    }
+                } catch (e) {}
+                if (tracked.status === "FAILED" || tracked.status === "CANCELLED") {
+                    if (typeof recapSubmitGuard !== "undefined") recapSubmitGuard.submittedFingerprint = null;
+                }
+            }
         }
         if (typeof setSubmitButtonState === "function") setSubmitButtonState("recap");
+        if (typeof refreshStickyCtas === "function") refreshStickyCtas();
     } catch (e) {}
 }
 function renderLiveJobsPill() {
@@ -10231,12 +10247,14 @@ function startRecapJobPolling(jobId) {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
                 try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
+                LiveJobs.track({ id: jobId, kind: "recap", status: "SUCCESS", progress_percent: 100, stage_index: 4, stage_total: 4 });
                 if (btn) btn.disabled = false;
                 if (progressBox) progressBox.classList.add("hidden");
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
-                    refreshStickyCtas();
                 }
+                if (typeof setSubmitButtonState === "function") setSubmitButtonState("recap");
+                refreshStickyCtas();
 
                 const btnTg = document.getElementById("btn-recap-send-telegram");
                 if (btnTg) {
@@ -10398,7 +10416,11 @@ function startRecapJobPolling(jobId) {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
                 try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
+                if (typeof recapSubmitGuard !== "undefined") recapSubmitGuard.submittedFingerprint = null;
+                LiveJobs.track({ id: jobId, kind: "recap", status: "FAILED", progress_percent: 0 });
                 if (btn) btn.disabled = false;
+                if (typeof setSubmitButtonState === "function") setSubmitButtonState("recap");
+                refreshStickyCtas();
                 haptic("error");
                 if (progressBox) progressBox.classList.add("hidden");
 
@@ -10487,7 +10509,11 @@ function startRecapJobPolling(jobId) {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
                 try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
+                if (typeof recapSubmitGuard !== "undefined") recapSubmitGuard.submittedFingerprint = null;
+                LiveJobs.track({ id: jobId, kind: "recap", status: "CANCELLED", progress_percent: 0 });
                 if (btn) btn.disabled = false;
+                if (typeof setSubmitButtonState === "function") setSubmitButtonState("recap");
+                refreshStickyCtas();
                 if (progressBox) progressBox.classList.add("hidden");
                 let cancelToast = t("recap_cancelled_toast");
                 if (data.credit_refunded) {
@@ -10519,7 +10545,14 @@ async function cancelRecapJobById(jobId) {
                 headers: getAuthHeaders(),
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.detail || t("err_generic"));
+            if (!res.ok) {
+                if (res.status === 409) {
+                    // Round 6 Item 5: job already ended on backend — immediately
+                    // reconcile LiveJobs so stale pill/sheet/Step 4 clear.
+                    LiveJobs.fetchNow();
+                }
+                throw new Error(data.detail || t("err_generic"));
+            }
             if (state.recapPollTimer) {
                 clearInterval(state.recapPollTimer);
                 state.recapPollTimer = null;
@@ -10528,12 +10561,16 @@ async function cancelRecapJobById(jobId) {
                 try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
             }
             if (state.recapScriptReadyJobId === jobId) state.recapScriptReadyJobId = null;
+            if (typeof recapSubmitGuard !== "undefined") recapSubmitGuard.submittedFingerprint = null;
+            LiveJobs.track({ id: jobId, kind: "recap", status: "CANCELLED", progress_percent: 0 });
             const pBox = document.getElementById("recap-progress-box");
             if (pBox) pBox.classList.add("hidden");
             const sBox = document.getElementById("recap-script-box");
             if (sBox) sBox.classList.add("hidden");
             const startBtn = document.getElementById("btn-start-recap");
             if (startBtn) startBtn.disabled = false;
+            if (typeof setSubmitButtonState === "function") setSubmitButtonState("recap");
+            refreshStickyCtas();
             let msg = t("recap_cancelled_toast");
             if (data.credit_refunded) {
                 msg += " " + tf("recap_refunded_line", { credits: data.credits_refunded || 1 });
@@ -16785,15 +16822,6 @@ window.trimVoiceTextToLimit = trimVoiceTextToLimit;
 
 function setCustomCloneStep(stepNum, file) {
     state.customCloneStep = stepNum;
-    const stepper = document.getElementById("custom-clone-stepper");
-    if (stepper) {
-        stepper.querySelectorAll("[data-clone-step]").forEach(el => {
-            const n = parseInt(el.getAttribute("data-clone-step") || "1", 10);
-            el.classList.toggle("is-active", n === stepNum);
-            el.classList.toggle("is-done", n < stepNum);
-            el.classList.toggle("is-locked", n > stepNum);
-        });
-    }
     const checkEl = document.getElementById("custom-clone-check-status");
     if (checkEl) {
         const refFile = file || state.selectedReferenceFile;
