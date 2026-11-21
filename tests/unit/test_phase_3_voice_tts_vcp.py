@@ -53,13 +53,13 @@ def test_phase3_custom_clone_five_guided_steps_and_file_requirements():
     assert "function saveCurrentRefAsCustomVoice(" in APP_JS
 
 
-def test_phase3_tts_byok_under_advanced_with_active_key_badge():
-    assert 'id="tts-byok-advanced-toggle"' in INDEX_HTML
-    assert 'id="tts-byok-advanced-body"' in INDEX_HTML
-    assert 'id="tts-key-active-badge"' in INDEX_HTML
-    assert 'onclick="toggleTtsByokAdvanced()"' in INDEX_HTML
-    assert "function toggleTtsByokAdvanced(" in APP_JS
-    assert 'getElementById("tts-key-active-badge")' in APP_JS
+def test_phase3_tts_byok_moved_to_profile_in_round8():
+    # Round 8 B7: Gemini Key BYOK card lives in Profile only (removed from TTS tab)
+    assert 'id="tts-gemini-key-card"' not in INDEX_HTML
+    assert 'id="tts-byok-advanced-toggle"' not in INDEX_HTML
+    assert 'id="profile-gemini-key-card"' in INDEX_HTML
+    assert 'id="profile-key-active-badge"' in INDEX_HTML
+    assert '"profile-key-active-badge"' in APP_JS
 
 
 def test_phase3_generate_buttons_show_estimated_minutes():

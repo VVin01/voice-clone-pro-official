@@ -207,7 +207,6 @@ def test_home_free_card_i18n_both_locales():
         "home_free_recap_label",
         "home_free_value_min",
         "home_free_value_credits",
-        "tts_sample_text",
     ):
         # Each key defined exactly twice in i18n.js (my + en).
         assert I18N_JS.count(f"{key}:") == 2, key
@@ -406,22 +405,14 @@ def test_guide_templates_have_no_stale_free_daily_voice_number():
 # Item 7 — TTS first-visit sample prefill
 # ===========================================================================
 
-def test_tts_prefill_logic_pins():
-    assert "function maybePrefillTtsSample()" in APP_JS
-    assert "let ttsSampleSettled = false;" in APP_JS
-    assert 'input.value = t("tts_sample_text");' in APP_JS
-    # Never overwrites existing text: the empty check precedes the set.
-    body = APP_JS[APP_JS.index("function maybePrefillTtsSample()"):]
-    body = body[: body.index("\n}\n") + 3]
-    assert '!== "")' in body
-    assert body.index("ttsSampleSettled = true;") < body.index("input.value =")
-    # Unified tab router: setupTabs() delegates to switchTab(), which carries
-    # the TTS prefill hook once for both nav-bar clicks and programmatic jumps.
-    assert APP_JS.count("window.maybePrefillTtsSample()") >= 1
+def test_tts_prefill_logic_retired_in_round8():
+    # Round 8 Item B2: TTS text input starts completely empty (no prefill,
+    # no draft auto-restore); sample chips still insert text on tap.
+    assert "maybePrefillTtsSample" not in APP_JS
+    assert "ttsSampleSettled" not in APP_JS
+    assert "tts_sample_text" not in I18N_JS
     setup_slice = APP_JS[APP_JS.index("function setupTabs()"):APP_JS.index("function setupTabs()") + 420]
     assert "switchTab(targetTab)" in setup_slice
-    # Real edits / sample chips / clear settle the prefill.
-    assert APP_JS.count("ttsSampleSettled = true;") >= 4
 
 
 # ===========================================================================

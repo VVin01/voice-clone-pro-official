@@ -327,28 +327,19 @@ def test_bb3_history_and_admin_surfaces_label_tts():
 
 # ── BB-4: quota loader resilience + endpoint ────────────────────────
 
-def test_bb4_loader_uses_timeout_retries_and_a_fallback_paint():
+def test_bb4_loader_uses_timeout_retries_and_retires_balance_line():
     body = _between(APP_JS, "async function refreshTtsQuota", "function updateTtsCharCount")
     assert 'fetchWithTimeout("/api/tts/quota"' in body
     assert 'await fetch("/api/tts/quota"' not in APP_JS
     assert "retryDelaysMs" in body and "1800" in body
     assert "ttsQuotaInFlight" in body
-    assert 't("tts_balance_error")' in body
-    assert 'line.dataset.quotaError = "1"' in body
-    # The success paints are unchanged from AW.
-    # SUPERSEDED by Polish Pass 1 (2026-11-14, brief 1D): refreshTtsQuota
-    # now delegates to tier-truthful formatTtsTabBalanceLine (Admin sees no referral line).
-    assert "formatTtsTabBalanceLine" in body
-    assert 'formatTtsTabBalanceLine' in APP_JS
-    assert 'tf("tts_balance_line", {' in APP_JS
-    # Tap-to-retry is wired in initTtsTab.
-    init = _between(APP_JS, "function initTtsTab", "document.addEventListener")
-    assert 'balLine.dataset.quotaError === "1"' in init
-    assert _i18n_values("tts_balance_error") == [
-        "လက်ကျန် မရသေးပါ — ပြန်စမ်းရန် တို့ပါ",
-        "Balance unavailable — tap to retry",
-    ]
-    assert ".tts-balance-retry" in CSS
+    # SUPERSEDED by Round 8 (B4, 2026-11-21): #tts-balance-line, formatTtsTabBalanceLine,
+    # and tts_balance_* i18n keys were retired while refreshTtsQuota keeps timeout + retry
+    # protection for chip/key/taste/cost-hint updates.
+    assert "formatTtsTabBalanceLine" not in APP_JS
+    assert "tts_balance_error" not in I18N_JS
+    assert "paintTtsChipFromQuota" in body
+    assert "paintTtsCostHintTiered" in body
 
 
 @pytest.mark.asyncio
@@ -407,6 +398,6 @@ def test_bb8_save_is_change_gated_and_seeded_on_apply():
 # ── i18n: every BB key complete in both locales ─────────────────────
 
 def test_bb_new_i18n_keys_complete_in_both_locales():
-    for key in ("tts_balance_error", "job_badge_tts", "speed_12_capsule"):
+    for key in ("job_badge_tts", "speed_12_capsule"):
         values = _i18n_values(key)
         assert len(values) == 2 and all(values), key

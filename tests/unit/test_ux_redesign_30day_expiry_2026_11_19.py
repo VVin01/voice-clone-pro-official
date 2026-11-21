@@ -377,8 +377,8 @@ def test_ux_redesign_voice_custom_first_recap_ratio_visible_and_admin_console():
     assert 'class="ref-audio-card" id="ref-audio-section"' in INDEX_HTML
     assert "≤ 50 MB" in INDEX_HTML
 
-    # TTS BYOK collapsed below generate
-    assert "#tab-tts > .input-card#tts-gemini-key-card { order: 6; }" in STYLE_CSS
+    # Round 8 B7 moved Gemini BYOK card to Profile only (removed from TTS tab)
+    assert "#tab-tts > .input-card#tts-gemini-key-card" not in STYLE_CSS
 
     # Recap Ratio always visible in applyActiveRecapStep2Category
     assert 'ratioGroup.classList.remove("hidden")' in APP_JS

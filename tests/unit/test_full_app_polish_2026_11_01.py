@@ -212,16 +212,13 @@ def test_speed_label_never_wraps_mid_word():
 
 def test_custom_voice_strings_fully_burmese():
     tr = _translations()
-    assert tr["my"]["custom_ref_title"] == "🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)"
-    # Round 6 Item 2: Optional/ရွေးချယ်ခွင့် hint tag removed from title row & both locales
+    # Round 8 Item A1: custom_ref_title removed from HTML & both locales
+    assert "custom_ref_title" not in tr["my"]
+    assert "custom_ref_title" not in tr["en"]
     assert "custom_ref_optional" not in tr["my"]
     assert "custom_ref_optional" not in tr["en"]
     assert tr["my"]["ref_file_btn"] == "📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်"
-    # HTML fallbacks render the same Burmese before i18n applies
-    assert f'data-i18n="custom_ref_title">{tr["my"]["custom_ref_title"]}<' in HTML
     assert f'data-i18n="ref_file_btn">{tr["my"]["ref_file_btn"]}<' in HTML
-    # English locale untouched
-    assert "Reference Voice" in tr["en"]["custom_ref_title"]
 
 
 def test_persona_preview_button_single_line_and_balanced_desc():

@@ -3782,7 +3782,6 @@ button.bal-chip {
     .home-free-row { padding: var(--s2); gap: var(--s2); }
 }
 /* BATCH CN (2026-11-07) — TTS TAB FIXES */
-#tts-gemini-key-card { padding-inline-start: calc(var(--s4) + var(--s2)); }
 .detail-toggle {
     display: flex; align-items: center; gap: var(--s2);
     width: 100%; min-height: 44px; padding: 2px 0;
@@ -4576,14 +4575,13 @@ input[type="range"]::-moz-range-thumb,
 #tab-voice > #voice-progress-box,
 #tab-voice > #voice-result-box,
 #tab-voice > .hub-link { order: 6; }
-#tab-tts > .pane-header { order: 1; }
 #tab-tts > #tts-text-card { order: 2; }
 #tab-tts > .input-card:not(#tts-text-card) { order: 3; }
 #tab-tts > #tts-cta-block { order: 4; }
 #tab-tts > #tts-progress-box,
-#tab-tts > #tts-result-box,
-#tab-tts > .hub-link { order: 5; }
-#tab-tts > .input-card#tts-gemini-key-card { order: 6; }
+#tab-tts > #tts-failed-box,
+#tab-tts > #tts-result-box { order: 5; }
+#tab-tts > .hub-link { order: 6; }
 #home-expiry-pill.exp-soon { background: rgba(239,68,68,.16); color: #ef4444; border-color: rgba(239,68,68,.4); }
 .vcp-plan-validity { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; background:var(--gold-soft); color:var(--gold-2); margin-bottom:6px; }
 .vcp-grant-row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
@@ -9731,17 +9729,18 @@ select.studio-select, select.studio-input, select.glass-dropdown {
 html[data-theme="light"] .sticky-cta-bar { background: rgba(255, 255, 255, 0.97) !important; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14); }
 .content-viewport,
 .tab-pane.active,
-#tab-tts.active,
 #tab-recap.active,
 #tab-admin.active { padding-bottom: calc(var(--nav-h, 68px) + 148px + env(safe-area-inset-bottom, 0px)) !important; }
 #tab-home.active,
 #tab-voice.active,
+#tab-tts.active,
 #tab-history.active,
 #tab-downloader.active,
 #tab-profile.active,
 #tab-vip.active { padding-bottom: 0 !important; }
 .content-viewport:has(#tab-home.active),
 .content-viewport:has(#tab-voice.active),
+.content-viewport:has(#tab-tts.active),
 .content-viewport:has(#tab-history.active),
 .content-viewport:has(#tab-downloader.active),
 .content-viewport:has(#tab-profile.active),
@@ -10480,5 +10479,57 @@ html[data-theme="dark"].lite #tab-voice .ref-notes-collapse {
     margin-top: 4px;
 }
 #tab-voice > .hub-link {
+    margin-top: 0;
+}
+/* 2026-11-21 Round 8 — Voice My-Voice sample card + TTS compact chips & bottom */
+#tab-voice #ref-audio-section {
+    margin-top: 10px;
+    border-top: 0;
+    padding-top: 0;
+}
+#tab-voice .ref-sample-card {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(248, 251, 255, 0.94);
+    border: 1px solid rgba(37, 99, 235, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+html[data-theme="dark"] #tab-voice .ref-sample-card {
+    background: rgba(22, 33, 58, 0.92);
+    border-color: rgba(96, 165, 250, 0.24);
+}
+html.lite #tab-voice .ref-sample-card {
+    background: #FFFFFF !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05) !important;
+}
+html[data-theme="dark"].lite #tab-voice .ref-sample-card {
+    background: #141D33 !important;
+    box-shadow: none !important;
+}
+#tab-tts .sample-chips {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+#tab-tts .sample-chips::-webkit-scrollbar {
+    display: none;
+}
+#tab-tts .sample-chips .mini-chip {
+    flex: 0 1 auto;
+    min-width: 0;
+    min-height: 36px;
+    padding: 4px 8px;
+    gap: 4px;
+    font-size: 12.5px;
+    line-height: 1.35;
+    white-space: nowrap;
+    justify-content: center;
+}
+#tab-tts > .hub-link {
     margin-top: 0;
 }

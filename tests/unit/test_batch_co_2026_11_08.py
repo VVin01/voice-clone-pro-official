@@ -31,22 +31,17 @@ def _values(key):
 
 
 def test_co_more_text_carries_the_full_picture_in_both_locales():
+    # Round 8 (B6): trimmed to essential numbers only (daily minutes, char caps, Gemini taste/BYOK).
     my, en = _values("tts_cost_hint_more")
     # Daily caps.
     assert "15 မိနစ်" in my and "60 မိနစ်" in my
-    assert "15 free minutes" in en and "60 for VIP" in en
-    # Referral seconds spent first.
-    assert "Referral ဆု" in my and "အရင် သုံး" in my
-    assert "referral reward seconds are spent first" in en
+    assert "15 min" in en and "60 min" in en
     # Per-generation character limits.
     assert "1,000" in my and "5,000" in my
-    assert "1,000 characters" in en and "5,000 for VIP" in en
+    assert "1,000 characters" in en and "5,000" in en
     # Gemini taste + own-key effect.
     assert "2 မိနစ်" in my and "ကိုယ်ပိုင် Key" in my
-    assert "2-minute free taste" in en and "your own key" in en
-    # The never-touch guarantee survives in both.
-    assert "Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ" in my
-    assert "never touched" in en
+    assert "2 min/day" in en and "your own key" in en
 
 
 def test_co_short_line_unchanged_from_cn():

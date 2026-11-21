@@ -93,15 +93,17 @@ def test_round6_item1_custom_clone_stepper_removed_and_section_order():
     assert 'id="saved-custom-voice-bar"' in INDEX_HTML
     assert 'id="custom-clone-check-status"' in INDEX_HTML
 
-    # Final order inside #ref-audio-section:
-    # title row -> saved-voice bar -> upload row -> collapsed notes -> check status.
+    # Final order inside #ref-audio-section (Round 8 A1+A2):
+    # custom_ref_title removed; inner items wrapped in .ref-sample-card:
+    # saved-voice bar -> upload row -> collapsed notes -> check status.
     sec = INDEX_HTML.split('id="ref-audio-section"', 1)[1].split("<!-- Step 2:", 1)[0]
-    i_title = sec.index('data-i18n="custom_ref_title"')
+    assert 'custom_ref_title' not in sec
+    i_card = sec.index('class="ref-sample-card"')
     i_saved = sec.index('id="saved-custom-voice-bar"')
     i_upload = sec.index('class="ref-upload-row"')
     i_notes = sec.index('id="ref-notes-details"')
     i_check = sec.index('id="custom-clone-check-status"')
-    assert i_title < i_saved < i_upload < i_notes < i_check
+    assert i_card < i_saved < i_upload < i_notes < i_check
 
 
 def test_round6_item2_optional_hint_tag_removed():

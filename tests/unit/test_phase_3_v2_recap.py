@@ -115,6 +115,11 @@ _RETIRED_VIP_STATIC_IDS = {
     "card-plan-combined-starter", "card-plan-master", "card-plan-recap",
     "card-plan-recap-starter", "card-plan-voice", "card-plan-voice-packs",
     "plan-panel-combined",
+    # Round 8 (B4 + B7): #tts-balance-line and #tts-gemini-key-card removed from #tab-tts
+    "btn-tts-key-delete", "btn-tts-key-save", "tts-balance-line",
+    "tts-byok-advanced-body", "tts-byok-advanced-toggle", "tts-gemini-key-card",
+    "tts-key-active-badge", "tts-key-guide-body", "tts-key-guide-toggle",
+    "tts-key-input", "tts-key-state",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",
@@ -127,6 +132,7 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "openPaymentDrawer('recap_studio_pro', 90000, '🎬 Recap Pro')",
     "openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')",
     "switchPlanCategory('combined')",
+    "toggleTtsByokAdvanced()",
 }
 
 

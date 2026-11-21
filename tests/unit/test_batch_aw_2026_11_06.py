@@ -697,7 +697,7 @@ def test_aw_tts_tab_section_and_controls():
         'id="tts-engine-picker"', 'data-tts-engine="gemini"', 'data-tts-engine="edge"',
         'id="tts-gemini-voice-select"', 'id="tts-edge-voice-select"',
         'id="tts-text-input"', 'id="tts-char-count"', 'id="tts-speed-picker"',
-        'id="tts-balance-line"', 'id="btn-generate-tts"', 'id="tts-progress-box"',
+        'id="btn-generate-tts"', 'id="tts-progress-box"',
         'id="tts-result-box"', 'id="tts-audio-player"', 'id="btn-download-tts"',
         'id="btn-tts-send-telegram"', 'onclick="generateTTS()"',
     ):
@@ -736,13 +736,12 @@ def test_aw_recap_step3_edge_pill_and_engine_lock():
 
 def test_aw_i18n_keys_exist_in_both_languages():
     keys = [
-        "tab_tts", "tts_title", "tts_subtitle", "tts_engine_label",
+        "tab_tts", "tts_engine_label",
         "tts_engine_gemini", "tts_engine_edge", "tts_voice_label",
         "tts_edge_thiha", "tts_edge_nilar", "tts_text_placeholder",
-        "tts_balance_loading", "tts_balance_line", "tts_balance_line_unlimited",
         "tts_cost_hint", "tts_generate_btn", "tts_queue_notice",
         "tts_status_generating", "tts_failed", "tts_empty_error",
-        "voice_tts_balance_line", "recap_engine_edge",
+        "recap_engine_edge",
     ]
     for key in keys:
         # Line-anchored count: one definition per language dict (the

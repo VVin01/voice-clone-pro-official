@@ -98,7 +98,6 @@ const translations = {
         persona_mode_title: "အသံရွေးချယ်မှု",
         btn_mode_curated: "🌟 Persona",
         btn_mode_custom: "🎙️ ကိုယ်ပိုင်အသံ",
-        custom_ref_title: "🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)",
         ref_file_btn: "📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်",
         ref_notes_toggle: "ℹ️ သတိပေးချက်များ",
         btn_clear_file: "✕ ရှင်းမည်",
@@ -358,30 +357,20 @@ const translations = {
         recap_engine_edge: "🎧 Edge TTS",
         recap_gemini_voice_label: "Gemini အသံ:",
         // TTS tab (Batch AW)
-        tts_title: "🎧 TTS အသံ ဖန်တီးရန်",
-        tts_subtitle: "စာသားကို Gemini AI သို့မဟုတ် Edge အသံဖြင့် အသံဖိုင် ပြောင်းပါ",
         tts_engine_label: "အသံ Engine:",
         tts_engine_gemini: "✨ Gemini AI",
         tts_engine_edge: "🎧 Edge TTS",
         tts_voice_label: "အသံ:",
-        tts_edge_thiha: "ကိုသီဟ (မြန်မာ · ကျား)",
-        tts_edge_nilar: "မနီလာ (မြန်မာ · မ)",
-        tts_edge_andrew: "ကိုအန်ဒရူး (Multilingual · ကျား · နွေးထွေး)",
-        tts_edge_brian: "ကိုဘရိုင်ယန် (Multilingual · ကျား · တည်ငြိမ်)",
-        tts_edge_remy: "ကိုရီမီ (Multilingual · ကျား · ကြည်လင်)",
-        tts_edge_ava: "မအေဗာ (Multilingual · မ · ချိုသာ)",
-        tts_edge_emma: "မအမ်မာ (Multilingual · မ · သွက်လက်)",
-        tts_edge_vivienne: "မဗီဗီယန် (Multilingual · မ · ငြိမ့်ညောင်း)",
+        tts_edge_thiha: "ကိုသီဟ (ကျား)",
+        tts_edge_nilar: "မနီလာ (မ)",
+        tts_edge_andrew: "ကိုအန်ဒရူး (ကျား)",
+        tts_edge_brian: "ကိုဘရိုင်ယန် (ကျား)",
+        tts_edge_remy: "ကိုရီမီ (ကျား)",
+        tts_edge_ava: "မအေဗာ (မ)",
+        tts_edge_emma: "မအမ်မာ (မ)",
+        tts_edge_vivienne: "မဗီဗီယန် (မ)",
         tts_text_placeholder: "အသံပြောင်းမည့် စာသား ရိုက်ထည့်ပါ…",
-        tts_balance_loading: "လက်ကျန် စစ်ဆေးနေသည်…",
-        tts_balance_error: "လက်ကျန် မရသေးပါ — ပြန်စမ်းရန် တို့ပါ",
         job_badge_tts: "🎧 TTS",
-        tts_balance_line: "🎧 မိတ်ဆက်ဆု လက်ကျန် (TTS): {ref_min} မိနစ် · 📅 ဒီနေ့ သုံးနိုင်သေးချိန်: {remain_min} မိနစ်",
-        tts_balance_line_unlimited: "🎧 မိတ်ဆက်ဆု လက်ကျန် (TTS): {ref_min} မိနစ် · 📅 နေ့စဉ် ကန့်သတ်ချက် မရှိပါ",
-        tts_balance_line_admin: "👑 Admin အကောင့် — နေ့စဉ် TTS ကန့်သတ်ချက် မရှိပါ",
-        tts_balance_line_paid: "👑 VIP · 📅 ဒီနေ့ သုံးနိုင်သေးချိန်: {remain_min} မိနစ်",
-        tts_balance_line_free_daily: "📅 ဒီနေ့ အခမဲ့ TTS လက်ကျန်: {remain_min} မိနစ်",
-        tts_balance_line_unlimited_clean: "📅 နေ့စဉ် TTS ကန့်သတ်ချက် မရှိပါ",
         tts_cost_hint: "💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပါတယ်",
         tts_cost_hint_admin: "👑 Admin အကောင့် — နေ့စဉ် TTS ကန့်သတ်ချက် မရှိပါ",
         tts_cost_hint_vip: "👑 VIP · နေ့စဉ် TTS 60 မိနစ် သုံးနိုင်ပါသည်",
@@ -390,10 +379,10 @@ const translations = {
         // Batch CN: the long explanations live behind tap-to-expand
         // toggles — one short line stays on screen, the rest opens
         // only when the user asks for it.
-        tts_cost_hint_more: "TTS အသံကို ဒီ Tab ရဲ့ လက်ကျန်ထဲကပဲ ဖြတ်ပါတယ်။ တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP အတွက် 60 မိနစ်) ရပြီး Referral ဆု စက္ကန့်တွေကို အရင် သုံးပေးပါတယ်။ တစ်ခါ ထုတ်ရင် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် ပါဝင်ပြီး ကိုယ်ပိုင် Key ထည့်ထားရင် မြည်းစမ်း ကန့်သတ်ချက် မရှိတော့ပါ။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။",
-        tts_cost_hint_more_admin: "Admin အကောင့်အတွက် TTS အသံထုတ်မှုကို နေ့စဉ် အချိန်ကန့်သတ်ချက် မရှိဘဲ သုံးနိုင်ပါတယ်။ တစ်ကြိမ်လျှင် စာလုံး {max_chars} အထိ ထုတ်နိုင်ပြီး Voice Clone မိနစ်နှင့် Recap Credit များကို လုံးဝ မထိပါ။",
-        tts_cost_hint_more_vip: "TTS အသံကို ဒီ Tab ရဲ့ လက်ကျန်ထဲကပဲ ဖြတ်ပါတယ်။ VIP အနေဖြင့် တစ်နေ့လျှင် 60 မိနစ်နှင့် တစ်ကြိမ်လျှင် စာလုံး {max_chars} အထိ ထုတ်နိုင်ပါတယ်။ Voice Clone မိနစ်နှင့် Recap Credit များကို လုံးဝ မထိပါ။",
-        tts_cost_hint_more_vip_ref: "TTS အသံကို ဒီ Tab ရဲ့ လက်ကျန်ထဲကပဲ ဖြတ်ပါတယ်။ VIP အနေဖြင့် တစ်နေ့လျှင် 60 မိနစ် (မိတ်ဆက်ဆု အချိန် အရင်သုံးမည်) နှင့် တစ်ကြိမ်လျှင် စာလုံး {max_chars} အထိ ထုတ်နိုင်ပါတယ်။ Voice Clone မိနစ်နှင့် Recap Credit များကို လုံးဝ မထိပါ။",
+        tts_cost_hint_more: "တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။",
+        tts_cost_hint_more_admin: "Admin အကောင့် — နေ့စဉ် TTS အကန့်အသတ်မရှိ · တစ်ကြိမ် စာလုံး {max_chars} အထိ။",
+        tts_cost_hint_more_vip: "VIP — တစ်နေ့ TTS 60 မိနစ် · တစ်ကြိမ် စာလုံး {max_chars} အထိ။",
+        tts_cost_hint_more_vip_ref: "VIP — တစ်နေ့ TTS 60 မိနစ် · တစ်ကြိမ် စာလုံး {max_chars} အထိ။",
         tts_details_toggle: "အသေးစိတ် ကြည့်ရန်",
         tts_edge_voice_hint: "Edge မှာ မြန်မာ & Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
@@ -415,9 +404,9 @@ const translations = {
         tts_key_honest_1: "ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။",
         tts_key_honest_2: "Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။",
         tts_taste_remaining: "✨ ဒီနေ့ Gemini အခမဲ့ စမ်းသုံးခွင့်: {min} မိနစ် ကျန်ပါသေးတယ်",
-        tts_taste_spent: "✨ ဒီနေ့ Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ — ကိုယ်ပိုင် Key ထည့်သုံးနိုင်ပါတယ်၊ မထည့်ရင်လည်း Edge အသံ ရပါတယ်",
+        tts_taste_spent: "✨ ဒီနေ့ Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ — Profile ထဲမှာ ကိုယ်ပိုင် Key ထည့်သုံးနိုင်ပါတယ်၊ မထည့်ရင်လည်း Edge အသံ ရပါတယ်",
         tts_key_prompt_title: "✨ ဒီနေ့ Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ",
-        tts_key_prompt_body: "ဒီနေ့အတွက် Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ။ ကိုယ်ပိုင် Gemini Key (Google AI Studio ကနေ အခမဲ့ ရယူနိုင်ပါတယ်) ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။",
+        tts_key_prompt_body: "ဒီနေ့အတွက် Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ။ Profile ထဲမှာ ကိုယ်ပိုင် Gemini Key (Google AI Studio ကနေ အခမဲ့ ရယူနိုင်ပါတယ်) ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။",
         tts_key_prompt_add: "🔑 Key ထည့်မယ်",
         tts_key_prompt_edge: "Edge နဲ့ ဆက်လုပ်မယ်",
         tts_generate_btn: "🎧 အသံ ထုတ်မည်",
@@ -425,7 +414,6 @@ const translations = {
         tts_status_generating: "အသံ ဖန်တီးနေသည်…",
         tts_failed: "အသံ ဖန်တီးလို့ မရပါ — ပြန်စမ်းကြည့်ပါ",
         tts_empty_error: "အသံပြောင်းဖို့ စာသား အရင် ရိုက်ထည့်ပေးပါ။",
-        voice_tts_balance_line: "🎧 TTS အသံ အတွက် လက်ကျန်: {min} မိနစ် — TTS Tab တွင် သုံးနိုင်ပါသည်",
         recap_sub_band: "⬛ Band (အပြည့်ပတ်)",
         recap_sub_heavy: "🔲 Heavy (ဘောင်ထူ)",
         recap_sub_soft: "🌫️ Soft (ဘောင်ပါး)",
@@ -781,11 +769,11 @@ const translations = {
         home_free_recap_label: "Recap Credit လက်ကျန်",
         home_free_value_min: "{min} မိနစ်",
         home_free_value_credits: "{count} Credit",
-        tts_sample_text: "မင်္ဂလာပါ။ Voice Clone Pro မှ ကြိုဆိုပါတယ် — ဒီ နမူနာ စာသားကို အသံပြောင်းပြီး အခုပဲ စမ်းနားထောင်ကြည့်လိုက်ပါ။",
         toast_copied: "ကူးယူပြီးပါပြီ!",
         toast_close: "ပိတ်မည်",
         toast_empty_text: "စာသား အရင် ရိုက်ထည့်ပေးပါ။",
         toast_custom_voice_needs_sample: "အသံနမူနာ အရင် ရွေးချယ်ပါ — သို့မဟုတ် သိမ်းထားတဲ့ အသံကို ရွေးပါ",
+        toast_saved_voice_not_found: "သိမ်းထားတဲ့ အသံကို မတွေ့တော့ပါ — အသံနမူနာ အသစ် ပြန်ရွေးပါ",
         toast_empty_url: "Video URL အရင် ထည့်ပေးပါ။",
         toast_success_slip: "ပြေစာ တင်ပြီးပါပြီ — မကြာမီ စစ်ဆေးပေးပါမယ်။",
         btn_send_voice_telegram: "Telegram သို့ ပို့မည်",
@@ -1882,7 +1870,6 @@ const translations = {
         persona_mode_title: "Voice Selection",
         btn_mode_curated: "🌟 Persona",
         btn_mode_custom: "🎙️ My Voice",
-        custom_ref_title: "🎙️ Reference Voice (Clone Sample)",
         ref_file_btn: "📁 Choose Reference Audio",
         ref_notes_toggle: "ℹ️ Notes",
         btn_clear_file: "✕ Clear",
@@ -2142,40 +2129,30 @@ const translations = {
         recap_engine_edge: "🎧 Edge TTS",
         recap_gemini_voice_label: "Gemini Voice:",
         // TTS tab (Batch AW)
-        tts_title: "🎧 Text to Speech",
-        tts_subtitle: "Turn any text into audio with Gemini AI or Edge voices",
         tts_engine_label: "Voice engine:",
         tts_engine_gemini: "✨ Gemini AI",
         tts_engine_edge: "🎧 Edge TTS",
         tts_voice_label: "Voice:",
-        tts_edge_thiha: "Thiha (Myanmar · Male)",
-        tts_edge_nilar: "Nilar (Myanmar · Female)",
-        tts_edge_andrew: "Andrew (Multilingual · Male · Warm)",
-        tts_edge_brian: "Brian (Multilingual · Male · Calm)",
-        tts_edge_remy: "Remy (Multilingual · Male · Crisp)",
-        tts_edge_ava: "Ava (Multilingual · Female · Sweet)",
-        tts_edge_emma: "Emma (Multilingual · Female · Bright)",
-        tts_edge_vivienne: "Vivienne (Multilingual · Female · Smooth)",
+        tts_edge_thiha: "Thiha (M)",
+        tts_edge_nilar: "Nilar (F)",
+        tts_edge_andrew: "Andrew (M)",
+        tts_edge_brian: "Brian (M)",
+        tts_edge_remy: "Remy (M)",
+        tts_edge_ava: "Ava (F)",
+        tts_edge_emma: "Emma (F)",
+        tts_edge_vivienne: "Vivienne (F)",
         tts_text_placeholder: "Type or paste the text to speak…",
-        tts_balance_loading: "Checking balance…",
-        tts_balance_error: "Balance unavailable — tap to retry",
         job_badge_tts: "🎧 TTS",
-        tts_balance_line: "🎧 Referral balance (TTS): {ref_min} min · 📅 Left today: {remain_min} min",
-        tts_balance_line_unlimited: "🎧 Referral balance (TTS): {ref_min} min · 📅 No daily limit",
-        tts_balance_line_admin: "👑 Admin access — Unlimited daily TTS",
-        tts_balance_line_paid: "👑 VIP · 📅 Left today: {remain_min} min",
-        tts_balance_line_free_daily: "📅 Free TTS left today: {remain_min} min",
-        tts_balance_line_unlimited_clean: "📅 Unlimited daily TTS",
         tts_cost_hint: "💡 Referral time is spent first",
         tts_cost_hint_admin: "👑 Admin access — Unlimited daily TTS",
         tts_cost_hint_vip: "👑 VIP · Up to 60 min/day TTS",
         tts_cost_hint_vip_ref: "👑 VIP · 60 min/day TTS (referral balance used first)",
         tts_cost_hint_free_noref: "📅 Up to 15 min/day free TTS",
         // Batch CN: tap-to-expand detail lines (see the my block).
-        tts_cost_hint_more: "TTS audio is charged only to this tab's own balance. You get 15 free minutes a day (60 for VIP), and referral reward seconds are spent first. Each generation can be up to 1,000 characters (5,000 for VIP). Gemini voices include a 2-minute free taste per day; if you add your own key, the taste limit no longer applies. Voice Clone minutes and Recap Credits are never touched.",
-        tts_cost_hint_more_admin: "Admin accounts enjoy unlimited daily TTS generation with up to {max_chars} characters per request. Voice Clone minutes and Recap Credits are never touched.",
-        tts_cost_hint_more_vip: "TTS audio is charged only to this tab's own balance. VIP includes 60 minutes per day and up to {max_chars} characters per request. Voice Clone minutes and Recap Credits are never touched.",
-        tts_cost_hint_more_vip_ref: "TTS audio is charged only to this tab's own balance. VIP includes 60 minutes per day (referral balance used first) and up to {max_chars} characters per request. Voice Clone minutes and Recap Credits are never touched.",
+        tts_cost_hint_more: "Daily free TTS: 15 min (VIP 60 min) · Up to 1,000 characters per generation (VIP 5,000). Gemini free taste: 2 min/day (unlimited with your own key).",
+        tts_cost_hint_more_admin: "Admin — Unlimited daily TTS · Up to {max_chars} characters per generation.",
+        tts_cost_hint_more_vip: "VIP — 60 min/day TTS · Up to {max_chars} characters per generation.",
+        tts_cost_hint_more_vip_ref: "VIP — 60 min/day TTS · Up to {max_chars} characters per generation.",
         tts_details_toggle: "View details",
         tts_edge_voice_hint: "Edge offers 8 Burmese-fluent Neural voices (4 Male · 4 Female)",
         // Batch CG: BYOK Gemini key card + taste note + Item 3b prompt
@@ -2197,9 +2174,9 @@ const translations = {
         tts_key_honest_1: "This key is used only for you and is never shared with anyone.",
         tts_key_honest_2: "You can delete it any time with one tap — it is removed immediately.",
         tts_taste_remaining: "✨ Free Gemini taste left today: {min} min",
-        tts_taste_spent: "✨ Today's free Gemini taste is used up — add your own key to keep Gemini, or use the Edge voice",
+        tts_taste_spent: "✨ Today's free Gemini taste is used up — add your own key in Profile to keep Gemini, or use the Edge voice",
         tts_key_prompt_title: "✨ Your free Gemini share is used up",
-        tts_key_prompt_body: "Today's free Gemini taste is finished. Add your own Gemini key (free from Google AI Studio) to keep the Gemini voice, or this generation will use the Edge voice instead.",
+        tts_key_prompt_body: "Today's free Gemini taste is finished. Add your own Gemini key in Profile (free from Google AI Studio) to keep the Gemini voice, or this generation will use the Edge voice instead.",
         tts_key_prompt_add: "🔑 Add Key",
         tts_key_prompt_edge: "Continue with Edge",
         tts_generate_btn: "🎧 Generate Audio",
@@ -2207,7 +2184,6 @@ const translations = {
         tts_status_generating: "Generating audio…",
         tts_failed: "Could not generate audio — please try again",
         tts_empty_error: "Please enter the text to speak first.",
-        voice_tts_balance_line: "🎧 TTS audio balance: {min} min — spend it in the TTS tab",
         recap_sub_band: "Band",
         recap_sub_heavy: "Heavy",
         recap_sub_soft: "Soft",
@@ -2563,11 +2539,11 @@ const translations = {
         home_free_recap_label: "Recap Credits left",
         home_free_value_min: "{min} min",
         home_free_value_credits: "{count} credits",
-        tts_sample_text: "Hello, and welcome to Voice Clone Pro — press Generate and hear this sample text spoken aloud.",
         toast_copied: "Copied!",
         toast_close: "Close",
         toast_empty_text: "Please enter your text first.",
         toast_custom_voice_needs_sample: "Choose a voice sample first — or select a saved voice",
+        toast_saved_voice_not_found: "Your saved voice could not be found — please choose a voice sample again",
         toast_empty_url: "Please enter a video URL first.",
         toast_success_slip: "Slip submitted — we'll review it shortly.",
         btn_send_voice_telegram: "Send to Telegram",
@@ -3633,16 +3609,6 @@ function setLanguage(lang) {
     // resets it to the plain "(1 Credit)" copy.
     if (window.repaintRecapCtaPrice) window.repaintRecapCtaPrice();
 
-    // Batch BH: the TTS balance line is painted dynamically (its
-    // paints strip data-i18n), so the sweep above cannot re-stamp
-    // it — but it also cannot translate it. When the line carries
-    // loader-painted data, re-run the quota loader so it repaints
-    // in the new language; its in-flight guard makes this safe.
-    const ttsBalLine = document.getElementById("tts-balance-line");
-    if (ttsBalLine && ttsBalLine.dataset.dynamic === "1" && window.refreshTtsQuota) {
-        window.refreshTtsQuota();
-    }
-
     // Apply placeholders
     document.querySelectorAll("[data-i18n-ph]").forEach(el => {
         const key = el.getAttribute("data-i18n-ph");
@@ -3760,6 +3726,7 @@ function localizeServerText(raw) {
     if (/ကိုယ်ပိုင် Logo ထည့်ခြင်းသည်/.test(s)) return t("srv_vip_logo_only");
     if (/ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည်/.test(s)) return t("srv_vip_clone_only");
     if (/အသံနမူနာ အရင် ရွေးချယ်ပါ/.test(s)) return t("toast_custom_voice_needs_sample");
+    if (/သိမ်းထားတဲ့ အသံကို မတွေ့တော့ပါ/.test(s)) return t("toast_saved_voice_not_found");
     if (/ရွေးထားတဲ့ အသံနမူနာ မမှန်ကန်ပါ|အသံနမူနာဖိုင် ရွေးချယ်ပေးပါ/.test(s)) return t("srv_invalid_sample");
     if (/ရွေးထားတဲ့ အသံ မမှန်ကန်ပါ/.test(s)) return t("srv_invalid_voice");
     if (/Font ဖိုင် မမှန်ကန်ပါ|Font ဖိုင် ရွေးချယ်ပေးပါ|ရွေးထားတဲ့ Font မမှန်ကန်ပါ/.test(s)) return t("srv_invalid_font");

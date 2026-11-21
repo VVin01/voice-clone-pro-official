@@ -708,7 +708,9 @@ def test_cg_bot_locales_have_all_new_keys():
 
 def test_cg_webapp_key_card_prompt_and_i18n_exist():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert 'id="tts-gemini-key-card"' in html
+    # Round 8 (B7): Gemini Key BYOK card lives in Profile only (removed from TTS tab)
+    assert 'id="tts-gemini-key-card"' not in html
+    assert 'id="profile-gemini-key-card"' in html
     assert 'id="tts-key-prompt-modal"' in html
     assert 'id="tts-taste-note"' in html
     assert 'id="adm-set-free-gemini-taste"' in html

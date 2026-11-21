@@ -92,7 +92,6 @@ console.log(JSON.stringify({ count: myK.length, hasWaiting: 'live_job_status_wai
 def test_2a_tts_tab_tier_gating_via_node():
     fn_code = "\n".join(
         [
-            _extract_js_fn(APP_JS, "formatTtsTabBalanceLine"),
             _extract_js_fn(APP_JS, "paintHomeTilePeriods"),
             _extract_js_fn(APP_JS, "paintTtsTodaySurfaces"),
             _extract_js_fn(APP_JS, "paintTtsCostHintTiered"),
@@ -155,7 +154,6 @@ function evalTier(opts, userData) {{
   vm.runInNewContext(i18nSrc + '\\n' + {json.dumps(fn_code)}, ctx);
   ctx.paintTtsTodaySurfaces(userData);
   return {{
-    line: ctx.formatTtsTabBalanceLine(opts),
     noteHidden: els.note.classList._hidden,
     ttsPeriod: els.ttsPeriod.textContent,
     ttsVal: els.ttsVal.innerText,
@@ -186,16 +184,13 @@ console.log(JSON.stringify({{ admin, vip, freeGift }}));
     )
     res = json.loads(proc.stdout.strip())
     assert res["admin"]["noteHidden"] is True
-    assert "မိတ်ဆက်ဆု" not in res["admin"]["line"]
     assert "မိတ်ဆက်ဆု" not in res["admin"]["shortHint"]
     assert "မိတ်ဆက်ဆု" not in res["admin"]["moreHint"]
     assert "Admin" in res["admin"]["shortHint"]
     assert res["admin"]["ttsVal"] == "∞"
     assert res["vip"]["noteHidden"] is True
-    assert "မိတ်ဆက်ဆု" not in res["vip"]["line"]
     assert "မိတ်ဆက်ဆု" not in res["vip"]["shortHint"]
     assert res["freeGift"]["noteHidden"] is False
-    assert "မိတ်ဆက်ဆု" in res["freeGift"]["line"]
     assert "မိတ်ဆက်ဆု" in res["freeGift"]["shortHint"]
 
 

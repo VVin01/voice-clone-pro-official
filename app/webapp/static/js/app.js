@@ -3229,10 +3229,6 @@ function switchTab(tabId) {
     if (tabId === "tab-vip" && typeof refreshPlanPrices === "function") {
         refreshPlanPrices();
     }
-    // Batch BZ: first-visit sample prefill rides the same entry hook.
-    if (tabId === "tab-tts" && typeof window.maybePrefillTtsSample === "function") {
-        window.maybePrefillTtsSample();
-    }
     syncTabAdminLifecycle(tabId);
     syncTelegramBackButton();
 }
@@ -3373,7 +3369,6 @@ async function loadUserProfile() {
         refreshLogoUi();
         refreshRecapQualityLock();
         refreshRecapEngineLock();
-        paintVoiceTtsBalanceLine(data);
         paintTtsTodaySurfaces(data);
         if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
         // Batch BW: repaint the TTS counter now the per-user limit is
@@ -4478,7 +4473,6 @@ function paintCachedUserHeader(data) {
     refreshRecapQualityLock();
     refreshRecapEngineLock();
     if (typeof renderMyRecapPresets === "function") renderMyRecapPresets();
-    paintVoiceTtsBalanceLine(data);
     paintTtsTodaySurfaces(data);
     if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
 }
@@ -11731,26 +11725,6 @@ window.sendVoiceToTelegram = sendVoiceToTelegram;
 const ttsState = { engine: "gemini", speed: "+12%", jobId: null, pollTimer: null };
 window.ttsState = ttsState;
 
-// Batch BZ: the two "today's TTS" surfaces — the header 🎧 chip and
-function formatTtsTabBalanceLine(opts) {
-    const isAdmin = !!(opts && opts.isAdmin);
-    const isVip = !!(opts && opts.isVip);
-    const unlimited = !!(opts && opts.unlimited);
-    const refSec = Math.max(0, Number(opts && opts.refSec) || 0);
-    const remainSec = Math.max(0, Number(opts && opts.remainSec) || 0);
-    const refMin = (refSec / 60).toFixed(1);
-    const remainMin = (remainSec / 60).toFixed(1);
-    if (isAdmin) return t("tts_balance_line_admin");
-    if (unlimited) {
-        return (!isVip && refSec > 0)
-            ? tf("tts_balance_line_unlimited", { ref_min: refMin })
-            : t("tts_balance_line_unlimited_clean");
-    }
-    if (isVip) return tf("tts_balance_line_paid", { remain_min: remainMin });
-    if (refSec > 0) return tf("tts_balance_line", { ref_min: refMin, remain_min: remainMin });
-    return tf("tts_balance_line_free_daily", { remain_min: remainMin });
-}
-
 function paintHomeTilePeriods(data, quota) {
     const u = data || (state && state.user) || {};
     const q = quota || window._lastTtsQuota || null;
@@ -11847,29 +11821,6 @@ function paintTtsChipFromQuota(q) {
     if (typeof paintTtsCostHintTiered === "function") paintTtsCostHintTiered(q, (state && state.user) || null);
 }
 
-function paintVoiceTtsBalanceLine(profile) {
-    // AW-11: the Voice tab labels the referral bucket as TTS-only —
-    // it is NOT part of the clone balance anymore. Admins sit outside
-    // referral/gift framing so the line stays hidden for them.
-    const el = document.getElementById("voice-tts-balance-line");
-    if (!el) return;
-    if (profile && profile.is_admin) {
-        el.textContent = "";
-        el.classList.add("hidden");
-        return;
-    }
-    const secs = profile && typeof profile.tts_balance_seconds === "number"
-        ? profile.tts_balance_seconds : 0;
-    if (secs > 0) {
-        el.textContent = tf("voice_tts_balance_line", { min: (secs / 60).toFixed(1) });
-        el.classList.remove("hidden");
-    } else {
-        el.textContent = "";
-        el.classList.add("hidden");
-    }
-}
-window.paintVoiceTtsBalanceLine = paintVoiceTtsBalanceLine;
-
 function paintTtsCostHintTiered(q, profile) {
     const u = profile || (typeof state !== "undefined" && state && state.user) || {};
     const isAdmin = Boolean((q && q.is_admin) || u.is_admin);
@@ -11899,65 +11850,14 @@ function paintTtsCostHintTiered(q, profile) {
 }
 window.paintTtsCostHintTiered = paintTtsCostHintTiered;
 
-// Batch BB-4 (diagnosed): this loader was the ONLY balance paint in
-// the app that ignored the fetchWithTimeout standard — ONE bare fetch
-// per tab entry, no timeout, no retry, and a catch that swallowed
-// every failure (network error / non-200 / bad JSON) without painting
-// anything, so the static "checking…" placeholder became the
-// permanent state after ANY single failed attempt. Both live
-// observations sat in deploy-restart windows of the single-process
-// app (r73 go-live ~07:00, r74 deploy mid-audit ~07:20), where one
-// request can hang on a draining instance or fail outright; the
-// first pass recovered only because the job flow re-invoked this
-// loader after each job, the audit ran no jobs and never recovered.
-// The endpoint itself reproduces at ≤0.05 s locally under this exact
-// request shape — the defect is this loader's fragility, fixed here:
-// timeout via fetchWithTimeout, bounded retries, an in-flight guard,
-// and a tap-to-retry fallback paint instead of eternal "checking…".
-// Batch BH (production bug, owner-confirmed on a real phone
-// 2026-11-06): despite the BB-4 bounds above, the line still sat on
-// "checking…" forever in production — three times, incl. a fresh
-// profile and the owner's phone — while the endpoint answers in
-// ~0.5 s. Two defects are provable from this code alone:
-// (1) every paint wrote into the node captured at loader start and
-//     left its data-i18n="tts_balance_loading" attribute in place,
-//     so ANY later setLanguage() pass (the profile language sync in
-//     loadUserProfile, or a manual language toggle) re-stamped the
-//     loading string over the painted balance — and nothing
-//     re-triggered this loader, so the line stayed on "checking…"
-//     for the rest of the session;
-// (2) every paint — including the BB error fallback — sat behind
-//     the fetch await-chain, so a chain that never settles inside
-//     the Telegram webview paints nothing at all and leaves
-//     ttsQuotaInFlight latched true, silently blocking every later
-//     retry (tab re-entries included).
-// BH makes the stuck state impossible by construction instead of
-// betting on which stall fired: an instant paint from the profile
-// /user/me already carries (BH-1), fresh-node paints that strip
-// data-i18n so no i18n sweep can re-stamp the placeholder (BH-2),
-// and a run-keyed 6 s watchdog that force-paints the tap-to-retry
-// state and releases the latch (BH-3).
+// Batch BB-4 / Round 8: resilient /api/tts/quota loader (fetchWithTimeout + bounded retries + in-flight latch).
 let ttsQuotaInFlight = false;
 async function refreshTtsQuota() {
-    // BH-1: paint from the already-loaded profile first — this runs
-    paintTtsQuotaInstant();
+    if (typeof state !== "undefined" && state && state.user) {
+        paintTtsCostHintTiered(null, state.user);
+    }
     if (ttsQuotaInFlight) return;
-    if (!document.getElementById("tts-balance-line")) return;
     ttsQuotaInFlight = true;
-    const runId = ++ttsQuotaRunCounter;
-    // BH-3: hard watchdog for this run (disarmed by any paint from
-    ttsQuotaWatchdogTimer = setTimeout(() => {
-        if (runId !== ttsQuotaRunCounter) return;
-        ttsQuotaWatchdogTimer = null;
-        const line = document.getElementById("tts-balance-line");
-        if (!line) return;
-        const stillLoading = line.getAttribute("data-i18n") === "tts_balance_loading"
-            || line.textContent === t("tts_balance_loading");
-        if (stillLoading) {
-            paintTtsQuotaError(runId);
-            ttsQuotaInFlight = false;
-        }
-    }, 6000);
     try {
         const retryDelaysMs = [0, 700, 1800];
         for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
@@ -11969,105 +11869,17 @@ async function refreshTtsQuota() {
                 if (!res.ok) throw new Error("tts quota " + res.status);
                 const q = await res.json();
                 _cgQuotaCache = q;
-                const refMin = ((q.referral_seconds || 0) / 60).toFixed(1);
                 paintTtsChipFromQuota(q);
                 paintTtsGeminiKeyState(q);
                 paintTtsTasteNote(q);
-                paintTtsBalanceLine(runId, (line) => {
-                    line.classList.remove("tts-balance-retry");
-                    delete line.dataset.quotaError;
-                    line.textContent = formatTtsTabBalanceLine({
-                        isAdmin: Boolean(q.is_admin || (state && state.user && state.user.is_admin)),
-                        isVip: Boolean(state && state.user && state.user.is_vip),
-                        unlimited: Boolean(q.unlimited),
-                        refSec: q.referral_seconds || 0,
-                        remainSec: q.remaining_seconds || 0,
-                    });
-                });
                 return;
-            } catch (e) { /* retry, then the fallback paint below */ }
+            } catch (e) { /* retry, then stop cleanly */ }
         }
-        paintTtsQuotaError(runId);
     } finally {
         ttsQuotaInFlight = false;
     }
 }
 window.refreshTtsQuota = refreshTtsQuota;
-
-// Batch BH machinery (declared after refreshTtsQuota; the function
-// declarations hoist and the counters initialise at script load,
-// before any tab entry can call the loader).
-let ttsQuotaRunCounter = 0;
-let ttsQuotaWatchdogTimer = null;
-
-function paintTtsBalanceLine(runId, mutate) {
-    // BH-2: re-query the node at paint time (never a captured node)
-    const line = document.getElementById("tts-balance-line");
-    if (!line) return;
-    line.removeAttribute("data-i18n");
-    line.dataset.dynamic = "1";
-    mutate(line);
-    // BH-3: a paint from the CURRENT run disarms its watchdog; a
-    if (runId === ttsQuotaRunCounter && ttsQuotaWatchdogTimer) {
-        clearTimeout(ttsQuotaWatchdogTimer);
-        ttsQuotaWatchdogTimer = null;
-    }
-}
-
-function paintTtsQuotaError(runId) {
-    paintTtsBalanceLine(runId, (line) => {
-        line.textContent = t("tts_balance_error");
-        line.dataset.quotaError = "1";
-        line.classList.add("tts-balance-retry");
-    });
-}
-
-function paintTtsQuotaInstant() {
-    // BH-1: /user/me already carries tts_balance_seconds (the Voice
-    // tab paints its own line from it in paintVoiceTtsBalanceLine);
-    // paint the referral picture from it immediately — the quota
-    // response then overwrites with the full picture (daily
-    // remaining included). Admins sit outside the daily cap, so
-    // their instant paint uses the unlimited format. The run key is
-    // -1: the instant paint is not a fetch run and must never
-    // disarm a watchdog.
-    const profile = state.user;
-    if (!profile || typeof profile.tts_balance_seconds !== "number") return;
-    const refMin = (profile.tts_balance_seconds / 60).toFixed(1);
-    paintTtsCostHintTiered(null, profile);
-    paintTtsBalanceLine(-1, (line) => {
-        line.classList.remove("tts-balance-retry");
-        delete line.dataset.quotaError;
-        const remSec = (typeof profile.tts_today_remaining_seconds === "number")
-            ? profile.tts_today_remaining_seconds
-            : (typeof profile.tts_daily_limit_seconds === "number" ? profile.tts_daily_limit_seconds : (profile.is_vip ? 3600 : 900));
-        line.textContent = formatTtsTabBalanceLine({
-            isAdmin: Boolean(profile.is_admin),
-            isVip: Boolean(profile.is_vip),
-            unlimited: Boolean(profile.is_admin),
-            refSec: profile.tts_referral_seconds ?? profile.tts_balance_seconds ?? 0,
-            remainSec: remSec,
-        });
-    });
-}
-
-// Batch BZ (Item 7): first-visit sample prefill — a brand-new user
-// landing on the TTS tab can press Generate immediately instead of
-// facing an empty box. Session-scoped: once the user types, edits,
-// clears, uses a sample chip, or simply already has text in the box,
-// the prefill never fires again this session, and it NEVER
-// overwrites existing text.
-let ttsSampleSettled = false;
-function maybePrefillTtsSample() {
-    if (ttsSampleSettled) return;
-    const input = document.getElementById("tts-text-input");
-    if (!input) return;
-    ttsSampleSettled = true;
-    if ((input.value || "").trim() !== "") return;
-    input.value = t("tts_sample_text");
-    updateTtsCharCount();
-}
-window.maybePrefillTtsSample = maybePrefillTtsSample;
 
 function updateTtsCharCount() {
     const input = document.getElementById("tts-text-input");
@@ -12086,23 +11898,20 @@ function updateTtsCharCount() {
 window.updateTtsCharCount = updateTtsCharCount;
 function insertTtsSampleText(txt) {
     const input = document.getElementById("tts-text-input");
-    ttsSampleSettled = true;
     if (input) { input.value = txt; updateTtsCharCount(); input.focus(); }
 }
 window.insertTtsSampleText = insertTtsSampleText;
 function clearTtsText() {
     const input = document.getElementById("tts-text-input");
-    ttsSampleSettled = true;
     if (input) { input.value = ""; updateTtsCharCount(); }
 }
 window.clearTtsText = clearTtsText;
 
-// ── Batch CG: BYOK Gemini key card, taste note, Item 3b prompt ──
+// ── Batch CG: BYOK Gemini key card (Profile), taste note, Item 3b prompt ──
 let _cgQuotaCache = null;
 
 function paintTtsGeminiKeyState(q) {
     const targets = [
-        { stateId: "tts-key-state", delId: "btn-tts-key-delete", badgeId: "tts-key-active-badge" },
         { stateId: "profile-key-state", delId: "btn-profile-key-delete", badgeId: "profile-key-active-badge" },
     ];
     const hasActiveKey = Boolean(q && q.has_own_key && q.own_key_state !== "invalid");
@@ -12174,10 +11983,8 @@ async function saveGeminiKeyFrom(inputId, btnId) {
         }, 90000);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || t("tts_key_save_failed"));
-        ["tts-key-input", "profile-key-input"].forEach((id) => {
-            const el = document.getElementById(id);
-            if (el) el.value = "";
-        });
+        const profileInput = document.getElementById("profile-key-input");
+        if (profileInput) profileInput.value = "";
         _applyGeminiKeyMutationView(data);
         showStudioToast(t("tts_key_saved"), 'success');
         refreshTtsQuota();
@@ -12198,10 +12005,8 @@ async function deleteGeminiKeyFrom(btnId) {
         }, 30000);
         const data = await res.json().catch(() => ({ has_key: false, masked: null, state: null }));
         if (!res.ok) throw new Error("delete failed");
-        ["tts-key-input", "profile-key-input"].forEach((id) => {
-            const el = document.getElementById(id);
-            if (el) el.value = "";
-        });
+        const profileInput = document.getElementById("profile-key-input");
+        if (profileInput) profileInput.value = "";
         _applyGeminiKeyMutationView(data);
         showStudioToast(t("tts_key_deleted"), 'success');
         refreshTtsQuota();
@@ -12210,14 +12015,6 @@ async function deleteGeminiKeyFrom(btnId) {
     } finally {
         if (btn) btn.disabled = false;
     }
-}
-
-async function saveTtsGeminiKey() {
-    return saveGeminiKeyFrom("tts-key-input", "btn-tts-key-save");
-}
-
-async function deleteTtsGeminiKey() {
-    return deleteGeminiKeyFrom("btn-tts-key-delete");
 }
 
 async function _cgTasteBlocked() {
@@ -12241,11 +12038,16 @@ async function _cgTasteBlocked() {
 function _cgPromptAddKey() {
     const modal = document.getElementById("tts-key-prompt-modal");
     if (modal) modal.classList.add("hidden");
-    toggleTtsByokAdvanced(true);
-    const card = document.getElementById("tts-gemini-key-card");
-    if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-    const input = document.getElementById("tts-key-input");
-    if (input) setTimeout(() => input.focus(), 350);
+    if (typeof openProfileView === "function") openProfileView();
+    else if (typeof switchTab === "function") switchTab("tab-profile");
+    const card = document.getElementById("profile-gemini-key-card");
+    if (card && typeof card.scrollIntoView === "function") {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    const input = document.getElementById("profile-key-input");
+    if (input && typeof input.focus === "function") {
+        setTimeout(() => input.focus(), 350);
+    }
 }
 
 function _cgPromptUseEdge() {
@@ -12280,8 +12082,6 @@ function applyTtsEngineVisibility() {
     const eRow = document.getElementById("tts-edge-voice-row");
     if (gRow) gRow.classList.toggle("hidden", engine !== "gemini");
     if (eRow) eRow.classList.toggle("hidden", engine !== "edge");
-    const keyCard = document.getElementById("tts-gemini-key-card");
-    if (keyCard) keyCard.classList.toggle("hidden", engine !== "gemini");
     const edgeHint = document.getElementById("tts-edge-voice-hint");
     if (edgeHint) edgeHint.classList.toggle("hidden", engine !== "edge");
     const tasteNote = document.getElementById("tts-taste-note");
@@ -12319,25 +12119,11 @@ function initTtsTab() {
     });
     const input = document.getElementById("tts-text-input");
     if (input) {
-        try {
-            const savedDraft = localStorage.getItem("vcp_tts_draft");
-            if (savedDraft && !input.value) {
-                input.value = savedDraft;
-                ttsSampleSettled = true;
-            }
-        } catch (e) {}
         input.addEventListener("input", () => {
-            // Any real edit settles the BZ prefill for this session.
-            ttsSampleSettled = true;
-            try { localStorage.setItem("vcp_tts_draft", input.value); } catch (e) {}
             updateTtsCharCount();
         });
     }
-    // Batch CG: key card + Item 3b prompt wiring (TTS tab + Profile view).
-    const keySaveBtn = document.getElementById("btn-tts-key-save");
-    if (keySaveBtn) keySaveBtn.addEventListener("click", saveTtsGeminiKey);
-    const keyDelBtn = document.getElementById("btn-tts-key-delete");
-    if (keyDelBtn) keyDelBtn.addEventListener("click", deleteTtsGeminiKey);
+    // Batch CG: Profile Gemini key wiring + Item 3b prompt.
     const profileKeySaveBtn = document.getElementById("btn-profile-key-save");
     if (profileKeySaveBtn) profileKeySaveBtn.addEventListener("click", () => saveGeminiKeyFrom("profile-key-input", "btn-profile-key-save"));
     const profileKeyDelBtn = document.getElementById("btn-profile-key-delete");
@@ -12347,11 +12133,6 @@ function initTtsTab() {
     const promptEdgeBtn = document.getElementById("btn-tts-prompt-edge");
     if (promptEdgeBtn) promptEdgeBtn.addEventListener("click", _cgPromptUseEdge);
     updateTtsCharCount();
-    // Batch BB-4: the balance line's fallback state is tap-to-retry.
-    const balLine = document.getElementById("tts-balance-line");
-    if (balLine) balLine.addEventListener("click", () => {
-        if (balLine.dataset.quotaError === "1") refreshTtsQuota();
-    });
     // Batch CN: paint the engine-driven surfaces once at init so
     applyTtsEngineVisibility();
 }
@@ -17218,22 +16999,6 @@ function trimTtsTextToLimit() {
 }
 window.trimTtsTextToLimit = trimTtsTextToLimit;
 
-function toggleTtsByokAdvanced(forceOpen) {
-    haptic("light");
-    const body = document.getElementById("tts-byok-advanced-body");
-    const head = document.getElementById("tts-byok-advanced-toggle");
-    if (!body) return;
-    const isOpen = typeof forceOpen === "boolean"
-        ? forceOpen
-        : body.classList.contains("hidden");
-    body.classList.toggle("hidden", !isOpen);
-    if (head) {
-        head.classList.toggle("open", isOpen);
-        head.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    }
-}
-window.toggleTtsByokAdvanced = toggleTtsByokAdvanced;
-
 document.addEventListener("DOMContentLoaded", () => {
     initTelegram();
     setupViewportAndKeyboardSync();
@@ -17771,8 +17536,8 @@ function refreshPhase1to4LanguageSurfaces() {
         if (window._lastTtsQuota && typeof paintTtsChipFromQuota === "function") {
             paintTtsChipFromQuota(window._lastTtsQuota);
         }
-        if (typeof paintTtsQuotaInstant === "function") {
-            paintTtsQuotaInstant();
+        if (typeof _cgQuotaCache !== "undefined" && _cgQuotaCache && typeof paintTtsTasteNote === "function") {
+            paintTtsTasteNote(_cgQuotaCache);
         }
         if (Array.isArray(window._lastAdminPricingPlans) && typeof renderAdminPricingList === "function") {
             renderAdminPricingList(window._lastAdminPricingPlans);

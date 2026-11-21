@@ -4318,11 +4318,21 @@ async def create_voice_job(
     from app.services.queue import create_voice_clone_job
 
     ref_audio_path: Optional[str] = None
-    if req.voice_ref_id and is_vip:
+    _raw_voice_ref_id = (req.voice_ref_id or "").strip()
+    if _raw_voice_ref_id:
+        _m_ref = _RECAP_VOICE_REF_ID_RE.match(_raw_voice_ref_id)
+        if not _m_ref or int(_m_ref.group(1)) != user.id:
+            raise HTTPException(
+                status_code=400,
+                detail="သိမ်းထားတဲ့ အသံကို မတွေ့တော့ပါ — အသံနမူနာ အသစ် ပြန်ရွေးပါ",
+            )
         try:
-            ref_audio_path = str(_resolve_recap_voice_ref(req.voice_ref_id, user))
+            ref_audio_path = str(_resolve_recap_voice_ref(_raw_voice_ref_id, user))
         except HTTPException:
-            ref_audio_path = None
+            raise HTTPException(
+                status_code=400,
+                detail="သိမ်းထားတဲ့ အသံကို မတွေ့တော့ပါ — အသံနမူနာ အသစ် ပြန်ရွေးပါ",
+            )
 
     # Round 7 Item 3: VoxCPM requires either a curated preset_voice or a
     # resolvable saved voice sample (source_audio_path). Rejecting missing

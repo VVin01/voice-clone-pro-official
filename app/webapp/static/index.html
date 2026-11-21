@@ -388,36 +388,35 @@
 
                         <!-- Custom Reference Audio Section (PRIMARY default mode) -->
                         <div class="ref-audio-card" id="ref-audio-section">
-                            <div class="card-header-row">
-                                <div class="card-label" data-i18n="custom_ref_title">🎙️ အသံနမူနာ (အသံတူ ဖန်တီးရန်)</div>
-                            </div>
-                            <div class="vcp-saved-voice-bar hidden" id="saved-custom-voice-bar">
-                                <span id="saved-custom-voice-label"></span>
-                                <div class="vcp-saved-voice-actions">
-                                    <button type="button" class="mini-chip" id="btn-saved-custom-voice-preview" onclick="previewSavedCustomVoice(event)" data-i18n="btn_preview_short">▶ နားထောင်</button>
-                                    <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToVoice()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
-                                    <button type="button" class="mini-chip text-danger" id="btn-saved-custom-voice-delete" onclick="deleteSavedCustomVoice()" data-i18n="saved_custom_voice_delete">🗑️ ဖျက်မည်</button>
+                            <div class="ref-sample-card" id="ref-sample-card">
+                                <div class="vcp-saved-voice-bar hidden" id="saved-custom-voice-bar">
+                                    <span id="saved-custom-voice-label"></span>
+                                    <div class="vcp-saved-voice-actions">
+                                        <button type="button" class="mini-chip" id="btn-saved-custom-voice-preview" onclick="previewSavedCustomVoice(event)" data-i18n="btn_preview_short">▶ နားထောင်</button>
+                                        <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToVoice()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
+                                        <button type="button" class="mini-chip text-danger" id="btn-saved-custom-voice-delete" onclick="deleteSavedCustomVoice()" data-i18n="saved_custom_voice_delete">🗑️ ဖျက်မည်</button>
+                                    </div>
                                 </div>
+                                <div class="ref-upload-row">
+                                    <label class="btn-file-upload" for="ref-audio-input">
+                                        <span id="ref-audio-label" data-i18n="ref_file_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
+                                    </label>
+                                    <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
+                                    <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
+                                </div>
+                                <details class="ref-notes-collapse" id="ref-notes-details">
+                                    <summary class="ref-notes-summary">
+                                        <span data-i18n="ref_notes_toggle">ℹ️ သတိပေးချက်များ</span>
+                                        <span class="ref-notes-chevron" aria-hidden="true">▾</span>
+                                    </summary>
+                                    <ul class="ref-notes-list">
+                                        <li data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50 စက္ကန့်)</li>
+                                        <li data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 50 MB)</li>
+                                        <li data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</li>
+                                    </ul>
+                                </details>
+                                <div class="vcp-clone-check-status hidden" id="custom-clone-check-status"></div>
                             </div>
-                            <div class="ref-upload-row">
-                                <label class="btn-file-upload" for="ref-audio-input">
-                                    <span id="ref-audio-label" data-i18n="ref_file_btn">📁 အသံနမူနာ ဖိုင် ရွေးချယ်မည်</span>
-                                </label>
-                                <input type="file" id="ref-audio-input" accept="audio/*,.wav,.mp3,.ogg,.m4a" class="hidden-file-input">
-                                <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
-                            </div>
-                            <details class="ref-notes-collapse" id="ref-notes-details">
-                                <summary class="ref-notes-summary">
-                                    <span data-i18n="ref_notes_toggle">ℹ️ သတိပေးချက်များ</span>
-                                    <span class="ref-notes-chevron" aria-hidden="true">▾</span>
-                                </summary>
-                                <ul class="ref-notes-list">
-                                    <li data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50 စက္ကန့်)</li>
-                                    <li data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 50 MB)</li>
-                                    <li data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</li>
-                                </ul>
-                            </details>
-                            <div class="vcp-clone-check-status hidden" id="custom-clone-check-status"></div>
                         </div>
                     </div>
                 </div><!-- Step 2: Unified Text Input & Speed Controls Card (Visually ordered 1st via Text-First layout) -->
@@ -520,14 +519,6 @@
                  own daily allowance — never to voice minutes or recap
                  credits (see app/services/tts_service.py). -->
             <section id="tab-tts" class="tab-pane">
-                <div class="pane-header">
-                    <div class="pane-title-row">
-                        <h2 data-i18n="tts_title">🎧 TTS အသံ ဖန်တီးရန်</h2>
-                        <span class="badge-studio gold">TTS</span>
-                    </div>
-                    <p data-i18n="tts_subtitle">စာသားကို Gemini AI သို့မဟုတ် Edge အသံဖြင့် အသံဖိုင် ပြောင်းပါ</p>
-                </div>
-
                 <div class="card glass input-card">
                     <div class="step-badge-title mb-2">
                         <span class="step-num-pill">2</span>
@@ -565,14 +556,14 @@
                         <span class="ctrl-title" data-i18n="tts_voice_label">အသံ:</span>
                         <div class="tts-voice-select-flex">
                         <select id="tts-edge-voice-select" class="studio-select glass-dropdown">
-                            <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (မြန်မာ · ကျား)</option>
-                            <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မြန်မာ · မ)</option>
-                            <option value="andrew" data-i18n="tts_edge_andrew">ကိုအန်ဒရူး (Multilingual · ကျား · နွေးထွေး)</option>
-                            <option value="brian" data-i18n="tts_edge_brian">ကိုဘရိုင်ယန် (Multilingual · ကျား · တည်ငြိမ်)</option>
-                            <option value="remy" data-i18n="tts_edge_remy">ကိုရီမီ (Multilingual · ကျား · ကြည်လင်)</option>
-                            <option value="ava" data-i18n="tts_edge_ava">မအေဗာ (Multilingual · မ · ချိုသာ)</option>
-                            <option value="emma" data-i18n="tts_edge_emma">မအမ်မာ (Multilingual · မ · သွက်လက်)</option>
-                            <option value="vivienne" data-i18n="tts_edge_vivienne">မဗီဗီယန် (Multilingual · မ · ငြိမ့်ညောင်း)</option>
+                            <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (ကျား)</option>
+                            <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မ)</option>
+                            <option value="andrew" data-i18n="tts_edge_andrew">ကိုအန်ဒရူး (ကျား)</option>
+                            <option value="brian" data-i18n="tts_edge_brian">ကိုဘရိုင်ယန် (ကျား)</option>
+                            <option value="remy" data-i18n="tts_edge_remy">ကိုရီမီ (ကျား)</option>
+                            <option value="ava" data-i18n="tts_edge_ava">မအေဗာ (မ)</option>
+                            <option value="emma" data-i18n="tts_edge_emma">မအမ်မာ (မ)</option>
+                            <option value="vivienne" data-i18n="tts_edge_vivienne">မဗီဗီယန် (မ)</option>
                         </select>
                         <button type="button" class="btn secondary-btn mini-btn" id="btn-tts-edge-preview" onclick="previewSelectedTtsVoice(event)">
                             <span data-i18n="btn_preview_short">▶ နားထောင်</span>
@@ -580,7 +571,6 @@
                         </div>
                     </div>
                     <p class="ref-desc hidden" id="tts-edge-voice-hint" data-i18n="tts_edge_voice_hint">Edge မှာ မြန်မာ &amp; Multilingual Neural အသံ ၈ မျိုး (ကျား ၄ · မ ၄) ရွေးနိုင်ပါတယ်</p>
-                    <p class="ref-desc" id="tts-balance-line" data-i18n="tts_balance_loading">လက်ကျန် စစ်ဆေးနေသည်…</p>
                     <!-- Batch CN: one short hint line stays on screen;
                          the full billing explanation is tap-to-expand
                          (the .detail-toggle pattern, toggleTtsDetail). -->
@@ -591,45 +581,7 @@
                     </button>
                     <div class="hidden" id="tts-cost-hint-more">
                         <p class="ref-desc hidden" id="tts-taste-note"></p>
-                        <p class="ref-desc" data-i18n="tts_cost_hint_more">TTS အသံကို ဒီ Tab ရဲ့ လက်ကျန်ထဲကပဲ ဖြတ်ပါတယ်။ တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP အတွက် 60 မိနစ်) ရပြီး Referral ဆု စက္ကန့်တွေကို အရင် သုံးပေးပါတယ်။ တစ်ခါ ထုတ်ရင် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် ပါဝင်ပြီး ကိုယ်ပိုင် Key ထည့်ထားရင် မြည်းစမ်း ကန့်သတ်ချက် မရှိတော့ပါ။ Voice Clone မိနစ် နဲ့ Recap Credit လုံးဝ မထိပါ။</p>
-                    </div>
-                </div>
-
-                <!-- Batch CG + Phase 3: bring-your-own Gemini key under Advanced accordion;
-                     when a key is active, shows ✅ Key Active badge on header. -->
-                <div class="card glass input-card" id="tts-gemini-key-card">
-                    <button type="button" class="tts-byok-advanced-head" id="tts-byok-advanced-toggle" aria-expanded="false" onclick="toggleTtsByokAdvanced()">
-                        <span class="card-label" data-i18n="tts_key_card_title">🔑 ကိုယ်ပိုင် Gemini Key</span>
-                        <span class="tts-byok-badges">
-                            <span class="vcp-badge vcp-badge-info" data-i18n="vcp_advanced_settings">⚙️ အသေးစိတ် ဆက်တင်များ</span>
-                            <span class="vcp-badge vcp-badge-success hidden" id="tts-key-active-badge" data-i18n="tts_key_active_badge">✅ Key Active</span>
-                        </span>
-                        <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
-                    </button>
-                    <div class="tts-byok-advanced-body hidden" id="tts-byok-advanced-body">
-                        <p class="ref-desc" id="tts-key-state" data-i18n="tts_key_state_none">Key မထည့်ရသေးပါ</p>
-                        <div class="control-row mt-2">
-                            <input type="password" id="tts-key-input" class="studio-input" data-i18n-ph="tts_key_input_placeholder" placeholder="Gemini API Key ထည့်ပါ…" autocomplete="off" spellcheck="false">
-                        </div>
-                        <div class="btn-row mt-2">
-                            <button type="button" class="btn secondary-btn" id="btn-tts-key-save" data-i18n="tts_key_save_btn">Key သိမ်းမယ်</button>
-                            <button type="button" class="btn secondary-btn hidden" id="btn-tts-key-delete" data-i18n="tts_key_delete_btn">Key ဖျက်မယ်</button>
-                        </div>
-                        <!-- Batch CN: the how-to + privacy notes are one
-                             tap-to-expand block (the guide title row is the
-                             toggle); the state line, input and save/delete
-                             above stay always visible. -->
-                        <button type="button" class="detail-toggle mt-2" id="tts-key-guide-toggle" aria-expanded="false" data-detail-target="tts-key-guide-body" onclick="toggleTtsDetail(this)">
-                            <span data-i18n="tts_key_guide_title">Key ရယူနည်း (အခမဲ့):</span>
-                            <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
-                        </button>
-                        <div class="hidden" id="tts-key-guide-body">
-                            <p class="ref-desc" data-i18n="tts_key_guide_1">၁။ Google AI Studio (aistudio.google.com) မှာ Google အကောင့်နဲ့ ဝင်ပါ</p>
-                            <p class="ref-desc" data-i18n="tts_key_guide_2">၂။ "Get API key" → "Create API key" ကို နှိပ်ပြီး Key ကို ကူးယူပါ</p>
-                            <p class="ref-desc" data-i18n="tts_key_guide_3">၃။ ကူးထားတဲ့ Key ကို ဒီမှာ ထည့်ပြီး သိမ်းပါ</p>
-                            <p class="ref-desc" data-i18n="tts_key_honest_1">ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။</p>
-                            <p class="ref-desc" data-i18n="tts_key_honest_2">Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။</p>
-                        </div>
+                        <p class="ref-desc" data-i18n="tts_cost_hint_more">တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။</p>
                     </div>
                 </div>
 
@@ -669,10 +621,6 @@
                 </div>
 
                 <div class="cta-block" id="tts-cta-block">
-                    <div class="step-badge-title">
-                        <span class="step-num-pill">3</span>
-                        <span class="step-title" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
-                    </div>
                     <div id="tts-preflight" class="voice-preflight" aria-live="polite"></div>
                     <button type="button" class="btn gold-gradient-btn" id="btn-generate-tts" onclick="generateTTS()">
                         <span class="btn-text" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
@@ -3842,7 +3790,7 @@
         <div class="modal-content centered" onclick="event.stopPropagation()">
             <div class="modal-emoji">✨</div>
             <h3 data-i18n="tts_key_prompt_title">✨ ဒီနေ့ Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ</h3>
-            <p data-i18n="tts_key_prompt_body" class="modal-desc">ဒီနေ့အတွက် Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ။ ကိုယ်ပိုင် Gemini Key ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။</p>
+            <p data-i18n="tts_key_prompt_body" class="modal-desc">ဒီနေ့အတွက် Gemini အခမဲ့ စမ်းသုံးခွင့် ကုန်သွားပါပြီ။ Profile ထဲမှာ ကိုယ်ပိုင် Gemini Key ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။</p>
             <button type="button" class="btn gold-gradient-btn" id="btn-tts-prompt-add-key" data-i18n="tts_key_prompt_add">🔑 Key ထည့်မယ်</button>
             <button type="button" class="btn secondary-btn mt-2" id="btn-tts-prompt-edge" data-i18n="tts_key_prompt_edge">Edge နဲ့ ဆက်လုပ်မယ်</button>
         </div>

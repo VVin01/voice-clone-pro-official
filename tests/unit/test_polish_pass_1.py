@@ -76,9 +76,6 @@ console.log(JSON.stringify({ equal: JSON.stringify(myKeys) === JSON.stringify(en
         "home_tile_voice_period_paid",
         "home_tile_recap_period_paid",
         "home_tile_period_unlimited",
-        "tts_balance_line_admin",
-        "tts_balance_line_paid",
-        "tts_balance_line_free_daily",
         "admin_plan_name_MIN_10",
         "admin_plan_name_all_in_one_master",
         "adm_ov_tap_slips",
@@ -91,7 +88,6 @@ console.log(JSON.stringify({ equal: JSON.stringify(myKeys) === JSON.stringify(en
 def test_1a_home_tiles_tier_truthful_via_node():
     fn_code = "\n".join(
         [
-            _extract_fn(APP_JS, "formatTtsTabBalanceLine"),
             _extract_fn(APP_JS, "paintHomeTilePeriods"),
             _extract_fn(APP_JS, "paintTtsTodaySurfaces"),
             _extract_fn(APP_JS, "paintTtsChipFromQuota"),
@@ -108,7 +104,6 @@ function evalCase(lang, userData, quotaData) {{
     '#home-free-voice-value': mkEl(),
     '#home-free-recap-value': mkEl(),
     '#home-free-tts-note': mkEl(),
-    '#tts-balance-line': mkEl(),
     '#tts-period': mkEl(),
     '#voice-period': mkEl(),
     '#recap-period': mkEl(),
@@ -118,7 +113,6 @@ function evalCase(lang, userData, quotaData) {{
     'home-free-voice-value': els['#home-free-voice-value'],
     'home-free-recap-value': els['#home-free-recap-value'],
     'home-free-tts-note': els['#home-free-tts-note'],
-    'tts-balance-line': els['#tts-balance-line'],
   }};
   const mapQs = {{
     '#home-free-card [data-i18n="home_free_tts_period"]': els['#tts-period'],
@@ -176,7 +170,8 @@ console.log(JSON.stringify({{ paid, free, admin }}));
 
 
 def test_1d_tts_balance_line_and_history_retention_via_node():
-    fmt_code = _extract_fn(APP_JS, "formatTtsTabBalanceLine")
+    # Round 8 B4 retired formatTtsTabBalanceLine; keep verifying 30-day history retention badge.
+    assert "formatTtsTabBalanceLine" not in APP_JS
     ret_code = "\n".join(
         [
             _extract_fn(APP_JS, "computeHistoryExpiryState"),
@@ -189,7 +184,6 @@ def test_1d_tts_balance_line_and_history_retention_via_node():
             _extract_fn(APP_JS, "hubHistoryRowHtml"),
         ]
     )
-    combined_code = fmt_code + "\n" + ret_code
     script = f"""
 const fs = require('fs');
 const vm = require('vm');
@@ -198,21 +192,13 @@ const ctx = {{ window: {{}}, document: {{}}, localStorage: {{ getItem: () => 'my
 vm.runInNewContext(i18nSrc + '; globalThis.__tr = translations;', ctx);
 ctx.t = (k) => (ctx.__tr.my && ctx.__tr.my[k]) || k;
 ctx.tf = (k, p={{}}) => {{ let s = ctx.t(k); for (const [a,b] of Object.entries(p)) s = s.replace('{{'+a+'}}', b); return s; }};
-vm.runInNewContext({json.dumps(combined_code)}, ctx);
-const adminLine = ctx.formatTtsTabBalanceLine({{ isAdmin: true, isVip: true, unlimited: true, refSec: 0, remainSec: 0 }});
-const paidLine = ctx.formatTtsTabBalanceLine({{ isAdmin: false, isVip: true, unlimited: false, refSec: 120, remainSec: 3420 }});
-const freeRefLine = ctx.formatTtsTabBalanceLine({{ isAdmin: false, isVip: false, unlimited: false, refSec: 120, remainSec: 900 }});
+vm.runInNewContext({json.dumps(ret_code)}, ctx);
 const rowFresh = ctx.hubHistoryRowHtml({{ id: 'rc_1', job_type: 'RECAP', status: 'SUCCESS', input_snippet: 'Test', voice_display: 'Thiha', created_at: new Date(Date.now() - 3*3600*1000).toISOString(), time_ago: '3h ago', deliverables: {{ video: '/dl' }} }});
-console.log(JSON.stringify({{ adminLine, paidLine, freeRefLine, rowFresh }}));
+console.log(JSON.stringify({{ rowFresh }}));
 """
     proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     res = json.loads(proc.stdout.strip())
-    assert "Admin" in res["adminLine"]
-    assert "မိတ်ဆက်ဆု" not in res["adminLine"]
-    assert "VIP" in res["paidLine"]
-    assert "မိတ်ဆက်ဆု" not in res["paidLine"]
-    assert "မိတ်ဆက်ဆု" in res["freeRefLine"]
     assert "vcp-badge-info" in res["rowFresh"]
     assert "⏳" in res["rowFresh"]
     assert "နာရီ ကျန်" in res["rowFresh"]
