@@ -266,47 +266,51 @@
                     </div>
                 </div>
 
-                <!-- Help Hub entry point (controls #home-samples-card and #home-tutorials-card visibility) -->
+                <!-- Refer card (bindings and exact Myanmar copy intact for AW/AY contracts) -->
+                <div class="card glass vcp-refer-card" id="home-refer-card">
+                    <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု</div>
+                    <p class="ref-desc" data-i18n="ref_desc">သူငယ်ချင်း တစ်ယောက် ဒီ link နဲ့ ဝင်၍ Channel + Group join လိုက်တာနဲ့ TTS အသံ ၂ မိနစ် ရပါမည် (အများဆုံး မိတ်ဆွေ 20 ယောက် = 40 မိနစ် အထိ)။ ဆုကို TTS Tab တွင်သာ သုံးနိုင်ပါသည်။</p>
+                    <div class="ref-link-row">
+                        <span class="ref-link-text" id="referral-link-text">—</span>
+                    </div>
+                    <div class="ref-actions">
+                        <button type="button" class="mini-chip gold" onclick="copyReferralLink()" data-i18n="btn_copy">📋 ကူးမည်</button>
+                        <button type="button" class="mini-chip" onclick="shareReferralLink()" data-i18n="ref_share_btn">↗️ မျှဝေမည်</button>
+                    </div>
+                    <p class="ref-stats" id="referral-stats-line"></p>
+                </div>
+
+                <!-- Support row in its own slim Liquid Glass card -->
+                <div class="card glass home-support-card">
+                    <div class="home-tut-list">
+                        <button type="button" class="home-tut-row" onclick="openSupportContact()">
+                            <span class="home-tut-icon vcp-settings-badge" aria-hidden="true">
+                                <svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            </span>
+                            <span class="home-tut-text">
+                                <span class="home-tut-name" data-i18n="support_contact_title">Support သို့ ဆက်သွယ်ရန်</span>
+                                <span class="home-tut-desc" data-i18n="support_contact_desc">@VoiceCloneProAdmin — ပြဿနာ ရှိရင် ဆက်သွယ်ပါ</span>
+                            </span>
+                            <span class="home-tut-chevron"><svg width="15" height="15" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tutorials Hub entry point (controls #home-tutorials-card visibility) -->
                 <div class="card glass home-help-entry-card" id="home-help-entry-card">
                     <button type="button" class="home-help-entry-btn" id="btn-home-help-hub" aria-expanded="false" onclick="toggleVcpHelpHub()">
                         <span class="home-help-entry-head">
                             <span class="home-help-entry-icon vcp-settings-badge" aria-hidden="true">
                                 <svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
                             </span>
-                            <span class="home-help-entry-title" data-i18n="home_help_entry_title">နမူနာ အသံများ နှင့် အသုံးပြုနည်း လမ်းညွှန်</span>
+                            <span class="home-help-entry-title" data-i18n="home_help_entry_title">📚 Tutorial လမ်းညွှန်များ</span>
                             <span class="vcp-badge vcp-badge-info" data-i18n="home_tut_count">၁၀ ခု</span>
                             <span class="home-help-entry-chevron" id="home-help-entry-chevron" aria-hidden="true">▾</span>
                         </span>
                         <span class="home-help-entry-text">
-                            <span class="home-help-entry-desc" data-i18n="home_help_entry_desc">Voice/Recap အသံ နမူနာများ နားထောင်ရန် နှင့် Tutorial ၁၀ ခု ကြည့်ရန်</span>
+                            <span class="home-help-entry-desc" data-i18n="home_help_entry_desc">Tutorial ၁၀ ခု ကြည့်ရန်</span>
                         </span>
                     </button>
-                </div>
-
-                <div class="card glass home-samples-card" id="home-samples-card">
-                    <div class="card-label" data-i18n="samples_title">🎧 နမူနာ နားထောင်ကြည့်ပါ</div>
-                    <div class="sample-row">
-                        <div class="sample-main">
-                            <button type="button" class="sample-play-btn" id="sample-btn-voice" data-sample-toggle="sample-audio-voice" aria-label="နမူနာ ဖွင့်မည်" data-i18n-aria="sample_play" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
-                            <div class="sample-meta">
-                                <span class="sample-name" data-i18n="sample_voice_name">🎙️ ကိုမင်း (Ko Min)</span>
-                                <span class="sample-desc" data-i18n="sample_voice_desc">Voice Clone နမူနာ အသံ</span>
-                            </div>
-                        </div>
-                        <div class="sample-progress" aria-hidden="true"><span class="sample-progress-fill" id="sample-progress-voice"></span></div>
-                        <audio id="sample-audio-voice" class="sample-audio" preload="none" data-sample-url="/api/voices/sample/komin"></audio>
-                    </div>
-                    <div class="sample-row">
-                        <div class="sample-main">
-                            <button type="button" class="sample-play-btn" id="sample-btn-recap" data-sample-toggle="sample-audio-recap" aria-label="နမူနာ ဖွင့်မည်" data-i18n-aria="sample_play" data-i18n-title="sample_play"><span class="sample-play-icon" aria-hidden="true">▶</span></button>
-                            <div class="sample-meta">
-                                <span class="sample-name" data-i18n="sample_recap_name">🎬 မနှင်း (Ma Hnin)</span>
-                                <span class="sample-desc" data-i18n="sample_recap_desc">Recap ဇာတ်လမ်းပြော နမူနာ အသံ</span>
-                            </div>
-                        </div>
-                        <div class="sample-progress" aria-hidden="true"><span class="sample-progress-fill" id="sample-progress-recap"></span></div>
-                        <audio id="sample-audio-recap" class="sample-audio" preload="none" data-sample-url="/api/voices/sample/mahnin"></audio>
-                    </div>
                 </div>
 
                 <div class="card glass" id="home-tutorials-card">
@@ -371,36 +375,6 @@
                                 <span class="home-tut-chevron">›</span>
                             </button>
                         </div>
-                    </div>
-                </div>
-
-                <!-- Refer card (bindings and exact Myanmar copy intact for AW/AY contracts) -->
-                <div class="card glass vcp-refer-card" id="home-refer-card">
-                    <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု</div>
-                    <p class="ref-desc" data-i18n="ref_desc">သူငယ်ချင်း တစ်ယောက် ဒီ link နဲ့ ဝင်၍ Channel + Group join လိုက်တာနဲ့ TTS အသံ ၂ မိနစ် ရပါမည် (အများဆုံး မိတ်ဆွေ 20 ယောက် = 40 မိနစ် အထိ)။ ဆုကို TTS Tab တွင်သာ သုံးနိုင်ပါသည်။</p>
-                    <div class="ref-link-row">
-                        <span class="ref-link-text" id="referral-link-text">—</span>
-                    </div>
-                    <div class="ref-actions">
-                        <button type="button" class="mini-chip gold" onclick="copyReferralLink()" data-i18n="btn_copy">📋 ကူးမည်</button>
-                        <button type="button" class="mini-chip" onclick="shareReferralLink()" data-i18n="ref_share_btn">↗️ မျှဝေမည်</button>
-                    </div>
-                    <p class="ref-stats" id="referral-stats-line"></p>
-                </div>
-
-                <!-- Support row in its own slim Liquid Glass card -->
-                <div class="card glass home-support-card">
-                    <div class="home-tut-list">
-                        <button type="button" class="home-tut-row" onclick="openSupportContact()">
-                            <span class="home-tut-icon vcp-settings-badge" aria-hidden="true">
-                                <svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                            </span>
-                            <span class="home-tut-text">
-                                <span class="home-tut-name" data-i18n="support_contact_title">Support သို့ ဆက်သွယ်ရန်</span>
-                                <span class="home-tut-desc" data-i18n="support_contact_desc">@VoiceCloneProAdmin — ပြဿနာ ရှိရင် ဆက်သွယ်ပါ</span>
-                            </span>
-                            <span class="home-tut-chevron"><svg width="15" height="15" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></span>
-                        </button>
                     </div>
                 </div>
             </section>
@@ -2129,8 +2103,7 @@
             <section id="tab-downloader" class="tab-pane">
                 <div class="pane-header">
                     <button type="button" class="vcp-subview-back-btn" onclick="switchTab('tab-home')" data-i18n="btn_back_home">← ပင်မသို့</button>
-                    <h2 data-i18n="dl_title">📥 Media Downloader (မီဒီယာ ဒေါင်းလုဒ်)</h2>
-                    <p data-i18n="dl_subtitle">YouTube, TikTok, Facebook နှင့် Douyin (抖音) မှ Video (MP4) / Audio (MP3) ဒေါင်းလုဒ် ရယူပါ</p>
+                    <h2 data-i18n="dl_title">📥 Media Downloader</h2>
                 </div>
 
                 <div class="card glass vcp-card dl-search-card">
@@ -2139,7 +2112,6 @@
                     <button class="btn primary-btn vcp-btn vcp-btn--primary vcp-btn--full mt-3" id="btn-extract-dl">
                         <span data-i18n="btn_search_dl">🔍 ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာမည်</span>
                     </button>
-                    <p class="link-source-help" data-i18n="link_help_dl">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်ပါတယ် — Link မရရင် မူရင်း App ထဲက Link ကို တိုက်ရိုက် ကူးထည့်ပြီး ပြန်စမ်းကြည့်ပါ။</p>
                     <div class="dl-error-box hidden" id="dl-error-box" role="alert">
                         <div class="dl-error-title" data-i18n="dl_extract_failed_title">ဗီဒီယို အချက်အလက် ထုတ်ယူ၍ မရပါ</div>
                         <p class="dl-error-hint" data-i18n="dl_extract_failed_hint">လင့်ခ် မှန်မမှန် စစ်ပြီး ထပ်ကြိုးစားပါ၊ သို့မဟုတ် တခြား လင့်ခ် တစ်ခု သုံးကြည့်ပါ။</p>
@@ -2150,11 +2122,6 @@
                 </div>
 
                 <div id="dl-extract-stage" class="dl-extract-stage mt-3" data-ui-state="empty">
-                    <div class="vcp-ui-state-slot vcp-state-empty vcp-card vcp-card--compact dl-empty-state-card" data-state-view="empty">
-                        <div class="dl-empty-icon" aria-hidden="true">📥</div>
-                        <div class="vcp-card__title" data-i18n="dl_empty_title">လင့်ခ် ထည့်ပြီး ဒေါင်းလုဒ် ရွေးချယ်မှုများ ရှာဖွေပါ</div>
-                        <p class="vcp-card__subtitle" data-i18n="dl_empty_sub">YouTube · TikTok · Facebook · Douyin မှ MP4 / MP3 / SRT ရယူနိုင်ပါတယ်</p>
-                    </div>
                     <div class="vcp-ui-state-slot vcp-state-loading vcp-card dl-loading-state-card" data-state-view="loading" aria-busy="true">
                         <div class="dl-skel-header">
                             <div class="vcp-skel dl-skel-thumb"></div>
@@ -2374,7 +2341,6 @@
                 <div class="pane-header">
                     <button type="button" class="vcp-subview-back-btn" onclick="switchTab('tab-home')" data-i18n="btn_back_home">← ပင်မသို့</button>
                     <h2 data-i18n="history_title">📜 မှတ်တမ်း</h2>
-                    <p data-i18n="history_subtitle">သင် ဖန်တီးထားသော Voice နှင့် Recap အလုပ်များ အားလုံး တစ်နေရာတည်းတွင်</p>
                 </div>
 
                 <div class="hub-filter-row" role="tablist" data-i18n-aria="history_filter_aria" aria-label="History filter">

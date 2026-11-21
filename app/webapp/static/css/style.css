@@ -4645,7 +4645,6 @@ input[type="range"]::-moz-range-thumb,
 #tab-home.vcp-help-hub-open .home-help-entry-chevron {
     transform: rotate(180deg);
 }
-#tab-home:not(.vcp-help-hub-open) #home-samples-card,
 #tab-home:not(.vcp-help-hub-open) #home-tutorials-card {
     display: none;
 }
@@ -8707,7 +8706,6 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     border: none;
     box-shadow: 0 10px 22px -10px rgba(79, 70, 229, 0.55);
 }
-#tab-downloader .dl-empty-state-card,
 #tab-downloader .dl-loading-state-card,
 #tab-downloader #dl-result-card {
     background: rgba(255, 255, 255, 0.92);
@@ -9040,7 +9038,6 @@ html[data-theme="dark"] #tab-admin .adm-settings-master-title {
     color: #F8FAFC;
 }
 html[data-theme="dark"] #tab-downloader .dl-search-card,
-html[data-theme="dark"] #tab-downloader .dl-empty-state-card,
 html[data-theme="dark"] #tab-downloader .dl-loading-state-card,
 html[data-theme="dark"] #tab-downloader #dl-result-card,
 html[data-theme="dark"] #tab-vip .stats-card,
@@ -10067,12 +10064,14 @@ html[data-theme="light"] .sticky-cta-bar { background: rgba(255, 255, 255, 0.97)
 #tab-voice.active,
 #tab-tts.active,
 #tab-recap.active,
-#tab-downloader.active,
 #tab-vip.active,
-#tab-history.active,
 #tab-admin.active { padding-bottom: calc(var(--nav-h, 68px) + 148px + env(safe-area-inset-bottom, 0px)) !important; }
-#tab-home.active { padding-bottom: 0 !important; }
-.content-viewport:has(#tab-home.active) { padding-bottom: calc(var(--nav-h, 64px) + 32px + env(safe-area-inset-bottom, 0px)) !important; }
+#tab-home.active,
+#tab-history.active,
+#tab-downloader.active { padding-bottom: 0 !important; }
+.content-viewport:has(#tab-home.active),
+.content-viewport:has(#tab-history.active),
+.content-viewport:has(#tab-downloader.active) { padding-bottom: calc(var(--nav-h, 64px) + 32px + env(safe-area-inset-bottom, 0px)) !important; }
 #recap-step-1,
 #recap-step-2,
 #recap-step-3,
@@ -10400,3 +10399,67 @@ html[data-theme="light"] .dd-acc-vip-tag { background: rgba(217, 119, 6, 0.14); 
 .recap-step3-acc-wrap { margin-top: 10px; }
 .recap-step4-more-options { margin-top: 10px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2, rgba(255, 255, 255, 0.04)); border: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
 .recap-step4-more-options > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text); list-style: none; display: flex; align-items: center; justify-content: space-between; }
+/* 2026-11-21 Home Round 2 — Compact Tutorials Accordion, History & Downloader Cleanup */
+#tab-home #home-tutorials-card {
+    padding: 10px 12px !important;
+}
+#tab-home #home-tutorials-card .home-tut-head {
+    min-height: 40px !important;
+    padding: 2px 2px !important;
+    gap: 8px !important;
+}
+#tab-home #home-tutorials-card #home-tut-more {
+    margin-top: 6px;
+}
+#tab-home #home-tutorials-card .home-tut-index-row {
+    margin-bottom: 6px;
+}
+#tab-home #home-tutorials-card .home-tut-list {
+    gap: 0;
+}
+#tab-home #home-tutorials-card .home-tut-row {
+    padding: 6px 4px;
+    gap: 10px;
+    min-height: 46px;
+}
+#tab-home #home-tutorials-card .home-tut-icon {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+    border-radius: 9px;
+}
+#tab-home:not(.vcp-help-hub-open) #home-help-entry-card,
+#tab-home.vcp-help-hub-open #home-tutorials-card {
+    margin-bottom: 0 !important;
+}
+#tab-history,
+#tab-downloader {
+    gap: 10px;
+}
+#tab-history .pane-header,
+#tab-downloader .pane-header {
+    padding: 0 2px;
+    gap: 2px;
+    margin-bottom: 0;
+}
+#tab-history .pane-header .vcp-subview-back-btn,
+#tab-downloader .pane-header .vcp-subview-back-btn {
+    align-self: flex-start;
+    min-height: 40px;
+    margin-bottom: 2px;
+}
+#tab-history .hub-filter-row {
+    margin-top: 0;
+    padding: 2px;
+}
+#tab-history .vcp-history-retention-bar {
+    margin-top: 0;
+}
+#tab-history #hub-history-stage,
+#tab-downloader #dl-extract-stage {
+    margin-top: 2px;
+}
+#tab-downloader #dl-extract-stage[data-ui-state="empty"],
+#tab-downloader #dl-extract-stage[data-ui-state="error"] {
+    display: none;
+}

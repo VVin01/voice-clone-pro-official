@@ -1038,55 +1038,6 @@ function setupStickyCtas() {
     refreshStickyCtas();
 }
 
-// Home sample players: lazy-load on first Play tap, one plays at a time
-function setupSamplePlayers() {
-    const a = document.getElementById("sample-audio-voice");
-    const b = document.getElementById("sample-audio-recap");
-    if (a && b) {
-        a.addEventListener("play", () => { try { b.pause(); } catch (e) {} });
-        b.addEventListener("play", () => { try { a.pause(); } catch (e) {} });
-    }
-    const ensureSampleSrc = async (el) => {
-        if (!el || el.src) return !!el?.src;
-        const url = el.getAttribute("data-sample-url");
-        if (!url) return false;
-        const authUrl = await fetchAuthImageUrl(url);
-        if (authUrl) el.src = authUrl;
-        return !!el.src;
-    };
-    const wireSampleButton = (el, btnId, fillId) => {
-        const btn = document.getElementById(btnId);
-        if (!el || !btn) return;
-        const icon = btn.querySelector(".sample-play-icon");
-        const fill = document.getElementById(fillId);
-        const render = () => {
-            const playing = !el.paused && !el.ended;
-            if (icon) icon.textContent = playing ? "⏸" : "▶";
-            btn.classList.toggle("playing", playing);
-            btn.setAttribute("aria-label", t(playing ? "sample_pause" : "sample_play"));
-            if (el.ended && fill) fill.style.width = "0%";
-        };
-        btn.addEventListener("click", async () => {
-            if (el.paused || el.ended) {
-                if (!(await ensureSampleSrc(el))) return;
-                const p = el.play();
-                if (p && p.catch) p.catch(() => {});
-            } else {
-                el.pause();
-            }
-        });
-        ["play", "pause", "ended"].forEach((ev) => el.addEventListener(ev, render));
-        el.addEventListener("timeupdate", () => {
-            if (fill && el.duration > 0) {
-                fill.style.width = `${Math.min(100, (el.currentTime / el.duration) * 100)}%`;
-            }
-        });
-        render();
-    };
-    wireSampleButton(a, "sample-btn-voice", "sample-progress-voice");
-    wireSampleButton(b, "sample-btn-recap", "sample-progress-recap");
-}
-
 // ── Home tutorials accordion (Batch AY + owner addendum): the
 function toggleHomeTutorials() {
     const more = document.getElementById("home-tut-more");
@@ -16600,26 +16551,38 @@ function paintHomeStatusStripFromQuota(q) {
 }
 
 // Plays the pre-generated static sample audio (/api/voices/sample/komin)
-function playWelcomeTrySample() {
+let _welcomeTryAudio = null;
+let _welcomeTryLoading = false;
+async function playWelcomeTrySample() {
     haptic("light");
-    const sampleBtn = document.getElementById("sample-btn-voice");
-    const audio = document.getElementById("sample-audio-voice");
-    const tryBtn = document.getElementById("welcome-try-sample-btn");
-    if (sampleBtn) {
-        sampleBtn.click();
-    } else if (audio) {
-        if (audio.paused) audio.play().catch(() => {});
-        else audio.pause();
+    if (_welcomeTryLoading) return;
+    const syncTryLabel = () => {
+        const tryBtn = document.getElementById("welcome-try-sample-btn");
+        if (!tryBtn || typeof t !== "function") return;
+        const playing = !!(_welcomeTryAudio && !_welcomeTryAudio.paused && !_welcomeTryAudio.ended);
+        tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
+    };
+    if (!_welcomeTryAudio) {
+        _welcomeTryAudio = new Audio();
+        _welcomeTryAudio.addEventListener("play", syncTryLabel);
+        _welcomeTryAudio.addEventListener("pause", syncTryLabel);
+        _welcomeTryAudio.addEventListener("ended", syncTryLabel);
     }
-    if (audio && tryBtn && !audio.dataset.welcomeTryWired) {
-        audio.dataset.welcomeTryWired = "1";
-        const syncTryLabel = () => {
-            const playing = !audio.paused && !audio.ended;
-            tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
-        };
-        audio.addEventListener("play", syncTryLabel);
-        audio.addEventListener("pause", syncTryLabel);
-        audio.addEventListener("ended", syncTryLabel);
+    if (_welcomeTryAudio.paused || _welcomeTryAudio.ended) {
+        if (!_welcomeTryAudio.src) {
+            _welcomeTryLoading = true;
+            try {
+                const authUrl = await fetchAuthImageUrl("/api/voices/sample/komin");
+                if (!authUrl) return;
+                _welcomeTryAudio.src = authUrl;
+            } finally {
+                _welcomeTryLoading = false;
+            }
+        }
+        const p = _welcomeTryAudio.play();
+        if (p && p.catch) p.catch(() => {});
+    } else {
+        _welcomeTryAudio.pause();
     }
 }
 window.playWelcomeTrySample = playWelcomeTrySample;
@@ -16774,12 +16737,17 @@ function toggleVcpHelpHub(forceOpen) {
         : !homeTab.classList.contains("vcp-help-hub-open");
     homeTab.classList.toggle("vcp-help-hub-open", isOpen);
     if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    const tutCard = document.getElementById("home-tutorials-card");
+    if (tutCard) tutCard.setAttribute("aria-hidden", isOpen ? "false" : "true");
     if (isOpen) {
         const tutMore = document.getElementById("home-tut-more");
         const tutHead = document.getElementById("home-tut-expand");
         if (tutMore && tutMore.classList.contains("hidden")) {
             tutMore.classList.remove("hidden");
-            if (tutHead) tutHead.setAttribute("aria-expanded", "true");
+            if (tutHead) {
+                tutHead.classList.add("open");
+                tutHead.setAttribute("aria-expanded", "true");
+            }
         }
     }
 }
@@ -17023,7 +16991,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupDownloader();
     setupSlipPreview();
     setupStickyCtas();
-    setupSamplePlayers();
     syncTelegramBackButton();
 
     loadUserProfile();
@@ -17565,10 +17532,9 @@ function refreshPhase1to4LanguageSurfaces() {
         if (typeof renderHomeRecentProjects === "function") {
             renderHomeRecentProjects();
         }
-        const sampleAudio = document.getElementById("sample-audio-voice");
         const tryBtn = document.getElementById("welcome-try-sample-btn");
-        if (sampleAudio && tryBtn && typeof t === "function") {
-            const playing = !sampleAudio.paused && !sampleAudio.ended;
+        if (tryBtn && typeof t === "function") {
+            const playing = !!(_welcomeTryAudio && !_welcomeTryAudio.paused && !_welcomeTryAudio.ended);
             tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
         }
         const u = (state && state.user) || {};
