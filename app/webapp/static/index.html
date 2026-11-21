@@ -353,7 +353,7 @@
                         </div>
                         <div class="segmented-control sm mb-2">
                             <button class="seg-btn active" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
-                                <span class="seg-title" data-i18n="btn_mode_custom">🎙️ ကိုယ်ပိုင်အသံ (My Voice)</span>
+                                <span class="seg-title" data-i18n="btn_mode_custom">🎙️ ကိုယ်ပိုင်အသံ</span>
                             </button>
                             <button class="seg-btn" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
                                 <span class="seg-title" data-i18n="btn_mode_curated">🌟 Persona ၁၂ မျိုး</span>
@@ -368,27 +368,21 @@
                             <button type="button" class="mini-chip vsr-change" id="btn-change-voice" onclick="togglePersonaPicker()" aria-expanded="false" aria-controls="persona-picker-card" data-i18n="voice_change">ပြောင်းမည်</button>
                         </div>
 
-                        <!-- Persona picker (compact UX): secondary option for users without a custom voice sample -->
+                        <!-- Persona picker (compact UX): single dropdown with gender filter chips -->
                         <div class="persona-picker-card picker-collapsed hidden" id="persona-picker-card">
                             <div id="curated-personas-card" class="hidden">
-                                <div class="card-header-row">
-                                    <div class="card-label" data-i18n="curated_section_title">အသင့်သုံး Persona အသံများ (အသံနမူနာ မရှိသူများအတွက်)</div>
-                                    <span class="count-badge" id="personas-count">12 Personas</span>
-                                </div>
                                 <div class="persona-filter-row">
                                     <button type="button" class="filter-chip active" data-filter="all" onclick="filterPersonas('all')" data-i18n="persona_filter_all">🌟 အားလုံး</button>
                                     <button type="button" class="filter-chip" data-filter="male" onclick="filterPersonas('male')" data-i18n="persona_filter_male">👨 ယောက်ျားလေး</button>
                                     <button type="button" class="filter-chip" data-filter="female" onclick="filterPersonas('female')" data-i18n="persona_filter_female">👩 မိန်းကလေး</button>
                                 </div>
-                                <div class="persona-select-row mt-2" id="voice-persona-select-row">
+                                <div class="persona-select-row" id="voice-persona-select-row">
                                     <select id="voice-persona-select" class="studio-select glass-dropdown" data-i18n-aria="voice_step2_select" aria-label="Select Persona Voice"></select>
                                     <button type="button" class="btn secondary-btn mini-btn" id="btn-voice-persona-preview" onclick="previewSelectedVoiceTabPersona(event)">
                                         <span data-i18n="btn_preview_short">▶ နားထောင်</span>
                                     </button>
                                 </div>
-                                <div class="personas-grid hidden" id="personas-grid">
-                                    <!-- Populated dynamically via JS with all 12 personas -->
-                                </div>
+                                <div class="persona-load-error hidden" id="voice-persona-load-error"></div>
                             </div>
                         </div>
 
@@ -406,13 +400,6 @@
                                 <span class="vcp-clone-step is-locked" data-clone-step="4" data-i18n="clone_step_4_listen">၄။ နားထောင်</span>
                                 <span class="vcp-clone-step is-locked" data-clone-step="5" data-i18n="clone_step_5_save">၅။ သိမ်းဆည်း</span>
                             </div>
-                            <!-- File requirements shown clearly before upload -->
-                            <div class="vcp-clone-req-box" id="custom-clone-req-box">
-                                <span class="vcp-clone-req-item" data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50 စက္ကန့်)</span>
-                                <span class="vcp-clone-req-item" data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 50 MB)</span>
-                                <span class="vcp-clone-req-item" data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</span>
-                            </div>
-                            <p class="ref-desc" data-i18n="custom_ref_desc">မိမိအသံ 10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့် (MP3, WAV, M4A, OGG — max 20 MB) တင်ပြီး အသံပုံစံတူ ဖန်တီးနိုင်ပါသည်။</p>
                             <div class="vcp-saved-voice-bar hidden" id="saved-custom-voice-bar">
                                 <span id="saved-custom-voice-label"></span>
                                 <div class="vcp-saved-voice-actions">
@@ -429,6 +416,17 @@
                                 <button class="mini-chip text-danger hidden" id="btn-clear-ref-audio" type="button" onclick="clearRefAudio()" data-i18n="btn_clear_file">✕ ရှင်းမည်</button>
                             </div>
                             <div class="vcp-clone-check-status hidden" id="custom-clone-check-status"></div>
+                            <details class="ref-notes-collapse" id="ref-notes-details">
+                                <summary class="ref-notes-summary">
+                                    <span data-i18n="ref_notes_toggle">ℹ️ သတိပေးချက်များ</span>
+                                    <span class="ref-notes-chevron" aria-hidden="true">▾</span>
+                                </summary>
+                                <ul class="ref-notes-list">
+                                    <li data-i18n="clone_req_duration">⏱️ 10–30 စက္ကန့် အကောင်းဆုံး (အများဆုံး 50 စက္ကန့်)</li>
+                                    <li data-i18n="clone_req_format">🎵 WAV / MP3 / OGG / M4A (≤ 50 MB)</li>
+                                    <li data-i18n="clone_req_clean">🔇 နောက်ခံသီချင်း နှင့် ဆူညံသံ ကင်းရမည်</li>
+                                </ul>
+                            </details>
                         </div>
                     </div>
                 </div><!-- Step 2: Unified Text Input & Speed Controls Card (Visually ordered 1st via Text-First layout) -->
@@ -468,14 +466,9 @@
                 </div>
 
 
-                <!-- Step 3: Generate -->
+                <!-- Generate CTA -->
                 <div class="cta-block" id="voice-cta-block">
-                    <div class="step-badge-title">
-                        <span class="step-num-pill">3</span>
-                        <span class="step-title" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
-                    </div>
                     <div id="voice-preflight" class="voice-preflight" aria-live="polite"></div>
-                    <p id="voice-tts-balance-line" class="hidden" style="font-size:12px; opacity:0.85; margin-top:6px;"></p>
                     <button class="btn gold-gradient-btn" id="btn-generate-voice">
                         <span class="btn-text" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
                         <span class="vcp-btn-est-cost" id="voice-btn-est-cost"></span>
@@ -1606,18 +1599,18 @@
                                     <span class="spec-lbl" data-i18n="recap_persona_select_label">Persona အသံများ:</span>
                                     <div class="persona-select-row mt-1">
                                         <select id="recap-persona-select" class="studio-select glass-dropdown" data-i18n-aria="recap_persona_select_label" aria-label="Persona Voices">
-                                            <option value="komin" data-i18n="voice_komin_name">ကိုမင်း (Ko Min) 🔥</option>
-                                            <option value="kozayar" data-i18n="voice_kozayar_name">ကိုဇေယျာ (Ko Zayar)</option>
-                                            <option value="koaung" data-i18n="voice_koaung_name">ကိုအောင် (Ko Aung)</option>
-                                            <option value="mahnin" data-i18n="voice_mahnin_name">မနှင်း (Ma Hnin)</option>
-                                            <option value="kothura" data-i18n="voice_kothura_name">ကိုသူရ (Ko Thura)</option>
-                                            <option value="komyat" data-i18n="voice_komyat_name">ကိုမြတ် (Ko Myat)</option>
-                                            <option value="kophone" data-i18n="voice_kophone_name">ကိုဘုန်း (Ko Phone)</option>
-                                            <option value="manadi" data-i18n="voice_manadi_name">မနဒီ (Ma Nadi)</option>
-                                            <option value="mamay" data-i18n="voice_mamay_name">မမေ (Ma May)</option>
-                                            <option value="mayoon" data-i18n="voice_mayoon_name">မယွန်း (Ma Yoon)</option>
-                                            <option value="machaw" data-i18n="voice_machaw_name">မချော (Ma Chaw)</option>
-                                            <option value="mathiri" data-i18n="voice_mathiri_name">မသီရိ (Ma Thiri)</option>
+                                            <option value="komin" data-i18n="persona_opt_komin">ကိုမင်း (ကျား)</option>
+                                            <option value="kozayar" data-i18n="persona_opt_kozayar">ကိုဇေယျာ (ကျား)</option>
+                                            <option value="koaung" data-i18n="persona_opt_koaung">ကိုအောင် (ကျား)</option>
+                                            <option value="mahnin" data-i18n="persona_opt_mahnin">မနှင်း (မ)</option>
+                                            <option value="kothura" data-i18n="persona_opt_kothura">ကိုသူရ (ကျား)</option>
+                                            <option value="komyat" data-i18n="persona_opt_komyat">ကိုမြတ် (ကျား)</option>
+                                            <option value="kophone" data-i18n="persona_opt_kophone">ကိုဘုန်း (ကျား)</option>
+                                            <option value="manadi" data-i18n="persona_opt_manadi">မနဒီ (မ)</option>
+                                            <option value="mamay" data-i18n="persona_opt_mamay">မမေ (မ)</option>
+                                            <option value="mayoon" data-i18n="persona_opt_mayoon">မယွန်း (မ)</option>
+                                            <option value="machaw" data-i18n="persona_opt_machaw">မချော (မ)</option>
+                                            <option value="mathiri" data-i18n="persona_opt_mathiri">မသီရိ (မ)</option>
                                         </select>
                                         <button type="button" class="btn secondary-btn mini-btn" id="btn-recap-persona-preview" onclick="previewSelectedRecapPersona(event)">
                                             <span data-i18n="btn_preview_short">▶ နားထောင်</span>
@@ -3716,16 +3709,11 @@
 
         </main>
 
-        <!-- ════ STICKY CREATE CTAs (premium polish) ════
-             Mirror bars for the Voice / Recap primary actions: they appear
-             only while the matching tab is active AND its in-flow CTA is
+        <!-- ════ STICKY CREATE CTA (Recap only) ════
+             Mirror bar for the Recap primary action: appears only while
+             the Recap tab is active on Step 4 AND its in-flow CTA is
              scrolled out of view, floating just above the bottom nav.
-             Clicks forward to the real buttons — no duplicate logic. -->
-        <div class="sticky-cta-bar hidden" id="sticky-cta-voice">
-            <button type="button" class="btn gold-gradient-btn sticky-cta-btn" id="btn-generate-voice-sticky">
-                <span class="btn-text" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
-            </button>
-        </div>
+             Clicks forward to the real button — no duplicate logic. -->
         <div class="sticky-cta-bar hidden" id="sticky-cta-recap">
             <button type="button" class="btn gold-gradient-btn sticky-cta-btn" id="btn-start-recap-sticky">
                 <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည် (1 Credit)</span>
@@ -3823,7 +3811,7 @@
             </button>
             <button class="nav-item" data-tab="tab-voice">
                 <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5 10.5a7 7 0 0 0 14 0"/><path d="M12 17.5V21"/><path d="M8.5 21h7"/></svg></span>
-                <span class="nav-label" data-i18n="tab_voice">အသံဖန်တီး</span>
+                <span class="nav-label" data-i18n="tab_voice">အသံတု</span>
             </button>
             <button class="nav-item" data-tab="tab-tts">
                 <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15.5a2 2 0 0 1-2 2h-1.5a1.5 1.5 0 0 1-1.5-1.5v-3a1.5 1.5 0 0 1 1.5-1.5H19a2 2 0 0 1 2 2z"/><path d="M3 15.5a2 2 0 0 0 2 2h1.5A1.5 1.5 0 0 0 8 16v-3a1.5 1.5 0 0 0-1.5-1.5H5a2 2 0 0 0-2 2z"/></svg></span>

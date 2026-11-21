@@ -976,7 +976,6 @@ window.setRecapStage = setRecapStage;
 
 // ── Sticky create CTAs (premium polish) ────────────────────────────────
 const STICKY_CTA_PAIRS = [
-    { tab: "tab-voice", bar: "sticky-cta-voice", src: "btn-generate-voice", btn: "btn-generate-voice-sticky" },
     { tab: "tab-recap", bar: "sticky-cta-recap", src: "btn-start-recap", btn: "btn-start-recap-sticky" },
 ];
 const stickyCtaInView = {};
@@ -3283,83 +3282,80 @@ function filterPersonas(filter) {
     renderCuratedVoices();
 }
 
+function formatPersonaOptionLabel(v) {
+    const shortNm = personaShortName(v && v.name) || (v && v.name) || "";
+    const g = String((v && v.gender) || "").toLowerCase();
+    const suffix = g === "female"
+        ? ` (${t("persona_gender_female")})`
+        : (g === "male" ? ` (${t("persona_gender_male")})` : "");
+    return `${shortNm}${suffix}`;
+}
+
 function renderCuratedVoices() {
-    const grid = document.getElementById("personas-grid");
-    if (!grid) return;
+    const voices = Array.isArray(state.curatedVoices) ? state.curatedVoices : [];
     const filter = state.personaFilter || "all";
     const filtered = (filter === "all")
-        ? state.curatedVoices
-        : state.curatedVoices.filter(v => v.gender === filter);
+        ? voices
+        : voices.filter(v => v.gender === filter);
 
-    grid.innerHTML = "";
-    filtered.forEach(v => {
-        const card = document.createElement("div");
-        const isSelected = (v.id === state.selectedPersona);
-        card.className = `persona-card ${isSelected ? "active" : ""}`;
-        card.setAttribute("data-voice-id", v.id);
-        // Batch BG (§15): the name renders SHORT (own line) and the
-        // parenthetical category becomes its own line under it — the
-        // full label used to wrap mid-parenthesis at phone widths.
-        const cardCategory = personaCategoryName(v.name);
-        card.innerHTML = `
-            <div class="persona-header">
-                <span class="persona-avatar">${v.avatar}</span>
-                <div class="persona-meta">
-                    <span class="persona-name">${personaShortName(v.name) || v.name}</span>
-                    ${cardCategory ? `<span class="persona-category">${cardCategory}</span>` : ''}
-                    <span class="persona-badge">${v.badge}</span>
-                </div>
-                ${isSelected ? '<span class="selected-indicator">✓</span>' : ''}
-            </div>
-            <p class="persona-desc">${v.description}</p>
-            <div class="persona-footer-row">
-                <button type="button" class="voice-preview-btn" onclick="event.stopPropagation(); playVoicePreview('${v.id}', this)">
-                    <span class="preview-btn-icon">▶️</span>
-                    <span class="preview-btn-label" data-i18n="preview_voice">${t("preview_voice")}</span>
-                </button>
-            </div>
-        `;
-
-        card.addEventListener("click", () => {
-            haptic("selection");
-            state.selectedPersona = v.id;
-            renderCuratedVoices();
-            // Compact UX: once a persona is chosen the picker collapses
-            // again — the summary chip above the text input is the
-            // persistent record of the choice.
-            setPersonaPickerOpen(false);
-        });
-
-        grid.appendChild(card);
-    });
+    const errBox = document.getElementById("voice-persona-load-error");
+    if (errBox && voices.length) {
+        errBox.innerHTML = "";
+        errBox.classList.add("hidden");
+    }
 
     const voiceSel = document.getElementById("voice-persona-select");
     if (voiceSel) {
         voiceSel.innerHTML = "";
-        (filtered.length ? filtered : state.curatedVoices).forEach(v => {
+        const list = filtered.length ? filtered : voices;
+        list.forEach(v => {
             const opt = document.createElement("option");
             opt.value = v.id;
-            const shortNm = personaShortName(v.name) || v.name;
-            const catNm = personaCategoryName(v.name);
-            opt.textContent = `${v.avatar || "🎙️"} ${shortNm}${catNm ? " — " + catNm : ""}`;
+            opt.textContent = formatPersonaOptionLabel(v);
             voiceSel.appendChild(opt);
         });
         const hasVal = Array.from(voiceSel.options).some(o => o.value === state.selectedPersona);
-        if (hasVal) voiceSel.value = state.selectedPersona;
+        if (hasVal) {
+            voiceSel.value = state.selectedPersona;
+        } else if (list.length) {
+            state.selectedPersona = list[0].id;
+            voiceSel.value = list[0].id;
+        }
         if (!voiceSel.dataset.vcpWired) {
             voiceSel.dataset.vcpWired = "1";
             voiceSel.addEventListener("change", () => {
                 haptic("selection");
                 state.selectedPersona = voiceSel.value || "komin";
-                renderCuratedVoices();
+                updateSelectedVoiceSummary();
+                setPersonaPickerOpen(false);
+                if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
             });
         }
     }
 
-    const countBadge = document.getElementById("personas-count");
-    if (countBadge) {
-        countBadge.innerText = tf("personas_count_fmt", { n: filtered.length });
+    const recapSel = document.getElementById("recap-persona-select");
+    if (recapSel && voices.length) {
+        const byId = new Map(voices.map(v => [v.id, v]));
+        if (recapSel.options.length) {
+            Array.from(recapSel.options).forEach(opt => {
+                const v = byId.get(opt.value);
+                if (v) opt.textContent = formatPersonaOptionLabel(v);
+            });
+        } else {
+            voices.forEach(v => {
+                const opt = document.createElement("option");
+                opt.value = v.id;
+                opt.textContent = formatPersonaOptionLabel(v);
+                recapSel.appendChild(opt);
+            });
+        }
+        const chosenRecap = state.recapVoice || "komin";
+        if (Array.from(recapSel.options).some(o => o.value === chosenRecap)) {
+            recapSel.value = chosenRecap;
+        }
+        if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
     }
+
     updateSelectedVoiceSummary();
 }
 
@@ -3421,9 +3417,10 @@ async function loadCuratedVoices() {
         renderCuratedVoices();
     } catch (e) {
         console.warn("Could not load curated voices:", e);
-        const grid = document.getElementById("personas-grid");
-        if (grid && !(state.curatedVoices || []).length) {
-            grid.innerHTML = `<div class="adm-state-error"><span data-i18n="home_load_error">${escapeHtml(t("home_load_error"))}</span> <button type="button" class="mini-chip" onclick="loadCuratedVoices()" data-i18n="admin_retry">${escapeHtml(t("admin_retry"))}</button></div>`;
+        const errBox = document.getElementById("voice-persona-load-error");
+        if (errBox && !(state.curatedVoices || []).length) {
+            errBox.innerHTML = `<div class="adm-state-error"><span data-i18n="home_load_error">${escapeHtml(t("home_load_error"))}</span> <button type="button" class="mini-chip" onclick="loadCuratedVoices()" data-i18n="admin_retry">${escapeHtml(t("admin_retry"))}</button></div>`;
+            errBox.classList.remove("hidden");
         }
     }
 }
@@ -4641,20 +4638,25 @@ async function initEntryGate() {
 }
 window.initEntryGate = initEntryGate;
 
-// Preflight: show cost/limit BEFORE the user taps Generate, so there is no surprise.
+// Preflight: surface only dynamic validation warnings (over-limit / empty balance);
+// static char count and balance already live in Step 1 (#char-count) and the Home hero.
 function updateVoicePreflight() {
     const box = document.getElementById("voice-preflight");
     const input = document.getElementById("voice-text-input");
-    if (!box || !input) return;
+    if (!input) return;
     const u = state.user || {};
     const len = input.value.length;
     const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
-    const bal = u.is_admin ? "∞" : `${u.balance_minutes ?? 0}`;
-    let line = tf("preflight_line", { len, max, bal });
-    if (len > max) line += t("preflight_over_limit");
-    else if (!u.is_admin && (u.balance_minutes ?? 0) <= 0) line += t("preflight_balance_empty");
-    box.innerText = line;
-    box.classList.toggle("preflight-warn", len > max || (!u.is_admin && (u.balance_minutes ?? 0) <= 0));
+    let warn = "";
+    if (len > max) {
+        warn = t("preflight_over_limit").replace(/^\s*•\s*/, "");
+    } else if (state.user && !u.is_admin && (u.balance_minutes ?? 0) <= 0) {
+        warn = t("preflight_balance_empty").replace(/^\s*•\s*/, "");
+    }
+    if (box) {
+        box.innerText = warn;
+        box.classList.toggle("preflight-warn", Boolean(warn));
+    }
     syncVoiceExcessAndCost(len, max);
 }
 
@@ -17489,12 +17491,8 @@ function refreshPhase1to4LanguageSurfaces() {
         if (Array.isArray(window._lastAdminPricingPlans) && typeof renderAdminPricingList === "function") {
             renderAdminPricingList(window._lastAdminPricingPlans);
         }
-        const personaBadge = document.getElementById("personas-count");
-        if (personaBadge && typeof CURATED_VOICES !== "undefined") {
-            const activeChip = document.querySelector("#curated-personas-card .filter-chip.active");
-            const gf = activeChip ? (activeChip.getAttribute("data-filter") || "all") : "all";
-            const n = gf === "all" ? CURATED_VOICES.length : CURATED_VOICES.filter(v => v.gender === gf).length;
-            personaBadge.innerText = tf("personas_count_fmt", { n });
+        if (typeof updateVoicePreflight === "function") {
+            updateVoicePreflight();
         }
         if (typeof paintPaymentAccountNames === "function") {
             paintPaymentAccountNames(window._lastPaymentAccounts || []);
