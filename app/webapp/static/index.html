@@ -104,7 +104,7 @@
                 </div>
                 <!-- Zone A: Hero + Unified Balance Trio + First-run Callout -->
                 <div class="card glass vcp-hero-card" id="home-hero-card" data-tier="free">
-                    <div class="vcp-card home-status-strip vcp-hero-top" id="home-status-strip" onclick="switchTab('tab-vip')" role="button" tabindex="0">
+                    <div class="vcp-card home-status-strip vcp-hero-top" id="home-status-strip" onclick="openProfileView()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProfileView();}" role="button" tabindex="0">
                         <div class="home-status-left vcp-hero-ident">
                             <span class="home-greeting-text" id="home-greeting-text" data-i18n="home_greeting_default">မင်္ဂလာပါ</span>
                         </div>
@@ -203,38 +203,6 @@
                     </div>
                 </div>
 
-                <!-- Zone C: Recent Projects (Designed Skeleton / Empty Glass / Error Banner / List) -->
-                <div class="card glass home-recent-card" id="home-recent-projects-card" data-ui-state="loading">
-                    <div class="home-recent-header">
-                        <span class="card-label" data-i18n="home_recent_title">⏱️ လတ်တလော ပရောဂျက်များ</span>
-                        <button type="button" class="vcp-chip home-recent-see-all" id="home-recent-see-all" onclick="openHistoryHub()">
-                            <span data-i18n="home_recent_see_all">အားလုံးကြည့်ရန်</span>
-                            <span aria-hidden="true">›</span>
-                        </button>
-                    </div>
-                    <div class="vcp-state-loading">
-                        <div class="vcp-skel-row" aria-hidden="true"><div class="vcp-skel-av"></div><div class="vcp-skel-lines"><div class="vcp-skel-line"></div><div class="vcp-skel-line short"></div></div><div class="vcp-skel-pill"></div></div>
-                        <div class="vcp-skel-row" aria-hidden="true"><div class="vcp-skel-av"></div><div class="vcp-skel-lines"><div class="vcp-skel-line"></div><div class="vcp-skel-line short"></div></div><div class="vcp-skel-pill"></div></div>
-                        <span class="vcp-sr-only" data-i18n="ui_state_loading">⏳ အချက်အလက် ရယူနေပါသည်...</span>
-                    </div>
-                    <div class="vcp-state-empty vcp-empty-glass">
-                        <div class="vcp-empty-medallion" aria-hidden="true">
-                            <svg width="24" height="24" viewBox="0 0 24 24" class="vcp-ico"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>
-                        </div>
-                        <div class="vcp-empty-title" data-i18n="home_recent_empty">ဖန်တီးထားသော ပရောဂျက် မရှိသေးပါ</div>
-                        <div class="vcp-empty-sub" data-i18n="home_recent_empty_sub">Recap သို့မဟုတ် Voice Studio မှ တစ်ခု စတင်ဖန်တီးကြည့်ပါ</div>
-                        <button type="button" class="vcp-chip active vcp-empty-cta" onclick="switchTab('tab-recap')" data-i18n="welcome_strip_btn">🎬 Recap စလုပ်မည်</button>
-                    </div>
-                    <div class="vcp-state-error vcp-error-glass">
-                        <span class="vcp-state-error-msg" data-i18n="ui_state_error">⚠️ အချက်အလက် ရယူ၍ မရပါ</span>
-                        <span class="vcp-error-sub" data-i18n="home_recent_error_sub">အင်တာနက် စစ်ဆေးပြီး ပြန်စမ်းကြည့်ပါ</span>
-                        <button type="button" class="vcp-chip" onclick="loadUserHistory()" data-i18n="ui_state_retry">🔄 ပြန်စမ်းမည်</button>
-                    </div>
-                    <div class="vcp-state-ready">
-                        <div class="home-recent-list" id="home-recent-projects-list"></div>
-                    </div>
-                </div>
-
                 <!-- Zone D: Unified Tools & Library, Help Hub Accordion, Refer & Support -->
                 <div class="card glass vcp-tools-card" id="home-tools-card">
                     <div class="card-label" data-i18n="home_tools_title">🧰 ကိရိယာ နှင့် မှတ်တမ်း</div>
@@ -313,13 +281,8 @@
                     </button>
                 </div>
 
-                <div class="card glass" id="home-tutorials-card">
-                    <button type="button" class="home-tut-head" id="home-tut-expand" aria-expanded="false" onclick="toggleHomeTutorials()">
-                        <span class="card-label" data-i18n="tutorials_card_title">📚 Tutorial လမ်းညွှန်များ</span>
-                        <span class="home-tut-count" data-i18n="home_tut_count">၁၀ ခု</span>
-                        <span class="home-tut-expand-chevron" aria-hidden="true">▾</span>
-                    </button>
-                    <div class="home-tut-more hidden" id="home-tut-more">
+                <div class="card glass" id="home-tutorials-card" aria-hidden="true">
+                    <div class="home-tut-more" id="home-tut-more">
                         <div class="home-tut-index-row">
                             <button type="button" class="mini-chip" onclick="openTutorialVideo('index')"><span data-i18n="tut_all_title">Tutorial အားလုံး</span></button>
                         </div>
@@ -2177,39 +2140,14 @@
                 </div>
             </section>
 
-            <!-- ════ TAB 4: VIP PLANS & WALLET ════ -->
+            <!-- ════ TAB 4: BUY / VIP PLANS ════ -->
             <section id="tab-vip" class="tab-pane">
                 <div class="pane-header">
                     <div class="pane-title-row">
-                        <h2 data-i18n="vip_title">💎 Creator VIP Plans &amp; ပိုက်ဆံအိတ်</h2>
+                        <h2 data-i18n="vip_title">💎 Creator VIP Plans</h2>
                         <span class="badge-studio gold">PREMIUM</span>
                     </div>
                     <p data-i18n="vip_subtitle">Creator များအတွက် အဆင့်မြင့် စတူဒီယို အစီအစဉ်များ</p>
-                </div>
-
-                <!-- User Stats Card: Dual-Wallet Available + Reserved for Recap & Voice -->
-                <div class="card glass vcp-card stats-card" id="vip-wallet-card">
-                    <div class="stats-row">
-                        <div class="stat-col">
-                            <span class="stat-label" data-i18n="stat_current_tier">လက်ရှိ အဆင့်</span>
-                            <span class="stat-val text-gold" id="profile-category-tag" data-i18n="vip_member_free">FREE MEMBER</span>
-                        </div>
-                        <div class="stat-col">
-                            <span class="stat-label" data-i18n="stat_balance_min">အသံမိနစ် လက်ကျန်</span>
-                            <span class="stat-val" id="profile-balance-min">—</span>
-                            <span class="stat-sub text-xs text-muted" id="vip-res-voice">Reserved: 0m</span>
-                        </div>
-                        <div class="stat-col">
-                            <span class="stat-label" data-i18n="stat_recap_credits">Recap Credit လက်ကျန်</span>
-                            <span class="stat-val text-cyan" id="profile-balance-credits">—</span>
-                            <span class="stat-sub text-xs text-muted" id="vip-res-credits">Reserved: 0 Cr</span>
-                        </div>
-                        <div class="stat-col">
-                            <span class="stat-label" data-i18n="stat_tts_balance">🎧 TTS ယနေ့ လက်ကျန်</span>
-                            <span class="stat-val" id="vip-wallet-tts-val">—</span>
-                        </div>
-                    </div>
-                    <button type="button" class="vcp-btn vcp-btn-glass mt-2 w-100" onclick="switchTab('tab-tts')" data-i18n="vip_byok_shortcut_btn">🔑 ကိုယ်ပိုင် Gemini Key ထည့်ရန် / စီမံရန်</button>
                 </div>
 
                 <!-- Storefront vs Wallet & Orders Sub-View Toggle -->
@@ -2348,7 +2286,7 @@
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="VOICE_CLONE" onclick="setHubHistoryFilter('VOICE_CLONE')"><span data-i18n="history_filter_voice">🎙️ အသံ</span></button>
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="TTS" onclick="setHubHistoryFilter('TTS')"><span data-i18n="history_filter_tts">🎧 TTS</span></button>
                     <button type="button" class="filter-chip hub-filter-chip vcp-chip" data-hub-filter="RECAP" onclick="setHubHistoryFilter('RECAP')"><span data-i18n="history_filter_recap">🎬 Recap</span></button>
-                    <button type="button" class="mini-chip hub-refresh-chip" onclick="loadUserHistory()" title="Refresh" data-i18n-title="btn_refresh" data-i18n-aria="btn_refresh" aria-label="Refresh">🔄</button>
+                    <button type="button" class="filter-chip vcp-chip hub-refresh-chip" onclick="loadUserHistory()" title="ပြန်စစ်မည်" data-i18n-title="btn_refresh" data-i18n-aria="btn_refresh" aria-label="ပြန်စစ်မည်"><span aria-hidden="true">🔄</span><span data-i18n="btn_refresh">ပြန်စစ်မည်</span></button>
                 </div>
 
                 <p class="history-expiry-note vcp-history-retention-bar mt-2" data-i18n="history_expiry_note">⏱️ ဖိုင်များကို ၂၄ နာရီအထိ သိမ်းထားပြီး ကျော်လွန်ပါက အလိုအလျောက် ဖျက်ပါမည်</p>
@@ -2375,6 +2313,106 @@
                         <button type="button" class="vcp-btn vcp-btn--glass vcp-btn--sm vcp-state-retry-btn" onclick="loadUserHistory()" data-i18n="history_retry">🔄 ပြန်စမ်းမည်</button>
                     </div>
                     <div id="hub-history-list" class="hub-history-list" data-state-content></div>
+                </div>
+            </section>
+
+            <!-- ════ TAB: PROFILE SUB-VIEW ════ -->
+            <section id="tab-profile" class="tab-pane">
+                <div class="pane-header">
+                    <button type="button" class="vcp-subview-back-btn" onclick="switchTab('tab-home')" data-i18n="btn_back_home">← ပင်မသို့</button>
+                    <h2 data-i18n="profile_title">👤 ကျွန်ုပ်၏ Profile</h2>
+                </div>
+
+                <!-- 1. Identity Block (renders only fields present in loaded user state) -->
+                <div class="card glass vcp-card profile-identity-card hidden" id="profile-identity-card">
+                    <div class="profile-ident-row">
+                        <div class="profile-avatar-circle" id="profile-ident-avatar" aria-hidden="true">👤</div>
+                        <div class="profile-ident-meta">
+                            <div class="profile-ident-name hidden" id="profile-ident-name"></div>
+                            <div class="profile-ident-sub-row">
+                                <span class="profile-ident-username hidden" id="profile-ident-username"></span>
+                                <span class="profile-ident-id-pill hidden" id="profile-ident-id-wrap">
+                                    <span data-i18n="profile_telegram_id_label">Telegram ID</span>:&nbsp;<span class="t-num" id="profile-ident-id"></span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Plan & Balances (moved from #tab-vip; existing IDs preserved) -->
+                <div class="card glass vcp-card stats-card" id="profile-wallet-card">
+                    <div class="card-label" data-i18n="profile_plan_balances_title">💎 အစီအစဉ် နှင့် လက်ကျန်</div>
+                    <div class="profile-expiry-line hidden" id="profile-expiry-line"></div>
+                    <div class="stats-row">
+                        <div class="stat-col">
+                            <span class="stat-label" data-i18n="stat_current_tier">လက်ရှိ အဆင့်</span>
+                            <span class="stat-val text-gold" id="profile-category-tag" data-i18n="vip_member_free">FREE MEMBER</span>
+                        </div>
+                        <div class="stat-col">
+                            <span class="stat-label" data-i18n="stat_balance_min">အသံမိနစ် လက်ကျန်</span>
+                            <span class="stat-val" id="profile-balance-min">—</span>
+                            <span class="stat-sub text-xs text-muted" id="vip-res-voice">Reserved: 0m</span>
+                        </div>
+                        <div class="stat-col">
+                            <span class="stat-label" data-i18n="stat_recap_credits">Recap Credit လက်ကျန်</span>
+                            <span class="stat-val text-cyan" id="profile-balance-credits">—</span>
+                            <span class="stat-sub text-xs text-muted" id="vip-res-credits">Reserved: 0 Cr</span>
+                        </div>
+                        <div class="stat-col">
+                            <span class="stat-label" data-i18n="stat_tts_balance">🎧 TTS ယနေ့ လက်ကျန်</span>
+                            <span class="stat-val" id="vip-wallet-tts-val">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Referral Summary -->
+                <div class="card glass vcp-card profile-refer-card" id="profile-refer-card">
+                    <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု</div>
+                    <div class="profile-ref-stats-grid">
+                        <div class="profile-ref-stat-box">
+                            <span class="stat-label" data-i18n="profile_ref_friends_label">ဖိတ်ခေါ်ပြီး သူငယ်ချင်း</span>
+                            <span class="stat-val t-num" id="profile-ref-friends">0 / 20</span>
+                        </div>
+                        <div class="profile-ref-stat-box">
+                            <span class="stat-label" data-i18n="profile_ref_minutes_label">ရရှိပြီး မိနစ်</span>
+                            <span class="stat-val t-num" id="profile-ref-minutes">0</span>
+                        </div>
+                    </div>
+                    <div class="profile-ref-link-block hidden" id="profile-ref-link-block">
+                        <div class="ref-link-row">
+                            <span class="ref-link-text" id="profile-referral-link-text">—</span>
+                        </div>
+                        <div class="ref-actions">
+                            <button type="button" class="mini-chip gold profile-ref-copy-btn" id="btn-profile-copy-ref" onclick="copyReferralLink()" data-i18n="btn_copy">📋 ကူးမည်</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Personal Gemini Key (new IDs, wired to /api/tts/gemini-key) -->
+                <div class="card glass vcp-card" id="profile-gemini-key-card">
+                    <div class="card-header-row profile-key-header">
+                        <span class="card-label" data-i18n="tts_key_card_title">🔑 ကိုယ်ပိုင် Gemini Key</span>
+                        <span class="vcp-badge vcp-badge-success hidden" id="profile-key-active-badge" data-i18n="tts_key_active_badge">✅ Key Active</span>
+                    </div>
+                    <p class="ref-desc" id="profile-key-state" data-i18n="tts_key_state_none">Key မထည့်ရသေးပါ</p>
+                    <div class="control-row mt-2">
+                        <input type="password" id="profile-key-input" class="studio-input" data-i18n-ph="tts_key_input_placeholder" placeholder="Gemini API Key ထည့်ပါ…" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="btn-row mt-2">
+                        <button type="button" class="btn secondary-btn" id="btn-profile-key-save" data-i18n="tts_key_save_btn">Key သိမ်းမယ်</button>
+                        <button type="button" class="btn secondary-btn hidden" id="btn-profile-key-delete" data-i18n="tts_key_delete_btn">Key ဖျက်မယ်</button>
+                    </div>
+                    <button type="button" class="detail-toggle mt-2" id="profile-key-guide-toggle" aria-expanded="false" data-detail-target="profile-key-guide-body" onclick="toggleTtsDetail(this)">
+                        <span data-i18n="tts_key_guide_title">Key ရယူနည်း (အခမဲ့):</span>
+                        <span class="detail-toggle-chevron" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="hidden" id="profile-key-guide-body">
+                        <p class="ref-desc" data-i18n="tts_key_guide_1">၁။ Google AI Studio (aistudio.google.com) မှာ Google အကောင့်နဲ့ ဝင်ပါ</p>
+                        <p class="ref-desc" data-i18n="tts_key_guide_2">၂။ "Get API key" → "Create API key" ကို နှိပ်ပြီး Key ကို ကူးယူပါ</p>
+                        <p class="ref-desc" data-i18n="tts_key_guide_3">၃။ ကူးထားတဲ့ Key ကို ဒီမှာ ထည့်ပြီး သိမ်းပါ</p>
+                        <p class="ref-desc" data-i18n="tts_key_honest_1">ဒီ Key က သင့်အတွက်ပဲ သုံးပြီး ဘယ်သူ့ကိုမှ မျှဝေခြင်း မရှိပါ။</p>
+                        <p class="ref-desc" data-i18n="tts_key_honest_2">Key ဖျက်ချင်ရင် တစ်ချက် နှိပ်ရုံနဲ့ ချက်ချင်း ဖျက်ပေးပါတယ်။</p>
+                    </div>
                 </div>
             </section>
 
@@ -3811,7 +3849,7 @@
             </button>
             <button class="nav-item" data-tab="tab-vip">
                 <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><path d="M6 3.5h12l4 5.5-10 12L2 9z"/><path d="M2 9h20"/><path d="m12 21 3.2-12L12 3.5 8.8 9z"/></svg></span>
-                <span class="nav-label" data-i18n="tab_vip">VIP</span>
+                <span class="nav-label" data-i18n="tab_vip">Buy</span>
             </button>
             <button class="nav-item hidden" id="nav-btn-admin" data-tab="tab-admin">
                 <span class="nav-icon" aria-hidden="true"><svg class="vcp-ico vcp-nav-svg" viewBox="0 0 24 24"><path d="M12 3l7.5 3.2v5.6c0 4.6-3.2 8.7-7.5 9.7-4.3-1-7.5-5.1-7.5-9.7V6.2z"/><path d="m9.5 12.2 1.8 1.8 3.6-3.8"/></svg></span>

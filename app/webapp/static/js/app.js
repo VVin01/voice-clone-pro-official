@@ -1038,16 +1038,6 @@ function setupStickyCtas() {
     refreshStickyCtas();
 }
 
-// ── Home tutorials accordion (Batch AY + owner addendum): the
-function toggleHomeTutorials() {
-    const more = document.getElementById("home-tut-more");
-    const btn = document.getElementById("home-tut-expand");
-    if (!more || !btn) return;
-    const open = more.classList.toggle("hidden") === false;
-    btn.classList.toggle("open", open);
-    btn.setAttribute("aria-expanded", open ? "true" : "false");
-}
-
 function getAuthHeaders(includeContentType = true) {
     const headers = {};
     if (includeContentType) {
@@ -2663,6 +2653,38 @@ function openTutorialUrl(url) {
 let _referralLink = "";
 let _supportLink = "https://t.me/VoiceCloneProAdmin";
 
+function updateProfileReferSummary(data) {
+    const src = data || window._lastReferralStats || (typeof state !== "undefined" && state && state.user);
+    if (!src) return;
+    const r = src.referral;
+    const friendsEl = document.getElementById("profile-ref-friends");
+    const minEl = document.getElementById("profile-ref-minutes");
+    const linkBlock = document.getElementById("profile-ref-link-block");
+    const linkText = document.getElementById("profile-referral-link-text");
+    if (friendsEl) {
+        const rewarded = (r && r.rewarded_referrals) || 0;
+        const max = (r && r.max_referrals) || 20;
+        friendsEl.textContent = `${rewarded} / ${max}`;
+    }
+    if (minEl) {
+        const earnedMin = r ? Math.round((r.earned_minutes || 0) * 10) / 10 : 0;
+        minEl.textContent = typeof tf === "function"
+            ? tf("home_free_value_min", { min: earnedMin })
+            : String(earnedMin);
+    }
+    const link = src.referral_link || _referralLink || "";
+    if (linkBlock && linkText) {
+        if (link) {
+            linkText.textContent = link;
+            linkBlock.classList.remove("hidden");
+        } else {
+            linkText.textContent = "";
+            linkBlock.classList.add("hidden");
+        }
+    }
+}
+window.updateProfileReferSummary = updateProfileReferSummary;
+
 function updateReferUI(data) {
     if (!data) return;
     window._lastReferralStats = data;
@@ -2680,6 +2702,7 @@ function updateReferUI(data) {
             remaining: r.remaining_slots != null ? r.remaining_slots : 20,
         }) : "";
     }
+    updateProfileReferSummary(data);
 }
 window.updateReferUI = updateReferUI;
 
@@ -2999,6 +3022,15 @@ function switchTab(tabId) {
     if (tabId === "tab-history" && typeof loadUserHistory === "function") {
         loadUserHistory();
     }
+    if (tabId === "tab-profile") {
+        if (typeof paintProfileView === "function") paintProfileView(state.user);
+        if (typeof paintTtsGeminiKeyState === "function" && typeof _cgQuotaCache !== "undefined" && _cgQuotaCache) {
+            paintTtsGeminiKeyState(_cgQuotaCache);
+        }
+        if (typeof window.refreshTtsQuota === "function") {
+            window.refreshTtsQuota();
+        }
+    }
     // Batch AW: the TTS tab paints its balance line fresh on entry.
     if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
         window.refreshTtsQuota();
@@ -3015,6 +3047,74 @@ function switchTab(tabId) {
     syncTelegramBackButton();
 }
 window.switchTab = switchTab;
+
+function openProfileView() {
+    haptic("light");
+    switchTab("tab-profile");
+}
+window.openProfileView = openProfileView;
+
+function paintProfileView(data) {
+    const u = data || (typeof state !== "undefined" && state && state.user) || null;
+    const tgUser = typeof state !== "undefined" && state && state.tg && state.tg.initDataUnsafe && state.tg.initDataUnsafe.user;
+    const cleanName = (n) => (n && !/^voice\s*clone\s*pro$/i.test(String(n).trim())) ? String(n).trim() : "";
+    const first = cleanName(u && u.first_name) || cleanName(tgUser && tgUser.first_name);
+    const last = cleanName(tgUser && tgUser.last_name);
+    const fullName = first ? (last && !first.includes(last) ? `${first} ${last}` : first) : "";
+    const rawUsername = (u && u.username) || (tgUser && tgUser.username) || "";
+    const cleanUsername = String(rawUsername).trim().replace(/^@+/, "");
+    const rawId = (u && u.id != null) ? u.id : (tgUser && tgUser.id != null ? tgUser.id : null);
+    const cleanId = (rawId !== null && rawId !== undefined && String(rawId).trim() !== "") ? String(rawId).trim() : "";
+
+    const identCard = document.getElementById("profile-identity-card");
+    const avatarEl = document.getElementById("profile-ident-avatar");
+    const nameEl = document.getElementById("profile-ident-name");
+    const userEl = document.getElementById("profile-ident-username");
+    const idWrap = document.getElementById("profile-ident-id-wrap");
+    const idEl = document.getElementById("profile-ident-id");
+
+    const hasAnyIdent = Boolean(fullName || cleanUsername || cleanId);
+    if (identCard) identCard.classList.toggle("hidden", !hasAnyIdent);
+    if (avatarEl) {
+        const ch = fullName
+            ? Array.from(fullName)[0].toUpperCase()
+            : (cleanUsername ? Array.from(cleanUsername)[0].toUpperCase() : "");
+        avatarEl.textContent = ch || "👤";
+    }
+    if (nameEl) {
+        nameEl.textContent = fullName;
+        nameEl.classList.toggle("hidden", !fullName);
+    }
+    if (userEl) {
+        userEl.textContent = cleanUsername ? `@${cleanUsername}` : "";
+        userEl.classList.toggle("hidden", !cleanUsername);
+    }
+    if (idWrap && idEl) {
+        idEl.textContent = cleanId;
+        idWrap.classList.toggle("hidden", !cleanId);
+    }
+
+    const expLine = document.getElementById("profile-expiry-line");
+    if (expLine) {
+        if (u && u.earliest_days_left != null && u.earliest_expires_at) {
+            const dateStr = String(u.earliest_expires_at).slice(0, 10);
+            const leftStr = tf("vip_grant_days_left", { d: u.earliest_days_left });
+            expLine.textContent = "⏳ " + tf("profile_plan_expiry_line", { date: dateStr, left: leftStr });
+            expLine.classList.remove("hidden");
+            expLine.classList.toggle("exp-soon", !!u.expiring_soon);
+        } else {
+            expLine.textContent = "";
+            expLine.classList.add("hidden");
+            expLine.classList.remove("exp-soon");
+        }
+    }
+
+    if (u) {
+        paintVipPlanBalances(u);
+        updateProfileReferSummary(u);
+    }
+}
+window.paintProfileView = paintProfileView;
 
 // ── Language Toggle (i18n) ─────────────────────────────────────────────────
 async function toggleLanguage() {
@@ -3128,6 +3228,7 @@ async function loadUserProfile() {
             catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
         }
         paintVipPlanBalances(data);
+        paintProfileView(data);
 
         if (charCount) {
             const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
@@ -4163,10 +4264,12 @@ function paintCachedUserHeader(data) {
         vipBadge.innerText = data.is_admin ? "👑 ADMIN" : (data.is_vip ? "👑 VIP" : "FREE");
     }
     if (catTag) {
-        catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_purchased") : t("vip_free"));
+        catTag.removeAttribute("data-i18n");
+        catTag.innerText = data.is_admin ? "ADMIN ⭐" : (data.is_vip ? t("vip_member_pro") : t("vip_member_free"));
         catTag.className = data.is_vip ? "stat-val text-gold" : "stat-val";
     }
     paintVipPlanBalances(data);
+    if (typeof paintProfileView === "function") paintProfileView(data);
     if (charCount) {
         const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
         charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
@@ -11450,11 +11553,15 @@ function paintTtsTodaySurfaces(data) {
 function paintTtsChipFromQuota(q) {
     if (!q) return;
     const ttsVal = document.getElementById("home-free-tts-value");
+    const vipTtsVal = document.getElementById("vip-wallet-tts-val");
     if (q.is_admin || q.unlimited) {
         if (ttsVal) ttsVal.innerText = q.is_admin ? "∞" : t("unlimited");
+        if (vipTtsVal) vipTtsVal.innerText = t("unlimited");
     } else {
         const total = (q.referral_seconds || 0) + (q.remaining_seconds || 0);
-        if (ttsVal) ttsVal.innerText = tf("home_free_value_min", { min: (total / 60).toFixed(1) });
+        const formatted = tf("home_free_value_min", { min: (total / 60).toFixed(1) });
+        if (ttsVal) ttsVal.innerText = formatted;
+        if (vipTtsVal) vipTtsVal.innerText = formatted;
     }
     window._lastTtsQuota = q;
     const note = document.getElementById("home-free-tts-note");
@@ -11726,23 +11833,31 @@ window.clearTtsText = clearTtsText;
 let _cgQuotaCache = null;
 
 function paintTtsGeminiKeyState(q) {
-    const stateEl = document.getElementById("tts-key-state");
-    const delBtn = document.getElementById("btn-tts-key-delete");
-    const activeBadge = document.getElementById("tts-key-active-badge");
-    if (activeBadge) {
-        activeBadge.classList.toggle("hidden", !(q && q.has_own_key && q.own_key_state !== "invalid"));
-    }
-    if (!stateEl) return;
-    if (q && q.has_own_key) {
-        stateEl.removeAttribute("data-i18n");
-        stateEl.textContent = q.own_key_state === "invalid"
-            ? t("tts_key_state_invalid")
-            : tf("tts_key_state_ok", { masked: q.own_key_masked || "" });
-        if (delBtn) delBtn.classList.remove("hidden");
-    } else {
-        stateEl.textContent = t("tts_key_state_none");
-        if (delBtn) delBtn.classList.add("hidden");
-    }
+    const targets = [
+        { stateId: "tts-key-state", delId: "btn-tts-key-delete", badgeId: "tts-key-active-badge" },
+        { stateId: "profile-key-state", delId: "btn-profile-key-delete", badgeId: "profile-key-active-badge" },
+    ];
+    const hasActiveKey = Boolean(q && q.has_own_key && q.own_key_state !== "invalid");
+    targets.forEach(({ stateId, delId, badgeId }) => {
+        const stateEl = document.getElementById(stateId);
+        const delBtn = document.getElementById(delId);
+        const activeBadge = document.getElementById(badgeId);
+        if (activeBadge) {
+            activeBadge.classList.toggle("hidden", !hasActiveKey);
+        }
+        if (!stateEl) return;
+        if (q && q.has_own_key) {
+            stateEl.removeAttribute("data-i18n");
+            stateEl.textContent = q.own_key_state === "invalid"
+                ? t("tts_key_state_invalid")
+                : tf("tts_key_state_ok", { masked: q.own_key_masked || "" });
+            if (delBtn) delBtn.classList.remove("hidden");
+        } else {
+            stateEl.setAttribute("data-i18n", "tts_key_state_none");
+            stateEl.textContent = t("tts_key_state_none");
+            if (delBtn) delBtn.classList.add("hidden");
+        }
+    });
 }
 
 function paintTtsTasteNote(q) {
@@ -11763,9 +11878,20 @@ function paintTtsTasteNote(q) {
         : t("tts_taste_spent");
 }
 
-async function saveTtsGeminiKey() {
-    const input = document.getElementById("tts-key-input");
-    const btn = document.getElementById("btn-tts-key-save");
+function _applyGeminiKeyMutationView(data) {
+    if (!data || typeof data !== "object") return;
+    const view = Object.assign({}, _cgQuotaCache || {}, {
+        has_own_key: Boolean(data.has_key),
+        own_key_masked: data.masked || "",
+        own_key_state: data.state || "",
+    });
+    _cgQuotaCache = view;
+    paintTtsGeminiKeyState(view);
+}
+
+async function saveGeminiKeyFrom(inputId, btnId) {
+    const input = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
     const candidate = ((input && input.value) || "").trim();
     if (!candidate) {
         showStudioToast(t("tts_key_save_failed"), 'warning');
@@ -11780,7 +11906,11 @@ async function saveTtsGeminiKey() {
         }, 90000);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || t("tts_key_save_failed"));
-        if (input) input.value = "";
+        ["tts-key-input", "profile-key-input"].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.value = "";
+        });
+        _applyGeminiKeyMutationView(data);
         showStudioToast(t("tts_key_saved"), 'success');
         refreshTtsQuota();
     } catch (err) {
@@ -11790,17 +11920,21 @@ async function saveTtsGeminiKey() {
     }
 }
 
-async function deleteTtsGeminiKey() {
-    const btn = document.getElementById("btn-tts-key-delete");
+async function deleteGeminiKeyFrom(btnId) {
+    const btn = document.getElementById(btnId);
     if (btn) btn.disabled = true;
     try {
         const res = await fetchWithTimeout("/api/tts/gemini-key", {
             method: "DELETE",
             headers: getAuthHeaders(),
         }, 30000);
+        const data = await res.json().catch(() => ({ has_key: false, masked: null, state: null }));
         if (!res.ok) throw new Error("delete failed");
-        const input = document.getElementById("tts-key-input");
-        if (input) input.value = "";
+        ["tts-key-input", "profile-key-input"].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.value = "";
+        });
+        _applyGeminiKeyMutationView(data);
         showStudioToast(t("tts_key_deleted"), 'success');
         refreshTtsQuota();
     } catch (err) {
@@ -11808,6 +11942,14 @@ async function deleteTtsGeminiKey() {
     } finally {
         if (btn) btn.disabled = false;
     }
+}
+
+async function saveTtsGeminiKey() {
+    return saveGeminiKeyFrom("tts-key-input", "btn-tts-key-save");
+}
+
+async function deleteTtsGeminiKey() {
+    return deleteGeminiKeyFrom("btn-tts-key-delete");
 }
 
 async function _cgTasteBlocked() {
@@ -11923,11 +12065,15 @@ function initTtsTab() {
             updateTtsCharCount();
         });
     }
-    // Batch CG: key card + Item 3b prompt wiring.
+    // Batch CG: key card + Item 3b prompt wiring (TTS tab + Profile view).
     const keySaveBtn = document.getElementById("btn-tts-key-save");
     if (keySaveBtn) keySaveBtn.addEventListener("click", saveTtsGeminiKey);
     const keyDelBtn = document.getElementById("btn-tts-key-delete");
     if (keyDelBtn) keyDelBtn.addEventListener("click", deleteTtsGeminiKey);
+    const profileKeySaveBtn = document.getElementById("btn-profile-key-save");
+    if (profileKeySaveBtn) profileKeySaveBtn.addEventListener("click", () => saveGeminiKeyFrom("profile-key-input", "btn-profile-key-save"));
+    const profileKeyDelBtn = document.getElementById("btn-profile-key-delete");
+    if (profileKeyDelBtn) profileKeyDelBtn.addEventListener("click", () => deleteGeminiKeyFrom("btn-profile-key-delete"));
     const promptAddBtn = document.getElementById("btn-tts-prompt-add-key");
     if (promptAddBtn) promptAddBtn.addEventListener("click", _cgPromptAddKey);
     const promptEdgeBtn = document.getElementById("btn-tts-prompt-edge");
@@ -15632,9 +15778,6 @@ function hubHistoryDetailHtml(j) {
     if (isRecap && j.status === "FAILED" && j.credit_refunded) {
         inner += `<div class="history-item-body">${escapeHtml(tf("recap_refunded_line", { credits: j.credits_refunded || j.credits_charged || 1 }))}</div>`;
     }
-    if (j.status === "FAILED") {
-        inner += `<div class="history-item-body hub-error-snippet text-danger">⚠️ ${escapeHtml(j.error_message || t("recap_failed_title"))}</div>`;
-    }
     if (isRecap && j.recap_settings) {
         // R40 item 13: compact settings summary from the persisted
         // recap_config (engine / voice / subtitle position / style /
@@ -15873,7 +16016,6 @@ function hubHistoryRowHtml(j) {
 }
 
 function renderHistoryHub() {
-    renderHomeRecentProjects();
     const container = document.getElementById("hub-history-list");
     const stage = document.getElementById("hub-history-stage");
     if (!container) return;
@@ -16601,132 +16743,6 @@ function computeRetentionBadgeHtml(j) {
     return `<span class="vcp-badge ${cls}">${escapeHtml(tf("home_recent_time_left_hours", { hours: exp.hoursLeft }))}</span>`;
 }
 
-function computeHomeRecentStatusBadgeHtml(j) {
-    const st = String(j.status || "").toUpperCase();
-    if (st === "SUCCESS") return `<span class="vcp-badge vcp-badge-success">✅ ${escapeHtml(t("status_badge_success"))}</span>`;
-    if (st === "RUNNING") return `<span class="vcp-badge vcp-badge-info">⏳ ${escapeHtml(t("status_badge_running"))}</span>`;
-    if (st === "QUEUED") return `<span class="vcp-badge vcp-badge-warning">🕒 ${escapeHtml(t("status_badge_queued"))}</span>`;
-    if (st === "FAILED") return `<span class="vcp-badge vcp-badge-danger">❌ ${escapeHtml(t("status_badge_failed"))}</span>`;
-    if (st === "CANCELLED") return `<span class="vcp-badge vcp-badge-warning">🚫 ${escapeHtml(t("hist_status_cancelled"))}</span>`;
-    return `<span class="vcp-badge vcp-badge-info">ℹ️ ${escapeHtml(t("status_badge_other"))}</span>`;
-}
-
-function openRecentProjectAction(jobId, mode) {
-    haptic("light");
-    if (mode === "review") {
-        switchTab("tab-recap");
-        if (typeof showRecapStep === "function") showRecapStep(4);
-        if (typeof openRecapScriptEditor === "function") openRecapScriptEditor(jobId);
-        return;
-    }
-    if (mode === "recap") {
-        switchTab("tab-recap");
-        if (typeof showRecapStep === "function") showRecapStep(4);
-        if (typeof openRecapDetail === "function") openRecapDetail(jobId);
-        return;
-    }
-    if (mode === "tts") {
-        switchTab("tab-tts");
-        return;
-    }
-    if (mode === "voice") {
-        switchTab("tab-voice");
-        if (typeof openVoiceDetail === "function") openVoiceDetail(jobId);
-        return;
-    }
-    if (mode === "retry") {
-        switchTab("tab-recap");
-        if (typeof retryRecapJob === "function") retryRecapJob(jobId);
-    }
-}
-window.openRecentProjectAction = openRecentProjectAction;
-
-function computeHomeRecentActionHtml(j) {
-    const isRecap = j.job_type === "RECAP";
-    const isTts = j.job_type === "TTS";
-    const safeId = escapeHtml(j.id);
-    if (isRecap && j.script_ready) {
-        return `<button type="button" class="vcp-chip active" onclick="openRecentProjectAction('${safeId}','review')">${escapeHtml(t("home_recent_action_review"))}</button>`;
-    }
-    if (j.status === "RUNNING" || j.status === "QUEUED") {
-        const mode = isRecap ? "recap" : (isTts ? "tts" : "voice");
-        return `<button type="button" class="vcp-chip active" onclick="openRecentProjectAction('${safeId}','${mode}')">${escapeHtml(t("home_recent_action_continue"))}</button>`;
-    }
-    if (j.status === "SUCCESS" && !j.is_expired) {
-        if (isRecap && j.deliverables && j.deliverables.video) {
-            return `<a href="#" data-dl-url="${j.deliverables.video}" data-dl-name="${brandedDlName("Recap", "mp4", j.input_snippet, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
-        }
-        if (!isRecap && j.download_url) {
-            return `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="vcp-chip active">${escapeHtml(t("home_recent_action_dl"))}</a>`;
-        }
-    }
-    if (j.status === "FAILED" && isRecap) {
-        if (j.can_retry === false) {
-            return `<button type="button" class="vcp-chip is-disabled" disabled title="${escapeHtml(t("recap_retry_upload_missing"))}">${escapeHtml(t("home_recent_action_retry"))}</button>`;
-        }
-        return `<button type="button" class="vcp-chip" onclick="openRecentProjectAction('${safeId}','retry')">${escapeHtml(t("home_recent_action_retry"))}</button>`;
-    }
-    return `<button type="button" class="vcp-chip" onclick="openHistoryHub()" aria-label="${escapeHtml(t("home_recent_action_open_history"))}">›</button>`;
-}
-
-function renderHomeRecentProjects() {
-    const card = document.getElementById("home-recent-projects-card");
-    const list = document.getElementById("home-recent-projects-list");
-    if (!card || !list) return;
-
-    if (hubHistoryCache === null && !hubHistoryError) {
-        setSectionState(card, "loading");
-        return;
-    }
-    if (hubHistoryError) {
-        setSectionState(card, "error");
-        return;
-    }
-    const all = hubHistoryCache || [];
-    if (all.length === 0) {
-        setSectionState(card, "empty");
-        return;
-    }
-    setSectionState(card, "ready");
-    const recent = all.slice(0, 5);
-    list.innerHTML = recent.map(j => {
-        const isRecap = j.job_type === "RECAP";
-        const isTts = j.job_type === "TTS";
-        const kind = isRecap ? "recap" : isTts ? "tts" : "voice";
-        const icon = isRecap
-            ? '<svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>'
-            : isTts
-                ? '<svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>'
-                : '<svg width="16" height="16" viewBox="0 0 24 24" class="vcp-ico" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>';
-        const snippet = j.input_snippet || (isRecap ? t("home_recent_fallback_recap") : isTts ? t("home_recent_fallback_tts") : t("home_recent_fallback_voice"));
-        const isRunningOrQueued = j.status === "RUNNING" || j.status === "QUEUED";
-        const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (j.status === "RUNNING" ? 55 : 22)));
-        const progressHtml = isRunningOrQueued
-            ? `<div class="vcp-job-progress"><span class="vcp-job-progress-fill" style="width:${pct}%"></span></div>`
-            : "";
-        return `
-        <div class="home-recent-row vcp-job-card" data-recent-job-id="${j.id}" data-job-kind="${kind}">
-            <div class="home-recent-main vcp-job-head">
-                <span class="home-recent-icon">${icon}</span>
-                <div class="home-recent-meta">
-                    <span class="home-recent-name">${escapeHtml(snippet)}</span>
-                </div>
-            </div>
-            ${progressHtml}
-            <div class="home-recent-footer">
-                <div class="home-recent-badges">
-                    ${computeHomeRecentStatusBadgeHtml(j)}
-                    ${computeRetentionBadgeHtml(j)}
-                </div>
-                <div class="home-recent-action vcp-job-footer-row">
-                    ${computeHomeRecentActionHtml(j)}
-                </div>
-            </div>
-        </div>`;
-    }).join("");
-}
-window.renderHomeRecentProjects = renderHomeRecentProjects;
-
 function toggleVcpHelpHub(forceOpen) {
     haptic("light");
     const homeTab = document.getElementById("tab-home");
@@ -16739,17 +16755,6 @@ function toggleVcpHelpHub(forceOpen) {
     if (btn) btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
     const tutCard = document.getElementById("home-tutorials-card");
     if (tutCard) tutCard.setAttribute("aria-hidden", isOpen ? "false" : "true");
-    if (isOpen) {
-        const tutMore = document.getElementById("home-tut-more");
-        const tutHead = document.getElementById("home-tut-expand");
-        if (tutMore && tutMore.classList.contains("hidden")) {
-            tutMore.classList.remove("hidden");
-            if (tutHead) {
-                tutHead.classList.add("open");
-                tutHead.setAttribute("aria-expanded", "true");
-            }
-        }
-    }
 }
 window.toggleVcpHelpHub = toggleVcpHelpHub;
 
@@ -17529,8 +17534,11 @@ function refreshPhase1to4LanguageSurfaces() {
         if (window._lastReferralStats && typeof updateReferUI === "function") {
             updateReferUI(window._lastReferralStats);
         }
-        if (typeof renderHomeRecentProjects === "function") {
-            renderHomeRecentProjects();
+        if (state && state.user && typeof paintProfileView === "function") {
+            paintProfileView(state.user);
+        }
+        if (typeof _cgQuotaCache !== "undefined" && _cgQuotaCache && typeof paintTtsGeminiKeyState === "function") {
+            paintTtsGeminiKeyState(_cgQuotaCache);
         }
         const tryBtn = document.getElementById("welcome-try-sample-btn");
         if (tryBtn && typeof t === "function") {

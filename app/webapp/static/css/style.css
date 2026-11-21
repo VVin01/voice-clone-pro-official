@@ -2736,11 +2736,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     margin-top: 2px;
     color: #ef4444;
 }
-.hub-error-snippet {
-    color: #ef4444;
-    font-size: 0.8125rem;
-    line-height: 1.4;
-}
 .live-jobs-pill-main {
     flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px;
     background: none; border: none; color: inherit; font: inherit;
@@ -3092,28 +3087,12 @@ body.lang-my .home-tile-hint { line-height: 1.8; }
     transition: width 0.2s linear;
 }
 #home-samples-card .sample-audio { display: none; }
-.home-tut-head {
-    display: flex; align-items: center; gap: var(--s2);
-    width: 100%; min-height: 44px; padding: 2px 0;
-    background: transparent; border: none; cursor: pointer;
-    color: var(--text); text-align: left;
-    -webkit-tap-highlight-color: transparent;
-}
-.home-tut-head .card-label { flex: 1; min-width: 0; }
-.home-tut-count {
-    flex: 0 0 auto; font-size: 11.5px; font-weight: 700; line-height: 1.5;
-    color: var(--gold-2); background: var(--gold-soft);
-    border: 1px solid var(--gold-border); border-radius: 999px; padding: 2px 9px;
-}
-body.lang-my .home-tut-count { line-height: 1.7; }
-.home-tut-expand-chevron { flex: 0 0 auto; font-size: 13px; color: var(--text-3); transition: transform 0.18s ease; }
-#home-tut-expand.open .home-tut-expand-chevron { transform: rotate(180deg); }
-#home-tut-more { margin-top: var(--s2); }
+#home-tut-more { margin-top: 0; }
 .home-tut-index-row { display: flex; justify-content: flex-end; margin-bottom: var(--s2); }
 #home-tut-more .home-tut-row:first-child { border-top: 1px solid var(--divider); }
 .home-support-card { padding-top: 6px; padding-bottom: 6px; }
 @media (prefers-reduced-motion: reduce) {
-    #tab-home .home-tile, .home-tut-expand-chevron, .sample-progress-fill { transition: none; }
+    #tab-home .home-tile, .sample-progress-fill { transition: none; }
 }
 /* ════════════════════════════════════════════════════════════════════
    BATCH AZ — GLASSMORPHISM 2.0 / LIQUIDMORPHISM (2026-11-06)
@@ -4542,65 +4521,6 @@ input[type="range"]::-moz-range-thumb,
     gap: var(--vcp-sp-2);
     flex-wrap: wrap;
 }
-#tab-home .home-recent-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--vcp-sp-2);
-    margin-bottom: var(--vcp-sp-3);
-}
-#tab-home .home-recent-header .card-label {
-    margin-bottom: 0;
-}
-#tab-home .home-recent-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--vcp-sp-2);
-}
-#tab-home .home-recent-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--vcp-sp-3);
-    padding: var(--vcp-sp-3);
-    border-radius: var(--vcp-radius-md);
-    background: rgba(15, 23, 42, 0.48);
-    border: 1px solid rgba(148, 163, 184, 0.14);
-}
-#tab-home .home-recent-main {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--vcp-sp-3);
-    min-width: 0;
-    flex: 1;
-}
-#tab-home .home-recent-icon {
-    font-size: 20px;
-    line-height: 1.4;
-    flex-shrink: 0;
-}
-#tab-home .home-recent-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-    flex: 1;
-}
-#tab-home .home-recent-name {
-    font-size: var(--vcp-fs-body);
-    font-weight: 600;
-    color: var(--vcp-text-primary);
-    overflow-wrap: anywhere;
-}
-#tab-home .home-recent-badges {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-#tab-home .home-recent-action {
-    flex-shrink: 0;
-}
 #tab-home .home-help-entry-card {
     padding: 0;
 }
@@ -5425,8 +5345,7 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
     padding: 4px 2px;
 }
 #tab-history .hub-refresh-chip {
-    min-height: var(--vcp-touch-min);
-    min-width: var(--vcp-touch-min);
+    min-height: 40px;
     border-radius: var(--vcp-radius-pill);
 }
 .vcp-history-retention-bar {
@@ -5519,7 +5438,7 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
     align-items: center;
     justify-content: center;
 }
-#tab-vip .stats-card {
+#tab-profile .stats-card {
     gap: var(--vcp-sp-2);
 }
 #tab-vip .plan-how-card {
@@ -5578,7 +5497,7 @@ html[data-theme="dark"] .vcp-insuf-min-title { color: #FDBA74; }
     #tab-history .hub-row-badges {
         max-width: 48%;
     }
-    #tab-vip .stats-row {
+    #tab-profile .stats-row {
         gap: var(--vcp-sp-2);
     }
 }
@@ -5975,128 +5894,6 @@ html.lite #tab-home .home-tile-tts {
     background: linear-gradient(135deg, #334155 0%, #64748b 100%) !important;
     box-shadow: 0 6px 14px -4px rgba(51, 65, 85, 0.32);
 }
-/* ── A2 / A3. Recent Projects: Light Glass Row, Full-Width 2-Line Name, Badges Under Name, Right-Centred Action */
-#tab-home .home-recent-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-#tab-home .home-recent-header .card-label {
-    flex: 1 1 auto;
-    min-width: 0;
-}
-#tab-home .vcp-chip.home-recent-see-all,
-#home-recent-see-all {
-    flex: 0 0 auto !important;
-    white-space: nowrap !important;
-    width: auto !important;
-    min-height: 32px !important;
-    height: auto !important;
-    padding: 5px 10px !important;
-    font-size: 12.5px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center;
-    gap: 4px;
-    line-height: 1.35 !important;
-}
-#tab-home .home-recent-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-#tab-home .home-recent-row,
-html.lite #tab-home .home-recent-row {
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: stretch !important;
-    gap: 9px !important;
-    padding: 12px !important;
-    border-radius: 15px !important;
-    background: rgba(248, 250, 255, 0.92) !important;
-    border: 1px solid rgba(15, 23, 42, 0.08) !important;
-    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04) !important;
-    color: #0f172a !important;
-}
-#tab-home .home-recent-main {
-    display: flex !important;
-    align-items: flex-start !important;
-    gap: 10px !important;
-    width: 100% !important;
-    min-width: 0 !important;
-}
-#tab-home .home-recent-icon {
-    flex: 0 0 32px !important;
-    width: 32px !important;
-    height: 32px !important;
-    border-radius: 10px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    font-size: 16px !important;
-    background: rgba(37, 99, 235, 0.12);
-    border: 1px solid rgba(37, 99, 235, 0.22);
-}
-#tab-home .home-recent-row[data-job-kind="recap"] .home-recent-icon {
-    background: rgba(124, 58, 237, 0.12);
-    border-color: rgba(124, 58, 237, 0.24);
-}
-#tab-home .home-recent-row[data-job-kind="tts"] .home-recent-icon {
-    background: rgba(13, 148, 136, 0.12);
-    border-color: rgba(13, 148, 136, 0.24);
-}
-#tab-home .home-recent-meta {
-    flex: 1 1 auto !important;
-    min-width: 0 !important;
-    width: 100% !important;
-}
-#tab-home .home-recent-name {
-    display: -webkit-box !important;
-    -webkit-box-orient: vertical !important;
-    -webkit-line-clamp: 2 !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    width: 100% !important;
-    font-size: 13.5px !important;
-    font-weight: 600 !important;
-    line-height: 1.5 !important;
-    color: #0f172a !important;
-    white-space: normal !important;
-    overflow-wrap: break-word !important;
-    word-break: normal !important;
-}
-#tab-home .home-recent-footer {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: space-between !important;
-    gap: 10px !important;
-    padding-left: 42px;
-    width: 100% !important;
-    box-sizing: border-box;
-}
-#tab-home .home-recent-badges {
-    flex: 1 1 auto !important;
-    min-width: 0 !important;
-    display: flex !important;
-    flex-wrap: wrap !important;
-    align-items: center !important;
-    gap: 6px !important;
-}
-#tab-home .home-recent-action {
-    flex: 0 0 auto !important;
-    align-self: center !important;
-    margin-left: auto !important;
-}
-#tab-home .home-recent-action .vcp-chip,
-#tab-home .home-recent-action button,
-#tab-home .home-recent-action a {
-    white-space: nowrap !important;
-    min-height: 34px !important;
-    padding: 6px 12px !important;
-    font-size: 12.5px !important;
-    font-weight: 700 !important;
-}
 /* ── A4. Free-Today Row First-Line Alignment ──────────────────────────────── */
 #tab-home .home-free-list {
     display: flex;
@@ -6239,20 +6036,6 @@ html.lite #tab-home .home-free-row {
     line-height: 1.5 !important;
     color: #475569 !important;
 }
-#tab-home #home-tutorials-card .home-tut-head {
-    display: flex !important;
-    align-items: center !important;
-    gap: 10px !important;
-    padding: 4px 2px !important;
-    min-height: 44px !important;
-}
-#tab-home #home-tutorials-card .home-tut-count {
-    white-space: nowrap !important;
-    flex-shrink: 0 !important;
-    background: rgba(37, 99, 235, 0.10) !important;
-    color: #1d4ed8 !important;
-    border-color: rgba(37, 99, 235, 0.22) !important;
-}
 #tab-home > .card,
 #tab-home > .vcp-card,
 #tab-home > .welcome-strip,
@@ -6384,7 +6167,7 @@ html.lite #tab-home .home-free-row {
     border: 1px solid rgba(217, 119, 6, 0.32) !important;
     font-weight: 700 !important;
 }
-#tab-vip #profile-balance-credits,
+#tab-profile #profile-balance-credits,
 #tab-vip .text-cyan {
     color: #b45309 !important;
 }
@@ -6869,7 +6652,6 @@ html[data-theme="dark"] .step-title,
 html[data-theme="dark"] .pane-header h2,
 html[data-theme="dark"] .home-tile-title,
 html[data-theme="dark"] .home-free-title,
-html[data-theme="dark"] .home-recent-name,
 html[data-theme="dark"] .home-help-entry-title,
 html[data-theme="dark"] .sample-name {
     color: #F8FAFC !important;
@@ -6886,8 +6668,6 @@ html[data-theme="dark"] #tab-home .home-tile,
 html[data-theme="dark"].lite #tab-home .home-tile,
 html[data-theme="dark"] #tab-home .home-free-row,
 html[data-theme="dark"].lite #tab-home .home-free-row,
-html[data-theme="dark"] #tab-home .home-recent-row,
-html[data-theme="dark"].lite #tab-home .home-recent-row,
 html[data-theme="dark"] #tab-home .home-help-entry-card,
 html[data-theme="dark"] .home-help-entry,
 html[data-theme="dark"] #tab-home .sample-row,
@@ -6907,7 +6687,6 @@ html[data-theme="dark"] #tab-home .home-tile-title,
 html[data-theme="dark"] #tab-home .home-tile-name,
 html[data-theme="dark"] #tab-home .home-tile-tts .home-tile-name,
 html[data-theme="dark"] #tab-home .home-free-title,
-html[data-theme="dark"] #tab-home .home-recent-name,
 html[data-theme="dark"] #tab-home .home-help-entry-title,
 html[data-theme="dark"] #tab-home .sample-name,
 html[data-theme="dark"] #tab-home .home-free-value {
@@ -6921,7 +6700,6 @@ html[data-theme="dark"] #tab-home .home-help-entry-desc,
 html[data-theme="dark"] #tab-home .sample-meta,
 html[data-theme="dark"] #tab-home .home-tile-chevron,
 html[data-theme="dark"] #tab-home .home-tile-tts .home-tile-chevron,
-html[data-theme="dark"] #tab-home .home-recent-chevron,
 html[data-theme="dark"] #tab-home .home-free-chevron,
 html[data-theme="dark"] #tab-home .home-help-entry-chevron {
     color: #CBD5E1 !important;
@@ -7429,17 +7207,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     background: rgba(239, 68, 68, 0.08);
     border: 1px solid rgba(239, 68, 68, 0.22);
 }
-#tab-home .home-recent-icon {
-    width: 34px !important;
-    height: 34px !important;
-    border-radius: 10px !important;
-    flex: 0 0 34px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    background: rgba(37, 99, 235, 0.10) !important;
-    color: #2563EB !important;
-}
 #tab-home #home-tools-card .home-tile-grid {
     display: grid !important;
     grid-template-columns: 1fr !important;
@@ -7539,8 +7306,7 @@ html[data-theme="dark"] #tab-home .vcp-studio-hero-tile {
 html[data-theme="dark"] #tab-home #home-start-card .home-tile[onclick] .home-tile-icon.vcp-lg-icon-disc.quiet,
 html[data-theme="dark"] #tab-home #home-start-card .vcp-lg-icon-disc.quiet,
 html[data-theme="dark"] #tab-home #home-tools-card .home-tile[onclick] .home-tile-icon.vcp-settings-badge,
-html[data-theme="dark"] #tab-home .vcp-settings-badge,
-html[data-theme="dark"] #tab-home .home-recent-icon {
+html[data-theme="dark"] #tab-home .vcp-settings-badge {
     background: rgba(59, 130, 246, 0.18) !important;
     color: #93C5FD !important;
     border-color: rgba(96, 165, 250, 0.28) !important;
@@ -7613,17 +7379,6 @@ html[data-theme="dark"].lite #tab-home .vcp-studio-hero-tile { background: #1A24
     background: linear-gradient(90deg, #2563EB, #06B6D4);
     transition: width 0.28s ease;
 }
-#tab-home .vcp-job-card .home-recent-footer {
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: stretch !important;
-    justify-content: flex-start !important;
-    gap: 8px !important;
-    padding-left: 0 !important;
-    width: 100% !important;
-    min-width: 0 !important;
-}
-#tab-home .vcp-job-card .home-recent-badges,
 #tab-history .hub-row.vcp-job-card .hub-row-badges,
 #admin-queue-list .queue-item.vcp-job-card .queue-item-header {
     display: flex !important;
@@ -7637,7 +7392,6 @@ html[data-theme="dark"].lite #tab-home .vcp-studio-hero-tile { background: #1A24
     min-width: 0 !important;
     margin-left: 0 !important;
 }
-#tab-home .home-recent-badges .vcp-badge,
 #tab-history .hub-row-badges .vcp-badge {
     max-width: 100% !important;
     white-space: normal !important;
@@ -7645,7 +7399,6 @@ html[data-theme="dark"].lite #tab-home .vcp-studio-hero-tile { background: #1A24
     word-break: break-word !important;
     text-align: left !important;
 }
-#tab-home .vcp-job-card .home-recent-action,
 .vcp-job-footer-row {
     display: flex !important;
     flex-wrap: wrap !important;
@@ -7676,7 +7429,6 @@ html[data-theme="dark"].lite #tab-home .vcp-studio-hero-tile { background: #1A24
     background: rgba(248, 250, 252, 0.55);
 }
 #tab-history .hub-row.vcp-job-card .hub-quick-footer .vcp-chip,
-#tab-home .vcp-job-card .home-recent-action .vcp-chip,
 .live-job-row.vcp-job-card .live-job-row-actions .mini-chip {
     min-height: 36px !important;
     display: inline-flex !important;
@@ -7695,7 +7447,6 @@ html[data-theme="dark"] .vcp-job-card {
     background: rgba(15, 23, 42, 0.78) !important;
     border-color: rgba(148, 163, 184, 0.24) !important;
 }
-html[data-theme="dark"] #tab-home .vcp-job-card .home-recent-name,
 html[data-theme="dark"] .vcp-job-card .hub-row-title,
 html[data-theme="dark"] .vcp-job-card .live-job-row-title,
 html[data-theme="dark"] .vcp-job-card .queue-item-body {
@@ -7704,8 +7455,7 @@ html[data-theme="dark"] .vcp-job-card .queue-item-body {
 html[data-theme="dark"] #tab-history .hub-row.vcp-job-card .hub-quick-footer {
     background: rgba(15, 23, 42, 0.45);
 }
-html[data-theme="dark"] .vcp-job-footer-row,
-html[data-theme="dark"] #tab-home .vcp-job-card .home-recent-action {
+html[data-theme="dark"] .vcp-job-footer-row {
     border-top-color: rgba(148, 163, 184, 0.20) !important;
 }
 html.lite .vcp-job-card { background: #F8FBFF !important; box-shadow: none !important; }
@@ -8744,7 +8494,7 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     border-color: rgba(79, 70, 229, 0.55);
     box-shadow: 0 0 0 1.5px rgba(79, 70, 229, 0.40), 0 8px 18px -10px rgba(79, 70, 229, 0.25);
 }
-#tab-vip .stats-card {
+#tab-profile .stats-card {
     background: linear-gradient(180deg, rgba(255, 252, 245, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%);
     border: 1px solid rgba(217, 119, 6, 0.24);
     border-radius: 22px;
@@ -9033,6 +8783,7 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
 html[data-theme="dark"] #tab-downloader .pane-header h2,
 html[data-theme="dark"] #tab-vip .pane-header h2,
 html[data-theme="dark"] #tab-history .pane-header h2,
+html[data-theme="dark"] #tab-profile .pane-header h2,
 html[data-theme="dark"] #tab-admin .pane-header h2,
 html[data-theme="dark"] #tab-admin .adm-settings-master-title {
     color: #F8FAFC;
@@ -9040,7 +8791,8 @@ html[data-theme="dark"] #tab-admin .adm-settings-master-title {
 html[data-theme="dark"] #tab-downloader .dl-search-card,
 html[data-theme="dark"] #tab-downloader .dl-loading-state-card,
 html[data-theme="dark"] #tab-downloader #dl-result-card,
-html[data-theme="dark"] #tab-vip .stats-card,
+html[data-theme="dark"] #tab-profile .card,
+html[data-theme="dark"] #tab-profile .stats-card,
 html[data-theme="dark"] #tab-vip .plan-how-card,
 html[data-theme="dark"] #tab-vip .pricing-card,
 html[data-theme="dark"] #tab-vip #payment-box,
@@ -9148,7 +8900,8 @@ html[data-theme="dark"] #tab-admin .adm-acc-chev {
 }
 html.lite #tab-downloader .dl-search-card,
 html.lite #tab-downloader #dl-result-card,
-html.lite #tab-vip .stats-card,
+html.lite #tab-profile .card,
+html.lite #tab-profile .stats-card,
 html.lite #tab-vip .pricing-card,
 html.lite #tab-vip #payment-box,
 html.lite #tab-admin #adm-nav,
@@ -9162,7 +8915,8 @@ html.lite .modal-content {
 }
 html[data-theme="dark"].lite #tab-downloader .dl-search-card,
 html[data-theme="dark"].lite #tab-downloader #dl-result-card,
-html[data-theme="dark"].lite #tab-vip .stats-card,
+html[data-theme="dark"].lite #tab-profile .card,
+html[data-theme="dark"].lite #tab-profile .stats-card,
 html[data-theme="dark"].lite #tab-vip .pricing-card,
 html[data-theme="dark"].lite #tab-vip #payment-box,
 html[data-theme="dark"].lite #tab-admin #adm-nav,
@@ -9962,8 +9716,9 @@ html[data-theme="dark"] .top-nav .lite-pill-btn.is-active {
         flex-shrink: 0;
     }
     #tab-history .hub-filter-row { gap: 4px; }
-    #tab-history .hub-filter-chip { padding: 4px 8px; font-size: 11.5px; min-height: 34px; }
-    #tab-history .hub-refresh-chip { width: 34px; min-width: 34px; min-height: 34px; padding: 0; margin-left: auto; }
+    #tab-history .hub-filter-chip,
+    #tab-history .hub-refresh-chip { padding: 4px 7px; font-size: 11px; min-height: 40px; gap: 3px; width: auto; min-width: 0; }
+    #tab-history .hub-refresh-chip { margin-left: auto; }
     .studio-input { font-size: 13.5px; }
 }
 a.history-dl-link, a.vcp-chip { text-decoration: none; }
@@ -9988,7 +9743,7 @@ select.studio-select, select.studio-input, select.glass-dropdown {
     }
 }
 @media (max-width: 480px) {
-    #tab-vip .stats-row {
+    #tab-profile .stats-row {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
@@ -10064,14 +9819,17 @@ html[data-theme="light"] .sticky-cta-bar { background: rgba(255, 255, 255, 0.97)
 #tab-voice.active,
 #tab-tts.active,
 #tab-recap.active,
-#tab-vip.active,
 #tab-admin.active { padding-bottom: calc(var(--nav-h, 68px) + 148px + env(safe-area-inset-bottom, 0px)) !important; }
 #tab-home.active,
 #tab-history.active,
-#tab-downloader.active { padding-bottom: 0 !important; }
+#tab-downloader.active,
+#tab-profile.active,
+#tab-vip.active { padding-bottom: 0 !important; }
 .content-viewport:has(#tab-home.active),
 .content-viewport:has(#tab-history.active),
-.content-viewport:has(#tab-downloader.active) { padding-bottom: calc(var(--nav-h, 64px) + 32px + env(safe-area-inset-bottom, 0px)) !important; }
+.content-viewport:has(#tab-downloader.active),
+.content-viewport:has(#tab-profile.active),
+.content-viewport:has(#tab-vip.active) { padding-bottom: calc(var(--nav-h, 64px) + 32px + env(safe-area-inset-bottom, 0px)) !important; }
 #recap-step-1,
 #recap-step-2,
 #recap-step-3,
@@ -10399,20 +10157,18 @@ html[data-theme="light"] .dd-acc-vip-tag { background: rgba(217, 119, 6, 0.14); 
 .recap-step3-acc-wrap { margin-top: 10px; }
 .recap-step4-more-options { margin-top: 10px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2, rgba(255, 255, 255, 0.04)); border: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
 .recap-step4-more-options > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text); list-style: none; display: flex; align-items: center; justify-content: space-between; }
-/* 2026-11-21 Home Round 2 — Compact Tutorials Accordion, History & Downloader Cleanup */
+/* 2026-11-21 Home Round 2 + Round 3 — Single-header Tutorials, Hero Long-Name, History Refresh Chip & Profile View */
 #tab-home #home-tutorials-card {
     padding: 10px 12px !important;
 }
-#tab-home #home-tutorials-card .home-tut-head {
-    min-height: 40px !important;
-    padding: 2px 2px !important;
-    gap: 8px !important;
-}
 #tab-home #home-tutorials-card #home-tut-more {
-    margin-top: 6px;
+    margin-top: 0;
 }
 #tab-home #home-tutorials-card .home-tut-index-row {
     margin-bottom: 6px;
+}
+#tab-home #home-tutorials-card .home-tut-index-row .mini-chip {
+    min-height: 40px;
 }
 #tab-home #home-tutorials-card .home-tut-list {
     gap: 0;
@@ -10432,18 +10188,73 @@ html[data-theme="light"] .dd-acc-vip-tag { background: rgba(217, 119, 6, 0.14); 
 #tab-home.vcp-help-hub-open #home-tutorials-card {
     margin-bottom: 0 !important;
 }
+/* Item 5a: Single-line hero greeting + non-squashing badges */
+#tab-home #home-hero-card #home-status-strip,
+html.lite #tab-home #home-hero-card #home-status-strip,
+body.lite #tab-home #home-hero-card #home-status-strip,
+html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
+    min-height: 40px !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 2px 0 8px 0 !important;
+}
+#tab-home #home-hero-card #home-status-strip .vcp-hero-ident,
+#tab-home #home-hero-card #home-status-strip .home-status-left {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+#tab-home #home-hero-card #home-greeting-text {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    font-size: 16px !important;
+    line-height: 1.35 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    word-break: normal !important;
+}
+#tab-home #home-hero-card #home-status-strip .vcp-hero-badges,
+#tab-home #home-hero-card #home-status-strip .home-status-right {
+    flex: 0 0 auto !important;
+    flex-shrink: 0 !important;
+    flex-wrap: nowrap !important;
+    gap: 4px !important;
+}
+@media (max-width: 400px) {
+    #tab-home #home-hero-card #home-status-strip,
+    html.lite #tab-home #home-hero-card #home-status-strip,
+    body.lite #tab-home #home-hero-card #home-status-strip,
+    html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
+        gap: 6px !important;
+    }
+    #tab-home #home-hero-card #home-status-strip .vcp-hero-ready-chip,
+    #tab-home #home-hero-card #home-status-strip .vcp-badge {
+        padding: 2px 6px !important;
+        font-size: 10px !important;
+        gap: 3px !important;
+    }
+    #tab-home #home-hero-card #home-greeting-text {
+        font-size: 14.5px !important;
+    }
+}
+/* Item 3: History filter row + uniform labeled refresh chip */
 #tab-history,
-#tab-downloader {
+#tab-downloader,
+#tab-profile {
     gap: 10px;
 }
 #tab-history .pane-header,
-#tab-downloader .pane-header {
+#tab-downloader .pane-header,
+#tab-profile .pane-header {
     padding: 0 2px;
     gap: 2px;
     margin-bottom: 0;
 }
 #tab-history .pane-header .vcp-subview-back-btn,
-#tab-downloader .pane-header .vcp-subview-back-btn {
+#tab-downloader .pane-header .vcp-subview-back-btn,
+#tab-profile .pane-header .vcp-subview-back-btn {
     align-self: flex-start;
     min-height: 40px;
     margin-bottom: 2px;
@@ -10451,6 +10262,29 @@ html[data-theme="light"] .dd-acc-vip-tag { background: rgba(217, 119, 6, 0.14); 
 #tab-history .hub-filter-row {
     margin-top: 0;
     padding: 2px;
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+}
+#tab-history .hub-filter-chip,
+#tab-history .hub-refresh-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    border-radius: var(--vcp-radius-pill, 999px);
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 1.3;
+}
+#tab-history .hub-refresh-chip {
+    margin-left: auto;
+}
+html[data-theme="dark"] #tab-history .hub-filter-chip:not(.active),
+html[data-theme="dark"] #tab-history .hub-refresh-chip {
+    background: rgba(30, 41, 59, 0.90);
+    border-color: rgba(148, 163, 184, 0.26);
+    color: #E2E8F0;
 }
 #tab-history .vcp-history-retention-bar {
     margin-top: 0;
@@ -10462,4 +10296,154 @@ html[data-theme="light"] .dd-acc-vip-tag { background: rgba(217, 119, 6, 0.14); 
 #tab-downloader #dl-extract-stage[data-ui-state="empty"],
 #tab-downloader #dl-extract-stage[data-ui-state="error"] {
     display: none;
+}
+/* Item 5b: Profile sub-view cards, identity, balances, referral & Gemini key */
+#tab-profile .profile-identity-card {
+    padding: 14px 16px;
+}
+#tab-profile .profile-ident-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+#tab-profile .profile-avatar-circle {
+    flex: 0 0 46px;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 19px;
+    font-weight: 800;
+    color: #FFFFFF;
+    background: linear-gradient(135deg, #2563EB 0%, #3B82F6 100%);
+    box-shadow: 0 6px 14px -6px rgba(37, 99, 235, 0.55);
+}
+#tab-profile .profile-ident-meta {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+#tab-profile .profile-ident-name {
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.35;
+    color: var(--vcp-text-primary, #0F172A);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+#tab-profile .profile-ident-sub-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+#tab-profile .profile-ident-username {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vcp-text-secondary, #475569);
+    overflow-wrap: anywhere;
+}
+#tab-profile .profile-ident-id-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--vcp-text-secondary, #334155);
+    background: rgba(148, 163, 184, 0.16);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+}
+#tab-profile .profile-expiry-line {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    padding: 5px 10px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    font-weight: 700;
+    line-height: 1.45;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(217, 119, 6, 0.28);
+    color: #B45309;
+}
+#tab-profile .profile-expiry-line.exp-soon {
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.36);
+    color: #DC2626;
+}
+#tab-profile .profile-ref-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 6px;
+}
+#tab-profile .profile-ref-stat-box {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(248, 250, 255, 0.85);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+}
+#tab-profile .profile-ref-link-block {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+#tab-profile .profile-ref-copy-btn {
+    min-height: 40px;
+    padding: 6px 14px;
+}
+#tab-profile .profile-key-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+#tab-profile .profile-key-header .card-label {
+    margin-bottom: 0;
+}
+#tab-profile #profile-gemini-key-card .btn,
+#tab-profile #profile-gemini-key-card .detail-toggle {
+    min-height: 42px;
+}
+#tab-profile > .card:last-child {
+    margin-bottom: 0;
+}
+html[data-theme="dark"] #tab-profile .profile-ident-name {
+    color: #F8FAFC;
+}
+html[data-theme="dark"] #tab-profile .profile-ident-username {
+    color: #CBD5E1;
+}
+html[data-theme="dark"] #tab-profile .profile-ident-id-pill {
+    color: #E2E8F0;
+    background: rgba(30, 41, 59, 0.88);
+    border-color: rgba(148, 163, 184, 0.26);
+}
+html[data-theme="dark"] #tab-profile .profile-expiry-line {
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.36);
+    color: #FCD34D;
+}
+html[data-theme="dark"] #tab-profile .profile-expiry-line.exp-soon {
+    background: rgba(239, 68, 68, 0.20);
+    border-color: rgba(248, 113, 113, 0.42);
+    color: #FCA5A5;
+}
+html[data-theme="dark"] #tab-profile #profile-balance-credits {
+    color: #FCD34D !important;
+}
+html[data-theme="dark"] #tab-profile .profile-ref-stat-box {
+    background: rgba(15, 23, 42, 0.72);
+    border-color: rgba(148, 163, 184, 0.20);
 }
