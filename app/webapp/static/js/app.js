@@ -2647,9 +2647,9 @@ function openTutorialUrl(url) {
     }
 }
 
-// ── Refer & Support (round-6 P2) ────────────────────────────────────
-// The referral programme itself lives in the bot (ledger.py); /me now
-// carries the user's own code/link + stats, rendered here on Home.
+// ── Refer & Support (round-6 P2; Refer card lives in Profile since Round 4) ─
+// The referral programme itself lives in the bot (ledger.py); /me carries the
+// user's own code/link + stats, rendered in #profile-refer-card.
 let _referralLink = "";
 let _supportLink = "https://t.me/VoiceCloneProAdmin";
 
@@ -2690,18 +2690,6 @@ function updateReferUI(data) {
     window._lastReferralStats = data;
     _referralLink = data.referral_link || "";
     if (data.support_link) _supportLink = data.support_link;
-    const lt = document.getElementById("referral-link-text");
-    if (lt) lt.textContent = _referralLink || t("ref_link_pending");
-    const st = document.getElementById("referral-stats-line");
-    const r = data.referral;
-    if (st) {
-        st.textContent = r ? tf("ref_stats_line", {
-            rewarded: r.rewarded_referrals || 0,
-            max: r.max_referrals || 20,
-            earned_min: Math.round((r.earned_minutes || 0) * 10) / 10,
-            remaining: r.remaining_slots != null ? r.remaining_slots : 20,
-        }) : "";
-    }
     updateProfileReferSummary(data);
 }
 window.updateReferUI = updateReferUI;
@@ -2727,15 +2715,6 @@ function copyReferralLink() {
     }
 }
 window.copyReferralLink = copyReferralLink;
-
-function shareReferralLink() {
-    haptic("light");
-    if (!_referralLink) return;
-    const u = "https://t.me/share/url?url=" + encodeURIComponent(_referralLink)
-        + "&text=" + encodeURIComponent(t("ref_share_text"));
-    openTutorialUrl(u);
-}
-window.shareReferralLink = shareReferralLink;
 
 function openSupportContact() {
     haptic("light");

@@ -636,12 +636,6 @@ select.studio-input { min-height: 50px; }
     text-overflow: ellipsis;
     opacity: 0.9;
 }
-.ref-stats {
-    font-size: 12px;
-    opacity: 0.75;
-    margin: 8px 0 4px;
-    min-height: 15px;
-}
 .history-item-body { font-size: 14px; color: var(--text); line-height: 1.6; word-break: break-word; }
 .history-item-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
 .history-item-footer > span { font-size: 12px; color: var(--text-3); }
@@ -7245,12 +7239,6 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
     color: #1D4ED8 !important;
     box-shadow: none !important;
 }
-#tab-home .vcp-refer-card .ref-link-row {
-    background: rgba(248, 250, 252, 0.85);
-    border: 1px solid rgba(148, 163, 184, 0.26);
-    border-radius: 12px;
-    padding: 9px 11px;
-}
 html[data-theme="dark"] #tab-home .vcp-hero-card {
     background-image: linear-gradient(160deg, rgba(30, 41, 59, 0.94) 0%, rgba(15, 23, 42, 0.96) 100%) !important;
     border-color: rgba(148, 163, 184, 0.26) !important;
@@ -7320,8 +7308,7 @@ html[data-theme="dark"] #tab-home .welcome-strip-sample-btn {
     border-color: rgba(148, 163, 184, 0.30) !important;
     color: #F8FAFC !important;
 }
-html[data-theme="dark"] #tab-home .vcp-empty-glass,
-html[data-theme="dark"] #tab-home .vcp-refer-card .ref-link-row {
+html[data-theme="dark"] #tab-home .vcp-empty-glass {
     background: rgba(15, 23, 42, 0.65) !important;
     border-color: rgba(148, 163, 184, 0.28) !important;
 }
@@ -10119,7 +10106,6 @@ body.profile-loading .home-free-value { color: transparent !important; backgroun
 #tab-voice > #voice-result-box,
 #tab-voice > #voice-inline-status { order: 6; }
 #tab-voice > .hub-link { order: 7; }
-#home-refer-card .ref-desc,
 .referral-banner-content .ref-desc { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; -webkit-line-clamp: unset !important; display: block !important; line-height: 1.5; }
 .persona-select-row,
 .tts-voice-select-flex { display: flex; align-items: center; gap: 8px; width: 100%; }

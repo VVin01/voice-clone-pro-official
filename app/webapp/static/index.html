@@ -44,7 +44,7 @@
             </div>
 
             <div class="top-actions">
-                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="closeHeaderPopovers(); switchTab('tab-vip')" role="button" tabindex="0">FREE</span>
+                <span class="vip-badge free" id="vip-status-badge" data-i18n="vip_free" onclick="closeHeaderPopovers(); openProfileView()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeHeaderPopovers();openProfileView();}" role="button" tabindex="0">FREE</span>
                 <button class="lang-pill-btn" id="btn-lang-toggle" onclick="toggleLanguage()" title="ဘာသာစကား ပြောင်းရန်" data-i18n-title="lang_toggle_title"><span class="lang-flag" aria-hidden="true">🇲🇲</span><span class="lang-btn-text" id="lang-btn-text">မြန်မာ</span></button>
                 <button type="button" class="theme-pill-btn header-more-btn" id="btn-header-more" onclick="toggleHeaderMoreMenu(event)" title="အခြားရွေးချယ်စရာများ" data-i18n-title="header_more_title" aria-label="More options" aria-expanded="false">⋯</button>
                 <div class="header-more-menu hidden" id="header-more-menu" role="menu">
@@ -232,20 +232,6 @@
                             </span>
                         </button>
                     </div>
-                </div>
-
-                <!-- Refer card (bindings and exact Myanmar copy intact for AW/AY contracts) -->
-                <div class="card glass vcp-refer-card" id="home-refer-card">
-                    <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု</div>
-                    <p class="ref-desc" data-i18n="ref_desc">သူငယ်ချင်း တစ်ယောက် ဒီ link နဲ့ ဝင်၍ Channel + Group join လိုက်တာနဲ့ TTS အသံ ၂ မိနစ် ရပါမည် (အများဆုံး မိတ်ဆွေ 20 ယောက် = 40 မိနစ် အထိ)။ ဆုကို TTS Tab တွင်သာ သုံးနိုင်ပါသည်။</p>
-                    <div class="ref-link-row">
-                        <span class="ref-link-text" id="referral-link-text">—</span>
-                    </div>
-                    <div class="ref-actions">
-                        <button type="button" class="mini-chip gold" onclick="copyReferralLink()" data-i18n="btn_copy">📋 ကူးမည်</button>
-                        <button type="button" class="mini-chip" onclick="shareReferralLink()" data-i18n="ref_share_btn">↗️ မျှဝေမည်</button>
-                    </div>
-                    <p class="ref-stats" id="referral-stats-line"></p>
                 </div>
 
                 <!-- Support row in its own slim Liquid Glass card -->
