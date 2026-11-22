@@ -291,7 +291,7 @@ def test_br_prefill_still_sets_title_from_job_config():
     # Batch DD: prefill maps the DD config fields (protection,
     # blur-box list) and no title keys at all.
     assert "recapTitle" not in body
-    assert "recapProtection: cfg.protection_level," in body
+    assert "recapProtection: RECAP_LOCKED_PROTECTION," in body
     assert "if (srToggle) srToggle.checked = !!cfg.script_review;" in body
 
 

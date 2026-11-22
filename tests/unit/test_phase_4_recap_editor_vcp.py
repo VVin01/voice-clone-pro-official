@@ -33,20 +33,16 @@ def test_phase4_sticky_preview_corner_reset_and_five_category_tabs():
 
 
 def test_phase4_master_presets_preserve_defaults_and_ui():
-    assert 'id="recap-cat-preset"' in INDEX_HTML
-    assert 'id="recap-master-presets-grid"' in INDEX_HTML
-    for key in ("tiktok", "fb_story", "yt_16_9", "strict_safe"):
-        assert f'data-master-preset="{key}"' in INDEX_HTML
-        assert f"applyRecapMasterPreset('{key}')" in INDEX_HTML
-
-    assert "const RECAP_MASTER_PRESETS =" in APP_JS
-    assert "function applyRecapMasterPreset(" in APP_JS
-    assert "function syncRecapMasterPresetActive(" in APP_JS
-    # Shipped defaults remain unchanged for primary tiktok preset and state init
+    assert 'id="recap-cat-preset"' not in INDEX_HTML
+    assert 'id="recap-master-presets-grid"' not in INDEX_HTML
+    assert "RECAP_MASTER_PRESETS" not in APP_JS
+    assert "applyRecapMasterPreset" not in APP_JS
+    assert "syncRecapMasterPresetActive" not in APP_JS
+    # Shipped defaults remain locked / intact in state init
     assert 'recapRatio: "9:16"' in APP_JS
-    assert 'recapRatioFill: "blur"' in APP_JS
-    assert 'recapSubStyle: "yellow"' in APP_JS
-    assert "recapBlurAutoDetect: true" in APP_JS
+    assert 'recapRatioFill: RECAP_LOCKED_FILL' in APP_JS
+    assert 'recapSubStyle: "cinematic"' in APP_JS
+    assert "recapBlurAutoDetect: false" in APP_JS
 
 
 def test_phase4_my_presets_ui_and_backend_recap_presets_sanitization():
@@ -56,9 +52,8 @@ def test_phase4_my_presets_ui_and_backend_recap_presets_sanitization():
         'id="input-my-preset-name"',
         'id="btn-save-my-preset"',
         'id="recap-my-presets-list"',
-        'onclick="saveCurrentAsMyRecapPreset()"',
     ):
-        assert marker in INDEX_HTML
+        assert marker not in INDEX_HTML
 
     for fn in (
         "function parseMyRecapPresets(",
@@ -68,7 +63,7 @@ def test_phase4_my_presets_ui_and_backend_recap_presets_sanitization():
         "function applyMyRecapPreset(",
         "function deleteMyRecapPreset(",
     ):
-        assert fn in APP_JS
+        assert fn not in APP_JS
 
     # Approved Phase 4 backend extension in USER_PREF_STRINGS & _sanitize_user_prefs
     assert api_mod.USER_PREF_STRINGS.get("recap_presets") == 4000
@@ -103,9 +98,7 @@ def test_phase4_all_ten_subtitle_visual_sample_cards_and_sync():
 
 def test_phase4_crop_bounds_l2_accordions_and_logo_vip_upsell():
     for cid in ("slider-crop-top", "slider-crop-bottom", "slider-crop-left", "slider-crop-right"):
-        m = re.search(rf'<[^>]*id="{cid}"[^>]*>', INDEX_HTML)
-        assert m, f"Missing crop slider {cid}"
-        assert 'max="35"' in m.group(0), f"{cid} should keep max=35"
+        assert f'id="{cid}"' not in INDEX_HTML, f"Retired crop slider {cid} still in HTML"
 
     for marker in (
         'id="recap-sub-l2-accordion"',

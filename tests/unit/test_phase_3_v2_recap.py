@@ -74,6 +74,7 @@ def test_v2_phase3_must_fix_3_master_preset_apply_and_restore_wiring():
 
     restore_block = APP_JS.split("function restoreRecapSettings()", 1)[1].split("window.restoreRecapSettings =", 1)[0]
     for call in (
+        "syncLockedRecapDefaultsToState();",
         "updateCanvasMockupVisuals();",
         "ddFitPreviewFrame();",
         "refreshRecapStep2Summary();",
@@ -81,17 +82,6 @@ def test_v2_phase3_must_fix_3_master_preset_apply_and_restore_wiring():
         "refreshRecapStep4Facts();",
     ):
         assert call in restore_block, f"restoreRecapSettings missing {call}"
-
-    preset_block = APP_JS.split("function applyRecapPresetObject(patch)", 1)[1].split("function applyRecapMasterPreset(", 1)[0]
-    for call in (
-        "window.restoreRecapSettings",
-        "window.updateCanvasMockupVisuals",
-        "window.__ddFitPreviewFrame",
-        "window.refreshRecapStep2Summary",
-        "window.refreshRecapStep4Output",
-        "applyActiveRecapStep2Category",
-    ):
-        assert call in preset_block, f"applyRecapPresetObject missing {call}"
 
 
 def test_v2_phase3_recap_studio_v2_surfaces_dark_and_lite():
@@ -122,8 +112,25 @@ _RETIRED_VIP_STATIC_IDS = {
     "tts-key-input", "tts-key-state",
     # Round 8.1: #tts-edge-voice-hint removed from #tab-tts
     "tts-edge-voice-hint",
+    # Round 10 B3–B7: retired Recap Step 2 controls & strips
+    "btn-canvas-play-toggle", "btn-reset-canvas-layout", "btn-save-my-preset",
+    "btn-seek-next-5", "btn-seek-prev-5", "btn-sync-crop", "btn-toggle-crop-detail",
+    "btn-toggle-mirror", "canvas-seek-time-badge", "crop-detail-chevron",
+    "input-my-preset-name", "recap-cat-preset", "recap-crop-detail",
+    "recap-crop-presets-toolbar", "recap-fill-note", "recap-fill-picker",
+    "recap-master-presets-grid", "recap-my-presets-list", "recap-my-presets-section",
+    "recap-my-presets-vip-badge", "recap-preview-transform-group", "recap-protection-picker",
+    "recap-step2-summary", "recap-zoom-picker", "slider-canvas-seek",
+    "slider-crop-bottom", "slider-crop-left", "slider-crop-right", "slider-crop-top",
+    "val-crop-bottom", "val-crop-left", "val-crop-right", "val-crop-top",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
+    "applyRecapMasterPreset('fb_story')",
+    "applyRecapMasterPreset('strict_safe')",
+    "applyRecapMasterPreset('tiktok')",
+    "applyRecapMasterPreset('yt_16_9')",
+    "saveCurrentAsMyRecapPreset()",
+    "toggleRecapCropDetail()",
     "copyAccount('09790760003')",
     "openPaymentDrawer('MIN_10', 8000, '🎙️ Voice Pack 10 Minutes')",
     "openPaymentDrawer('MIN_30', 20000, '🎙️ Voice Pack 30 Minutes')",

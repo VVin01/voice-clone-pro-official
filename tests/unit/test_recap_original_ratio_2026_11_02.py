@@ -152,7 +152,7 @@ def test_original_ratio_no_longer_hardcodes_169_frame():
     # geometry mirror's (recapPictureRect) and Batch AK's fill-loss
     # note; "Original" still never asserts 16:9 without dimensions
     # (Batch AK: the unknown-dims fallback is rSource = rCanvas).
-    assert APP_JS.count("rCanvas = 16 / 9") == 3
+    assert APP_JS.count("rCanvas = 16 / 9") == 2
     assert "rSource = rCanvas;" in APP_JS
     assert 'if (state.recapRatio === "16:9") rCanvas = 16 / 9;' in APP_JS
 
@@ -172,12 +172,10 @@ def test_original_ratio_still_derives_from_real_dimensions():
 # ── 4. Client: seek badge + info card honesty (RS-4) ─────────────────
 
 def test_seek_badge_never_paints_invented_total():
-    # Analyze write is guarded by the verified duration.
-    assert "seekBadge.innerText = data.duration_seconds" in APP_JS
-    assert '"⏱️ 00:05s / --:--"' in APP_JS
-    # updateSeekTimeDisplay: no fabricated 60s default total remains.
+    # Round 10 B3 removed the seek slider & time badge; no fabricated 60s default total remains.
+    assert "canvas-seek-time-badge" not in APP_JS
     assert "state.recapSourceDuration || 60" not in APP_JS
-    assert "state.recapSourceDuration > 0 ? (totalSec || state.recapSourceDuration) : 0" in APP_JS
+    assert "state.recapSeekSec" in APP_JS
 
 
 def test_analyze_catch_paints_unverified_info_card():

@@ -66,8 +66,6 @@ UI_KEYS_K = [
     "recap_cost_charged_line",
     "recap_refunded_line",
     "btn_start_recap_credits",
-    "recap_platforms_note",
-    "recap_drop_limits",
 ]
 SERVER_KEYS_K = [
     "recap_retention_note",
@@ -435,12 +433,11 @@ def test_accept_extensions_equal_server_upload_formats():
 
 
 def test_pre_submit_source_facts_present():
-    # Supported platforms listed on the recap tab (item 4a), upload
-    # limits stated in the drop zone (item 4b) — both i18n-wired.
-    assert 'data-i18n="recap_platforms_note"' in INDEX_HTML
-    assert 'data-i18n="recap_drop_limits"' in INDEX_HTML
+    # Round 10 compacted Step 1: choose-file button & rights note sit after panel-source-url.
+    assert 'data-i18n="recap_choose_video_file"' in INDEX_HTML
+    assert 'data-i18n="recap_rights_note"' in INDEX_HTML
     panel = INDEX_HTML.index('id="panel-source-url"')
-    note = INDEX_HTML.index('data-i18n="recap_platforms_note"')
+    note = INDEX_HTML.index('data-i18n="recap_rights_note"')
     assert panel < note
 
 

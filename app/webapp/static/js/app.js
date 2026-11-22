@@ -380,16 +380,18 @@ const state = {
     activeJobId: null,
     pollTimer: null,
 
-    // Recap Configuration
+    // Recap Configuration (Round 10 locked pro defaults: fill=blur, crop=CinemaScope 12% non-Original,
+    // protection=strong, mirror=true, zoom=1.10)
     recapRatio: "9:16",
     recapRatioFill: "blur",
-    recapCropTop: 0,
-    recapCropBottom: 0,
+    recapCropTop: 12,
+    recapCropBottom: 12,
     recapCropLeft: 0,
     recapCropRight: 0,
     recapSyncCrop: true,
     recapMirror: true,
     recapZoom: 1.1,
+    recapSeekSec: 5,
     recapSpeed: "+12%",
     recapStoryStyle: "pov",
     recapBurnSubs: true,
@@ -2126,6 +2128,29 @@ function convertSubCentreToMargin(centrePct, fontSizePt, lines) {
     return Math.round(Math.min(95, Math.max(0, margin)));
 }
 window.convertSubCentreToMargin = convertSubCentreToMargin;
+const RECAP_LOCKED_FILL = "blur";
+const RECAP_LOCKED_PROTECTION = "strong";
+const RECAP_LOCKED_MIRROR = true;
+const RECAP_LOCKED_ZOOM = 1.1;
+function recapLockedCropForRatio(ratio) {
+    if (String(ratio || "9:16").trim().toLowerCase() === "original") {
+        return { crop_top: 0, crop_bottom: 0, crop_left: 0, crop_right: 0 };
+    }
+    return { crop_top: 12, crop_bottom: 12, crop_left: 0, crop_right: 0 };
+}
+function syncLockedRecapDefaultsToState() {
+    state.recapRatioFill = RECAP_LOCKED_FILL;
+    state.recapProtection = RECAP_LOCKED_PROTECTION;
+    state.recapMirror = RECAP_LOCKED_MIRROR;
+    state.recapZoom = RECAP_LOCKED_ZOOM;
+    const c = recapLockedCropForRatio(state.recapRatio);
+    state.recapCropTop = c.crop_top;
+    state.recapCropBottom = c.crop_bottom;
+    state.recapCropLeft = c.crop_left;
+    state.recapCropRight = c.crop_right;
+}
+window.recapLockedCropForRatio = recapLockedCropForRatio;
+
 // Batch DD: the Step-2 rebuild's payload fields, shared by the
 function ddConfigExtras() {
     const out = {};
@@ -2137,7 +2162,7 @@ function ddConfigExtras() {
             strength: Math.max(4, Math.min(40, parseInt(b.strength) || 18)),
         }));
     }
-    out.protection_level = state.recapProtection || "strong";
+    out.protection_level = RECAP_LOCKED_PROTECTION;
     out.sub_render_mode = state.recapSubRenderMode || "timeline";
     out.sub_effect = state.recapSubEffect || "none";
     out.embed_soft_subs = state.recapEmbedSoftSubs !== false;
@@ -2158,11 +2183,12 @@ function collectAccountPrefs() {
     const sxEl = document.getElementById("slider-sub-x");
     const swEl = document.getElementById("slider-sub-w");
     const splitToggle = document.getElementById("recap-split-toggle");
+    const lockedCrop = recapLockedCropForRatio(state.recapRatio);
     return {
         voice_persona: state.selectedPersona,
         voice_speed: normalizeSpeedOption(state.speed),
         recapRatio: state.recapRatio,
-        recapRatioFill: state.recapRatioFill,
+        recapRatioFill: RECAP_LOCKED_FILL,
         recapSpeed: normalizeSpeedOption(state.recapSpeed),
         recapStoryStyle: state.recapStoryStyle,
         recapSubStyle: state.recapSubStyle,
@@ -2174,16 +2200,16 @@ function collectAccountPrefs() {
         recapRenderQuality: state.recapRenderQuality,
         recapTtsEngine: state.recapTtsEngine,
         recapSyncCrop: !!state.recapSyncCrop,
-        recapMirror: !!state.recapMirror,
+        recapMirror: RECAP_LOCKED_MIRROR,
         recapBurnSubs: !!state.recapBurnSubs,
         recapBlurSubs: !!state.recapBlurSubs,
         recapBlurAutoDetect: state.recapBlurAutoDetect !== false,
         recapLogo: !!state.recapLogo,
         recapSplitEnabled: !!(splitToggle && splitToggle.checked),
-        recapCropTop: state.recapCropTop || 0,
-        recapCropBottom: state.recapCropBottom || 0,
-        recapCropLeft: state.recapCropLeft || 0,
-        recapCropRight: state.recapCropRight || 0,
+        recapCropTop: lockedCrop.crop_top,
+        recapCropBottom: lockedCrop.crop_bottom,
+        recapCropLeft: lockedCrop.crop_left,
+        recapCropRight: lockedCrop.crop_right,
         recapFontSize: state.recapFontSize || 13,
         recapLines: state.recapLines || 1,
         recapSplitMinutes: state.recapSplitMinutes || 3,
@@ -2191,7 +2217,7 @@ function collectAccountPrefs() {
         recapSettingsVersion: 3,
         recapSubX: sxEl ? parseInt(sxEl.value) : (state.recapSubX || 50),
         recapSubW: swEl ? parseInt(swEl.value) : (state.recapSubW || 92),
-        recapProtection: state.recapProtection || "strong",
+        recapProtection: RECAP_LOCKED_PROTECTION,
         recapTextColor: state.recapTextColor || "",
         recapOutlineColor: state.recapOutlineColor || "",
         recapBgColor: state.recapBgColor || "",
@@ -2202,7 +2228,7 @@ function collectAccountPrefs() {
         recapBlurBoxesJson: JSON.stringify(state.recapBlurBoxes || []),
         recapSubFontCustomId: state.recapSubFontCustomId || "",
         recapBlurStrength: bs ? parseInt(bs.value) : (state.recapBlurStrength || 18),
-        recapZoom: state.recapZoom,
+        recapZoom: RECAP_LOCKED_ZOOM,
         recapVoice: state.recapVoice,
         recapGeminiVoice: state.recapGeminiVoice || "",
         recapSubRenderMode: state.recapSubRenderMode || "timeline",
@@ -2210,8 +2236,6 @@ function collectAccountPrefs() {
         recapEmbedSoftSubs: state.recapEmbedSoftSubs !== false,
         savedCustomVoiceId: state.savedCustomVoiceId || "",
         savedCustomVoiceName: state.savedCustomVoiceName || "",
-        // Phase 4: up to 3 named Step-2 presets ("My Presets"), JSON.
-        recap_presets: serializeMyRecapPresets(),
     };
 }
 function cacheAccountPrefs(prefs) {
@@ -2266,6 +2290,7 @@ function applyAccountPrefs(prefs) {
         "savedCustomVoiceId", "savedCustomVoiceName",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
+    syncLockedRecapDefaultsToState();
     if (typeof syncSavedCustomVoiceUi === "function") syncSavedCustomVoiceUi();
     state.recapSpeed = normalizeSpeedOption(state.recapSpeed);
     // Batch DD: the blur-box list rides prefs as JSON.
@@ -2277,11 +2302,6 @@ function applyAccountPrefs(prefs) {
     }
     if (state.recapOutlineWidth === -1) state.recapOutlineWidth = null;
     if (typeof prefs.recapBgOpacity !== "number") state.recapBgOpacity = null;
-    // Phase 4: My Presets ride the account prefs as a JSON string.
-    if (typeof prefs.recap_presets === "string") {
-        state.recapCustomPresets = parseMyRecapPresets(prefs.recap_presets);
-        if (typeof renderMyRecapPresets === "function") { try { renderMyRecapPresets(); } catch (e) {} }
-    }
     cacheAccountPrefs(prefs);
     // Batch AM (M8ii): the recap controls were synced at boot from
     if (typeof window.resyncRecapControlsAfterPrefs === "function") {
@@ -3917,7 +3937,7 @@ window.deleteSavedCustomVoice = function() {
     if (typeof syncSavedCustomVoiceUi === "function") syncSavedCustomVoiceUi();
     if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
     else if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
-    showStudioToast(t("recap_my_preset_deleted_toast"), "info");
+    showStudioToast(t("saved_custom_voice_deleted_toast"), "info");
 };
 
 // ── Voice Studio Controls & Sub-Modes ──────────────────────────────────────
@@ -4516,7 +4536,6 @@ function paintCachedUserHeader(data) {
     refreshLogoUi();
     refreshRecapQualityLock();
     refreshRecapEngineLock();
-    if (typeof renderMyRecapPresets === "function") renderMyRecapPresets();
     paintTtsTodaySurfaces(data);
     if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
 }
@@ -5474,7 +5493,6 @@ function setRecapPreviewState(mode) {
     const controlsGroup = document.getElementById("recap-preview-controls-group");
     const ratioGroup = document.getElementById("recap-preview-ratio-group");
     const speedGroup = document.getElementById("recap-preview-speed-group");
-    const transformGroup = document.getElementById("recap-preview-transform-group");
     if (emptyBox) emptyBox.classList.toggle("hidden", ready);
     if (emptyInner) emptyInner.classList.toggle("hidden", mode === "loading");
     if (loadingInner) loadingInner.classList.toggle("hidden", mode !== "loading");
@@ -5491,7 +5509,6 @@ function setRecapPreviewState(mode) {
     if (controlsGroup) controlsGroup.classList.toggle("hidden", !(ready || recapHasSource()));
     if (ratioGroup) ratioGroup.classList.toggle("hidden", !ready);
     if (speedGroup) speedGroup.classList.toggle("hidden", !ready);
-    if (transformGroup) transformGroup.classList.toggle("hidden", !ready);
     if ((ready || recapHasSource()) && typeof applyActiveRecapStep2Category === "function") {
         applyActiveRecapStep2Category();
     }
@@ -5933,12 +5950,12 @@ function refreshRecapStep4Facts() {
     } else {
         set("recap-fact-subs", "📝 " + t("recap_fact_off"));
     }
-    set("recap-fact-title", "🛡️ " + t("recap_protection_" + (state.recapProtection || "standard")));
+    set("recap-fact-title", "🛡️ " + t("recap_protection_" + RECAP_LOCKED_PROTECTION));
     set("recap-fact-blur", "🌫️ " + t(state.recapBlurSubs !== false ? "recap_fact_on" : "recap_fact_off"));
     const qBtn = document.querySelector("#recap-quality-picker .pill-btn.active");
     set("recap-fact-quality", "🎞️ " + (qBtn ? qBtn.textContent.trim() : (state.recapRenderQuality || "standard")));
     set("recap-fact-speed", "⚡ " + (state.recapSpeed || "+12%"));
-    set("recap-fact-mirror", state.recapMirror !== false ? "🪞 " + t("recap_fact_mirror_on") : "");
+    set("recap-fact-mirror", RECAP_LOCKED_MIRROR ? "🪞 " + t("recap_fact_mirror_on") : "");
 }
 window.refreshRecapStep4Facts = refreshRecapStep4Facts;
 
@@ -5962,11 +5979,6 @@ function toggleRecapFineSettings(force) {
     if (chevron) chevron.textContent = open ? "▲" : "▼";
     const btn = document.getElementById("btn-toggle-recap-fine");
     if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
-    // The transform group syncs its own visibility from the preview
-    if (open) {
-        const tg = document.getElementById("recap-preview-transform-group");
-        if (tg && recapHasSource()) tg.classList.remove("hidden");
-    }
     // F1 (Batch AV rewire): the blur box's label is an editing
     const blurBox = document.getElementById("preview-blur-box");
     if (blurBox) blurBox.classList.toggle("label-on", open);
@@ -6067,10 +6079,35 @@ function setupRecapVisualEditor() {
         });
     }
 
+    function setRecapDropFileState(file) {
+        const iconEl = document.getElementById("recap-drop-icon");
+        const textEl = document.getElementById("recap-drop-text");
+        const stateEl = document.getElementById("recap-drop-file-state");
+        if (file && file.name) {
+            if (dropZone) dropZone.classList.add("has-file");
+            if (iconEl) iconEl.textContent = "🎬";
+            if (textEl) textEl.classList.remove("hidden");
+            if (stateEl) {
+                const sz = formatUploadSize(file.size);
+                stateEl.innerText = sz ? `${file.name} (${sz})` : file.name;
+                stateEl.classList.remove("hidden");
+            }
+        } else {
+            if (dropZone) dropZone.classList.remove("has-file");
+            if (iconEl) iconEl.textContent = "📁";
+            if (textEl) textEl.classList.remove("hidden");
+            if (stateEl) {
+                stateEl.innerText = "";
+                stateEl.classList.add("hidden");
+            }
+        }
+    }
+
     let recapCanvasVideoObjectUrl = null;
     async function handleVideoFileSelect(file) {
         if (!file) return;
         haptic("medium");
+        setRecapDropFileState(file);
         setRecapPreviewState("loading");
 
         // Instant client-side video preview via Object URL
@@ -6100,11 +6137,9 @@ function setupRecapVisualEditor() {
                     state.recapSourceHeight = canvasVideo.videoHeight;
                     updateCanvasMockupVisuals();
                 }
-                if (sliderSeek) {
-                    sliderSeek.max = Math.min(600, Math.floor(dur));
-                    sliderSeek.value = Math.min(5, Math.floor(dur));
-                }
-                updateSeekTimeDisplay(sliderSeek ? parseFloat(sliderSeek.value) : 5, dur);
+                const initSeek = Math.min(5, Math.floor(dur));
+                state.recapSeekSec = initSeek;
+                updateSeekChipsAvailability(dur);
                 seekCanvasFrame(Math.min(5, Math.floor(dur * 0.2)));
             };
         }
@@ -6394,6 +6429,7 @@ function setupRecapVisualEditor() {
             if (els.cancelBtn) els.cancelBtn.classList.add("hidden");
             if (els.hint) els.hint.classList.add("hidden");
             setTimeout(() => { if (els.wrap) els.wrap.classList.add("hidden"); }, 1200);
+            if (!state.uploadedVideoPath) setRecapDropFileState(null);
             resetRecapUploadPreview();
         };
 
@@ -6586,31 +6622,11 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // ── 0.5. Timeline Frame Scrubber & Second-Skipping (Like in the Bot) ──
-    const sliderSeek = document.getElementById("slider-canvas-seek");
-    const seekBadge = document.getElementById("canvas-seek-time-badge");
-    const btnPrev5 = document.getElementById("btn-seek-prev-5");
-    const btnNext5 = document.getElementById("btn-seek-next-5");
-    const btnPlayToggle = document.getElementById("btn-canvas-play-toggle");
+    // ── 0.5. Timeline Frame Scrubber (Quick-Jump Chips) ──
     const seekPills = document.querySelectorAll(".seek-pill-btn");
 
-    function formatSecToMMSS(sec) {
-        const s = Math.max(0, Math.floor(sec || 0));
-        const m = Math.floor(s / 60);
-        const remS = s % 60;
-        return `${m < 10 ? '0' : ''}${m}:${remS < 10 ? '0' : ''}${remS}`;
-    }
-
-    function updateSeekTimeDisplay(currentSec, totalSec) {
-        if (!seekBadge) return;
-        const curStr = formatSecToMMSS(currentSec);
-        // state.recapSourceDuration is only ever set from REAL metadata
-        // (verified extract, upload probe, or the <video> element). When
-        // it is 0 the source's length is unknown — show "--:--" instead
-        // of the old fabricated 60s default total (RS-4).
+    function updateSeekChipsAvailability(totalSec) {
         const knownTotal = state.recapSourceDuration > 0 ? (totalSec || state.recapSourceDuration) : 0;
-        const totStr = knownTotal > 0 ? formatSecToMMSS(knownTotal) : "--:--";
-        seekBadge.innerText = `⏱️ ${curStr}s / ${totStr}s`;
         seekPills.forEach(pill => {
             const pSec = parseFloat(pill.getAttribute("data-sec") || 0);
             pill.disabled = knownTotal > 0 && pSec > knownTotal;
@@ -6620,10 +6636,10 @@ function setupRecapVisualEditor() {
     function seekCanvasFrame(targetSec) {
         const total = state.recapSourceDuration || (canvasVideo?.duration) || 60;
         const clamped = Math.max(0, Math.min(total, targetSec));
-        if (sliderSeek) sliderSeek.value = clamped;
-        updateSeekTimeDisplay(clamped, total);
+        state.recapSeekSec = clamped;
+        updateSeekChipsAvailability(total);
         // Batch AK: the composited preview follows the seek (its
-        // payload reads the seek slider position).
+        // payload reads state.recapSeekSec).
         scheduleRecapCompositeRefresh();
 
         if (canvasVideo && canvasVideo.src && !canvasVideo.classList.contains("hidden")) {
@@ -6692,23 +6708,23 @@ function setupRecapVisualEditor() {
     function recapCompositePayload() {
         const g = (id) => document.getElementById(id);
         const iv = (el, dflt) => el ? parseInt(el.value) : dflt;
-        const seek = g("slider-canvas-seek");
         // N3: the real first cue once the script editor has one.
         let sample = "";
         const firstSeg = document.querySelector("#recap-script-list .script-seg-text");
         if (firstSeg && firstSeg.value) sample = firstSeg.value.trim().slice(0, 120);
+        const lockedCrop = recapLockedCropForRatio(state.recapRatio);
         return {
             url: recapCompositeSourceUrl(),
             uploaded_path: state.uploadedVideoPath || null,
-            t: seek ? (parseFloat(seek.value) || 5) : 5,
+            t: Number.isFinite(state.recapSeekSec) ? state.recapSeekSec : 5,
             ratio: state.recapRatio || "9:16",
-            ratio_fill: state.recapRatioFill || "blur",
-            crop_top: state.recapCropTop || 0,
-            crop_bottom: state.recapCropBottom || 0,
-            crop_left: state.recapCropLeft || 0,
-            crop_right: state.recapCropRight || 0,
-            mirror_video: state.recapMirror !== false,
-            zoom_factor: state.recapZoom || 1.0,
+            ratio_fill: RECAP_LOCKED_FILL,
+            crop_top: lockedCrop.crop_top,
+            crop_bottom: lockedCrop.crop_bottom,
+            crop_left: lockedCrop.crop_left,
+            crop_right: lockedCrop.crop_right,
+            mirror_video: RECAP_LOCKED_MIRROR,
+            zoom_factor: RECAP_LOCKED_ZOOM,
             blur_subtitles: state.recapBlurSubs !== false,
             blur_y: iv(g("slider-blur-y"), 85),
             blur_h: iv(g("slider-blur-h"), 7),
@@ -6801,61 +6817,6 @@ function setupRecapVisualEditor() {
     }
     window.refreshRecapCompositePreview = refreshRecapCompositePreview;
 
-    if (sliderSeek) {
-        sliderSeek.addEventListener("input", (e) => {
-            seekCanvasFrame(parseFloat(e.target.value));
-        });
-    }
-
-    if (btnPrev5) {
-        btnPrev5.addEventListener("click", () => {
-            haptic("selection");
-            const cur = sliderSeek ? parseFloat(sliderSeek.value) : 5;
-            seekCanvasFrame(cur - 5);
-        });
-    }
-
-    if (btnNext5) {
-        btnNext5.addEventListener("click", () => {
-            haptic("selection");
-            const cur = sliderSeek ? parseFloat(sliderSeek.value) : 5;
-            seekCanvasFrame(cur + 5);
-        });
-    }
-
-    if (btnPlayToggle && canvasVideo) {
-        btnPlayToggle.addEventListener("click", () => {
-            haptic("selection");
-            if (canvasVideo.src && !canvasVideo.classList.contains("hidden")) {
-                if (canvasVideo.paused) {
-                    canvasVideo.play().then(() => {
-                        btnPlayToggle.innerText = `⏸️ ${t("pause_audio")}`;
-                        btnPlayToggle.classList.add("active");
-                    }).catch(err => {
-                        console.warn("Play error:", err);
-                    });
-                } else {
-                    canvasVideo.pause();
-                    btnPlayToggle.innerText = `⏯️ ${t("play_audio")}`;
-                    btnPlayToggle.classList.remove("active");
-                }
-            } else {
-                showStudioToast(t("toast_scrub_hint"), 'info');
-            }
-        });
-
-        canvasVideo.addEventListener("timeupdate", () => {
-            if (!canvasVideo.paused && sliderSeek) {
-                sliderSeek.value = canvasVideo.currentTime;
-                updateSeekTimeDisplay(canvasVideo.currentTime, canvasVideo.duration);
-            }
-        });
-        canvasVideo.addEventListener("ended", () => {
-            btnPlayToggle.innerText = `⏯️ ${t("play_audio")}`;
-            btnPlayToggle.classList.remove("active");
-        });
-    }
-
     seekPills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
@@ -6867,7 +6828,7 @@ function setupRecapVisualEditor() {
     // Batch P: ONE geometry for preview and render (recapter
     // standard) — mirrors core.frame_layout + subtitle_centre_px in
     // core.py. The picture rect is computed from the same inputs the
-    // render uses (source aspect, chosen ratio, crop, fill), and
+    // render uses (source aspect, chosen ratio, locked crop, locked fill), and
     // sub_y is interpreted picture-relatively on letterboxed
     // layouts, exactly as the render burns it.
     function recapPictureRect() {
@@ -6887,15 +6848,16 @@ function setupRecapVisualEditor() {
             // canvas; the composited frame corrects it on arrival.
             rSource = rCanvas;
         }
-        const ct = Math.max(0, Math.min(35, state.recapCropTop || 0)) / 100.0;
-        const cb = Math.max(0, Math.min(35, state.recapCropBottom || 0)) / 100.0;
-        const cl = Math.max(0, Math.min(35, state.recapCropLeft || 0)) / 100.0;
-        const cr = Math.max(0, Math.min(35, state.recapCropRight || 0)) / 100.0;
+        const isOrig = state.recapRatio === "Original";
+        const ct = isOrig ? 0 : Math.max(0, Math.min(35, state.recapCropTop || 0)) / 100.0;
+        const cb = isOrig ? 0 : Math.max(0, Math.min(35, state.recapCropBottom || 0)) / 100.0;
+        const cl = isOrig ? 0 : Math.max(0, Math.min(35, state.recapCropLeft || 0)) / 100.0;
+        const cr = isOrig ? 0 : Math.max(0, Math.min(35, state.recapCropRight || 0)) / 100.0;
         const keepW = Math.max(0.10, 1.0 - cl - cr);
         const keepH = Math.max(0.10, 1.0 - ct - cb);
         const hasCrop = (ct > 0.001 || cb > 0.001 || cl > 0.001 || cr > 0.001);
         const rCropped = rSource * (keepW / keepH);
-        const fillMode = state.recapRatioFill || "blur";
+        const fillMode = (typeof RECAP_LOCKED_FILL !== "undefined") ? RECAP_LOCKED_FILL : (state.recapRatioFill || "blur");
         if (fillMode === "crop" || (!hasCrop && Math.abs(rSource - rCanvas) < 0.01)) {
             return { ox: 0, oy: 0, pw: 1, ph: 1 };
         }
@@ -7594,7 +7556,8 @@ function setupRecapVisualEditor() {
     function updateCanvasMockupVisuals() {
         if (!canvas) return;
 
-        const zoom = state.recapZoom || 1.0;
+        syncLockedRecapDefaultsToState();
+        const zoom = RECAP_LOCKED_ZOOM;
 
         // 1. Aspect Ratio Frame Class — Batch AS (AS-2): the stage
         // shape comes from the single authority above, for every
@@ -7623,8 +7586,8 @@ function setupRecapVisualEditor() {
             }
         }
 
-        // 2. Canvas Base Classes & Fill Mode
-        const fillMode = state.recapRatioFill || "blur";
+        // 2. Canvas Base Classes & Fill Mode (locked to blur + mirror)
+        const fillMode = RECAP_LOCKED_FILL;
         canvas.className = `video-bg-placeholder fill-${fillMode} ${state.recapMirror ? 'mirrored' : ''}`;
 
         // 3. Keep thumbnail on Canvas & Inner Movie
@@ -7638,10 +7601,11 @@ function setupRecapVisualEditor() {
             origSub.style.display = hasActiveMedia ? "none" : "";
         }
 
-        const cTop = Math.max(0, Math.min(35, state.recapCropTop || 0));
-        const cBottom = Math.max(0, Math.min(35, state.recapCropBottom || 0));
-        const cLeft = Math.max(0, Math.min(35, state.recapCropLeft || 0));
-        const cRight = Math.max(0, Math.min(35, state.recapCropRight || 0));
+        const lockedCrop = recapLockedCropForRatio(state.recapRatio);
+        const cTop = Math.max(0, Math.min(35, lockedCrop.crop_top || 0));
+        const cBottom = Math.max(0, Math.min(35, lockedCrop.crop_bottom || 0));
+        const cLeft = Math.max(0, Math.min(35, lockedCrop.crop_left || 0));
+        const cRight = Math.max(0, Math.min(35, lockedCrop.crop_right || 0));
 
         const ct = cTop / 100.0;
         const cb = cBottom / 100.0;
@@ -7989,89 +7953,8 @@ function setupRecapVisualEditor() {
         }
         syncBlurBoxVisual();
         syncSubBoxVisual();
-        syncFillPickerState();
         scheduleRecapCompositeRefresh();
     }
-
-    // Batch AK (S4/S5/N5): the fill picker's honesty layer — the
-    function syncFillPickerState() {
-        const note = document.getElementById("recap-fill-note");
-        const picker = document.getElementById("recap-fill-picker");
-        if (!note || !picker) return;
-        const r = recapPictureRect();
-        const fill = state.recapRatioFill || "blur";
-        const fullFrame = (r.pw > 0.999 && r.ph > 0.999);
-        const disabled = state.recapRatio === "Original" || fullFrame;
-        picker.classList.toggle("fill-picker-disabled", disabled);
-        picker.querySelectorAll(".pill-btn").forEach(b => { b.disabled = disabled; });
-        if (disabled) {
-            note.innerText = t("recap_fill_disabled_note");
-            note.classList.remove("hidden");
-            return;
-        }
-        if (fill === "crop") {
-            let rCanvas = 9 / 16;
-            if (state.recapRatio === "16:9") rCanvas = 16 / 9;
-            else if (state.recapRatio === "1:1") rCanvas = 1.0;
-            let rSource = null;
-            if (state.recapSourceWidth && state.recapSourceHeight && state.recapSourceHeight > 0) {
-                rSource = state.recapSourceWidth / state.recapSourceHeight;
-            }
-            if (!rSource) rSource = rCanvas;
-            const keepW = Math.max(0.10, 1.0 - (Math.min(35, state.recapCropLeft || 0) + Math.min(35, state.recapCropRight || 0)) / 100.0);
-            const keepH = Math.max(0.10, 1.0 - (Math.min(35, state.recapCropTop || 0) + Math.min(35, state.recapCropBottom || 0)) / 100.0);
-            const rCropped = rSource * (keepW / keepH);
-            const loss = rCropped >= rCanvas ? (1 - rCanvas / rCropped) : (1 - rCropped / rCanvas);
-            note.innerText = tf("fill_crop_loss", { pct: Math.max(0, Math.round(loss * 100)) });
-        } else {
-            note.innerText = t("fill_keep_picture_note");
-        }
-        note.classList.remove("hidden");
-    }
-
-    // Batch AK (S5): in Center Crop mode, dragging the canvas pans
-    // the crop window — the left/right (or top/bottom) crop split
-    // moves with the drag while each axis's TOTAL crop stays, which
-    // is exactly the render's crop-offset freedom. Sliders remain
-    // the precise control; this is the direct-manipulation path.
-    (function setupCropPanDrag() {
-        if (!canvas) return;
-        let panning = null;
-        canvas.addEventListener("pointerdown", (e) => {
-            if ((state.recapRatioFill || "blur") !== "crop") return;
-            if (e.target.closest(".draggable-box")) return;
-            panning = {
-                x: e.clientX, y: e.clientY,
-                cl: state.recapCropLeft || 0, cr: state.recapCropRight || 0,
-                ct: state.recapCropTop || 0, cb: state.recapCropBottom || 0,
-            };
-        });
-        window.addEventListener("pointermove", (e) => {
-            if (!panning) return;
-            const rect = canvas.getBoundingClientRect();
-            if (!rect.width || !rect.height) return;
-            const dxPct = ((e.clientX - panning.x) / rect.width) * 100;
-            const dyPct = ((e.clientY - panning.y) / rect.height) * 100;
-            let cl = panning.cl, cr = panning.cr, ct = panning.ct, cb = panning.cb;
-            const totX = cl + cr, totY = ct + cb;
-            if (totX > 0) {
-                // Dragging right reveals more of the left side.
-                const keepW = Math.max(0.10, 1.0 - totX / 100.0);
-                cl = Math.round(Math.max(0, Math.min(totX, panning.cl - dxPct * keepW)));
-                cr = totX - cl;
-            }
-            if (totY > 0) {
-                const keepH = Math.max(0.10, 1.0 - totY / 100.0);
-                ct = Math.round(Math.max(0, Math.min(totY, panning.ct - dyPct * keepH)));
-                cb = totY - ct;
-            }
-            if (cl !== (state.recapCropLeft || 0) || cr !== (state.recapCropRight || 0)
-                || ct !== (state.recapCropTop || 0) || cb !== (state.recapCropBottom || 0)) {
-                applyCropValues(ct, cb, cl, cr);
-            }
-        });
-        window.addEventListener("pointerup", () => { panning = null; });
-    })();
 
     // 2. Aspect Ratio Selector (9:16, 16:9, 1:1, Original)
     const ratioBtns = document.querySelectorAll("#recap-ratio-picker .ratio-btn");
@@ -8081,155 +7964,7 @@ function setupRecapVisualEditor() {
             ratioBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapRatio = btn.getAttribute("data-ratio") || "9:16";
-            updateCanvasMockupVisuals();
-        });
-    });
-
-    // 3. Aspect Ratio Fill Mode (blur, crop, black)
-    const fillBtns = document.querySelectorAll("#recap-fill-picker .pill-btn");
-    fillBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
-            haptic("selection");
-            fillBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            state.recapRatioFill = btn.getAttribute("data-fill") || "blur";
-            updateCanvasMockupVisuals();
-        });
-    });
-
-    // ── 3.5. Custom Video Crop: Sliders, Presets & Sync Mode ──
-    const sliderCropTop = document.getElementById("slider-crop-top");
-    const sliderCropBottom = document.getElementById("slider-crop-bottom");
-    const sliderCropLeft = document.getElementById("slider-crop-left");
-    const sliderCropRight = document.getElementById("slider-crop-right");
-
-    const valCropTop = document.getElementById("val-crop-top");
-    const valCropBottom = document.getElementById("val-crop-bottom");
-    const valCropLeft = document.getElementById("val-crop-left");
-    const valCropRight = document.getElementById("val-crop-right");
-
-    const btnSyncCrop = document.getElementById("btn-sync-crop");
-
-    function setCropPresetActive(presetName) {
-        document.querySelectorAll("#recap-crop-presets .pill-btn, #recap-crop-presets-toolbar .pill-btn").forEach(btn => {
-            btn.classList.toggle("active", btn.getAttribute("data-crop") === presetName);
-        });
-    }
-
-    function applyCropValues(top, bottom, left, right, preset = null) {
-        state.recapCropTop = top;
-        state.recapCropBottom = bottom;
-        state.recapCropLeft = left;
-        state.recapCropRight = right;
-
-        if (sliderCropTop) sliderCropTop.value = top;
-        if (sliderCropBottom) sliderCropBottom.value = bottom;
-        if (sliderCropLeft) sliderCropLeft.value = left;
-        if (sliderCropRight) sliderCropRight.value = right;
-
-        if (valCropTop) valCropTop.innerText = `${top}%`;
-        if (valCropBottom) valCropBottom.innerText = `${bottom}%`;
-        if (valCropLeft) valCropLeft.innerText = `${left}%`;
-        if (valCropRight) valCropRight.innerText = `${right}%`;
-
-        if (preset) {
-            setCropPresetActive(preset);
-        } else {
-            // Check matches
-            if (top === 0 && bottom === 0 && left === 0 && right === 0) setCropPresetActive("full");
-            else if (top === 12 && bottom === 12 && left === 0 && right === 0) setCropPresetActive("cinema");
-            else if (top === 0 && bottom === 0 && left === 10 && right === 10) setCropPresetActive("side");
-            else setCropPresetActive("custom");
-        }
-
-        updateCanvasMockupVisuals();
-    }
-
-    if (btnSyncCrop) {
-        btnSyncCrop.addEventListener("click", () => {
-            haptic("selection");
-            state.recapSyncCrop = !state.recapSyncCrop;
-            btnSyncCrop.classList.toggle("active", state.recapSyncCrop);
-            if (state.recapSyncCrop && sliderCropTop) {
-                applyCropValues(parseInt(sliderCropTop.value) || 0, parseInt(sliderCropTop.value) || 0, state.recapCropLeft, state.recapCropRight);
-            }
-        });
-    }
-
-    if (sliderCropTop) {
-        sliderCropTop.addEventListener("input", (e) => {
-            const val = parseInt(e.target.value) || 0;
-            const bottomVal = state.recapSyncCrop ? val : state.recapCropBottom;
-            applyCropValues(val, bottomVal, state.recapCropLeft, state.recapCropRight);
-        });
-    }
-
-    if (sliderCropBottom) {
-        sliderCropBottom.addEventListener("input", (e) => {
-            const val = parseInt(e.target.value) || 0;
-            const topVal = state.recapSyncCrop ? val : state.recapCropTop;
-            applyCropValues(topVal, val, state.recapCropLeft, state.recapCropRight);
-        });
-    }
-
-    if (sliderCropLeft) {
-        sliderCropLeft.addEventListener("input", (e) => {
-            const val = parseInt(e.target.value) || 0;
-            applyCropValues(state.recapCropTop, state.recapCropBottom, val, state.recapCropRight);
-        });
-    }
-
-    if (sliderCropRight) {
-        sliderCropRight.addEventListener("input", (e) => {
-            const val = parseInt(e.target.value) || 0;
-            applyCropValues(state.recapCropTop, state.recapCropBottom, state.recapCropLeft, val);
-        });
-    }
-
-    document.querySelectorAll("#recap-crop-presets .pill-btn, #recap-crop-presets-toolbar .pill-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-            haptic("selection");
-            const mode = btn.getAttribute("data-crop");
-            if (mode === "full") {
-                applyCropValues(0, 0, 0, 0, "full");
-            } else if (mode === "cinema") {
-                applyCropValues(12, 12, 0, 0, "cinema");
-            } else if (mode === "side") {
-                applyCropValues(0, 0, 10, 10, "side");
-            } else if (mode === "custom") {
-                setCropPresetActive("custom");
-            }
-        });
-    });
-
-    // 4. Video Transformation: Mirror Toggle
-    const btnMirror = document.getElementById("btn-toggle-mirror");
-    if (btnMirror) {
-        btnMirror.addEventListener("click", () => {
-            haptic("selection");
-            state.recapMirror = !state.recapMirror;
-            btnMirror.classList.toggle("active", state.recapMirror);
-            const statusSpan = btnMirror.querySelector(".toggle-status");
-            if (statusSpan) {
-                statusSpan.innerText = state.recapMirror ? t("mirror_on") : t("mirror_off");
-            }
-            updateCanvasMockupVisuals();
-            if (canvas) {
-                canvas.classList.toggle("mirrored", state.recapMirror);
-            }
-            refreshRecapStep2Summary();
-            if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
-        });
-    }
-
-    // 5. Video Transformation: Micro-Zoom (1.00, 1.06, 1.10)
-    const zoomBtns = document.querySelectorAll("#recap-zoom-picker .pill-btn");
-    zoomBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
-            haptic("selection");
-            zoomBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            state.recapZoom = parseFloat(btn.getAttribute("data-zoom") || "1.00");
+            syncLockedRecapDefaultsToState();
             updateCanvasMockupVisuals();
         });
     });
@@ -8418,26 +8153,7 @@ function setupRecapVisualEditor() {
         syncBlurBoxVisual();
         syncSubBoxVisual();
 
-        state.recapCropTop = 0;
-        state.recapCropBottom = 0;
-        state.recapCropLeft = 0;
-        state.recapCropRight = 0;
-        const sTop = document.getElementById("slider-crop-top");
-        const sBot = document.getElementById("slider-crop-bottom");
-        const sLeft = document.getElementById("slider-crop-left");
-        const sRight = document.getElementById("slider-crop-right");
-        if (sTop) sTop.value = "0";
-        if (sBot) sBot.value = "0";
-        if (sLeft) sLeft.value = "0";
-        if (sRight) sRight.value = "0";
-        document.querySelectorAll("#recap-crop-presets .pill-btn, #recap-crop-presets-toolbar .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-crop") === "full");
-        });
-
-        state.recapZoom = 1.1;
-        document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", parseFloat(b.getAttribute("data-zoom")) === 1.1);
-        });
+        syncLockedRecapDefaultsToState();
         updateCanvasMockupVisuals();
     }
     window.resetRecapCanvasLayout = resetRecapCanvasLayout;
@@ -8666,28 +8382,15 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // (1) Summary strip + accordion header values.
+    // (1) Accordion header values.
     function refreshRecapStep2Summary() {
         const styleName = t("sub_style_" + (state.recapSubStyle || "cinematic"));
-        const prot = t("recap_protection_" + (state.recapProtection || "strong"));
-        const strip = document.getElementById("recap-step2-summary");
-        const mTag = state.recapMirror !== false ? "🪞 " + t("recap_fact_mirror_on") : "";
-        if (strip) {
-            strip.innerText = [
-                state.recapRatio || "9:16",
-                state.recapRatioFill || "blur",
-                `${state.recapFontSize || 13}pt`,
-                styleName,
-                `🛡️ ${prot}`,
-                mTag,
-            ].filter(Boolean).join(" · ");
-        }
         const setVal = (id, txt) => {
             const gEl = document.getElementById(id);
             const v = gEl ? gEl.querySelector(".dd-acc-val") : null;
             if (v) v.innerText = txt;
         };
-        setVal("recap-preview-ratio-group", `${state.recapRatio || "9:16"} · ${state.recapRatioFill || "blur"}`);
+        setVal("recap-preview-ratio-group", `${state.recapRatio || "9:16"} · ${RECAP_LOCKED_FILL}`);
         setVal("recap-subtitle-group", `${state.recapFontSize || 13}pt · ${styleName} · ${state.recapLines || 1}`);
         const nBoxes = (state.recapBlurBoxes || []).length;
         const blurVal = state.recapBlurSubs === false
@@ -8695,9 +8398,6 @@ function setupRecapVisualEditor() {
             : (state.recapBlurAutoDetect !== false ? "Auto" : `Manual · ×${Math.max(1, nBoxes)}`);
         setVal("recap-blur-group", blurVal);
         setVal("recap-logo-group", `${state.recapLogo !== false ? t("toggle_on") : t("toggle_off")} · ${state.recapLogoPos || "top-right"}`);
-        setVal("recap-preview-transform-group", [`🛡️ ${prot}`, `${state.recapZoom || 1.1}x`, mTag].filter(Boolean).join(" · "));
-        const savedPresetCnt = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.length : 0;
-        setVal("recap-my-presets-section", savedPresetCnt ? `${savedPresetCnt}/3` : "0/3");
         const storyKey = state.recapStoryStyle || "pov";
         const storyPill = document.querySelector(`#story-style-picker-quick [data-story="${storyKey}"]`);
         setVal("recap-story-style-acc", storyPill ? storyPill.textContent.trim() : storyKey);
@@ -8865,20 +8565,6 @@ function setupRecapVisualEditor() {
         if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
     });
 
-    // (4) Protection level pills.
-    document.querySelectorAll("#recap-protection-picker .pill-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-            haptic("selection");
-            state.recapProtection = btn.getAttribute("data-protection") || "standard";
-            document.querySelectorAll("#recap-protection-picker .pill-btn").forEach(b => {
-                b.classList.toggle("active", b === btn);
-            });
-            scheduleRecapCompositeRefresh();
-            refreshRecapStep2Summary();
-            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
-        });
-    });
-
     // (5) Free style controls. A preset SEEDS them (ddSeedStyleControls,
     const DD_PRESET_SEED = {
         cinematic: { text: "#ffffff", outline: "#000000", ow: 2.5, bg: null, bgOp: null, shadow: true },
@@ -9039,9 +8725,6 @@ function setupRecapVisualEditor() {
 
     // (8) Restore-path control sync (called from restoreRecapSettings
     window.ddSyncControlsFromState = function () {
-        document.querySelectorAll("#recap-protection-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-protection") === (state.recapProtection || "strong"));
-        });
         const setColor = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
         setColor("input-sub-text-color", state.recapTextColor);
         setColor("input-sub-outline-color", state.recapOutlineColor);
@@ -9112,7 +8795,7 @@ function setupRecapVisualEditor() {
     }
     window.addEventListener("resize", ddFitPreviewFrame);
     window.__ddFitPreviewFrame = ddFitPreviewFrame;
-    ["recap-ratio-picker", "recap-fill-picker"].forEach(id => {
+    ["recap-ratio-picker"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener("click", () => setTimeout(() => {
             refreshRecapStep2Summary();
@@ -9372,19 +9055,9 @@ function setupRecapVisualEditor() {
                 } else {
                     state.recapVerifiedSourceUrl = null;
                 }
-                const sliderSeek = document.getElementById("slider-canvas-seek");
-                const seekBadge = document.getElementById("canvas-seek-time-badge");
-                if (sliderSeek) {
-                    sliderSeek.max = Math.min(600, data.duration_seconds || 60);
-                    sliderSeek.value = Math.min(5, data.duration_seconds || 5);
-                }
-                if (seekBadge) {
-                    // Unverified payloads carry an invented placeholder
-                    // duration ("03:30") — never paint it as the source's
-                    // length; the total stays unknown until verified.
-                    seekBadge.innerText = data.duration_seconds
-                        ? `⏱️ 00:05s / ${data.estimated_duration || "00:00"}s`
-                        : "⏱️ 00:05s / --:--";
+                state.recapSeekSec = Math.min(5, data.duration_seconds || 5);
+                if (typeof updateSeekChipsAvailability === "function") {
+                    updateSeekChipsAvailability(data.duration_seconds || 0);
                 }
                 setRecapPreviewState("ready");
             } catch (err) {
@@ -9412,8 +9085,10 @@ function setupRecapVisualEditor() {
                     // Batch CI: duration is back to UNKNOWN here —
                     // repaint the gate so no stale notice survives.
                     updateRecapDurationGate();
-                    const sb = document.getElementById("canvas-seek-time-badge");
-                    if (sb) sb.innerText = "⏱️ 00:05s / --:--";
+                    state.recapSeekSec = 5;
+                    if (typeof updateSeekChipsAvailability === "function") {
+                        updateSeekChipsAvailability(0);
+                    }
                 }
                 const msg = err.message || "";
                 if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
@@ -9570,6 +9245,7 @@ function setupRecapVisualEditor() {
     };
 
     function snapshotRecapSettings() {
+        syncLockedRecapDefaultsToState();
         const snap = {};
         Object.keys(RECAP_SETTING_ENUMS).forEach(k => { snap[k] = state[k]; });
         RECAP_SETTING_BOOLS.forEach(k => { snap[k] = !!state[k]; });
@@ -9702,6 +9378,7 @@ function setupRecapVisualEditor() {
         if (typeof saved.recapSubFontCustomName === "string") state.recapSubFontCustomName = saved.recapSubFontCustomName;
         if (Array.isArray(saved.recapBlurBoxes)) state.recapBlurBoxes = saved.recapBlurBoxes.filter(b => b && typeof b === "object").slice(0, 5);
         if (["top", "center", "bottom"].includes(saved.recapSubPosBand)) state.recapSubPosBand = saved.recapSubPosBand;
+        syncLockedRecapDefaultsToState();
         // Batch DD migration-on-read: a legacy snapshot with a
         // deliberately-set single box (recapBlurBoxTouched) and NO
         // list becomes a one-element list.
@@ -9717,20 +9394,7 @@ function setupRecapVisualEditor() {
 
         // ── Re-sync every control so the UI shows the restored state ──
         syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio);
-        syncPillGroup("#recap-fill-picker .pill-btn", "data-fill", state.recapRatioFill);
-        applyCropValues(state.recapCropTop || 0, state.recapCropBottom || 0,
-                        state.recapCropLeft || 0, state.recapCropRight || 0);
-        if (btnSyncCrop) btnSyncCrop.classList.toggle("active", !!state.recapSyncCrop);
-        const btnMirrorEl = document.getElementById("btn-toggle-mirror");
-        if (btnMirrorEl) {
-            btnMirrorEl.classList.toggle("active", !!state.recapMirror);
-            const ms = btnMirrorEl.querySelector(".toggle-status");
-            if (ms) ms.innerText = state.recapMirror ? t("mirror_on") : t("mirror_off");
-        }
         if (canvas) canvas.classList.toggle("mirrored", !!state.recapMirror);
-        document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", parseFloat(b.getAttribute("data-zoom")) === state.recapZoom);
-        });
         syncPillGroup("#recap-speed-picker .speed-seg", "data-speed", state.recapSpeed);
         moveSpeedPill(document.getElementById("recap-speed-picker"));
         syncPillGroup("#recap-split-minutes-picker .pill-btn", "data-split-min", state.recapSplitMinutes);
@@ -9824,7 +9488,6 @@ function setupRecapVisualEditor() {
         if (typeof refreshRecapStep4Thumb === "function") refreshRecapStep4Thumb();
         if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
         if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
-        if (typeof syncRecapMasterPresetActive === "function") syncRecapMasterPresetActive();
     }
 
     const recapTabEl = document.getElementById("tab-recap");
@@ -9840,9 +9503,7 @@ function setupRecapVisualEditor() {
         if (subStyleSel && state.recapSubStyle) subStyleSel.value = state.recapSubStyle;
         if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
         syncSubtitleFontSize(state.recapFontSize || 13);
-        document.querySelectorAll("#recap-zoom-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", parseFloat(b.getAttribute("data-zoom")) === state.recapZoom);
-        });
+        syncLockedRecapDefaultsToState();
         document.querySelectorAll("#story-style-picker-quick .style-select-pill").forEach(p => {
             p.classList.toggle("active", p.getAttribute("data-story") === state.recapStoryStyle);
         });
@@ -9874,18 +9535,19 @@ function setupRecapVisualEditor() {
     // Batch L: "Re-run with these settings" (History detail) — map a
     window.prefillRecapFromHistory = function(cfg, item) {
         if (!cfg || typeof cfg !== "object") return;
+        const lockedCrop = recapLockedCropForRatio(cfg.ratio);
         const snap = {
-            recapRatio: cfg.ratio, recapRatioFill: cfg.ratio_fill,
+            recapRatio: cfg.ratio, recapRatioFill: RECAP_LOCKED_FILL,
             recapSpeed: normalizeSpeedOption(cfg.voice_speed), recapStoryStyle: cfg.story_style,
             recapSubStyle: cfg.sub_style, recapSubFont: cfg.sub_font,
             recapLogoPos: cfg.logo_pos, recapSourceLanguage: cfg.source_language,
             recapRenderQuality: cfg.render_quality, recapTtsEngine: cfg.tts_engine,
-            recapMirror: cfg.mirror_video !== false,
+            recapMirror: RECAP_LOCKED_MIRROR,
             recapBurnSubs: cfg.burn_subtitles !== false,
             recapBlurSubs: cfg.blur_subtitles !== false,
             recapLogo: cfg.include_logo !== false,
-            recapCropTop: cfg.crop_top, recapCropBottom: cfg.crop_bottom,
-            recapCropLeft: cfg.crop_left, recapCropRight: cfg.crop_right,
+            recapCropTop: lockedCrop.crop_top, recapCropBottom: lockedCrop.crop_bottom,
+            recapCropLeft: lockedCrop.crop_left, recapCropRight: lockedCrop.crop_right,
             recapFontSize: cfg.sub_font_size, recapLines: cfg.sub_lines,
             recapSplitMinutes: cfg.split_minutes,
             recapBlurY: cfg.blur_y, recapBlurH: cfg.blur_h, recapSubY: cfg.sub_y,
@@ -9906,7 +9568,7 @@ function setupRecapVisualEditor() {
             // custom font round-trip (pre-DD configs carry none of
             // these keys and restore keeps the current values; a
             // legacy explicit single box migrates in restore).
-            recapProtection: cfg.protection_level,
+            recapProtection: RECAP_LOCKED_PROTECTION,
             recapTextColor: cfg.sub_text_color || "",
             recapOutlineColor: cfg.sub_outline_color || "",
             recapBgColor: cfg.sub_bg_color || "",
@@ -9925,7 +9587,7 @@ function setupRecapVisualEditor() {
             // Batch BI: the auto-detect switch round-trips too
             // (pre-BI configs carry no key and restore keeps ON).
             recapBlurAutoDetect: cfg.blur_auto_detect !== false,
-            recapZoom: cfg.zoom_factor, recapVoice: cfg.voice_slug,
+            recapZoom: RECAP_LOCKED_ZOOM, recapVoice: cfg.voice_slug,
             recapGeminiVoice: cfg.gemini_voice || "",
             recapSubRenderMode: cfg.sub_render_mode || "timeline",
             recapSubEffect: cfg.sub_effect || "none",
@@ -9994,14 +9656,6 @@ window.toggleSectionAccordion = function(btn) {
     if (!wrap) return;
     const body = wrap.querySelector(".advanced-accordion-body");
     const chevron = btn.querySelector(".accordion-chevron");
-    if (!body) return;
-    const isHidden = body.classList.toggle("hidden");
-    if (chevron) chevron.innerText = isHidden ? "▼" : "▲";
-};
-
-window.toggleRecapCropDetail = function() {
-    const body = document.getElementById("recap-crop-detail");
-    const chevron = document.getElementById("crop-detail-chevron");
     if (!body) return;
     const isHidden = body.classList.toggle("hidden");
     if (chevron) chevron.innerText = isHidden ? "▼" : "▲";
@@ -10135,19 +9789,20 @@ async function handleStartRecap() {
         const sliderSubX = document.getElementById("slider-sub-x");
         const sliderSubW = document.getElementById("slider-sub-w");
 
+        const lockedCrop = recapLockedCropForRatio(state.recapRatio);
         const payload = {
             url: url,
             title: state.recapVideoTitle || null,
             voice_slug: state.recapVoice || "komin",
             story_style: state.recapStoryStyle || "pov",
             ratio: state.recapRatio || "9:16",
-            ratio_fill: state.recapRatioFill || "blur",
-            crop_top: state.recapCropTop || 0,
-            crop_bottom: state.recapCropBottom || 0,
-            crop_left: state.recapCropLeft || 0,
-            crop_right: state.recapCropRight || 0,
-            mirror_video: state.recapMirror !== false,
-            zoom_factor: state.recapZoom || 1.1,
+            ratio_fill: RECAP_LOCKED_FILL,
+            crop_top: lockedCrop.crop_top,
+            crop_bottom: lockedCrop.crop_bottom,
+            crop_left: lockedCrop.crop_left,
+            crop_right: lockedCrop.crop_right,
+            mirror_video: RECAP_LOCKED_MIRROR,
+            zoom_factor: RECAP_LOCKED_ZOOM,
             voice_speed: state.recapSpeed || "+12%",
             blur_subtitles: state.recapBlurSubs !== false,
             blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
@@ -17046,15 +16701,12 @@ document.addEventListener("DOMContentLoaded", () => {
     setupVoiceStudio();
     setupRecapVisualEditor();
     initRecapSteps();
-    switchRecapStep2Category(state.recapStep2Cat || "preset", true);
-    syncRecapMasterPresetActive();
+    switchRecapStep2Category(state.recapStep2Cat || "subtitle", true);
     syncRecapSubStyleCards();
-    renderMyRecapPresets();
     const recapStep2El = document.getElementById("recap-step-2");
     if (recapStep2El) {
         recapStep2El.addEventListener("click", () => {
             setTimeout(() => {
-                if (typeof syncRecapMasterPresetActive === "function") syncRecapMasterPresetActive();
                 if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
             }, 0);
         });
@@ -17077,79 +16729,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadAccountPrefs();
 });
 
-// ==================== PHASE 4: RECAP STEP 2 SPLIT-SCREEN 5-TAB EDITOR ====================
-
-const RECAP_MASTER_PRESETS = {
-    tiktok: {
-        recapRatio: "9:16",
-        recapRatioFill: "blur",
-        recapSubStyle: "yellow",
-        recapLines: 1,
-        recapProtection: "standard",
-        recapBurnSubs: true,
-        recapBlurSubs: true,
-        recapMirror: true,
-        recapZoom: 1.0,
-        recapTextColor: "",
-        recapOutlineColor: "",
-        recapBgColor: "",
-    },
-    fb_story: {
-        recapRatio: "9:16",
-        recapRatioFill: "crop",
-        recapSubStyle: "boxed",
-        recapLines: 2,
-        recapProtection: "standard",
-        recapBurnSubs: true,
-        recapBlurSubs: true,
-        recapMirror: true,
-        recapZoom: 1.0,
-        recapTextColor: "",
-        recapOutlineColor: "",
-        recapBgColor: "",
-    },
-    yt_16_9: {
-        recapRatio: "16:9",
-        recapRatioFill: "blur",
-        recapSubStyle: "white",
-        recapLines: 1,
-        recapProtection: "standard",
-        recapBurnSubs: true,
-        recapBlurSubs: true,
-        recapMirror: true,
-        recapZoom: 1.0,
-        recapTextColor: "",
-        recapOutlineColor: "",
-        recapBgColor: "",
-    },
-    strict_safe: {
-        recapRatio: "9:16",
-        recapRatioFill: "blur",
-        recapSubStyle: "band",
-        recapLines: 1,
-        recapProtection: "strong",
-        recapBurnSubs: true,
-        recapBlurSubs: true,
-        recapBlurAutoDetect: true,
-        recapMirror: true,
-        recapZoom: 1.06,
-        recapTextColor: "",
-        recapOutlineColor: "",
-        recapBgColor: "",
-    },
-};
-
-const PORTABLE_RECAP_PRESET_KEYS = [
-    "recapRatio", "recapRatioFill",
-    "recapCropTop", "recapCropBottom", "recapCropLeft", "recapCropRight", "recapSyncCrop",
-    "recapMirror", "recapZoom", "recapProtection",
-    "recapBurnSubs", "recapSubStyle", "recapSubFont", "recapFontSize", "recapLines",
-    "recapSubRenderMode", "recapSubEffect", "recapEmbedSoftSubs",
-    "recapSubMargin", "recapSubX", "recapSubW",
-    "recapTextColor", "recapOutlineColor", "recapBgColor",
-    "recapOutlineWidth", "recapBgOpacity", "recapSubShadow", "recapSubBold", "recapSubPosBand",
-    "recapBlurSubs", "recapBlurAutoDetect",
-];
+// ==================== PHASE 4: RECAP STEP 2 SETTINGS GROUPS ====================
 
 function applyActiveRecapStep2Category() {
     const valid = ["subtitle", "blur", "protection", "preset", "frame"];
@@ -17162,24 +16742,11 @@ function applyActiveRecapStep2Category() {
         btn.setAttribute("aria-selected", match ? "true" : "false");
     });
 
-    const setAccOpen = (id, open) => {
-        const grp = document.getElementById(id);
-        if (!grp) return;
-        grp.classList.toggle("open", open);
-        const body = grp.querySelector(":scope > .dd-acc-body");
-        if (body) body.classList.toggle("hidden", !open);
-        const hd = grp.querySelector(":scope > .dd-acc-hd");
-        if (hd) hd.setAttribute("aria-expanded", open ? "true" : "false");
-    };
-
-    // Always keep Aspect Ratio picker visible directly under Preview (user essential control!)
+    // Ratio picker stays visible directly under seek chips (collapsed by default)
     const ratioGroup = document.getElementById("recap-preview-ratio-group");
     if (ratioGroup) {
         ratioGroup.classList.remove("hidden");
     }
-
-    const presetPanel = document.getElementById("recap-cat-preset");
-    if (presetPanel) presetPanel.classList.remove("hidden");
 
     const fineWrap = document.querySelector("#recap-step-2 .recap-fine");
     const fineHeader = document.querySelector("#recap-step-2 .recap-fine-header");
@@ -17195,8 +16762,6 @@ function applyActiveRecapStep2Category() {
         "recap-subtitle-group",
         "recap-blur-group",
         "recap-logo-group",
-        "recap-preview-transform-group",
-        "recap-my-presets-section",
     ].forEach(id => {
         const grp = document.getElementById(id);
         if (grp) grp.classList.remove("hidden");
@@ -17223,218 +16788,6 @@ function switchRecapStep2Category(cat, silent) {
 }
 window.switchRecapStep2Category = switchRecapStep2Category;
 
-function applyRecapPresetObject(patch) {
-    if (!patch || typeof patch !== "object") return;
-    const base = typeof window.__snapshotRecapSettings === "function"
-        ? window.__snapshotRecapSettings()
-        : {};
-    const next = Object.assign({}, base, patch);
-    if (next.recapSpeed != null) next.recapSpeed = normalizeSpeedOption(next.recapSpeed);
-    const settingsKey = window.__RECAP_SETTINGS_KEY || "vcp_recap_settings";
-    try { localStorage.setItem(settingsKey, JSON.stringify(next)); } catch (e) {}
-    if (typeof state === "object" && state) {
-        Object.assign(state, patch);
-        state.recapSpeed = normalizeSpeedOption(state.recapSpeed);
-    }
-    const restoreFn = typeof window.restoreRecapSettings === "function"
-        ? window.restoreRecapSettings
-        : (typeof window.resyncRecapControlsAfterPrefs === "function" ? window.resyncRecapControlsAfterPrefs : null);
-    if (restoreFn) restoreFn();
-    if (typeof window.updateCanvasMockupVisuals === "function") window.updateCanvasMockupVisuals();
-    if (typeof window.__ddFitPreviewFrame === "function") window.__ddFitPreviewFrame();
-    if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
-    if (typeof window.refreshRecapStep4Output === "function") window.refreshRecapStep4Output();
-    if (typeof window.__saveRecapSettingsNow === "function") window.__saveRecapSettingsNow();
-    if (typeof saveAccountPrefsSoon === "function") saveAccountPrefsSoon();
-    if (typeof applyActiveRecapStep2Category === "function") applyActiveRecapStep2Category();
-    syncRecapSubStyleCards();
-    syncRecapMasterPresetActive();
-}
-
-function applyRecapMasterPreset(presetKey) {
-    const patch = RECAP_MASTER_PRESETS[presetKey];
-    if (!patch) return;
-    if (typeof haptic === "function") haptic("medium");
-    applyRecapPresetObject(patch);
-    if (typeof showStudioToast === "function" && typeof t === "function") {
-        const presetLabel = t(`preset_${presetKey}_name`);
-        const msg = typeof tf === "function"
-            ? tf("recap_master_preset_applied_toast", { name: presetLabel })
-            : t("recap_master_preset_applied_toast");
-        showStudioToast(msg, "success");
-    }
-}
-window.applyRecapMasterPreset = applyRecapMasterPreset;
-
-function syncRecapMasterPresetActive() {
-    const cards = document.querySelectorAll("#recap-master-presets-grid [data-master-preset]");
-    if (!cards.length) return;
-    const curRatio = state.recapRatio || "9:16";
-    const curFill = state.recapRatioFill || "blur";
-    const curStyle = state.recapSubStyle || "yellow";
-    const curLines = Number(state.recapLines || 1);
-    const curProt = state.recapProtection || "standard";
-    cards.forEach(btn => {
-        const key = btn.getAttribute("data-master-preset");
-        const p = RECAP_MASTER_PRESETS[key];
-        const match = Boolean(p)
-            && p.recapRatio === curRatio
-            && p.recapRatioFill === curFill
-            && p.recapSubStyle === curStyle
-            && Number(p.recapLines) === curLines
-            && p.recapProtection === curProt;
-        btn.classList.toggle("active", match);
-        btn.setAttribute("aria-pressed", match ? "true" : "false");
-    });
-}
-window.syncRecapMasterPresetActive = syncRecapMasterPresetActive;
-
-function extractPortablePresetSettings() {
-    const snap = typeof window.__snapshotRecapSettings === "function"
-        ? window.__snapshotRecapSettings()
-        : state;
-    const out = {};
-    PORTABLE_RECAP_PRESET_KEYS.forEach(k => {
-        if (snap && Object.prototype.hasOwnProperty.call(snap, k) && snap[k] !== undefined) {
-            out[k] = snap[k];
-        }
-    });
-    return out;
-}
-
-function parseMyRecapPresets(raw) {
-    let arr = [];
-    if (Array.isArray(raw)) {
-        arr = raw;
-    } else if (typeof raw === "string" && raw.trim()) {
-        try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) arr = parsed;
-        } catch (e) {
-            return [];
-        }
-    }
-    const clean = [];
-    arr.slice(0, 3).forEach(item => {
-        if (!item || typeof item !== "object") return;
-        const name = String(item.name || "").trim().slice(0, 32);
-        const settings = item.settings && typeof item.settings === "object" && !Array.isArray(item.settings)
-            ? item.settings
-            : null;
-        if (name && settings) clean.push({ name, settings });
-    });
-    return clean;
-}
-window.parseMyRecapPresets = parseMyRecapPresets;
-
-function serializeMyRecapPresets() {
-    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
-    try {
-        return JSON.stringify(list.slice(0, 3));
-    } catch (e) {
-        return "[]";
-    }
-}
-window.serializeMyRecapPresets = serializeMyRecapPresets;
-
-function renderMyRecapPresets() {
-    const isVip = Boolean(state.user && state.user.is_vip);
-    const badge = document.getElementById("recap-my-presets-vip-badge");
-    if (badge) badge.classList.toggle("hidden", isVip);
-
-    const listEl = document.getElementById("recap-my-presets-list");
-    if (!listEl) return;
-
-    const presets = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
-    if (!presets.length) {
-        const emptyText = typeof t === "function" ? t("recap_my_preset_empty") : "";
-        listEl.innerHTML = `<div class="vcp-my-preset-empty" data-i18n="recap_my_preset_empty">${escapeHtml(emptyText)}</div>`;
-        return;
-    }
-
-    listEl.innerHTML = presets.map((p, idx) => {
-        const metaParts = [
-            p.settings && p.settings.recapRatio ? p.settings.recapRatio : "9:16",
-            p.settings && p.settings.recapSubStyle ? p.settings.recapSubStyle : "yellow",
-        ];
-        const applyLabel = typeof t === "function" ? t("recap_my_preset_apply") : "Apply";
-        const delLabel = typeof t === "function" ? t("recap_my_preset_delete") : "Delete";
-        return `
-            <div class="vcp-my-preset-item">
-                <button type="button" class="vcp-my-preset-apply" onclick="applyMyRecapPreset(${idx})" title="${escapeHtml(applyLabel)}">
-                    <span class="vcp-my-preset-name">${escapeHtml(p.name)}</span>
-                    <span class="vcp-my-preset-meta">${escapeHtml(metaParts.join(" · "))}</span>
-                </button>
-                <button type="button" class="vcp-my-preset-del" onclick="deleteMyRecapPreset(${idx})" aria-label="${escapeHtml(delLabel)} ${escapeHtml(p.name)}" title="${escapeHtml(delLabel)}">✕</button>
-            </div>
-        `;
-    }).join("");
-}
-window.renderMyRecapPresets = renderMyRecapPresets;
-
-function saveCurrentAsMyRecapPreset() {
-    if (typeof haptic === "function") haptic("light");
-    const isVip = Boolean(state.user && state.user.is_vip);
-    if (!isVip) {
-        if (typeof showStudioToast === "function" && typeof t === "function") {
-            showStudioToast(t("recap_my_preset_vip_only"), "warning");
-        }
-        return;
-    }
-    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.slice() : [];
-    if (list.length >= 3) {
-        if (typeof showStudioToast === "function" && typeof t === "function") {
-            showStudioToast(t("recap_my_preset_max_toast"), "warning");
-        }
-        return;
-    }
-    const input = document.getElementById("input-my-preset-name");
-    const rawName = input ? input.value.trim() : "";
-    const defTpl = (typeof t === "function" && t("recap_my_preset_default_name")) || "My Preset {n}";
-    const name = (rawName || defTpl.replace("{n}", String(list.length + 1))).slice(0, 32);
-    list.push({ name, settings: extractPortablePresetSettings() });
-    if (JSON.stringify(list).length > 3900) {
-        if (typeof showStudioToast === "function" && typeof t === "function") {
-            showStudioToast(t("recap_my_preset_too_large"), "warning");
-        }
-        return;
-    }
-    state.recapCustomPresets = list;
-    if (input) input.value = "";
-    renderMyRecapPresets();
-    if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
-    if (typeof showStudioToast === "function" && typeof t === "function") {
-        showStudioToast(t("recap_my_preset_saved_toast"), "success");
-    }
-}
-window.saveCurrentAsMyRecapPreset = saveCurrentAsMyRecapPreset;
-
-function applyMyRecapPreset(idx) {
-    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets : [];
-    const item = list[idx];
-    if (!item || !item.settings) return;
-    if (typeof haptic === "function") haptic("medium");
-    applyRecapPresetObject(item.settings);
-    if (typeof showStudioToast === "function" && typeof t === "function") {
-        showStudioToast(t("recap_my_preset_applied_toast"), "success");
-    }
-}
-window.applyMyRecapPreset = applyMyRecapPreset;
-
-function deleteMyRecapPreset(idx) {
-    const list = Array.isArray(state.recapCustomPresets) ? state.recapCustomPresets.slice() : [];
-    if (idx < 0 || idx >= list.length) return;
-    if (typeof haptic === "function") haptic("light");
-    list.splice(idx, 1);
-    state.recapCustomPresets = list;
-    renderMyRecapPresets();
-    if (typeof saveAccountPrefsNow === "function") saveAccountPrefsNow();
-    if (typeof showStudioToast === "function" && typeof t === "function") {
-        showStudioToast(t("recap_my_preset_deleted_toast"), "info");
-    }
-}
-window.deleteMyRecapPreset = deleteMyRecapPreset;
-
 function syncRecapSubStyleCards() {
     const sel = document.getElementById("sub-style-picker");
     const cur = state.recapSubStyle || (sel ? sel.value : "cinematic") || "cinematic";
@@ -17460,7 +16813,6 @@ function selectRecapSubStyleCard(styleKey) {
         state.recapSubStyle = styleKey;
         syncRecapSubStyleCards();
     }
-    syncRecapMasterPresetActive();
 }
 window.selectRecapSubStyleCard = selectRecapSubStyleCard;
 
@@ -17628,9 +16980,6 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (state && state.selectedReferenceFile && typeof setCustomCloneStep === "function") {
             setCustomCloneStep(state.customCloneStep || 2, state.selectedReferenceFile);
-        }
-        if (typeof renderMyRecapPresets === "function") {
-            renderMyRecapPresets();
         }
         if (typeof window.refreshRecapStep2Summary === "function") {
             window.refreshRecapStep2Summary();

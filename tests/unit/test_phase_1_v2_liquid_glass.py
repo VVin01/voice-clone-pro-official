@@ -123,6 +123,18 @@ _RETIRED_VIP_STATIC_IDS = {
     "tts-key-input", "tts-key-state",
     # Round 8.1: #tts-edge-voice-hint removed from #tab-tts
     "tts-edge-voice-hint",
+    # Round 10 (B3-B7): Step 2 seek bar/slider/badge, fill chooser, crop UI, transforms, presets & summary bar removed
+    "btn-canvas-play-toggle", "btn-reset-canvas-layout", "btn-save-my-preset",
+    "btn-seek-next-5", "btn-seek-prev-5", "btn-sync-crop", "btn-toggle-crop-detail",
+    "btn-toggle-mirror", "canvas-seek-time-badge", "crop-detail-chevron",
+    "input-my-preset-name", "recap-cat-preset", "recap-crop-detail",
+    "recap-crop-presets-toolbar", "recap-fill-note", "recap-fill-picker",
+    "recap-master-presets-grid", "recap-my-presets-list", "recap-my-presets-section",
+    "recap-my-presets-vip-badge", "recap-preview-transform-group",
+    "recap-protection-picker", "recap-step2-summary", "recap-zoom-picker",
+    "slider-canvas-seek", "slider-crop-bottom", "slider-crop-left",
+    "slider-crop-right", "slider-crop-top", "val-crop-bottom", "val-crop-left",
+    "val-crop-right", "val-crop-top",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",
@@ -136,6 +148,13 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')",
     "switchPlanCategory('combined')",
     "toggleTtsByokAdvanced()",
+    # Round 10 (B5/B7): crop detail & preset inline handlers removed
+    "applyRecapMasterPreset('fb_story')",
+    "applyRecapMasterPreset('strict_safe')",
+    "applyRecapMasterPreset('tiktok')",
+    "applyRecapMasterPreset('yt_16_9')",
+    "saveCurrentAsMyRecapPreset()",
+    "toggleRecapCropDetail()",
 }
 
 

@@ -898,11 +898,14 @@ def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
     fill = fill if fill in FRAME_FILLS else "blur"
     sw, sh = int(source_w or 0) or cw, int(source_h or 0) or ch
 
-    # Clamp custom crop margins (0.0 to 0.35 max crop per side)
-    ct = max(0.0, min(0.35, float(crop_top or 0.0)))
-    cb = max(0.0, min(0.35, float(crop_bottom or 0.0)))
-    cl = max(0.0, min(0.35, float(crop_left or 0.0)))
-    cr = max(0.0, min(0.35, float(crop_right or 0.0)))
+    if ratio == "Original":
+        ct = cb = cl = cr = 0.0
+    else:
+        # Clamp custom crop margins (0.0 to 0.35 max crop per side)
+        ct = max(0.0, min(0.35, float(crop_top or 0.0)))
+        cb = max(0.0, min(0.35, float(crop_bottom or 0.0)))
+        cl = max(0.0, min(0.35, float(crop_left or 0.0)))
+        cr = max(0.0, min(0.35, float(crop_right or 0.0)))
 
     has_crop = (ct > 0.001 or cb > 0.001 or cl > 0.001 or cr > 0.001)
     if has_crop and (cl + cr < 0.90) and (ct + cb < 0.90):
@@ -4603,13 +4606,9 @@ def recommended_subtitle_chars_per_line(
 
 
 def _subtitle_fit_width_px(overlays: dict[str, Any] | None, picture_w: int) -> int:
-    """Hard rendered PNG width cap: respects ``_sub_w_fraction`` while capping
-    default layouts to the S1 legible line width (~840 px at 1080 width).
-    """
+    """Hard rendered PNG width cap: uses ``_sub_w_fraction`` (0.92 × picture_w by default)."""
     pw = max(240, int(picture_w))
-    user_w = int(round(_sub_w_fraction(overlays) * pw))
-    s1_cap = _subtitle_max_line_width_px(pw)
-    return min(user_w, s1_cap)
+    return max(120, int(round(_sub_w_fraction(overlays) * pw)))
 
 
 def _split_line_units_s1(
@@ -5426,6 +5425,344 @@ def split_burmese_subtitle_cues(
     return [(s, e, grp) for (s, e), grp in zip(spans, grouped_cues)]
 
 
+# ── Part D (2026-11-22): Cross-segment full-line width-true subtitle repack ──
+
+SUBTITLE_MERGE_MAX_GAP_SEC = 0.35
+
+
+def _split_width_true_pieces(
+    text: str,
+    *,
+    lines_per_cue: int = 1,
+    max_width_px: int,
+    font_px: int,
+    font_path: Path | None,
+    stroke_px: int = 2,
+) -> list[str]:
+    """Split a merged narration span using true pixel width (no 24-cluster cap),
+    preserving S1 meaningful breaks (။ -> ၊/particles -> space -> cluster) and
+    stranded-particle protection, respecting ``lines_per_cue``.
+    """
+    clean = canonicalize_burmese_text(text)
+    if not clean:
+        return []
+    flat = re.sub(r"\s+", " ", clean.replace("\r\n", " ").replace("\n", " ")).strip()
+    if not flat:
+        return []
+
+    lines_cnt = min(3, max(1, int(lines_per_cue or 1)))
+    eff_w = max(80, int(max_width_px))
+    lines = _split_line_units_s1(
+        flat,
+        max_chars=None,
+        max_clusters=None,
+        max_width_px=eff_w,
+        font_px=int(font_px),
+        font_path=font_path,
+        stroke_px=int(stroke_px),
+        legacy_tail_merge=False,
+    )
+    lines = [ln for ln in lines if ln.strip()]
+    if not lines:
+        return [flat]
+    if lines_cnt == 1 or len(lines) == 1:
+        return lines
+
+    if len(lines) <= lines_cnt:
+        balanced = _format_cue_lines(
+            flat,
+            lines_cnt,
+            max_clusters=None,
+            max_width_px=eff_w,
+            font_px=int(font_px),
+            font_path=font_path,
+            stroke_px=int(stroke_px),
+        )
+        b_lines = [ln for ln in balanced.split("\n") if ln.strip()]
+        if len(b_lines) <= lines_cnt and all(
+            _measure_text_width_px(ln, int(font_px), font_path, int(stroke_px)) <= eff_w
+            for ln in b_lines
+        ):
+            return ["\n".join(b_lines)]
+        return ["\n".join(lines)]
+
+    return [
+        "\n".join(lines[i:i + lines_cnt])
+        for i in range(0, len(lines), lines_cnt)
+    ]
+
+
+def _coherent_segment_word_events(
+    seg_text: str,
+    word_timings: list[dict[str, Any]] | None,
+) -> tuple[list[tuple[float, float, int]], float, int] | None:
+    """Return ``(events[(st, en, tok_len)], wt_max, wt_total)`` when segment
+    WordBoundary timings coherently cover ``seg_text``; else None.
+    """
+    if not word_timings:
+        return None
+    clean_events: list[tuple[float, float, int]] = []
+    prev_s = -1.0
+    for ev in word_timings:
+        if not isinstance(ev, dict):
+            continue
+        tok = re.sub(r"\s+", "", str(ev.get("text") or ""))
+        try:
+            st = float(ev.get("start") or 0.0)
+            en = float(ev.get("end") or st)
+        except (TypeError, ValueError):
+            continue
+        if not tok or en < st or st < prev_s - 0.05:
+            continue
+        prev_s = max(prev_s, st)
+        clean_events.append((max(0.0, st), max(0.0, st, en), len(tok)))
+    if len(clean_events) < 2:
+        return None
+    wt_max = max(en for _, en, _ in clean_events)
+    if wt_max <= 0.1:
+        return None
+    wt_total = sum(ln for _, _, ln in clean_events)
+    unit_total = len(re.sub(r"\s+", "", seg_text or ""))
+    if wt_total < 4 or unit_total < 4:
+        return None
+    ratio = wt_total / float(unit_total)
+    if ratio < 0.65 or ratio > 1.35:
+        return None
+    return clean_events, wt_max, wt_total
+
+
+def _allocate_span_cue_times(
+    span_segments: list[dict[str, Any]],
+    piece_texts: list[str],
+) -> list[tuple[float, float, float]]:
+    """Distribute contiguous timestamps across a merged segment span for each
+    emitted cue piece, preferring coherent ``word_timings`` and otherwise
+    using grapheme-cluster share across each segment window, while enforcing
+    ``_CX_MIN_PIECE_SECONDS`` (0.4 s) when the span is long enough.
+    """
+    if not span_segments or not piece_texts:
+        return []
+    span_start = round(float(span_segments[0]["start"]), 3)
+    span_end = round(max(span_start, float(span_segments[-1]["end"])), 3)
+    last_sp_end = round(min(span_end, max(span_start, float(span_segments[-1]["speech_end"]))), 3)
+
+    if len(piece_texts) == 1:
+        return [(span_start, span_end, last_sp_end)]
+
+    seg_cluster_spans: list[tuple[float, float, float, float, Any]] = []
+    cum_seg_c = 0.0
+    for s in span_segments:
+        c_len = float(max(1, len(myanmar_grapheme_clusters(re.sub(r"\s+", "", s["text"])))))
+        wt_info = _coherent_segment_word_events(s["text"], s.get("word_timings"))
+        seg_cluster_spans.append((
+            cum_seg_c,
+            cum_seg_c + c_len,
+            float(s["start"]),
+            float(s["end"]),
+            wt_info,
+        ))
+        cum_seg_c += c_len
+    segs_total_c = max(1.0, cum_seg_c)
+
+    def _time_at_cluster_pos(pos: float) -> float:
+        clamped = max(0.0, min(segs_total_c, pos))
+        for c0, c1, s_st, s_en, wt_info in seg_cluster_spans:
+            if clamped <= c1 or c1 >= segs_total_c:
+                seg_c = max(1.0, c1 - c0)
+                u = max(0.0, min(1.0, (clamped - c0) / seg_c))
+                if wt_info is not None:
+                    events, wt_max, wt_total = wt_info
+                    target = u * float(wt_total)
+                    seen = 0.0
+                    bt: float | None = None
+                    for ev_st, ev_en, tok_l in events:
+                        tl = float(tok_l)
+                        if seen + tl >= target:
+                            inner = max(0.0, min(1.0, (target - seen) / tl)) if tl > 0 else 1.0
+                            bt = ev_st + inner * (ev_en - ev_st)
+                            break
+                        seen += tl
+                    if bt is None:
+                        bt = events[-1][1]
+                    u_t = max(0.0, min(1.0, bt / wt_max))
+                    return s_st + u_t * max(0.0, s_en - s_st)
+                return s_st + u * max(0.0, s_en - s_st)
+        return float(span_end)
+
+    piece_clusters = [
+        max(1, len(myanmar_grapheme_clusters(re.sub(r"\s+", "", p))))
+        for p in piece_texts
+    ]
+    pieces_total_c = float(sum(piece_clusters)) or 1.0
+
+    boundaries: list[float] = [float(span_start)]
+    cum_p = 0
+    for pc in piece_clusters[:-1]:
+        cum_p += pc
+        raw_t = _time_at_cluster_pos((cum_p / pieces_total_c) * segs_total_c)
+        boundaries.append(max(boundaries[-1], min(float(span_end), raw_t)))
+    boundaries.append(float(span_end))
+
+    durs = [max(0.0, boundaries[i + 1] - boundaries[i]) for i in range(len(piece_texts))]
+    total_dur = max(0.0, float(span_end) - float(span_start))
+    if len(durs) > 1 and total_dur >= _CX_MIN_PIECE_SECONDS * len(durs):
+        need = sum(max(0.0, _CX_MIN_PIECE_SECONDS - d) for d in durs)
+        if need > 1e-6:
+            surplus = [max(0.0, d - _CX_MIN_PIECE_SECONDS) for d in durs]
+            tot_surplus = sum(surplus)
+            if tot_surplus > 1e-6:
+                spare = total_dur - _CX_MIN_PIECE_SECONDS * len(durs)
+                durs = [
+                    _CX_MIN_PIECE_SECONDS + (s / tot_surplus) * spare
+                    for s in surplus
+                ]
+
+    out: list[tuple[float, float, float]] = []
+    cur = float(span_start)
+    for i, dur in enumerate(durs):
+        p_start = round(cur, 3)
+        if i == len(durs) - 1:
+            p_end = span_end
+            sp_end = min(p_end, last_sp_end)
+        else:
+            raw_end = cur + dur
+            p_end = round(max(p_start, min(float(span_end), raw_end)), 3)
+            sp_end = p_end
+        out.append((p_start, p_end, sp_end))
+        cur = float(p_end)
+    return out
+
+
+class SubtitleCuePacker:
+    """Streaming pause-delimited Burmese subtitle packer.
+
+    Concatenates consecutive narration segments whose inter-segment gap is
+    ``<= max_gap_sec`` (0.35 s) and packs them to full measured PNG width
+    at the job's locked font size. Guarantees identical output between live
+    prewarm streaming and final burn/SRT/ASS emission.
+    """
+
+    def __init__(
+        self,
+        *,
+        lines_per_cue: int = 1,
+        max_width_px: int,
+        font_px: int = 54,
+        font_path: Path | None = None,
+        stroke_px: int = 2,
+        max_gap_sec: float = SUBTITLE_MERGE_MAX_GAP_SEC,
+    ) -> None:
+        self.lines_per_cue = min(3, max(1, int(lines_per_cue or 1)))
+        self.max_width_px = max(80, int(max_width_px))
+        self.font_px = int(font_px)
+        self.font_path = font_path
+        self.stroke_px = int(stroke_px)
+        self.max_gap_sec = float(max_gap_sec)
+        self._run: list[dict[str, Any]] = []
+
+    def add_segment(
+        self,
+        start_sec: float,
+        end_sec: float,
+        text: str,
+        *,
+        speech_end: float | None = None,
+        word_timings: list[dict[str, Any]] | None = None,
+    ) -> list[tuple[float, float, str, float]]:
+        clean = canonicalize_burmese_text(text)
+        flat = re.sub(r"\s+", " ", clean.replace("\r\n", " ").replace("\n", " ")).strip()
+        if not flat:
+            return []
+
+        st = round(float(start_sec), 3)
+        en = round(max(st, float(end_sec)), 3)
+        sp = round(min(en, max(st, float(speech_end if speech_end is not None else en))), 3)
+
+        emitted: list[tuple[float, float, str, float]] = []
+        if self._run and (st - float(self._run[-1]["end"])) > self.max_gap_sec + 1e-6:
+            emitted = self.flush()
+
+        self._run.append({
+            "start": st,
+            "end": en,
+            "speech_end": sp,
+            "text": flat,
+            "word_timings": word_timings,
+        })
+        return emitted
+
+    def flush(self) -> list[tuple[float, float, str, float]]:
+        if not self._run:
+            return []
+        span = self._run
+        self._run = []
+        joined = " ".join(s["text"] for s in span).strip()
+        pieces = _split_width_true_pieces(
+            joined,
+            lines_per_cue=self.lines_per_cue,
+            max_width_px=self.max_width_px,
+            font_px=self.font_px,
+            font_path=self.font_path,
+            stroke_px=self.stroke_px,
+        )
+        if not pieces:
+            return []
+        times = _allocate_span_cue_times(span, pieces)
+        return [
+            (st, en, txt, sp_en)
+            for (st, en, sp_en), txt in zip(times, pieces)
+        ]
+
+
+def pack_subtitle_cues_from_segments(
+    timing_items: list[dict[str, Any]],
+    *,
+    lines_per_cue: int = 1,
+    max_width_px: int,
+    font_px: int = 54,
+    font_path: Path | None = None,
+    stroke_px: int = 2,
+    max_gap_sec: float = SUBTITLE_MERGE_MAX_GAP_SEC,
+) -> tuple[list[tuple[float, float, str]], list[float | None]]:
+    """Pack a sequence of segment dicts (``audio_start``/``start``,
+    ``audio_end``/``end``, ``text``, optional ``speech_duration``,
+    ``word_timings``) into width-true repacked cues + aligned speech_ends.
+    """
+    packer = SubtitleCuePacker(
+        lines_per_cue=lines_per_cue,
+        max_width_px=max_width_px,
+        font_px=font_px,
+        font_path=font_path,
+        stroke_px=stroke_px,
+        max_gap_sec=max_gap_sec,
+    )
+    packed: list[tuple[float, float, str, float]] = []
+    for item in timing_items:
+        raw_st = float(item.get("audio_start", item.get("start", 0.0)))
+        raw_en = float(item.get("audio_end", item.get("end", raw_st)))
+        sp_dur = item.get("speech_duration")
+        if sp_dur is not None:
+            seg_sp_end = min(raw_en, raw_st + max(0.05, float(sp_dur)))
+        else:
+            seg_sp_end = raw_en
+        txt = str(item.get("text", "")).strip()
+        if not txt:
+            continue
+        packed.extend(
+            packer.add_segment(
+                raw_st,
+                raw_en,
+                txt,
+                speech_end=seg_sp_end,
+                word_timings=item.get("word_timings"),
+            )
+        )
+    packed.extend(packer.flush())
+    cues = [(c_st, c_en, c_txt) for c_st, c_en, c_txt, _ in packed]
+    speech_ends: list[float | None] = [float(sp_en) for _, _, _, sp_en in packed]
+    return cues, speech_ends
+
+
 def _resolve_png_subtitle_job(
     overlays: dict[str, Any], cw: int, ch: int,
     layout: dict[str, Any] | None,
@@ -6022,7 +6359,7 @@ def apply_production_overlays(
         else:
             renderer = _png_subs.PngSubtitleRenderer(work_dir / "subtitle_png_cache")
             x_expr = _subtitle_overlay_x_expr(cw, ch, lay_dict, overlays.get("sub_x"))
-            fit_max_w = min(int(round(_sub_w_fraction(overlays) * pw)), _subtitle_max_line_width_px(pw))
+            fit_max_w = _subtitle_fit_width_px(overlays, pw)
 
             def _render_cue_item(cue_item):
                 cue_start, cue_end, cue_text = cue_item
@@ -6448,17 +6785,19 @@ def extract_preview_with_overlays(
     output_ratio: str = "Original",
     frame_fill: str = "blur",
     mirror_video: bool = True,
-    zoom_factor: float = 1.0,
+    zoom_factor: float = 1.1,
     sample_text: str = PREVIEW_SAMPLE_TEXT,
     work_dir: Path | str | None = None,
     ffprobe: str | None = None,
-    crop_top: float = 0.0,
-    crop_bottom: float = 0.0,
+    crop_top: float = 0.12,
+    crop_bottom: float = 0.12,
     crop_left: float = 0.0,
     crop_right: float = 0.0,
 ) -> Path:
     """Extracts a single representative frame with layout, blur box, and sample 1-line subtitle applied."""
     source = Path(source_video).resolve()
+    if str(output_ratio or "").strip().lower() == "original":
+        crop_top = crop_bottom = crop_left = crop_right = 0.0
     out_img = Path(output_image).resolve()
     out_img.parent.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(work_dir).resolve() if work_dir else out_img.parent
@@ -6619,7 +6958,7 @@ def extract_preview_with_overlays(
             canonicalize_burmese_text(sample),
             sub_lines, font_px,
             font_file, visuals,
-            min(int(round(_sub_w_fraction(overlays) * pw)), _subtitle_max_line_width_px(pw)),
+            _subtitle_fit_width_px(overlays, pw),
         )
         rendered = None
         if fit_lines:
@@ -6748,14 +7087,14 @@ class EdgeSmartSync:
         max_video_speed: float = 1.25,
         max_video_slow: float = 1.35,
         mirror_video: bool = True,
-        zoom_factor: float = 1.05,
+        zoom_factor: float = 1.1,
         smooth_freeze_fallback: bool = False,
         max_freeze_hold: float = 0.75,
         render_final_video: bool = True,
         output_ratio: str = "16:9",
         frame_fill: str = "blur",
-        crop_top: float = 0.0,
-        crop_bottom: float = 0.0,
+        crop_top: float = 0.12,
+        crop_bottom: float = 0.12,
         crop_left: float = 0.0,
         crop_right: float = 0.0,
         overlays: dict[str, Any] | None = None,
@@ -6784,10 +7123,16 @@ class EdgeSmartSync:
         self.zoom_factor = max(1.0, min(float(zoom_factor), 1.25))
         self.output_ratio = output_ratio if output_ratio in OUTPUT_RATIOS else "16:9"
         self.frame_fill = frame_fill if frame_fill in FRAME_FILLS else "blur"
-        self.crop_top = float(crop_top or 0.0)
-        self.crop_bottom = float(crop_bottom or 0.0)
-        self.crop_left = float(crop_left or 0.0)
-        self.crop_right = float(crop_right or 0.0)
+        if self.output_ratio == "Original":
+            self.crop_top = 0.0
+            self.crop_bottom = 0.0
+            self.crop_left = 0.0
+            self.crop_right = 0.0
+        else:
+            self.crop_top = float(crop_top or 0.0)
+            self.crop_bottom = float(crop_bottom or 0.0)
+            self.crop_left = float(crop_left or 0.0)
+            self.crop_right = float(crop_right or 0.0)
         self.smooth_freeze_fallback = bool(smooth_freeze_fallback)
         self.max_freeze_hold = max(0.15, min(float(max_freeze_hold), 1.50))
         self.render_final_video = bool(render_final_video)
@@ -6816,6 +7161,11 @@ class EdgeSmartSync:
         # Short pauses: see trim_edge_silence. Trims excessive TTS dead air while keeping natural breath.
         self.short_pauses = True
         self.overlays = dict(overlays or {})
+        self.overlays.setdefault("protection_level", "strong")
+        if "protection_strong" not in self.overlays:
+            self.overlays["protection_strong"] = (
+                normalize_protection_level(self.overlays.get("protection_level")) == "strong"
+            )
         # Render quality preset (overlays key set by recap_pipeline);
         # "standard" == the historical encode, so old callers are
         # unaffected. Included in the video-part checkpoint fingerprint
@@ -7718,6 +8068,7 @@ class EdgeSmartSync:
             or str(self.overlays.get("extra_text") or "").strip()
             or (self.overlays.get("burn_subtitles", True) and _srm_pre != "soft")
         )
+        _prewarm_packer: SubtitleCuePacker | None = None
         if render_pipelined and self.overlays.get("burn_subtitles", True) and _srm_pre in ("png", "timeline"):
             try:
                 _cw_pre = int(layout.get("cw", 1920))
@@ -7732,7 +8083,7 @@ class EdgeSmartSync:
                 if _prewarm_spec is not None:
                     _prewarm_renderer = _png_subs.PngSubtitleRenderer(paths.work / "subtitle_png_cache")
                     _prewarm_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="recap-png-pre")
-                    _fit_w_pre = min(int(round(_sub_w_fraction(self.overlays) * _pw_pre)), _subtitle_max_line_width_px(_pw_pre))
+                    _fit_w_pre = _subtitle_fit_width_px(self.overlays, _pw_pre)
                     _pad2_pre = 2 * _png_subs.png_pad_x(
                         _prewarm_spec["visuals"], _prewarm_spec["font_px"],
                         int(_prewarm_spec["visuals"].get("stroke_px", 1)),
@@ -7740,28 +8091,25 @@ class EdgeSmartSync:
                     _ink_w_pre = max(80, _fit_w_pre - _pad2_pre)
                     _max_cl_pre = _subtitle_max_clusters(_fs_pre, self.overlays.get("sub_w"))
                     _prewarm_params = (_max_cl_pre, _lpc_pre, _fit_w_pre, _ink_w_pre)
+                    _prewarm_packer = SubtitleCuePacker(
+                        lines_per_cue=_lpc_pre,
+                        max_width_px=_ink_w_pre,
+                        font_px=_prewarm_spec["font_px"],
+                        font_path=_prewarm_spec["font_path"],
+                        stroke_px=int(_prewarm_spec["visuals"].get("stroke_px", 1)),
+                    )
             except Exception:
                 _prewarm_pool = None
                 _prewarm_spec = None
+                _prewarm_packer = None
 
-        def _prewarm_segment_cues(st: float, en: float, seg_text: str, wt: list[dict[str, Any]] | None) -> None:
-            if _prewarm_pool is None or _prewarm_spec is None or _prewarm_renderer is None or _prewarm_params is None:
+        def _submit_prewarm_cues(emitted: list[tuple[float, float, str, float]]) -> None:
+            if not emitted or _prewarm_pool is None or _prewarm_spec is None or _prewarm_renderer is None or _prewarm_params is None:
                 return
-            _mcl, _lpc, _fit_mw, _ink_w = _prewarm_params
-            try:
-                cues = split_burmese_subtitle_cues(
-                    st, en, seg_text, lines_per_cue=_lpc, word_timings=wt,
-                    max_clusters_per_line=_mcl,
-                    max_width_px=_ink_w,
-                    font_px=_prewarm_spec["font_px"],
-                    font_path=_prewarm_spec["font_path"],
-                    stroke_px=int(_prewarm_spec["visuals"].get("stroke_px", 1)),
-                )
-            except Exception:
-                return
-            def _do_warm(_cues=cues) -> None:
+            _, _, _fit_mw, _ = _prewarm_params
+            def _do_warm(_cues=emitted) -> None:
                 try:
-                    for c_st, c_en, c_txt in _cues:
+                    for c_st, c_en, c_txt, _ in _cues:
                         for f_lines, f_px, f_vis, _ps, _pe in fit_png_cue_pieces(
                             _prewarm_renderer,
                             c_txt,
@@ -7783,6 +8131,48 @@ class EdgeSmartSync:
                 _prewarm_pool.submit(_do_warm)
             except Exception:
                 pass
+
+        def _prewarm_segment_cues(
+            st: float,
+            en: float,
+            seg_text: str,
+            wt: list[dict[str, Any]] | None,
+            sp_dur: float | None = None,
+        ) -> None:
+            if _prewarm_packer is None or _prewarm_pool is None:
+                return
+            try:
+                sp_en = min(en, st + max(0.05, float(sp_dur))) if sp_dur is not None else en
+                emitted = _prewarm_packer.add_segment(
+                    st, en, seg_text, speech_end=sp_en, word_timings=wt
+                )
+            except Exception:
+                return
+            if emitted:
+                _submit_prewarm_cues(emitted)
+
+        def _flush_prewarm_cues() -> None:
+            if _prewarm_packer is None:
+                return
+            try:
+                emitted = _prewarm_packer.flush()
+            except Exception:
+                return
+            if emitted:
+                _submit_prewarm_cues(emitted)
+
+        def _reset_prewarm_packer() -> None:
+            nonlocal _prewarm_packer
+            if _prewarm_spec is None or _prewarm_params is None:
+                return
+            _, _lpc, _, _ink_w = _prewarm_params
+            _prewarm_packer = SubtitleCuePacker(
+                lines_per_cue=_lpc,
+                max_width_px=_ink_w,
+                font_px=_prewarm_spec["font_px"],
+                font_path=_prewarm_spec["font_path"],
+                stroke_px=int(_prewarm_spec["visuals"].get("stroke_px", 1)),
+            )
 
         def _shutdown_prewarm(wait: bool) -> float:
             nonlocal _prewarm_pool
@@ -7899,7 +8289,10 @@ class EdgeSmartSync:
                     audio_parts.append(_res["part"])
                     if _render_queue is not None:
                         _render_queue.put((_idx, _seg, _item))
-                    _prewarm_segment_cues(_start, _end, _seg["narration"], _cached_wt)
+                    _prewarm_segment_cues(
+                        _start, _end, _seg["narration"], _cached_wt,
+                        sp_dur=float(_res.get("raw_duration") or _dur),
+                    )
                     _assemble_next[0] += 1
 
             def _produce_and_commit(_slot: int, _idx: int, _seg: dict[str, Any]) -> None:
@@ -8037,8 +8430,10 @@ class EdgeSmartSync:
                         _part.unlink()
                     except OSError:
                         pass
+                _reset_prewarm_packer()
 
             if not restart_uniform:
+                _flush_prewarm_cues()
                 break
           with _checkpoint_lock:
             checkpoint["fallback_used"] = bool(fallback_segments)
@@ -8194,31 +8589,14 @@ class EdgeSmartSync:
                 is_vert=(ch_val > cw_val),
             )
 
-            for s_item in timing:
-                raw_st = float(s_item.get("audio_start", 0.0))
-                raw_en = float(s_item.get("audio_end", 0.0))
-                raw_sp_dur = float(s_item.get("speech_duration") or (raw_en - raw_st))
-                seg_speech_end = min(raw_en, raw_st + max(0.05, raw_sp_dur))
-                txt = str(s_item.get("text", "")).strip()
-                if not txt:
-                    continue
-                sub_cues = split_burmese_subtitle_cues(
-                    raw_st, raw_en, txt,
-                    lines_per_cue=lines_per_cue,
-                    word_timings=s_item.get("word_timings"),
-                    max_clusters_per_line=max_clusters_line,
-                    max_width_px=max_line_ink_w,
-                    font_px=burn_font_px,
-                    font_path=burn_font_path,
-                    stroke_px=burn_stroke,
-                )
-                if not sub_cues:
-                    fallback_txt = canonicalize_burmese_text(txt)
-                    sub_cues = [(raw_st, raw_en, fallback_txt)] if fallback_txt else []
-                for c_idx, (c_st, c_en, c_txt) in enumerate(sub_cues):
-                    all_sub_cues.append((c_st, c_en, c_txt))
-                    is_last_in_seg = (c_idx == len(sub_cues) - 1)
-                    all_speech_ends.append(min(float(c_en), seg_speech_end) if is_last_in_seg else float(c_en))
+            all_sub_cues, all_speech_ends = pack_subtitle_cues_from_segments(
+                timing,
+                lines_per_cue=lines_per_cue,
+                max_width_px=max_line_ink_w,
+                font_px=burn_font_px,
+                font_path=burn_font_path,
+                stroke_px=burn_stroke,
+            )
 
             # S2: best-effort END-side / gap-only reading-speed polish BEFORE
             # emitting SRT, ASS, and burn-in subtitle_cues so all outputs match.

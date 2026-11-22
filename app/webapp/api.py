@@ -4718,8 +4718,8 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapEmbedSoftSubs": True,
     "savedCustomVoiceId": "",
     "savedCustomVoiceName": "",
-    "recapCropTop": 0,
-    "recapCropBottom": 0,
+    "recapCropTop": 12,
+    "recapCropBottom": 12,
     "recapCropLeft": 0,
     "recapCropRight": 0,
     "recapFontSize": 16,
@@ -4730,9 +4730,9 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapSettingsVersion": 2,
     "recapSubX": 50,
     "recapSubW": 92,
-    # Batch DD defaults: protection Standard (today's behaviour),
-    # free style controls unset (preset look), bold on, shadow off.
-    "recapProtection": "standard",
+    # Locked Pro defaults (Round 10): Strong protection, Blur fill,
+    # CinemaScope 12% top/bottom crop (non-Original), Mirror ON, 1.10x zoom.
+    "recapProtection": "strong",
     "recapTextColor": "",
     "recapOutlineColor": "",
     "recapBgColor": "",
@@ -4745,10 +4745,7 @@ DEFAULT_USER_PREFS: Dict[str, Any] = {
     "recapBlurStrength": 18,
     # Batch BI: auto-detect blur defaults ON (historical behaviour).
     "recapBlurAutoDetect": True,
-    # Batch AK (premium audit S1): the shipped default Micro-Zoom
-    # is 1.00 — 1.06 silently cropped ≈11% of the picture in the
-    # fill modes. Saved user values persist untouched.
-    "recapZoom": 1.0,
+    "recapZoom": 1.1,
     "recapVoice": "komin",
     "recapGeminiVoice": "",
     "recap_presets": "",
@@ -6552,12 +6549,12 @@ class RecapPreviewCompositeRequest(BaseModel):
     # payload maps 1:1.
     ratio: str = "9:16"
     ratio_fill: str = "blur"
-    crop_top: int = Field(0, ge=0, le=35)
-    crop_bottom: int = Field(0, ge=0, le=35)
+    crop_top: int = Field(12, ge=0, le=35)
+    crop_bottom: int = Field(12, ge=0, le=35)
     crop_left: int = Field(0, ge=0, le=35)
     crop_right: int = Field(0, ge=0, le=35)
     mirror_video: bool = True
-    zoom_factor: float = 1.0
+    zoom_factor: float = 1.1
     blur_subtitles: bool = True
     blur_y: int = Field(85, ge=0, le=100)
     blur_h: int = Field(7, ge=1, le=50)
@@ -6586,7 +6583,7 @@ class RecapPreviewCompositeRequest(BaseModel):
     # controls and the custom-font handle mirror RecapConfigRequest
     # so the composite shows exactly what the render will burn.
     blur_boxes: Optional[List[RecapBlurBoxIn]] = Field(None, max_length=5)
-    protection_level: str = "standard"
+    protection_level: str = "strong"
     sub_text_color: Optional[str] = None
     sub_outline_color: Optional[str] = None
     # Batch DK: ge=-1 — the prefs layer's documented sentinel for
@@ -6616,6 +6613,24 @@ class RecapPreviewCompositeRequest(BaseModel):
         if v is not None and float(v) == -1.0:
             return None
         return v
+
+    @model_validator(mode="after")
+    def _lock_pro_defaults(self):
+        self.ratio_fill = "blur"
+        self.protection_level = "strong"
+        self.mirror_video = True
+        self.zoom_factor = 1.1
+        if str(self.ratio or "").strip().lower() == "original":
+            self.crop_top = 0
+            self.crop_bottom = 0
+            self.crop_left = 0
+            self.crop_right = 0
+        else:
+            self.crop_top = 12
+            self.crop_bottom = 12
+            self.crop_left = 0
+            self.crop_right = 0
+        return self
 
 
 @api_router.post("/recap/preview-composite")
@@ -7023,17 +7038,13 @@ class RecapConfigRequest(BaseModel):
     voice_slug: str = Field("komin", max_length=50)  # Job.preset_voice String(50)
     story_style: str = "viral"        # viral, dramatic, funny, pov, standard
     ratio: str = "9:16"               # Original, 9:16, 16:9, 1:1
-    ratio_fill: str = "blur"          # blur, crop, black
-    crop_top: int = Field(0, ge=0, le=35)
-    crop_bottom: int = Field(0, ge=0, le=35)
+    ratio_fill: str = "blur"          # locked to blur
+    crop_top: int = Field(12, ge=0, le=35)
+    crop_bottom: int = Field(12, ge=0, le=35)
     crop_left: int = Field(0, ge=0, le=35)
     crop_right: int = Field(0, ge=0, le=35)
     mirror_video: bool = True
-    # Batch AK (premium audit S1): default Micro-Zoom is 1.00 — the
-    # old 1.06 default silently cropped ≈11% of the picture area in
-    # the Blur/Black fill modes. Explicit client values are
-    # honoured exactly as before.
-    zoom_factor: float = 1.0
+    zoom_factor: float = 1.1
     voice_speed: str = DEFAULT_SPEED   # -6%, +0%, +12%, +20%, +25%
     blur_subtitles: bool = True
     blur_y: int = Field(85, ge=0, le=100)
@@ -7100,9 +7111,8 @@ class RecapConfigRequest(BaseModel):
     # absent, a legacy blur_box_explicit config migrates to a
     # one-element list at dispatch (_dd_blur_boxes_fractions).
     blur_boxes: Optional[List[RecapBlurBoxIn]] = Field(None, max_length=5)
-    # Batch DD: anti-copyright LEVEL — off / standard / strong
-    # (validated below; unknown values degrade to "standard").
-    protection_level: str = "standard"
+    # Round 10: locked anti-copyright level ("strong").
+    protection_level: str = "strong"
     # Batch DD: free subtitle-style controls. Colours are #RRGGBB
     # (invalid → dropped to None by the validator = preset colour);
     # outline_width is in ASS units; bg_opacity is a percent.
@@ -7192,13 +7202,29 @@ class RecapConfigRequest(BaseModel):
         if self.blur_x is not None:
             w_eff = self.blur_w if self.blur_w is not None else 92
             self.blur_x = max(0, min(100 - w_eff, int(self.blur_x)))
+        # Round 10: lock Pro fill/crop/protection/mirror/zoom so a stale client
+        # cannot resurrect removed choices.
+        self.ratio_fill = "blur"
+        self.protection_level = "strong"
+        self.mirror_video = True
+        self.zoom_factor = 1.1
+        if str(self.ratio or "").strip().lower() == "original":
+            self.crop_top = 0
+            self.crop_bottom = 0
+            self.crop_left = 0
+            self.crop_right = 0
+        else:
+            self.crop_top = 12
+            self.crop_bottom = 12
+            self.crop_left = 0
+            self.crop_right = 0
         return self
 
     @field_validator("protection_level")
     @classmethod
     def _check_protection_level(cls, v: str) -> str:
-        lvl = str(v or "standard").strip().lower()
-        return lvl if lvl in ("off", "standard", "strong") else "standard"
+        lvl = str(v or "strong").strip().lower()
+        return lvl if lvl in ("off", "standard", "strong") else "strong"
 
     @field_validator("sub_outline_width")
     @classmethod

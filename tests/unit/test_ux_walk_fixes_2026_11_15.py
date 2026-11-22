@@ -105,9 +105,17 @@ def _run_node(script: str) -> dict:
 # ── Item 1: Step-2 preview subtitles & viewport clearance ───────────────────
 
 
+def _locked_defaults_js() -> str:
+    return "\n".join(
+        [line for line in APP_JS.splitlines() if line.startswith("const RECAP_LOCKED_")]
+        + [_extract_fn(APP_JS, "recapLockedCropForRatio")]
+    )
+
+
 def test_item1_step2_preview_composite_wiring_and_fit_via_node():
     fns = "\n".join(
         [
+            _locked_defaults_js(),
             _extract_fn(APP_JS, "ddConfigExtras"),
             _extract_fn(APP_JS, "recapCompositeSourceUrl"),
             _extract_fn(APP_JS, "recapCompositePayload"),
@@ -131,7 +139,6 @@ const mkEl = (id, init={{}}) => {{
   return obj;
 }};
 mkEl('recap-url-input', {{ value: 'Check https://example.com/watch?v=1 please' }});
-mkEl('slider-canvas-seek', {{ value: '5' }});
 mkEl('recap-step-1'); mkEl('recap-step-2'); mkEl('recap-step-3'); mkEl('recap-step-4');
 const frame = mkEl('recap-mockup-frame', {{ parentElement: {{ clientWidth: 300 }} }});
 
@@ -148,6 +155,7 @@ const ctx = {{
     uploadedVideoPath: null,
     recapVerifiedSourceUrl: null,
     recapSourceDuration: 30,
+    recapSeekSec: 5,
     recapRatio: '9:16',
     recapRatioFill: 'blur',
     recapBurnSubs: true,
@@ -277,6 +285,7 @@ def test_item1_preview_composite_forwards_style_and_size_to_png_renderer(tmp_pat
 def test_item2_step4_summary_voice_by_engine_and_size_and_speed_via_node():
     fns = "\n".join(
         [
+            _locked_defaults_js(),
             _extract_fn(APP_JS, "refreshRecapStep4Choices"),
             _extract_fn(APP_JS, "refreshRecapStep4Facts"),
         ]
@@ -474,8 +483,12 @@ async def test_item3_admin_access_control_preserved(db_session):
 
 
 def test_item4_mirror_visibility_step2_and_step4_via_node():
+    # Round 10 B6/B7: Step 2 summary bar & transform expander removed; mirror is locked true in Pro defaults.
+    assert 'id="recap-step2-summary"' not in INDEX_HTML
+    assert 'id="recap-preview-transform-group"' not in INDEX_HTML
     fns = "\n".join(
         [
+            _locked_defaults_js(),
             _extract_fn(APP_JS, "refreshRecapStep2Summary"),
             _extract_fn(APP_JS, "refreshRecapStep4Facts"),
         ]
@@ -490,17 +503,16 @@ const mkGroup = (id) => {{
   const valEl = {{ innerText: '', classList: mkClassList() }};
   els[id] = {{ id, querySelector: (s) => s === '.dd-acc-val' ? valEl : null, _val: valEl, classList: mkClassList() }};
 }};
-['recap-preview-ratio-group','recap-subtitle-group','recap-blur-group',
- 'recap-logo-group','recap-preview-transform-group'].forEach(mkGroup);
-['recap-step2-summary','recap-fact-aspect','recap-fact-ratio','recap-fact-fill',
- 'recap-fact-zoom','recap-fact-subs','recap-fact-title','recap-fact-blur',
- 'recap-fact-quality','recap-fact-speed','recap-fact-mirror'].forEach(id => (els[id] = {{ id, innerText: '', textContent: '', classList: mkClassList() }}));
+['recap-preview-ratio-group','recap-subtitle-group','recap-blur-group','recap-logo-group'].forEach(mkGroup);
+['recap-fact-aspect','recap-fact-ratio','recap-fact-fill','recap-fact-zoom',
+ 'recap-fact-subs','recap-fact-title','recap-fact-blur','recap-fact-quality',
+ 'recap-fact-speed','recap-fact-mirror'].forEach(id => (els[id] = {{ id, innerText: '', textContent: '', classList: mkClassList() }}));
 
 const ctx = {{
   document: {{ getElementById: (id) => els[id] || null, querySelector: () => null }},
   window: {{}},
   localStorage: {{ getItem: () => 'en', setItem: () => {{}} }},
-  state: {{ recapMirror: true, recapFontSize: 16, recapSpeed: '+12%' }},
+  state: {{ recapRatio: '9:16', recapMirror: true, recapFontSize: 16, recapSpeed: '+12%' }},
 }};
 vm.runInNewContext(i18nSrc + '; globalThis.__tr = translations;', ctx);
 ctx.t = (k) => (ctx.__tr.en && ctx.__tr.en[k]) || k;
@@ -509,89 +521,24 @@ vm.runInNewContext({json.dumps(fns)}, ctx);
 ctx.refreshRecapStep2Summary();
 ctx.refreshRecapStep4Facts();
 const on = {{
-  step2: els['recap-step2-summary'].innerText || els['recap-step2-summary'].textContent,
-  xform: els['recap-preview-transform-group']._val.innerText || els['recap-preview-transform-group']._val.textContent,
+  ratioAcc: els['recap-preview-ratio-group']._val.innerText || els['recap-preview-ratio-group']._val.textContent,
   step4: els['recap-fact-mirror'].textContent,
 }};
-
-ctx.state.recapMirror = false;
-ctx.refreshRecapStep2Summary();
-ctx.refreshRecapStep4Facts();
-const off = {{
-  step2: els['recap-step2-summary'].innerText || els['recap-step2-summary'].textContent,
-  xform: els['recap-preview-transform-group']._val.innerText || els['recap-preview-transform-group']._val.textContent,
-  step4: els['recap-fact-mirror'].textContent,
-}};
-console.log(JSON.stringify({{ on, off }}));
+console.log(JSON.stringify({{ on }}));
 """
     res = _run_node(script)
-    assert "Mirror: on" in res["on"]["step2"]
-    assert "Mirror: on" in res["on"]["xform"]
+    assert res["on"]["ratioAcc"] == "9:16 · blur"
     assert "Mirror: on" in res["on"]["step4"]
-    assert "Mirror" not in res["off"]["step2"]
-    assert "Mirror" not in res["off"]["xform"]
-    assert res["off"]["step4"] == ""
 
 
-# ── Item 6: Disabled fill-mode buttons show i18n explanation ────────────────
+# ── Item 6: Round 10 B4 removed fill picker & fill disabled note ────────────
 
 
 def test_item6_disabled_fill_picker_shows_i18n_note_via_node():
-    fn = _extract_fn(APP_JS, "syncFillPickerState")
-    script = f"""
-const fs = require('fs');
-const vm = require('vm');
-const i18nSrc = fs.readFileSync({json.dumps(str(REPO / "app/webapp/static/js/i18n.js"))}, 'utf8');
-const btns = [{{ disabled: false }}, {{ disabled: false }}, {{ disabled: false }}];
-const picker = {{
-  classes: new Set(),
-  classList: {{ toggle(c,f){{ f ? picker.classes.add(c) : picker.classes.delete(c); }} }},
-  querySelectorAll: () => btns,
-}};
-const note = {{
-  innerText: '',
-  classes: new Set(['hidden']),
-  classList: {{ remove(c){{ note.classes.delete(c); }} }},
-}};
-let rect = {{ pw: 1.0, ph: 1.0 }};
-const ctx = {{
-  document: {{ getElementById: (id) => id === 'recap-fill-note' ? note : (id === 'recap-fill-picker' ? picker : null) }},
-  window: {{}},
-  localStorage: {{ getItem: () => 'en', setItem: () => {{}} }},
-  state: {{ recapRatio: '9:16', recapRatioFill: 'blur', recapSourceWidth: 1080, recapSourceHeight: 1920 }},
-  recapPictureRect: () => rect,
-  Math,
-}};
-vm.runInNewContext(i18nSrc + '; globalThis.__tr = translations;', ctx);
-ctx.t = (k) => (ctx.__tr.en && ctx.__tr.en[k]) || k;
-ctx.tf = (k, p={{}}) => ctx.t(k).replace('{{pct}}', p.pct ?? '');
-vm.runInNewContext({json.dumps(fn)}, ctx);
-
-ctx.syncFillPickerState();
-const sameAspect = {{
-  disabled: btns.every(b => b.disabled),
-  hasCls: picker.classes.has('fill-picker-disabled'),
-  hidden: note.classes.has('hidden'),
-  text: note.innerText,
-}};
-
-rect = {{ pw: 1.0, ph: 0.32 }};
-ctx.syncFillPickerState();
-const diffAspect = {{
-  disabled: btns.some(b => b.disabled),
-  hasCls: picker.classes.has('fill-picker-disabled'),
-  text: note.innerText,
-}};
-console.log(JSON.stringify({{ sameAspect, diffAspect }}));
-"""
-    res = _run_node(script)
-    assert res["sameAspect"]["disabled"] is True
-    assert res["sameAspect"]["hasCls"] is True
-    assert res["sameAspect"]["hidden"] is False
-    assert "aspect differs" in res["sameAspect"]["text"]
-    assert res["diffAspect"]["disabled"] is False
-    assert res["diffAspect"]["hasCls"] is False
-    assert res["diffAspect"]["text"] != res["sameAspect"]["text"]
+    assert 'id="recap-fill-picker"' not in INDEX_HTML
+    assert 'id="recap-fill-note"' not in INDEX_HTML
+    assert "syncFillPickerState" not in APP_JS
+    assert 'const RECAP_LOCKED_FILL = "blur"' in APP_JS
 
 
 # ── Item 7: Subtitle size slider ticks & ±0.5 pt snapping ───────────────────
@@ -697,6 +644,6 @@ vm.runInNewContext(src + '; globalThis.__tr = translations;', ctx);
 console.log(JSON.stringify({{ my: ctx.__tr.my, en: ctx.__tr.en }}));
 """
     res = _run_node(script)
-    for key in ("recap_fact_mirror_on", "recap_fill_disabled_note", "recap_info_processing"):
+    for key in ("recap_fact_mirror_on", "recap_info_processing"):
         assert str(res["my"].get(key) or "").strip(), f"Missing my.{key}"
         assert str(res["en"].get(key) or "").strip(), f"Missing en.{key}"

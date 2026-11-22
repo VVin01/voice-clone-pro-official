@@ -118,10 +118,9 @@ def test_ax_chips_carry_number_or_check_only():
         NAV)
     assert chips == [("1", "1", "recap_step1_title"), ("2", "2", "recap_step_nav_preview"),
                      ("3", "3", "recap_step_nav_voice"), ("4", "4", "recap_step4_title")], chips
-    # The step WORD now renders only in the four card headers — the
-    # AZ-9 capsule carries names, not the word, and the AX-2R
-    # caption (the former 5th use) is removed.
-    assert TAB.count('data-i18n="recap_step_word"') == 4
+    # Step 1 and Step 2 in-card headers were removed in Round 10 (A2 & B2),
+    # leaving Steps 3 and 4 carrying recap_step_word in the card header.
+    assert TAB.count('data-i18n="recap_step_word"') == 2
     # The ✓ state is painted by markRecapStepDone on the same spans.
     assert 'pill.textContent = done ? "✓" : String(n);' in APP_JS
 

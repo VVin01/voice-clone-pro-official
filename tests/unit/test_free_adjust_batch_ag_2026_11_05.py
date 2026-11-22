@@ -727,8 +727,12 @@ def test_fit_wired_into_both_burn_paths():
     # still fits the single sample frame via fit_png_cue_lines.
     prod = CORE_PY.split("def apply_production_overlays(", 1)[1].split("\ndef ", 1)[0]
     prev = CORE_PY.split("def extract_preview_with_overlays(", 1)[1].split("\ndef ", 1)[0]
-    assert "fit_png_cue_pieces(" in prod and "_sub_w_fraction(overlays)" in prod
-    assert "fit_png_cue_lines(" in prev and "_sub_w_fraction(overlays)" in prev
+    assert "fit_png_cue_pieces(" in prod and (
+        "_sub_w_fraction(overlays)" in prod or "_subtitle_fit_width_px(overlays, pw)" in prod
+    )
+    assert "fit_png_cue_lines(" in prev and (
+        "_sub_w_fraction(overlays)" in prev or "_subtitle_fit_width_px(overlays, pw)" in prev
+    )
 
 
 def _make_fit_src(tmp_path):

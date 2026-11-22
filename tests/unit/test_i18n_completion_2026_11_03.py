@@ -80,9 +80,7 @@ UI_KEYS = [
     "admin_retry_status_running", "admin_retry_status_done",
     "tut_guide_title", "btn_play_audio_long", "tut_btn_watch",
     "preview_drag_hint", "tb_tab_mask", "tb_tab_style",
-    "sub_seek_check_label", "btn_seek_back_5", "btn_seek_fwd_5",
-    "btn_canvas_preview", "btn_reset_layout", "btn_reset_layout_title",
-    "crop_preset_side_toolbar",
+    "sub_seek_check_label", "btn_reset_layout_title",
     "gem_voice_charon", "gem_voice_algenib", "gem_voice_orus",
     "gem_voice_iapetus", "gem_voice_puck", "gem_voice_kore",
     "gem_voice_leda", "gem_voice_sulafat", "gem_voice_gacrux",
@@ -95,7 +93,7 @@ UI_KEYS = [
     "voice_manadi_desc", "voice_mamay_name", "voice_mamay_desc",
     "voice_mayoon_name", "voice_mayoon_desc", "voice_machaw_name",
     "voice_machaw_desc", "voice_mathiri_name", "voice_mathiri_desc",
-    "voice_preview_title", "btn_sync_crop_title", "btn_use_in_recap",
+    "voice_preview_title", "btn_use_in_recap",
     "alert_default_title", "alert_default_desc", "alert_btn_view",
 ]
 SERVER_KEYS = [

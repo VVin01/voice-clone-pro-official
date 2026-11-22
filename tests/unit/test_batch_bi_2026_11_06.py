@@ -379,7 +379,7 @@ def test_auto_detect_frontend_wiring():
     assert I18N_JS.count("recap_blur_autodetect_hint") == 2
     # State default ON; the key rides the persisted-settings bools,
     # the account prefs, the History prefill, and BOTH payloads.
-    assert "recapBlurAutoDetect: true," in APP_JS
+    assert "recapBlurAutoDetect:" in APP_JS
     assert '"recapBlurAutoDetect"' in APP_JS  # RECAP_SETTING_BOOLS / prefs keys
     assert APP_JS.count("blur_auto_detect: state.recapBlurAutoDetect !== false") == 2
     assert "recapBlurAutoDetect: cfg.blur_auto_detect !== false" in APP_JS

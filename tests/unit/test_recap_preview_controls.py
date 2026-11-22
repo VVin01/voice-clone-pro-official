@@ -126,49 +126,39 @@ def test_ratio_speed_transform_cards_start_hidden():
     # Owner addendum (2026-10-31): the Ratio/Fill, Narration Speed and
     # Transform cards join the preview-dependent set — they ship hidden
     # exactly like the canvas toolbar group.
-    for card_id in ("recap-preview-ratio-group", "recap-preview-speed-group",
-                    "recap-preview-transform-group"):
+    for card_id in ("recap-preview-ratio-group", "recap-preview-speed-group"):
         assert f'id="{card_id}"' in html
         tag = html.split(f'id="{card_id}"')[0].rsplit("<div", 1)[1]
         assert "hidden" in tag, card_id
-    # Each picker lives inside its own gated card (fill sits with ratio).
+    # Each picker lives inside its own gated card (fill & transform groups removed in Round 10).
     ratio_card = html.split('id="recap-preview-ratio-group"')[1] \
         .split('id="recap-preview-speed-group"')[0]
     assert 'id="recap-ratio-picker"' in ratio_card
-    assert 'id="recap-fill-picker"' in ratio_card
-    speed_card = html.split('id="recap-preview-speed-group"')[1] \
-        .split('id="recap-preview-transform-group"')[0]
-    assert 'id="recap-speed-picker"' in speed_card
-    transform_card = html.split('id="recap-preview-transform-group"')[1][:6000]
-    assert 'id="btn-toggle-mirror"' in transform_card
-    # Recap tidy-up dedupe: the Advanced crop-presets duplicate is gone;
-    # the single surviving set lives in the canvas toolbar.
+    assert 'id="recap-fill-picker"' not in ratio_card
+    assert 'id="recap-speed-picker"' in html
+    assert 'id="recap-preview-transform-group"' not in html
+    assert 'id="btn-toggle-mirror"' not in html
+    # Both crop preset groups are removed in Round 10 (Pro CinemaScope 12% locked).
     assert 'id="recap-crop-presets"' not in html
-    assert 'id="recap-crop-presets-toolbar"' in html
+    assert 'id="recap-crop-presets-toolbar"' not in html
 
 
 def test_state_machine_toggles_ratio_speed_transform_cards():
     js = _js()
-    for el in ("recap-preview-ratio-group", "recap-preview-speed-group",
-               "recap-preview-transform-group"):
+    for el in ("recap-preview-ratio-group", "recap-preview-speed-group"):
         assert f'getElementById("{el}")' in js
     assert 'ratioGroup.classList.toggle("hidden", !ready)' in js
     assert 'speedGroup.classList.toggle("hidden", !ready)' in js
-    assert 'transformGroup.classList.toggle("hidden", !ready)' in js
+    assert "transformGroup" not in js
 
 
 def test_hidden_cards_keep_their_default_values():
     html = _html()
-    # Hiding is visibility-only: the shipped defaults the payload reads
-    # (active pills / toggles) must be exactly as before.
+    # Hiding is visibility-only: the surviving shipped defaults remain.
     assert '<button class="ratio-btn active" data-ratio="9:16">' in html
-    assert '<button class="pill-btn active" data-fill="blur"' in html
     # Batch BB-2 re-pin: the recap speed pills became liquid-capsule
     # segments (.speed-seg); the shipped +12% default is unchanged.
     assert '<button class="speed-seg active" data-speed="+12%"' in html
-    # Batch AK (S1): the shipped Micro-Zoom default is 1.00.
-    assert '<button class="pill-btn active" data-zoom="1.00"' in html
-    assert 'class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true"' in html
 
 
 def test_preview_state_i18n_keys_exist_in_both_languages():

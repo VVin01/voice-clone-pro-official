@@ -693,7 +693,7 @@
         </button>
         <button type="button" class="recap-steps-nav-item is-locked" data-step-toggle="2" aria-label="2" aria-disabled="true">
             <span class="recap-steps-nav-num" data-step-pill="2">2</span>
-            <span class="recap-steps-nav-name" data-i18n="recap_step_nav_preview">အစမ်းကြည့်ရှုမှု</span>
+            <span class="recap-steps-nav-name" data-i18n="recap_step_nav_preview">Settings ချိန်ရန်</span>
         </button>
         <button type="button" class="recap-steps-nav-item is-locked" data-step-toggle="3" aria-label="3" aria-disabled="true">
             <span class="recap-steps-nav-num" data-step-pill="3">3</span>
@@ -707,16 +707,10 @@
 </div>
                             <p class="prefs-saved-note hidden" id="prefs-saved-note"></p>
 <div class="card glass recap-step-card recap-step" id="recap-step-1" data-step="1">
-    <div class="recap-step-head">
-        <span class="recap-step-word" data-i18n="recap_step_word">အဆင့်</span>
-        <span class="step-num-pill" data-step-pill="1">1</span>
-        <span class="recap-step-dot" aria-hidden="true">·</span>
-        <span class="step-title" data-i18n="recap_step1_title">ဗီဒီယို ထည့်သွင်းပါ</span>
-    </div>
     <div class="recap-step-body" id="recap-step-1-body">
 
         <!-- Mode Selector: URL Link vs Direct File Upload -->
-        <div class="source-mode-toggle mt-2">
+        <div class="source-mode-toggle">
             <button type="button" class="source-tab-btn active" id="btn-source-mode-url">
                 <span data-i18n="recap_source_tab_url">🔗 ဗီဒီယို လင့်ခ်</span>
             </button>
@@ -738,10 +732,9 @@
             <div class="video-drop-zone" id="recap-video-drop-zone">
                 <input type="file" id="recap-video-file-input" accept="video/mp4,video/x-matroska,video/quicktime,video/x-msvideo,video/webm,video/mp2t,video/x-m4v,.mp4,.mkv,.mov,.avi,.webm,.ts,.m4v" class="drop-zone-file-input">
                 <label class="drop-zone-content" for="recap-video-file-input">
-                    <span class="drop-icon">🎬</span>
-                    <span class="drop-text" id="recap-drop-text" data-i18n="recap_drop_text">ဖုန်း သို့မဟုတ် ကွန်ပျူတာထဲမှ MP4 ဗီဒီယို ရွေးချယ်ပါ</span>
-                    <span class="drop-subtext" data-i18n="recap_drop_subtext">Douyin, TikTok, Movie clip မည်သည့် ဗီဒီယိုဖိုင်မဆို တိုက်ရိုက်လက်ခံပါသည်</span>
-                    <span class="drop-limits" data-i18n="recap_drop_limits">📦 အများဆုံး 1 GB · MP4, MKV, MOV, AVI, WebM, TS, M4V</span>
+                    <span class="drop-icon" id="recap-drop-icon">📁</span>
+                    <span class="drop-text" id="recap-drop-text" data-i18n="recap_choose_video_file">ဗီဒီယိုဖိုင် ရွေးချယ်မည်</span>
+                    <span class="drop-file-state hidden" id="recap-drop-file-state"></span>
                     <span class="drop-desktop-hint" id="recap-drop-desktop-hint" data-i18n="recap_drop_desktop_hint" hidden>💡 ကွန်ပျူတာ (Desktop) မှာ နှိပ်လို့ ဖိုင်ရွေးတာ မပွင့်ရင် ဗီဒီယိုဖိုင်ကို ဒီနေရာသို့ ဆွဲထည့်ပါ</span>
                 </label>
                 <div class="upload-progress-wrap hidden" id="recap-upload-progress">
@@ -796,14 +789,6 @@
     </div>
 </div>
 <div class="card glass visual-editor-card recap-step hidden" id="recap-step-2" data-step="2">
-    <div class="recap-step-head card-header-row">
-        <span class="card-label">
-            <span class="recap-step-word" data-i18n="recap_step_word">အဆင့်</span>
-            <span class="step-num-pill" data-step-pill="2">2</span>
-            <span class="recap-step-dot" aria-hidden="true">·</span>
-            <span data-i18n="preview_label">🖼️ အစမ်းကြည့်ရှုမှု (Preview)</span>
-        </span>
-    </div>
     <div class="recap-step-body" id="recap-step-2-body">
         <div class="vcp-step2-sticky-preview" id="recap-step2-sticky-preview">
             <div class="vcp-preview-stage-bar">
@@ -876,15 +861,8 @@
                 <div class="tb-tab-panel active" id="tb-panel-seek">
                     <div class="seek-info-header">
                         <span class="seek-title" data-i18n="sub_seek_check_label">⏱️ စက္ကန့်ကျော်၍ စာတန်းနေရာ စစ်ဆေးပါ:</span>
-                        <span class="seek-time-badge" id="canvas-seek-time-badge">⏱️ 00:05s / 00:00s</span>
-                    </div>
-                    <div class="seek-slider-wrap mt-1">
-                        <input type="range" id="slider-canvas-seek" min="0" max="60" value="5" step="0.5" class="studio-slider seek-slider">
                     </div>
                     <div class="seek-actions-row mt-2">
-                        <button type="button" class="mini-btn-seek" id="btn-seek-prev-5" title="5 စက္ကန့် နောက်ဆုတ်မည်" data-i18n-title="btn_seek_back_5">⏪ -5s</button>
-                        <button type="button" class="mini-btn-seek active" id="btn-canvas-play-toggle" title="Play/Pause Frame" data-i18n-title="recap_canvas_play_title" data-i18n="btn_canvas_preview">⏯️ နမူနာကြည့်</button>
-                        <button type="button" class="mini-btn-seek" id="btn-seek-next-5" title="5 စက္ကန့် ရှေ့တိုးမည်" data-i18n-title="btn_seek_fwd_5">⏩ +5s</button>
                         <div class="seek-presets-pills">
                             <button type="button" class="seek-pill-btn" data-sec="0">0s</button>
                             <button type="button" class="seek-pill-btn active" data-sec="5">5s</button>
@@ -914,35 +892,7 @@
                     </button>
                 </div>
 
-                <!-- Category 1: Master Presets (compact 1-line cards at top of Step 2) -->
-                <div class="vcp-step2-cat-panel mt-2" id="recap-cat-preset" data-step2-panel="preset">
-                    <div class="style-lbl mb-1" data-i18n="recap_master_presets_title">⚡ အသင့်သုံး Master Presets:</div>
-                    <div class="vcp-preset-grid" id="recap-master-presets-grid">
-                        <button type="button" class="vcp-preset-card" data-master-preset="tiktok" onclick="applyRecapMasterPreset('tiktok')">
-                            <span class="vcp-preset-icon">📱</span>
-                            <span class="vcp-preset-name" data-i18n="preset_tiktok_name">TikTok / Reels 9:16</span>
-                            <span class="vcp-preset-desc" data-i18n="preset_tiktok_desc">9:16 Blur · Classic Gold · Standard</span>
-                        </button>
-                        <button type="button" class="vcp-preset-card" data-master-preset="fb_story" onclick="applyRecapMasterPreset('fb_story')">
-                            <span class="vcp-preset-icon">📲</span>
-                            <span class="vcp-preset-name" data-i18n="preset_fb_story_name">Facebook Story</span>
-                            <span class="vcp-preset-desc" data-i18n="preset_fb_story_desc">9:16 Crop · Dark Box · 2 Lines</span>
-                        </button>
-                        <button type="button" class="vcp-preset-card" data-master-preset="yt_16_9" onclick="applyRecapMasterPreset('yt_16_9')">
-                            <span class="vcp-preset-icon">🖥️</span>
-                            <span class="vcp-preset-name" data-i18n="preset_yt_16_9_name">YouTube Landscape 16:9</span>
-                            <span class="vcp-preset-desc" data-i18n="preset_yt_16_9_desc">16:9 Blur · Clean White · Standard</span>
-                        </button>
-                        <button type="button" class="vcp-preset-card" data-master-preset="strict_safe" onclick="applyRecapMasterPreset('strict_safe')">
-                            <span class="vcp-preset-icon">🛡️</span>
-                            <span class="vcp-preset-name" data-i18n="preset_strict_safe_name">Strict Safe</span>
-                            <span class="vcp-preset-desc" data-i18n="preset_strict_safe_desc">9:16 Blur · Band · Strong Protection</span>
-                        </button>
-                    </div>
-                </div>
-                <div class="recap-step2-summary mt-2" id="recap-step2-summary" aria-live="polite"></div>
-
-                <!-- Row 1: Layout (Ratio & Fill & Crop) -->
+                <!-- Row 1: Ratio -->
                 <div class="recap-dock-section hidden dd-acc-group" id="recap-preview-ratio-group" data-acc-title-key="recap_ratio_label">
                     <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား:</div>
                     <div class="ratio-pills-grid" id="recap-ratio-picker">
@@ -971,69 +921,6 @@
                             <span class="ratio-dims" data-i18n="ratio_original_dims">မူရင်းအချိုး · မူရင်းအရွယ်</span>
                         </button>
                     </div>
-
-                    <div class="sub-specs-row mt-3">
-                        <div class="spec-col span-all">
-                            <span class="spec-lbl" data-i18n="recap_fill_label">ဘောင်ဖြည့်ပုံ:</span>
-                            <div class="pill-group sm" id="recap-fill-picker">
-                                <button class="pill-btn active" data-fill="blur" data-i18n="fill_blur">🌫️ Blur Background (ဝါးဖြည့်)</button>
-                                <button class="pill-btn" data-fill="crop" data-i18n="fill_crop">✂️ Center Crop (အလယ်ဖြတ်)</button>
-                                <button class="pill-btn" data-fill="black" data-i18n="fill_black">⬛ Black Bars (ဘေးဘောင်မည်း)</button>
-                            </div>
-                            <div class="fill-note hidden" id="recap-fill-note"></div>
-                        </div>
-                    </div>
-
-                    <div class="style-selector-row mt-2">
-                        <span class="style-lbl" data-i18n="recap_crop_presets_label">ဘောင်ဖြတ်ခြင်း (Framing Crop Presets):</span>
-                        <div class="pill-group sm" id="recap-crop-presets-toolbar">
-                            <button class="pill-btn active" data-crop="full" data-i18n="crop_preset_full">📐 မူရင်း (0%)</button>
-                            <button class="pill-btn" data-crop="cinema" data-i18n="crop_preset_cinema">🎞️ CinemaScope (12%)</button>
-                            <button class="pill-btn" data-crop="side" data-i18n="crop_preset_side_toolbar">↔️ ဘေးဘောင်ဖြတ် (10%)</button>
-                        </div>
-                    </div>
-                    <div class="card-header-row mt-3">
-                        <button type="button" class="recap-detail-toggle" id="btn-toggle-crop-detail" onclick="toggleRecapCropDetail()">
-                            <span data-i18n="recap_crop_label">ဘောင် စိတ်ကြိုက်ဖြတ်ခြင်း:</span>
-                            <span class="recap-detail-chevron" id="crop-detail-chevron">▼</span>
-                        </button>
-                        <button class="chip-toggle active" id="btn-sync-crop" title="အပေါ်နှင့်အောက် တပြိုင်နက်ညှိမည်" data-i18n-title="btn_sync_crop_title">
-                            <span class="chip-icon">🔗</span>
-                            <span class="chip-lbl" data-i18n="crop_sync_label">အပေါ်/အောက် တပြိုင်နက်</span>
-                        </button>
-                    </div>
-                    <div class="recap-detail-body hidden" id="recap-crop-detail">
-                        <div class="crop-sliders-grid mt-3">
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="crop_top_label">↕️ အပေါ်ဘောင် (Top):</span>
-                                    <span class="slider-val" id="val-crop-top">0%</span>
-                                </div>
-                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-top">
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="crop_bottom_label">↕️ အောက်ဘောင် (Bottom):</span>
-                                    <span class="slider-val" id="val-crop-bottom">0%</span>
-                                </div>
-                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-bottom">
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="crop_left_label">↔️ ဘယ်ဘက် (Left):</span>
-                                    <span class="slider-val" id="val-crop-left">0%</span>
-                                </div>
-                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-left">
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="crop_right_label">↔️ ညာဘက် (Right):</span>
-                                    <span class="slider-val" id="val-crop-right">0%</span>
-                                </div>
-                                <input type="range" min="0" max="35" value="0" class="studio-slider" id="slider-crop-right">
-                            </div>
-                        </div>
-                    </div><!-- /#recap-crop-detail -->
                 </div>
 
                 <div class="recap-fine mt-2">
@@ -1375,53 +1262,6 @@
                             </div>
                             <div class="logo-status" id="recap-logo-status"></div>
                         </div>
-                    </div>
-                    <div class="recap-adv-group hidden dd-acc-group" id="recap-preview-transform-group" data-acc-title-key="recap_anticopyright_label">
-                        <div class="card-label" data-i18n="recap_anticopyright_label">ဗီဒီယို ပုံစံပြောင်းမှုများ:</div>
-                        <div class="style-selector-row mt-2">
-                            <span class="style-lbl" data-i18n="recap_protection_label">🛡️ ကာကွယ်မှု အဆင့်:</span>
-                            <div class="pill-group sm" id="recap-protection-picker">
-                                <button type="button" class="pill-btn" data-protection="off" data-i18n="recap_protection_off">ပိတ်မည်</button>
-                                <button type="button" class="pill-btn" data-protection="standard" data-i18n="recap_protection_standard">စံနှုန်း</button>
-                                <button type="button" class="pill-btn active" data-protection="strong" data-i18n="recap_protection_strong">အပြင်းစား</button>
-                            </div>
-                        </div>
-                        <div class="anticopyright-grid mt-2">
-                            <div class="spec-col">
-                                <span class="spec-lbl" data-i18n="recap_mirror_label">🪞 Mirror (ဘယ်/ညာ လှန်):</span>
-                                <button class="toggle-pill-btn active" id="btn-toggle-mirror" data-mirror="true">
-                                    <span class="toggle-status" data-i18n="mirror_on">ဖွင့်</span>
-                                    <span class="switch-track" aria-hidden="true"></span>
-                                </button>
-                            </div>
-                            <div class="spec-col">
-                                <span class="spec-lbl" data-i18n="recap_zoom_label">🔍 Micro-Zoom:</span>
-                                <div class="pill-group sm" id="recap-zoom-picker">
-                                    <button class="pill-btn active" data-zoom="1.00" data-i18n="zoom_off">1.0x ပုံမှန်</button>
-                                    <button class="pill-btn" data-zoom="1.06" data-i18n="zoom_std">1.06x စံနှုန်း</button>
-                                    <button class="pill-btn" data-zoom="1.10" data-i18n="zoom_strong">1.10x အမြင့်</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Row 6: My Presets (collapsed accordion row) -->
-                    <div class="vcp-my-presets-box mt-2 dd-acc-group" id="recap-my-presets-section" data-acc-title-key="recap_my_presets_title" data-acc-vip-key="badge_vip">
-                        <div class="card-header-row">
-                            <span class="style-lbl" data-i18n="recap_my_presets_title">💾 ကိုယ်ပိုင် Preset (အများဆုံး ၃ ခု):</span>
-                            <span class="vcp-badge vcp-badge-gold" id="recap-my-presets-vip-badge" data-i18n="badge_vip">👑 VIP</span>
-                        </div>
-                        <div class="vcp-my-preset-save-row mt-1">
-                            <input type="text" id="input-my-preset-name" class="vcp-input sm" maxlength="32" data-i18n-ph="recap_my_preset_ph" placeholder="Preset အမည် ရေးပါ (ဥပမာ - My TikTok)">
-                            <button type="button" class="vcp-btn vcp-btn-glass sm" id="btn-save-my-preset" onclick="saveCurrentAsMyRecapPreset()">
-                                <span data-i18n="btn_save_my_preset">💾 Save as My Preset</span>
-                            </button>
-                        </div>
-                        <div class="vcp-my-presets-list mt-2" id="recap-my-presets-list"></div>
-                    </div>
-                    <div class="reset-row mt-2">
-                        <button type="button" class="mini-btn-seek sm" id="btn-reset-canvas-layout" onclick="resetRecapCanvasLayout()" title="Blur နှင့် စာတန်းနေရာများကို မူလအတိုင်း ပြန်ထားမည်" data-i18n-title="btn_reset_layout_title" data-i18n="btn_reset_layout">
-                            🔄 မူလနေရာ ပြန်ထားမည် (Reset Layout)
-                        </button>
                     </div>
                     </div>
                 </div>
@@ -1920,9 +1760,7 @@
                 </div>
                 <details class="recap-notes-collapse mt-3">
                     <summary><span data-i18n="recap_step1_notes_toggle">ℹ️ သတိပြုရန်နှင့် ကန့်သတ်ချက်များ</span><span aria-hidden="true">▾</span></summary>
-                    <p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ ဒီ App က အသံအသစ်၊ ဘာသာပြန် Script နှင့် ပုံစံပြောင်း Render ဖြင့် ဗီဒီယိုကို ပြောင်းလဲပေးပါသည် — သို့သော် မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
-                    <p class="rights-note recap-rights-note" data-i18n="recap_platforms_note">🔗 YouTube, TikTok, Facebook, Douyin (抖音) လင့်ခ်များ အသုံးပြုနိုင်ပါသည်</p>
-                    <p class="rights-note recap-rights-note" data-i18n="link_help_recap">💡 TikTok၊ VidMate စတဲ့ ဆိုက်တချို့က ပြင်ပ Download ကို ပိတ်ထားတတ်လို့ Link နဲ့ မရတာမျိုး ဖြစ်တတ်ပါတယ် — ဗီဒီယိုဖိုင်ကို တိုက်ရိုက် Upload တင်တာက အသေချာဆုံးပါ။</p>
+                    <p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
 
                     <!-- 🌟 AUTO-SLIDING STUDIO ANNOUNCEMENT & POLICY CAROUSEL (CLEAN & COMPACT) 🌟 -->
                     <div class="studio-alert-carousel" id="studio-alert-carousel">

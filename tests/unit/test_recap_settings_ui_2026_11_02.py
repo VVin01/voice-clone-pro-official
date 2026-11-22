@@ -124,19 +124,14 @@ def test_rs7_crop_sync_chip_single_line():
     block = _rs_block()
     assert "#btn-sync-crop { flex: 0 0 auto; }" in block
     assert "#btn-sync-crop .chip-lbl { white-space: nowrap; }" in block
-    assert 'id="btn-sync-crop"' in HTML
+    assert 'id="btn-sync-crop"' not in HTML
 
 
 def test_rs7_mirror_single_label():
-    # The row label above the toggle names the control; the toggle's
-    # own status text now carries only the state (no second "Mirror").
-    assert 'data-i18n="recap_mirror_label"' in HTML
-    assert 'data-i18n="mirror_on">ဖွင့်</span>' in HTML
-    # R40 deck (labels): the ✅/❌ are gone from the toggle states.
-    assert 'mirror_on: "ဖွင့်"' in I18N_JS
-    assert 'mirror_off: "ပိတ်"' in I18N_JS
-    assert 'mirror_on: "ON"' in I18N_JS
-    assert 'mirror_off: "OFF"' in I18N_JS
+    # Round 10 B6 removed the mirror UI toggle from Step 2.
+    assert 'data-i18n="recap_mirror_label"' not in HTML
+    assert 'id="btn-toggle-mirror"' not in HTML
+    assert "recap_fact_mirror_on" in I18N_JS
     assert "Mirror: ON" not in I18N_JS
     assert "Mirror: ဖွင့်" not in I18N_JS
 

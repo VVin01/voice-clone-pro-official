@@ -53,7 +53,7 @@ NEW_KEYS = [
     "err_send_telegram", "err_download_failed", "toast_job_id_missing",
     "toast_split_auto", "toast_duration_over", "toast_recap_over_limit",
     "toast_recap_over_hint_vip", "toast_recap_over_hint_free",
-    "toast_scrub_hint", "toast_douyin_blocked", "toast_slip_no_file",
+    "toast_douyin_blocked", "toast_slip_no_file",
     "confirm_cancel", "confirm_ok", "account_number_title", "btn_copy",
     "admin_reject_title", "admin_reject_btn", "admin_reject_default",
     "admin_settings_saved", "admin_cancel_err", "admin_retry_err",
@@ -85,7 +85,6 @@ def test_stripped_toast_strings_have_no_leading_type_emoji():
         "toast_script_ready": "✅",
         "toast_script_warnings": "⚠️",
         "toast_split_auto": "✂️",
-        "toast_scrub_hint": "💡",
         "toast_douyin_blocked": "⚠️",
     }
     for lang in ("my", "en"):
@@ -193,7 +192,7 @@ def test_duration_essays_replaced_by_single_key():
 
 def test_hardcoded_toasts_moved_to_i18n():
     assert 'showStudioToast(t("toast_split_auto"), \'info\')' in APP_JS
-    assert 'showStudioToast(t("toast_scrub_hint"), \'info\')' in APP_JS
+    assert "toast_scrub_hint" not in APP_JS
     assert 'showStudioToast(t("toast_slip_no_file"), \'info\')' in APP_JS
     assert "ငွေလွှဲပြေစာ ပုံကို ရွေးချယ်ပေးပါခင်ဗျာ" not in APP_JS
 

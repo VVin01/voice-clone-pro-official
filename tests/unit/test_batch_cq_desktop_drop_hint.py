@@ -22,7 +22,7 @@ def test_hint_element_exists_hidden_by_default():
     # inside the drop-zone label (after the limits line)
     label = INDEX[INDEX.index('class="drop-zone-content"'):INDEX.index('id="recap-upload-progress"')]
     assert "recap-drop-desktop-hint" in label
-    assert label.index("recap_drop_limits") < label.index("recap-drop-desktop-hint")
+    assert label.index("recap_choose_video_file") < label.index("recap-drop-desktop-hint")
 
 
 def test_hint_key_in_both_locales():

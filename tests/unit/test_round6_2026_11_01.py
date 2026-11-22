@@ -272,13 +272,12 @@ def test_p7_step1_strings_wired_to_i18n():
     for frag in (
         'data-i18n="recap_source_tab_url"',
         'data-i18n="recap_source_tab_file"',
-        'data-i18n="recap_drop_text"',
-        'data-i18n="recap_drop_subtext"',
+        'data-i18n="recap_choose_video_file"',
     ):
         assert frag in INDEX_HTML, frag
     tr = _translations()
-    for key in ("recap_source_tab_url", "recap_source_tab_file", "recap_drop_text",
-                "recap_drop_subtext", "recap_sub_ready", "recap_sub_ai"):
+    for key in ("recap_source_tab_url", "recap_source_tab_file", "recap_choose_video_file",
+                "recap_sub_ready", "recap_sub_ai"):
         assert tr["my"][key] and tr["en"][key], key
         assert not _has_myanmar(tr["en"][key]), key
 
@@ -312,7 +311,7 @@ def test_e3_e4_index_fallbacks():
     # R40: index.html defaults are REGENERATED from the dictionary
     # (drift 0), so the old drifted static phrases are gone; the
     # dictionary's own preview label is the static paint now.
-    assert "အစမ်းကြည့်ရှုမှု (Preview)" in INDEX_HTML
+    assert 'data-i18n="recap_step_nav_preview">Settings ချိန်ရန်<' in INDEX_HTML
     assert "စာတန်းထိုး အနေအထားချိန်ရန်" not in INDEX_HTML
     assert "စကွဲယား" not in INDEX_HTML
     # Batch AS (AS-1): the ratio card's static fallback is split into

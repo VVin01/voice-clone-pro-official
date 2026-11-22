@@ -161,8 +161,8 @@ def test_title_prefs_defaults_and_sanitizer():
     })
     for key in ("recapTitleEnabled", "recapTitleText", "recapTitleX", "recapTitleY"):
         assert key not in out
-    # The DD defaults that replaced them are present.
-    assert defaults["recapProtection"] == "standard"
+    # Round 10 locked Pro protection default is "strong".
+    assert defaults["recapProtection"] == "strong"
     assert defaults["recapSubBold"] is True
 
 
@@ -232,7 +232,8 @@ def test_pipeline_title_default_position_is_historical(monkeypatch, tmp_path):
     overlays = _capture_pipeline_overlays(monkeypatch, tmp_path)
     assert "title_text" not in overlays
     assert "title_position" not in overlays
-    assert overlays["protection_level"] == "standard"
+    # Round 10 locked Pro protection default is "strong".
+    assert overlays["protection_level"] == "strong"
 
 
 @pytest.mark.skipif(not FFMPEG_BIN, reason="ffmpeg not available")

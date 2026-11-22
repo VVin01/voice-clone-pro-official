@@ -62,6 +62,15 @@ REMOVED_IDS = {
     "recap-title-fallback-hint",
     # Batch DD: the font-size pill toolbar became a slider row.
     "font-size-picker-toolbar",
+    # Round 10 B3-B7: retired seek, fill, crop, transform & reset-layout controls.
+    "canvas-seek-time-badge", "slider-canvas-seek", "btn-seek-prev-5",
+    "btn-canvas-play-toggle", "btn-seek-next-5", "btn-reset-canvas-layout",
+    "recap-crop-presets-toolbar", "recap-fill-picker", "recap-fill-note",
+    "recap-preview-transform-group", "btn-toggle-mirror", "recap-zoom-picker",
+    "btn-toggle-crop-detail", "crop-detail-chevron", "recap-crop-detail",
+    "btn-sync-crop", "slider-crop-top", "val-crop-top",
+    "slider-crop-bottom", "val-crop-bottom", "slider-crop-left",
+    "val-crop-left", "slider-crop-right", "val-crop-right",
 }
 
 SURVIVING_IDS = [
@@ -74,20 +83,18 @@ SURVIVING_IDS = [
     "preview-logo", "preview-blur-box", "preview-sub-box",
     "mockup-fill-badge",
     "recap-preview-ratio-group", "recap-preview-controls-group",
-    "canvas-compact-toolbar", "tb-panel-seek", "canvas-seek-time-badge",
-    "slider-canvas-seek", "btn-seek-prev-5", "btn-canvas-play-toggle",
-    "btn-seek-next-5", "btn-toggle-subs", "btn-toggle-blur", "btn-toggle-logo",
+    "canvas-compact-toolbar", "tb-panel-seek",
+    "btn-toggle-subs", "btn-toggle-blur", "btn-toggle-logo",
     "slider-blur-y", "val-blur-y", "slider-blur-h", "val-blur-h",
     "slider-blur-x", "val-blur-x", "slider-blur-w", "val-blur-w",
     "slider-blur-strength", "val-blur-strength",
     "slider-sub-y", "val-sub-y", "slider-sub-x", "val-sub-x",
     "slider-sub-w", "val-sub-w",
-    "btn-reset-canvas-layout",
     # Batch DD: font size is a full-width slider row now.
     "sub-style-picker", "sub-lines-picker-toolbar", "slider-font-size",
     "val-font-size",
     "recap-sub-font-picker", "recap-quality-picker",
-    "recap-crop-presets-toolbar", "recap-logo-pos-picker",
+    "recap-logo-pos-picker",
     "recap-logo-manager", "recap-logo-controls", "recap-logo-thumb",
     "btn-logo-upload", "btn-logo-remove", "input-logo-file",
     "recap-logo-vip-hint", "recap-logo-status",
@@ -102,17 +109,12 @@ SURVIVING_IDS = [
     "recap-video-file-input", "recap-video-info-box", "recap-info-thumb",
     "recap-info-title", "recap-info-dur", "recap-info-platform",
     "recap-info-sub", "recap-limit-pill", "recap-tier-limit-text",
-    "recap-ratio-picker", "recap-fill-picker", "recap-fill-note",
+    "recap-ratio-picker",
     "recap-engine-picker", "recap-gemini-voice-wrap",
     "recap-gemini-voice-select", "btn-preview-gemini-voice",
     "recap-persona-area", "recap-top-voices", "btn-toggle-all-voices",
     "all-voices-toggle-text", "all-voices-dropdown-wrap",
     "recap-all-voices-grid", "story-style-picker-quick",
-    "recap-preview-transform-group", "btn-toggle-mirror", "recap-zoom-picker",
-    "btn-toggle-crop-detail", "crop-detail-chevron", "recap-crop-detail",
-    "btn-sync-crop", "slider-crop-top", "val-crop-top",
-    "slider-crop-bottom", "val-crop-bottom", "slider-crop-left",
-    "val-crop-left", "slider-crop-right", "val-crop-right",
     "recap-preview-speed-group", "recap-speed-picker",
     # Batch AZ-11: "recap-lang-picker" (the AX-5 pill group) is
     # retired — the surviving language control is "recap-lang-more".
@@ -252,11 +254,8 @@ def test_av_step2_visible_vs_detail_split():
     # 5-category segmented tabs, Master Presets, and Category 2 Frame/Crop group.
     for marker in ('id="recap-step2-sticky-preview"', 'id="recap-mockup-wrap"',
                    'id="btn-preview-corner-reset"', 'id="tb-panel-seek"',
-                   'id="slider-canvas-seek"', 'id="btn-seek-prev-5"',
-                   'id="btn-seek-next-5"', 'class="seek-presets-pills"',
-                   'id="recap-step2-cat-tabs"', 'id="recap-cat-preset"',
-                   'id="recap-preview-ratio-group"', 'id="recap-crop-presets-toolbar"',
-                   'id="btn-sync-crop"', 'id="slider-crop-top"'):
+                   'class="seek-presets-pills"',
+                   'id="recap-preview-ratio-group"'):
         assert marker in visible, marker
     # Detail (#recap-fine-body): Subtitle group (all subtitle controls together).
     sub = detail[detail.index('id="recap-subtitle-group"'):detail.index('id="recap-blur-group"')]
@@ -275,13 +274,14 @@ def test_av_step2_visible_vs_detail_split():
     for marker in ('id="recap-title-toggle"', 'id="recap-title-text"',
                    'id="slider-title-x"', 'id="slider-title-y"'):
         assert marker not in detail, marker
-    # Category 5 Protection & Logo groups.
+    # Logo group stays in detail; Round 10 B6/B7 removed mirror, zoom, and reset-canvas-layout.
     for marker in ('id="btn-toggle-logo"', 'id="recap-logo-pos-picker"',
-                   'id="recap-logo-manager"', 'id="btn-toggle-mirror"',
-                   'id="recap-zoom-picker"'):
+                   'id="recap-logo-manager"'):
         assert marker in detail, marker
-    # Reset Layout remains available.
-    assert 'id="btn-reset-canvas-layout"' in detail
+    for retired in ('id="btn-toggle-mirror"', 'id="recap-zoom-picker"',
+                    'id="btn-reset-canvas-layout"'):
+        assert retired not in detail, retired
+    assert 'id="btn-preview-corner-reset"' in _step_slice(2)
 
 
 def test_av_step3_holds_voice_speed_language_script_review():

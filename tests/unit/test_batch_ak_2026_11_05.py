@@ -42,23 +42,21 @@ def _fullframe():
     return core.frame_layout("9:16", "blur", 1080, 1920)
 
 
-# ── S1: Micro-Zoom default is 1.00 ─────────────────────────────────
+# ── S1: Micro-Zoom locked to 1.10 (Round 10 B6) ────────────────────
 
 def test_zoom_defaults_are_1_00():
     req = api_mod.RecapConfigRequest(url="https://example.com/v")
-    assert req.zoom_factor == 1.0
-    assert api_mod.DEFAULT_USER_PREFS["recapZoom"] == 1.0
-    assert inspect.signature(core.extract_preview_with_overlays).parameters["zoom_factor"].default == 1.0
-    assert inspect.signature(recap_pipeline.run_recap_pipeline).parameters["zoom_factor"].default == 1.0
-    assert inspect.signature(recap_pipeline.generate_recap_preview).parameters["zoom_factor"].default == 1.0
+    assert req.zoom_factor == 1.1
+    assert api_mod.DEFAULT_USER_PREFS["recapZoom"] == 1.1
+    assert inspect.signature(core.extract_preview_with_overlays).parameters["zoom_factor"].default == 1.1
+    assert inspect.signature(recap_pipeline.run_recap_pipeline).parameters["zoom_factor"].default == 1.1
+    assert inspect.signature(recap_pipeline.generate_recap_preview).parameters["zoom_factor"].default == 1.1
 
 
 def test_zoom_default_in_markup():
-    m = re.search(r'id="recap-zoom-picker">(.*?)</div>', INDEX_HTML, re.S)
-    assert m, "zoom picker present"
-    block = m.group(1)
-    active = re.search(r'class="pill-btn active" data-zoom="([\d.]+)"', block)
-    assert active and active.group(1) == "1.00"
+    # Round 10 B6 removed #recap-zoom-picker from Step 2 UI
+    assert "recap-zoom-picker" not in INDEX_HTML
+    assert "const RECAP_LOCKED_ZOOM = 1.1;" in APP_JS
 
 
 # ── S3 / Addition D: anchor migration ──────────────────────────────

@@ -61,12 +61,11 @@ def test_save_wired_to_recap_tab_events():
 def test_restore_resyncs_ui_controls():
     for needle in [
         'syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio)',
-        'syncPillGroup("#recap-fill-picker .pill-btn", "data-fill", state.recapRatioFill)',
+        "syncLockedRecapDefaultsToState();",
         'syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine)',
         # Batch AZ-11: the subtitle-style picker is a <select> now —
         # the restore re-sync sets its value directly (same state).
         'if (subStyleSel) subStyleSel.value = state.recapSubStyle;',
-        "applyCropValues(state.recapCropTop || 0",
         "splitToggleEl.checked = !!saved.recapSplitEnabled",
         "syncSubtitleFontSize(state.recapFontSize || 16)",
         "syncSubtitleLines(state.recapLines || 1)",

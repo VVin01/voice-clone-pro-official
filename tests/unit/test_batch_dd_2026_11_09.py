@@ -258,7 +258,7 @@ def test_protection_level_mapping():
 
 def test_protection_schema_clamps_unknown_to_standard():
     assert _cfg(protection_level="strong").protection_level == "strong"
-    assert _cfg(protection_level="weird").protection_level == "standard"
+    assert _cfg(protection_level="weird").protection_level == "strong"
 
 
 # ── 5. Title removal ─────────────────────────────────────────────
@@ -360,14 +360,13 @@ def test_visual_overrides_fold_into_png_and_ass():
 # ── 7. Frontend pins: accordion, label, i18n, slider ─────────────
 
 def test_accordion_groups_present_and_collapsed_by_default():
-    # All five DD groups carry the accordion marker; the JS builds
+    # Remaining four DD groups carry the accordion marker; the JS builds
     # headers + hidden bodies (nothing renders open by default).
     for gid in ("recap-preview-ratio-group", "recap-subtitle-group",
-                "recap-blur-group", "recap-logo-group",
-                "recap-preview-transform-group"):
+                "recap-blur-group", "recap-logo-group"):
         assert f'id="{gid}"' in INDEX_HTML
         assert "dd-acc-group" in INDEX_HTML
-    assert INDEX_HTML.count("dd-acc-group") >= 5
+    assert INDEX_HTML.count("dd-acc-group") >= 4
     assert "setupRecapAccordion" in APP_JS
     assert 'dd-acc-body hidden' in APP_JS  # bodies start hidden
     # The subtitle group is NOT exempted: it is one of the markers.
@@ -377,8 +376,8 @@ def test_accordion_groups_present_and_collapsed_by_default():
 
 def test_burn_label_and_i18n_keys_both_languages():
     assert "စာတန်းထိုး ထည့်မည်" in INDEX_HTML
-    # my + en both carry the label and every DD key.
-    for key in ("recap_protection_label", "recap_protection_off",
+    # my + en both carry the label and every remaining DD key.
+    for key in ("recap_protection_off",
                 "recap_protection_standard", "recap_protection_strong",
                 "recap_style_custom_label", "recap_font_custom_label",
                 "recap_blur_boxes_label", "recap_blur_box_add",
@@ -395,8 +394,6 @@ def test_font_size_slider_replaces_pills():
     assert 'id="val-font-size"' in INDEX_HTML
     assert "font-size-picker-toolbar" not in INDEX_HTML
     assert 'data-lines="3"' in INDEX_HTML
-    assert 'id="recap-step2-summary"' in INDEX_HTML
-    assert 'id="recap-protection-picker"' in INDEX_HTML
     assert 'id="input-sub-font-file"' in INDEX_HTML
     assert 'id="blur-box-chips"' in INDEX_HTML
 

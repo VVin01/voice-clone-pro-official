@@ -61,12 +61,10 @@ def test_round9_a2_help_paragraphs_moved_to_notes_expander():
         recap_tab.index('class="recap-notes-collapse') : recap_tab.index("</details>", recap_tab.index('class="recap-notes-collapse'))
     ]
     rights_idx = notes_block.index('data-i18n="recap_rights_note"')
-    platforms_idx = notes_block.index('data-i18n="recap_platforms_note"')
-    vidmate_idx = notes_block.index('data-i18n="link_help_recap"')
     carousel_idx = notes_block.index('id="studio-alert-carousel"')
-    assert rights_idx < platforms_idx < vidmate_idx < carousel_idx
-    assert 'class="rights-note recap-rights-note" data-i18n="recap_platforms_note"' in notes_block
-    assert 'class="rights-note recap-rights-note" data-i18n="link_help_recap"' in notes_block
+    assert rights_idx < carousel_idx
+    assert 'recap_platforms_note' not in recap_tab
+    assert 'link_help_recap' not in recap_tab
 
     # Untouched Step 1 pieces remain intact
     assert 'id="recap-free-terms-note"' in recap_tab

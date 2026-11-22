@@ -72,7 +72,7 @@ def test_engine_picker_lives_in_step3_voice_card():
 
 
 def test_canvas_toolbar_and_ratio_docked_in_step2():
-    step2 = HTML.index('data-i18n="preview_label"')
+    step2 = HTML.index('id="recap-step-2"')
     step3 = HTML.index('data-i18n="recap_step2_title"')
     for el in ('id="recap-preview-ratio-group"', 'id="recap-mockup-wrap"',
                'id="recap-preview-controls-group"', 'id="canvas-no-thumb"'):
@@ -92,7 +92,8 @@ def test_advanced_sections_redistributed_into_steps():
     step2 = HTML.index('id="recap-step-2"')
     step3 = HTML.index('id="recap-step-3"')
     step4 = HTML.index('id="recap-step-4"')
-    assert step2 < HTML.index('id="recap-preview-transform-group"') < step3
+    assert step2 < HTML.index('id="recap-logo-group"') < step3
+    assert 'id="recap-preview-transform-group"' not in HTML
     # AZ-11: the language control is the compact dropdown now (the
     # pill group is retired); it still lives in Step 3.
     assert step3 < HTML.index('id="recap-lang-more"') < step4
@@ -108,9 +109,9 @@ def test_story_style_picker_has_one_home_in_step3():
 
 
 def test_crop_presets_have_one_home_in_toolbar():
+    # Round 10 B5 removed both crop preset groups (Pro CinemaScope 12% locked).
     assert 'id="recap-crop-presets"' not in HTML
-    assert HTML.count('id="recap-crop-presets-toolbar"') == 1
-    assert "recap-crop-presets-toolbar" in APP_JS  # sync still targets the survivor
+    assert 'id="recap-crop-presets-toolbar"' not in HTML
 
 
 # ── Voices: all 12 as cards, no duplicated select ────────────────────
@@ -186,7 +187,7 @@ def test_checking_state_has_shimmer_and_unverified_hint():
 # ── Components: one switch, uniform pills, compact ratio ─────────────
 
 def test_one_switch_component():
-    assert '<span class="switch-track" aria-hidden="true"></span>' in HTML
+    # Round 10 B6 removed the mirror toggle switch; script-review & mini-toggle styles remain.
     assert ".toggle-pill-btn.active .switch-track" in CSS
     assert '.script-review-row input[type="checkbox"]' in CSS
     assert "appearance: none" in CSS
@@ -218,10 +219,10 @@ def test_step1_tutorial_pill_removed_as_duplicate():
 
 
 def test_crop_sliders_nested_one_level_deeper():
-    assert 'id="recap-crop-detail"' in HTML
-    assert 'onclick="toggleRecapCropDetail()"' in HTML
-    assert "window.toggleRecapCropDetail = function()" in APP_JS
-    assert HTML.index('id="recap-crop-detail"') < HTML.index('id="slider-crop-top"')
+    # Round 10 B5 removed the crop UI & sliders altogether.
+    assert 'id="recap-crop-detail"' not in HTML
+    assert "toggleRecapCropDetail" not in APP_JS
+    assert 'id="slider-crop-top"' not in HTML
 
 
 # ── Copy / i18n hygiene ──────────────────────────────────────────────
@@ -231,7 +232,7 @@ def test_new_i18n_keys_exist_in_both_languages():
     for key in ("recap_preview_unverified_hint", "recap_gemini_auto_hint",
                 "recap_canvas_no_thumb", "recap_specs_title",
                 "recap_sub_lines_label", "recap_sub_size_label",
-                "recap_crop_presets_label", "recap_adv_other_title"):
+                "recap_adv_other_title"):
         assert tr["my"][key] and tr["en"][key], key
         assert tr["my"][key] != tr["en"][key], key
 

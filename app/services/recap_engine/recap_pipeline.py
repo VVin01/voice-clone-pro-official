@@ -337,12 +337,12 @@ def run_recap_pipeline(
     env_path: Optional[str | Path] = None,
     output_ratio: str = "Original",
     frame_fill: str = "blur",
-    crop_top: float = 0.0,
-    crop_bottom: float = 0.0,
+    crop_top: float = 0.12,
+    crop_bottom: float = 0.12,
     crop_left: float = 0.0,
     crop_right: float = 0.0,
     mirror_video: bool = True,
-    zoom_factor: float = 1.0,
+    zoom_factor: float = 1.1,
     blur_subtitles: bool = True,
     blur_y: float = 0.85,
     blur_h: float = 0.07,
@@ -368,7 +368,7 @@ def run_recap_pipeline(
     sub_render_mode: str = "png",
     sub_effect: str = "none",
     embed_soft_subs: bool = True,
-    protection_level: str = "standard",
+    protection_level: str = "strong",
     logo_path: Optional[str] = None,
     logo_position: Optional[list[float]] = None,
     logo_scale: float = 0.16,
@@ -397,6 +397,8 @@ def run_recap_pipeline(
     source = Path(source_video_path).resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Source video not found: {source}")
+    if str(output_ratio or "").strip().lower() == "original":
+        crop_top = crop_bottom = crop_left = crop_right = 0.0
 
     def _log(msg: str) -> None:
         logger.info(str(msg))
@@ -945,16 +947,16 @@ def generate_recap_preview(
     sub_render_mode: str = "png",
     sub_effect: str = "none",
     embed_soft_subs: bool = True,
-    protection_level: str = "standard",
+    protection_level: str = "strong",
     sample_text: str = "",
     output_ratio: str = "Original",
     frame_fill: str = "blur",
-    crop_top: float = 0.0,
-    crop_bottom: float = 0.0,
+    crop_top: float = 0.12,
+    crop_bottom: float = 0.12,
     crop_left: float = 0.0,
     crop_right: float = 0.0,
     mirror_video: bool = True,
-    zoom_factor: float = 1.0,
+    zoom_factor: float = 1.1,
     at_seconds: float = 3.5,
     logo_enabled: bool = False,
     logo_path: Optional[str] = None,
@@ -970,6 +972,8 @@ def generate_recap_preview(
     src = Path(source_video_path).resolve()
     if not src.is_file():
         raise FileNotFoundError(f"Source video not found: {src}")
+    if str(output_ratio or "").strip().lower() == "original":
+        crop_top = crop_bottom = crop_left = crop_right = 0.0
 
     ffmpeg_bin = ffmpeg_path or find_binary("ffmpeg")
     ffprobe_bin = ffprobe_path or find_binary("ffprobe")
