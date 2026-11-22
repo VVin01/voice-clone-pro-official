@@ -8221,13 +8221,13 @@ function setupRecapVisualEditor() {
             // Batch DD: a preset SEEDS the free controls (the user
             // can still tweak them afterwards).
             if (typeof ddSeedStyleControls === "function") ddSeedStyleControls(state.recapSubStyle);
-            // Phase 4: keep the 10 visual sample cards in step with
-            // the dropdown (both write the SAME state.recapSubStyle).
-            if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
+            updateSubtitleVisualPreview();
+            if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
             // Batch AK: the style renders in the composited frame —
             // refresh it; the drag handle keeps a neutral outline
             // (no per-style CSS classes to keep in sync any more).
             scheduleRecapCompositeRefresh();
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
         });
     }
 
@@ -8240,6 +8240,7 @@ function setupRecapVisualEditor() {
         }
         return;
     }
+    window.updateSubtitleVisualPreview = updateSubtitleVisualPreview;
     // 11. Font Size — Batch DD: ONE full-width slider (10–26pt)
     function estimateSubtitleCharsPerLine(fontSize, lines, subW) {
         const fs = parseFloat(fontSize) || 16;
@@ -8426,16 +8427,18 @@ function setupRecapVisualEditor() {
             head.type = "button";
             head.className = "dd-acc-head vcp-acc-head";
             head.setAttribute("aria-expanded", "false");
+            const inFine = !!(group.closest && group.closest("#recap-fine-body"));
+            const plainTxt = (raw) => (inFine && typeof stripPanelEmoji === "function") ? stripPanelEmoji(raw) : raw;
             const titleSpan = document.createElement("span");
             titleSpan.className = "dd-acc-title";
             if (titleKey) titleSpan.setAttribute("data-i18n", titleKey);
-            titleSpan.textContent = titleKey ? t(titleKey) : "";
+            titleSpan.textContent = titleKey ? plainTxt(t(titleKey)) : "";
             head.appendChild(titleSpan);
             if (vipKey) {
                 const vipSpan = document.createElement("span");
                 vipSpan.className = "dd-acc-vip-tag";
                 vipSpan.setAttribute("data-i18n", vipKey);
-                vipSpan.textContent = t(vipKey);
+                vipSpan.textContent = plainTxt(t(vipKey));
                 head.appendChild(vipSpan);
             }
             const valSpan = document.createElement("span");
@@ -9441,7 +9444,7 @@ function setupRecapVisualEditor() {
         // its value directly (same state field as before).
         const subStyleSel = document.getElementById("sub-style-picker");
         if (subStyleSel) subStyleSel.value = state.recapSubStyle;
-        if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
+        if (typeof updateSubtitleVisualPreview === "function") updateSubtitleVisualPreview();
         // Batch AK: the handle's classes are fixed (the style lives
         // in the composited frame, not in CSS classes).
         if (previewSub) previewSub.className = "preview-sub-box draggable-box";
@@ -9501,7 +9504,7 @@ function setupRecapVisualEditor() {
         if (typeof syncRecapEngineAreas === "function") syncRecapEngineAreas();
         const subStyleSel = document.getElementById("sub-style-picker");
         if (subStyleSel && state.recapSubStyle) subStyleSel.value = state.recapSubStyle;
-        if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
+        if (typeof updateSubtitleVisualPreview === "function") updateSubtitleVisualPreview();
         syncSubtitleFontSize(state.recapFontSize || 13);
         syncLockedRecapDefaultsToState();
         document.querySelectorAll("#story-style-picker-quick .style-select-pill").forEach(p => {
@@ -16702,15 +16705,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupRecapVisualEditor();
     initRecapSteps();
     switchRecapStep2Category(state.recapStep2Cat || "subtitle", true);
-    syncRecapSubStyleCards();
-    const recapStep2El = document.getElementById("recap-step-2");
-    if (recapStep2El) {
-        recapStep2El.addEventListener("click", () => {
-            setTimeout(() => {
-                if (typeof syncRecapSubStyleCards === "function") syncRecapSubStyleCards();
-            }, 0);
-        });
-    }
+    if (typeof window.updateSubtitleVisualPreview === "function") window.updateSubtitleVisualPreview();
     setupAlertCarousel();
     setupDownloader();
     setupSlipPreview();
@@ -16787,34 +16782,6 @@ function switchRecapStep2Category(cat, silent) {
     applyActiveRecapStep2Category();
 }
 window.switchRecapStep2Category = switchRecapStep2Category;
-
-function syncRecapSubStyleCards() {
-    const sel = document.getElementById("sub-style-picker");
-    const cur = state.recapSubStyle || (sel ? sel.value : "cinematic") || "cinematic";
-    document.querySelectorAll("#sub-style-cards-grid [data-style-card]").forEach(btn => {
-        const match = btn.getAttribute("data-style-card") === cur;
-        btn.classList.toggle("active", match);
-        btn.setAttribute("aria-pressed", match ? "true" : "false");
-    });
-    const liveBadge = document.getElementById("recap-sub-style-live-preview");
-    if (liveBadge) {
-        liveBadge.className = "vcp-sub-sample recap-sub-live-badge sample-" + cur;
-    }
-}
-window.syncRecapSubStyleCards = syncRecapSubStyleCards;
-
-function selectRecapSubStyleCard(styleKey) {
-    if (typeof haptic === "function") haptic("light");
-    const sel = document.getElementById("sub-style-picker");
-    if (sel) {
-        sel.value = styleKey;
-        sel.dispatchEvent(new Event("change", { bubbles: true }));
-    } else {
-        state.recapSubStyle = styleKey;
-        syncRecapSubStyleCards();
-    }
-}
-window.selectRecapSubStyleCard = selectRecapSubStyleCard;
 
 function toggleRecapSubL2Detail(forceOpen) {
     if (typeof haptic === "function") haptic("light");
@@ -16944,6 +16911,9 @@ function refreshPhase1to4LanguageSurfaces() {
         });
         if (typeof updateRecapDurationGate === "function") {
             updateRecapDurationGate();
+        }
+        if (typeof window.refreshRecapStep2Summary === "function") {
+            window.refreshRecapStep2Summary();
         }
         refreshAdminLanguageSurfaces();
         if (window._lastReferralStats && typeof updateReferUI === "function") {

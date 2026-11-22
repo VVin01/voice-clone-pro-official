@@ -259,11 +259,12 @@ def test_av_step2_visible_vs_detail_split():
         assert marker in visible, marker
     # Detail (#recap-fine-body): Subtitle group (all subtitle controls together).
     sub = detail[detail.index('id="recap-subtitle-group"'):detail.index('id="recap-blur-group"')]
-    for marker in ('id="btn-toggle-subs"', 'id="sub-style-cards-grid"',
+    for marker in ('id="btn-toggle-subs"',
                    'id="sub-style-picker"', 'id="sub-lines-picker-toolbar"',
                    'id="slider-font-size"', 'id="recap-sub-font-picker"',
                    'id="slider-sub-y"', 'id="slider-sub-x"', 'id="slider-sub-w"'):
         assert marker in sub, marker
+    assert 'id="sub-style-cards-grid"' not in sub
     # Blur-box group separate from subtitle group (now holds Category 4 toggle + sliders).
     blur = detail[detail.index('id="recap-blur-group"'):detail.index('id="recap-logo-group"')]
     for marker in ('id="btn-toggle-blur"', 'id="slider-blur-y"', 'id="slider-blur-h"',

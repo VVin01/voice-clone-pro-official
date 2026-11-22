@@ -384,8 +384,8 @@ def test_burn_label_and_i18n_keys_both_languages():
                 "recap_sub_pos_label", "sub_lines_three",
                 "recap_logo_group_title", "recap_font_upload_btn"):
         assert I18N_JS.count(f"{key}:") >= 2, key
-    assert 'recap_burn_subs_label: "📝 စာတန်းထိုး ထည့်မည်"' in I18N_JS
-    assert 'recap_burn_subs_label: "📝 Burn Subtitles"' in I18N_JS
+    assert 'recap_burn_subs_label: "စာတန်းထိုး ထည့်မည်"' in I18N_JS
+    assert 'recap_burn_subs_label: "Burn Subtitles"' in I18N_JS
 
 
 def test_font_size_slider_replaces_pills():

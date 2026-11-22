@@ -84,16 +84,20 @@ def test_phase4_my_presets_ui_and_backend_recap_presets_sanitization():
 
 
 def test_phase4_all_ten_subtitle_visual_sample_cards_and_sync():
-    assert 'id="sub-style-cards-grid"' in INDEX_HTML
-    styles = ("yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint")
+    # Round 11: 12-card style grid retired; #sub-style-picker dropdown is the sole style selector,
+    # while .vcp-sub-sample.sample-* CSS stays for #recap-sub-style-live-preview.
+    assert 'id="sub-style-cards-grid"' not in INDEX_HTML
+    assert "selectRecapSubStyleCard" not in INDEX_HTML
+    assert "function syncRecapSubStyleCards(" not in APP_JS
+    assert "function selectRecapSubStyleCard(" not in APP_JS
+    m = re.search(r'<select id="sub-style-picker"[^>]*>(.*?)</select>', INDEX_HTML, re.S)
+    assert m is not None
+    styles = ("cinematic", "glass", "yellow", "white", "boxed", "neon", "band", "heavy", "soft", "rose", "orange", "mint")
     for style in styles:
-        assert f'data-style-card="{style}"' in INDEX_HTML
-        assert f"selectRecapSubStyleCard('{style}')" in INDEX_HTML
-        assert f"sample-{style}" in INDEX_HTML
+        assert f'value="{style}"' in m.group(1)
         assert f".vcp-sub-sample.sample-{style}" in STYLE_CSS
-
-    assert "function syncRecapSubStyleCards(" in APP_JS
-    assert "function selectRecapSubStyleCard(" in APP_JS
+    assert 'id="recap-sub-style-live-preview"' in INDEX_HTML
+    assert "function updateSubtitleVisualPreview(" in APP_JS
 
 
 def test_phase4_crop_bounds_l2_accordions_and_logo_vip_upsell():
@@ -180,9 +184,9 @@ def test_phase4_i18n_keys_complete_in_my_and_en():
 
 
 def test_phase1_to_4_retroactive_i18n_and_bug_fixes():
-    # Specimen text on all 12 subtitle sample cards must be under i18n
+    # Live preview specimen span is under i18n (12-card grid retired in Round 11)
     sample_spans = re.findall(r'<span class="vcp-sub-sample[^"]*"[^>]*>', INDEX_HTML)
-    assert len(sample_spans) == 12
+    assert len(sample_spans) == 1
     assert all('data-i18n="recap_sub_sample_specimen"' in span for span in sample_spans)
     assert INDEX_HTML.count('id="recap-my-presets-vip-badge" data-i18n="badge_vip"') == 1
     assert INDEX_HTML.count('id="recap-logo-vip-badge" data-i18n="badge_vip"') == 1
