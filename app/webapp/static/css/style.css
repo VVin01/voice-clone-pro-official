@@ -862,44 +862,40 @@ select.studio-input { min-height: 50px; }
 /* Batch AU: free-tier render-quality lock (the server clamps too). */
 #recap-quality-picker .pill-btn.quality-locked { opacity: 0.45; }
 #recap-quality-picker .pill-btn.quality-locked::after { content: " 🔒"; }
-/* Batch AW: the recap engine picker's clone/persona pill carries the
-   same lock affordance for free profiles (Gemini/Edge stay usable). */
-#recap-engine-picker .pill-btn.engine-locked { opacity: 0.45; }
-#recap-engine-picker .pill-btn.engine-locked::after { content: " 🔒"; }
 .draggable-box { position: absolute; left: 4%; right: 4%; z-index: 6; cursor: grab; touch-action: pan-y; }
 .draggable-box.is-dragging { cursor: grabbing; opacity: 0.9; }
 /* Batch AH: the grip is the ONLY touch-drag initiator (R40 item 5) */
-.drag-grip-icon { touch-action: none; padding: 7px 16px; margin: -4px 0; cursor: grab; background: rgba(10, 12, 18, 0.55); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; min-width: 30px; text-align: center; }
+.drag-grip-icon { touch-action: none; padding: 1px 6px; margin: 0; cursor: grab; background: rgba(10, 12, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 4px; min-width: 24px; text-align: center; color: rgba(255, 255, 255, 0.94); font-size: 10px; letter-spacing: 0.01em; }
 .preview-blur-box {
     /* Batch CA: NO backdrop-filter, by design. The box is a drag */
-    background: rgba(120, 130, 150, 0.45);
-    border: 1.5px dashed rgba(255, 255, 255, 0.55); border-radius: 6px;
+    background: rgba(120, 130, 150, 0.35);
+    border: 1.5px solid rgba(56, 189, 248, 0.85); border-radius: 5px;
     display: flex; align-items: center; justify-content: center; gap: 5px;
-    /* Batch AM (M1): NO min-height floor. The old 22px floor painted */
+    /* Batch AM (M1): NO min-height floor. */
 }
-.preview-blur-box .blur-label { display: none; font-size: 10.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.7); white-space: nowrap; overflow: hidden; }
 .preview-blur-box.no-media { background: rgba(120, 130, 150, 0.16); }
-.drag-grip-icon { color: rgba(255, 255, 255, 0.9); font-size: 13px; letter-spacing: 2px; }
-.box-resize-handle { position: absolute; left: 50%; transform: translateX(-50%); width: 34px; height: 8px; cursor: ns-resize; }
-.box-resize-handle.top { top: -5px; }
-.box-resize-handle.bottom { bottom: -5px; }
+.box-resize-handle { position: absolute; left: 50%; transform: translateX(-50%); width: 38px; height: 24px; cursor: ns-resize; background: transparent; display: flex; align-items: center; justify-content: center; }
+.box-resize-handle::after { content: ""; width: 16px; height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.55); box-shadow: 0 1px 2px rgba(0,0,0,0.45); opacity: 0.75; }
+.box-resize-handle.top { top: -12px; }
+.box-resize-handle.bottom { bottom: -12px; }
 /* Batch AG: left/right width handles on the blur box (ew-resize). */
 .box-resize-handle.left, .box-resize-handle.right {
     left: auto; top: 50%; transform: translateY(-50%);
-    width: 8px; height: 34px; cursor: ew-resize;
+    width: 24px; height: 38px; cursor: ew-resize;
 }
-.box-resize-handle.left { left: -5px; }
-.box-resize-handle.right { right: -5px; }
+.box-resize-handle.left::after, .box-resize-handle.right::after { width: 2px; height: 16px; }
+.box-resize-handle.left { left: -12px; }
+.box-resize-handle.right { right: -12px; }
 /* Batch AG: the blur box and the subtitle sample take EXPLICIT */
 .preview-blur-box.draggable-box, .preview-sub-box.draggable-box { max-width: 100%; }
 /* Batch AK: the sub box is an OUTLINE-ONLY drag handle over the */
 .preview-sub-box {
     z-index: 7; pointer-events: auto;
     display: flex; align-items: flex-start; justify-content: center;
-    border: 1.5px dashed rgba(255, 217, 59, 0.9); border-radius: 6px;
-    background: rgba(255, 217, 59, 0.07);
+    border: 1.5px solid rgba(251, 191, 36, 0.88); border-radius: 5px;
+    background: rgba(255, 217, 59, 0.06);
 }
-.preview-sub-box .sub-grip { text-shadow: 0 1px 2px rgba(0,0,0,0.8); padding-top: 2px; }
+.preview-sub-box .sub-grip { text-shadow: none; }
 /* Batch AH: the recap title overlay box — centred on (title_x, */
 .preview-title-box {
     z-index: 7; text-align: center; padding: 4px 10px; pointer-events: auto;
@@ -2424,7 +2420,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     font-size: 14px; font-weight: 700; color: var(--text);
 }
 #tab-recap .mini-tag { font-size: 12px; }
-.preview-blur-box .blur-label { font-size: 12px; }
 .preview-logo-watermark { font-size: 12px; }
 .mockup-orig-sub { font-size: 12px; }
 /* E2 — (Batch AV) the Step-1 tutorial pill and its row were removed:
@@ -2451,20 +2446,11 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     line-height: 1.6;
 }
 #recap-quality-picker .pill-btn,
-#recap-sub-font-picker .pill-btn,
-#sub-lines-picker-toolbar .pill-btn,
 #font-size-picker-toolbar .pill-btn,
-#recap-split-minutes-picker .pill-btn,
 #recap-zoom-picker .pill-btn {
     flex: 1 1 26%; min-width: 0; white-space: normal; text-align: center;
     display: inline-flex; align-items: center; justify-content: center;
     line-height: 1.6;
-}
-#recap-split-minutes-picker { display: flex; flex-wrap: wrap; gap: var(--s1); flex: 1; min-width: 0; }
-#recap-split-minutes-wrap { display: flex; flex-wrap: wrap; align-items: center; }
-#recap-engine-picker .pill-btn {
-    flex: 1 1 42%; min-width: 0; white-space: normal; text-align: center;
-    display: inline-flex; align-items: center; justify-content: center;
 }
 .ratio-pills-grid { grid-template-columns: 1fr 1fr; gap: var(--s2); }
 .ratio-btn { min-height: 44px; padding: 6px 10px; border-radius: 999px; justify-content: center; }
@@ -2587,12 +2573,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .studio-slider::-webkit-slider-thumb { border-color: #ffffff; }
 .studio-slider::-moz-range-thumb { border-color: #ffffff; }
 .preview-blur-box { box-shadow: var(--glass-hi); }
-.preview-blur-box.label-on .blur-label,
-.preview-blur-box.is-dragging .blur-label,
-.preview-blur-box:hover .blur-label {
-    display: block; position: absolute; bottom: calc(100% + 1px); left: 50%;
-    transform: translateX(-50%); line-height: 1.1;
-}
 /* FULL-APP POLISH (2026-11-01) — closes the full-app audit's fixab */
 .bottom-nav { background: rgba(255, 255, 255, 0.97); }
 .nav-scrim {
@@ -2671,17 +2651,14 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 /* Recap settings-UI fix batch (2026-11-02, RS-1/RS-2/RS-6/RS-7) */
 .pill-group, .pill-group.sm { border-radius: 24px; }
 .pill-group .pill-btn.active { box-shadow: var(--glass-hi); }
-#recap-quality-picker, #recap-logo-pos-picker, #recap-fill-picker,
-#recap-crop-presets-toolbar, #sub-lines-picker-toolbar,
-#font-size-picker-toolbar, #recap-sub-font-picker, #recap-speed-picker {
+#recap-quality-picker, #recap-fill-picker,
+#recap-crop-presets-toolbar,
+#font-size-picker-toolbar, #recap-speed-picker {
     display: grid; gap: var(--s1); align-items: stretch;
 }
 #recap-quality-picker { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
-#recap-logo-pos-picker { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
 #recap-crop-presets-toolbar { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; }
-#sub-lines-picker-toolbar { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
 #font-size-picker-toolbar { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; }
-#recap-sub-font-picker { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
 #recap-fill-picker { grid-template-columns: 1fr; grid-auto-rows: 1fr; }
 #recap-fill-picker .pill-btn { white-space: nowrap; }
 #recap-speed-picker { grid-template-columns: repeat(6, 1fr); grid-auto-rows: 1fr; }
@@ -2921,14 +2898,22 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-detail-group:first-child { border-top: none; padding-top: 0; }
 .recap-detail-group-title { font-size: 13.5px; font-weight: 700; color: var(--text-1); margin-bottom: var(--s1, 4px); }
 .recap-step4-choices {
-    display: flex; align-items: center; gap: 6px; min-width: 0;
-    margin-bottom: var(--s2); font-size: 13px; color: var(--text-2);
-    white-space: nowrap; overflow: hidden;
+    display: flex; flex-direction: column; gap: 8px; min-width: 0;
+    margin-bottom: var(--s2); padding: 10px 14px;
+    border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 13px; color: var(--text);
 }
-.recap-step4-choice-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recap-step4-choice-voice, .recap-step4-choice-ratio { flex: 0 0 auto; }
-.recap-step4-choice-voice::before, .recap-step4-choice-ratio::before { content: "·"; margin-right: 6px; color: var(--text-3); }
-.recap-step4-choice-voice:empty::before, .recap-step4-choice-ratio:empty::before { content: none; }
+.recap-choice-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; min-width: 0;
+}
+.recap-choice-label {
+    font-size: 12px; color: var(--text-3); flex: 0 0 auto; white-space: nowrap;
+}
+.recap-step4-choice-title, .recap-step4-choice-voice, .recap-step4-choice-ratio {
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-weight: 600; text-align: right; color: var(--text);
+}
 .recap-lang-more { width: 100%; min-width: 0; }
 .recap-step4-review { display: flex; align-items: center; gap: var(--s3, 14px); }
 .recap-step4-thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; flex-shrink: 0; border: 1px solid rgba(255, 255, 255, 0.15); }
@@ -2936,7 +2921,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-step4-quote-label { font-size: 12.5px; color: var(--text-3); }
 .recap-step4-quote-value { font-size: 30px; font-weight: 800; line-height: 1.1; color: var(--gold, #f5c451); }
 .recap-step4-quote-unit { font-size: 15px; font-weight: 600; }
-.preview-sub-box .sub-grip,
 .preview-title-box .title-grip {
     position: absolute; top: 0; left: 50%;
     transform: translate(-50%, calc(-100% - 3px));
@@ -2956,12 +2940,17 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 .recap-output-empty { padding: 24px 16px; color: rgba(255, 255, 255, 0.92); }
 .recap-output-empty .preview-empty-desc { color: rgba(255, 255, 255, 0.75); opacity: 1; }
 .recap-output-caption { margin-top: var(--s2); font-size: 12.5px; line-height: 1.7; color: var(--text-2); text-align: center; }
-.recap-output-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--s2); justify-content: center; }
-.recap-fact-chip {
-    display: inline-flex; align-items: center; min-height: 30px; padding: 3px 10px;
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
-    font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap;
+.recap-output-facts {
+    display: flex; align-items: stretch; justify-content: center; gap: 10px;
+    margin-top: var(--s2); padding: 8px 12px;
+    border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border);
 }
+.recap-format-fact-item {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    flex: 1 1 0; min-width: 0; text-align: center;
+}
+.recap-format-fact-label { font-size: 11px; color: var(--text-3); }
+.recap-format-fact-val { font-size: 13px; font-weight: 700; color: var(--text); }
 /* Card headers (AX-6): one pattern — the step number as a badge in */
 .recap-step-head { gap: var(--s2); padding: var(--s2) 2px var(--s3); min-height: 52px; }
 .recap-step-head .step-num-pill {
@@ -3007,12 +2996,6 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     border-radius: var(--r-lg); padding: 24px 16px;
     background: rgba(127, 148, 179, 0.06);
 }
-.recap-step4-choices { flex-wrap: wrap; overflow: visible; white-space: normal; row-gap: 6px; }
-.recap-step4-choices > span {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 999px; padding: 4px 12px;
-}
-.recap-step4-choice-voice::before, .recap-step4-choice-ratio::before { content: none; }
 .recap-step4-quote {
     border-radius: var(--r-md); padding: var(--s3) var(--s4); margin-bottom: var(--s3);
     border: 1px solid transparent;
@@ -4953,14 +4936,29 @@ body.lite .vcp-step2-sticky-preview {
     }
 }
 /* ═══ Phase 5: Recap Steps 3–4, Option B Dual Quote, Result/Failure Polish ═══ */
-.vcp-engine-billing-hint {
+.vcp-engine-billing-details {
     margin-top: 8px;
-    padding: 8px 12px;
     border-radius: var(--vcp-radius-md);
     background: var(--vcp-flat-glass-bg);
     border: 1px solid var(--vcp-flat-glass-border);
+    padding: 6px 10px;
+}
+.vcp-engine-billing-details > summary {
+    cursor: pointer;
     font-size: 12px;
-    line-height: 1.6;
+    font-weight: 700;
+    color: var(--vcp-text-secondary);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.vcp-engine-billing-details > summary::-webkit-details-marker { display: none; }
+.vcp-engine-billing-details[open] > summary { margin-bottom: 6px; }
+.vcp-engine-billing-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.55;
     color: var(--vcp-text-secondary);
 }
 .vcp-persona-head-row {
@@ -7609,9 +7607,9 @@ html, body {
 #tab-recap #preview-blur-box {
     z-index: 8;
     pointer-events: auto;
-    border-radius: 6px;
-    border: 1.5px dashed rgba(56, 189, 248, 0.88);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+    border-radius: 5px;
+    border: 1.5px solid rgba(56, 189, 248, 0.85);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 #tab-recap #preview-blur-box.label-on {
     z-index: 9;
@@ -7619,9 +7617,9 @@ html, body {
 }
 #tab-recap #preview-blur-box .drag-grip-icon {
     position: absolute;
-    left: 6px;
+    left: 0;
     right: auto;
-    bottom: calc(100% + 4px);
+    bottom: calc(100% + 2px);
     top: auto;
     transform: none;
     margin: 0;
@@ -7629,33 +7627,34 @@ html, body {
     pointer-events: auto;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    min-height: 22px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: rgba(2, 132, 199, 0.94);
-    border: 1px solid rgba(186, 230, 253, 0.92);
+    min-height: 18px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(2, 132, 199, 0.90);
+    border: 1px solid rgba(186, 230, 253, 0.72);
     color: #FFFFFF;
-    font-size: 10.5px;
+    font-size: 10px;
     font-weight: 700;
-    line-height: 1.2;
+    letter-spacing: 0.01em;
+    line-height: 1.25;
     white-space: nowrap;
-    box-shadow: 0 3px 10px rgba(2, 132, 199, 0.40);
+    box-shadow: 0 1px 4px rgba(2, 132, 199, 0.30);
 }
 #tab-recap #preview-blur-box.is-near-top .drag-grip-icon {
     bottom: auto;
-    top: calc(100% + 4px);
+    top: calc(100% + 2px);
 }
 #tab-recap #preview-sub-box {
     pointer-events: none;
-    border-radius: 6px;
-    border: 1.5px dashed rgba(251, 191, 36, 0.82);
+    border-radius: 5px;
+    border: 1.5px solid rgba(251, 191, 36, 0.85);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 #tab-recap #preview-sub-box .sub-grip {
     position: absolute;
-    left: auto;
-    right: 6px;
-    bottom: calc(100% + 4px);
+    left: 0;
+    right: auto;
+    bottom: calc(100% + 2px);
     top: auto;
     transform: none;
     margin: 0;
@@ -7663,23 +7662,23 @@ html, body {
     pointer-events: auto;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    min-height: 22px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: rgba(217, 119, 6, 0.94);
-    border: 1px solid rgba(253, 230, 138, 0.92);
+    min-height: 18px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(217, 119, 6, 0.90);
+    border: 1px solid rgba(253, 230, 138, 0.72);
     color: #FFFFFF;
-    font-size: 10.5px;
+    font-size: 10px;
     font-weight: 700;
-    line-height: 1.2;
+    letter-spacing: 0.01em;
+    line-height: 1.25;
     text-shadow: none;
     white-space: nowrap;
-    box-shadow: 0 3px 10px rgba(180, 83, 9, 0.42);
+    box-shadow: 0 1px 4px rgba(180, 83, 9, 0.32);
 }
 #tab-recap #preview-sub-box.is-near-top .sub-grip {
     bottom: auto;
-    top: calc(100% + 4px);
+    top: calc(100% + 2px);
 }
 /* ── Step 2 Controls Deck: Seek, 5-Cat Tabs, Presets, Subtitle Cards ────── */
 #tab-recap .canvas-compact-toolbar {
@@ -7765,12 +7764,6 @@ html, body {
     border-radius: 14px;
     border: 1px solid rgba(148, 163, 184, 0.24);
 }
-#tab-recap .recap-fact-chip {
-    background: rgba(124, 58, 237, 0.09);
-    border: 1px solid rgba(124, 58, 237, 0.22);
-    color: var(--vcp-text-primary);
-    border-radius: 999px;
-}
 #tab-recap .recap-step-next {
     min-height: 46px;
     border-radius: 14px;
@@ -7840,11 +7833,6 @@ html[data-theme="dark"] #tab-recap .recap-step2-summary {
     background: rgba(124, 58, 237, 0.16);
     border-color: rgba(167, 139, 250, 0.32);
     color: #F8FAFC;
-}
-html[data-theme="dark"] #tab-recap .recap-fact-chip {
-    background: rgba(124, 58, 237, 0.20);
-    border-color: rgba(167, 139, 250, 0.34);
-    color: #E2E8F0;
 }
 html[data-theme="dark"] #tab-recap .vcp-step2-cat-tabs .vcp-seg-btn {
     color: #CBD5E1;
@@ -9997,9 +9985,7 @@ body.profile-loading .home-free-value { color: transparent !important; backgroun
 .vip-shared-benefits-bar { padding: 8px 12px; margin-bottom: 10px; border-radius: 12px; font-size: 12px; font-weight: 600; line-height: 1.5; background: var(--gold-soft, rgba(245, 158, 11, 0.1)); border: 1px solid var(--gold-border, rgba(245, 158, 11, 0.25)); color: var(--text); }
 #studio-alert-carousel .carousel-nav-bar,
 #recap-step2-cat-tabs,
-#btn-toggle-recap-fine,
-#recap-voice-billing-badge,
-#recap-engine-picker .pill-btn[data-engine="none"] { display: none !important; }
+#btn-toggle-recap-fine { display: none !important; }
 .recap-fast-path-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
 .recap-fast-path-bar .btn { flex: 1 1 140px; min-height: 40px; font-size: 13px; }
 .recap-notes-collapse { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2, rgba(255, 255, 255, 0.04)); border: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
@@ -10017,11 +10003,7 @@ body.profile-loading .home-free-value { color: transparent !important; backgroun
 .dd-acc-head .dd-acc-chevron { display: inline-block; transition: transform 0.15s ease; }
 .dd-acc-vip-tag { font-size: 10.5px; font-weight: 800; padding: 2px 7px; border-radius: 999px; background: rgba(250, 204, 21, 0.18); color: #facc15; border: 1px solid rgba(250, 204, 21, 0.35); margin-left: 6px; flex-shrink: 0; }
 html[data-theme="light"] .dd-acc-vip-tag { background: rgba(217, 119, 6, 0.14); color: #b45309; border-color: rgba(217, 119, 6, 0.3); }
-#tab-recap #preview-blur-box .drag-grip-icon,
-#tab-recap #preview-sub-box .sub-grip { min-height: 28px; padding: 3px 9px; font-size: 11px; font-weight: 800; letter-spacing: 0.01em; border-radius: 999px; background: rgba(10, 14, 26, 0.88); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.36); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); display: inline-flex; align-items: center; gap: 4px; }
 .recap-step3-acc-wrap { margin-top: 10px; }
-.recap-step4-more-options { margin-top: 10px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2, rgba(255, 255, 255, 0.04)); border: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
-.recap-step4-more-options > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text); list-style: none; display: flex; align-items: center; justify-content: space-between; }
 /* 2026-11-21 Home Round 2 + Round 3 — Single-header Tutorials, Hero Long-Name, History Refresh Chip & Profile View */
 #tab-home #home-tutorials-card {
     padding: 10px 12px !important;
@@ -10820,25 +10802,24 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
     box-shadow: none !important;
 }
 #tab-recap #recap-fine-body .vcp-compact-panel > .dd-acc-head {
-    min-height: 38px;
+    min-height: 40px;
     padding: 4px 2px;
-    gap: 6px;
+    gap: 8px;
 }
 #tab-recap #recap-fine-body .vcp-compact-panel > .dd-acc-head .dd-acc-title {
     font-size: 13px;
     font-weight: 700;
-    line-height: 1.3;
-    white-space: nowrap;
+    line-height: 1.35;
 }
-#tab-recap #recap-fine-body .vcp-compact-panel > .dd-acc-head .dd-acc-val {
-    font-size: 11px;
-    max-width: 48%;
+#tab-recap #recap-fine-body .vcp-compact-panel > .dd-acc-head .dd-acc-chevron {
+    margin-left: auto;
+    flex-shrink: 0;
 }
 #tab-recap #recap-fine-body .vcp-compact-panel > .dd-acc-body {
     display: flex;
     flex-direction: column;
-    gap: 7px;
-    padding: 7px 0 4px;
+    gap: 10px;
+    padding: 10px 0 6px;
     border-top: 1px solid var(--divider, rgba(148, 163, 184, 0.20));
 }
 #tab-recap #recap-fine-body .vcp-compact-panel > .dd-acc-body.hidden {
@@ -10846,42 +10827,32 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
 }
 #tab-recap #recap-fine-body .vcp-compact-row {
     margin: 0;
-}
-#tab-recap #recap-fine-body .vcp-paired-row {
-    display: grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 6px 8px;
-    align-items: start;
     width: 100%;
-    margin: 0;
-}
-#tab-recap #recap-fine-body .vcp-paired-row > * {
-    min-width: 0;
-    margin: 0;
+    box-sizing: border-box;
 }
 #tab-recap #recap-fine-body .style-lbl {
     display: block;
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 600;
-    line-height: 1.3;
-    margin: 0 0 3px;
+    line-height: 1.35;
+    margin: 0 0 4px;
     color: var(--text-2);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
 }
 #tab-recap #recap-fine-body .overlays-toggle-row {
     margin: 0;
     padding: 0;
-    gap: 6px;
+    gap: 8px;
 }
 #tab-recap #recap-fine-body .mini-toggle {
-    min-height: 40px;
-    height: 42px;
-    padding: 5px 9px;
+    min-height: 42px;
+    height: auto;
+    padding: 7px 10px;
     border-radius: 11px;
     font-size: 12px;
-    gap: 6px;
+    gap: 8px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -10890,57 +10861,49 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
 }
 #tab-recap #recap-fine-body .mini-toggle .t-lbl {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: left;
-    font-size: 11.5px;
-    line-height: 1.25;
-}
-#tab-recap #recap-fine-body .vcp-paired-toggles {
-    flex-direction: row !important;
-}
-#tab-recap #recap-fine-body .vcp-paired-switches {
-    align-items: stretch;
-}
-#tab-recap #recap-fine-body .vcp-paired-switches .mini-toggle,
-#tab-recap #recap-fine-body .vcp-paired-switches .vcp-switch-row {
-    min-height: 42px;
-    height: auto;
-    padding: 6px 8px;
-}
-#tab-recap #recap-fine-body .vcp-paired-switches .mini-toggle .t-lbl,
-#tab-recap #recap-fine-body .vcp-paired-switches .vcp-switch-row .t-lbl {
     white-space: normal;
     overflow: visible;
     text-overflow: clip;
-    font-size: 10.5px;
-    line-height: 1.25;
+    text-align: left;
+    font-size: 12px;
+    line-height: 1.35;
+}
+#tab-recap #recap-fine-body .vcp-blur-switches {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
 }
 #tab-recap #recap-fine-body .vcp-switch-row {
-    min-height: 40px;
-    height: 42px;
-    padding: 5px 8px;
+    min-height: 42px;
+    height: auto;
+    padding: 7px 10px;
     margin: 0;
     border-radius: 11px;
     background: var(--surface-2);
     border: 1px solid var(--border);
-    gap: 6px;
+    gap: 8px;
     width: 100%;
     box-sizing: border-box;
+    justify-content: space-between;
+}
+#tab-recap #recap-fine-body .vcp-switch-row .script-review-main-text {
+    min-width: 0;
+    flex: 1 1 auto;
 }
 #tab-recap #recap-fine-body .vcp-switch-row .t-lbl {
     display: block;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.35;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
 }
 #tab-recap #recap-fine-body .vcp-switch-row input[type="checkbox"] {
     width: 34px;
     height: 20px;
+    flex-shrink: 0;
 }
 #tab-recap #recap-fine-body .vcp-switch-row input[type="checkbox"]::after {
     width: 14px;
@@ -10950,142 +10913,83 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
     left: 16px;
 }
 #tab-recap #recap-fine-body .vcp-blur-autodetect-hint {
-    grid-column: 1 / -1;
     margin: -2px 2px 0;
-    font-size: 10.5px;
-    line-height: 1.3;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
     color: var(--text-3);
 }
 #tab-recap #recap-fine-body .vcp-inline-field-row {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
+    width: 100%;
+}
+#tab-recap #recap-fine-body .vcp-inline-field-row .studio-select {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+    border-radius: 10px;
+    box-sizing: border-box;
 }
 #tab-recap #recap-fine-body .recap-sub-style-select-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     width: 100%;
     margin: 0;
 }
 #tab-recap #recap-fine-body #sub-style-picker {
-    min-height: 38px !important;
-    height: 40px;
-    padding: 4px 8px !important;
-    font-size: 12px;
+    min-height: 40px !important;
+    height: auto;
+    padding: 6px 10px !important;
+    font-size: 12.5px;
     border-radius: 10px;
     flex: 1 1 auto;
     min-width: 0;
 }
 #tab-recap #recap-fine-body #recap-sub-style-live-preview {
-    padding: 4px 8px;
-    font-size: 11px;
+    padding: 5px 9px;
+    font-size: 11.5px;
     border-radius: 8px;
     flex: 0 0 auto;
-}
-#tab-recap #recap-fine-body #recap-sub-font-picker {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 3px;
-    padding: 3px;
-    border-radius: 10px;
-    width: 100%;
-    box-sizing: border-box;
-}
-@media (min-width: 600px) {
-    #tab-recap #recap-fine-body #recap-sub-font-picker {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
-}
-#tab-recap #recap-fine-body #recap-sub-font-picker .pill-btn {
-    min-height: 26px !important;
-    padding: 2px 3px;
-    font-size: 10px;
-    line-height: 1.2;
-    border-radius: 7px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: none;
-}
-#tab-recap #recap-fine-body #sub-lines-picker-toolbar {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 3px;
-    padding: 3px;
-    border-radius: 10px;
-    width: 100%;
-    box-sizing: border-box;
-}
-#tab-recap #recap-fine-body #sub-lines-picker-toolbar .pill-btn {
-    min-height: 30px !important;
-    padding: 2px 2px;
-    font-size: 10px;
-    line-height: 1.2;
-    border-radius: 7px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: none;
 }
 #tab-recap #recap-fine-body .slider-group {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
     padding: 2px 0;
     margin: 0;
     min-width: 0;
+    width: 100%;
 }
 #tab-recap #recap-fine-body .slider-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 4px;
-    font-size: 11px;
-    line-height: 1.25;
+    gap: 8px;
+    font-size: 12px;
+    line-height: 1.35;
     margin: 0;
 }
 #tab-recap #recap-fine-body .slider-header > span:first-child {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
 }
 #tab-recap #recap-fine-body .slider-val {
-    min-width: 34px !important;
-    padding: 1px 5px !important;
-    font-size: 10.5px;
+    min-width: 38px !important;
+    padding: 2px 6px !important;
+    font-size: 11px;
     font-weight: 700;
     border-radius: 6px;
     flex-shrink: 0;
-}
-@media (max-width: 440px) {
-    #tab-recap #recap-fine-body .vcp-paired-row:has(#recap-sub-font-picker) {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
-        gap: 6px;
-    }
-    #tab-recap #recap-fine-body #sub-lines-picker-toolbar .pill-btn {
-        font-size: 9.5px;
-        padding: 3px 1px;
-        min-height: 55px !important;
-        line-height: 1.25;
-        white-space: normal;
-        overflow: visible;
-        text-overflow: clip;
-        word-break: normal;
-        overflow-wrap: break-word;
-    }
-    #tab-recap #recap-fine-body .slider-header {
-        font-size: 10.5px;
-    }
-    #tab-recap #recap-fine-body .slider-val {
-        min-width: 28px !important;
-        padding: 1px 4px !important;
-        font-size: 10px;
-    }
+    margin-left: auto;
 }
 #tab-recap #recap-fine-body .slider-sub-est {
     display: none;
@@ -11093,35 +10997,41 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
 @media (min-width: 520px) {
     #tab-recap #recap-fine-body .slider-sub-est {
         display: inline-block;
-        font-size: 10px;
-        padding: 0 5px;
+        font-size: 10.5px;
+        padding: 0 6px;
         margin-left: auto;
         margin-right: 4px;
         white-space: nowrap;
     }
 }
 #tab-recap #recap-fine-body .studio-slider {
-    height: 20px;
+    height: 22px;
     margin: 0;
     width: 100%;
 }
 #tab-recap #recap-fine-body #blur-box-list-row {
     display: flex;
-    align-items: center;
-    gap: 5px;
-    flex-wrap: wrap;
-    min-height: 36px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     padding: 2px 0;
     margin: 0;
 }
 #tab-recap #recap-fine-body #blur-box-list-row .style-lbl {
     margin: 0;
-    flex: 0 0 auto;
+}
+#tab-recap #recap-fine-body .blur-box-controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    width: 100%;
 }
 #tab-recap #recap-fine-body #blur-box-chips {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     flex-wrap: wrap;
     margin: 0;
     flex: 1 1 auto;
@@ -11129,10 +11039,10 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
 }
 #tab-recap #recap-fine-body #blur-box-chips .pill-btn,
 #tab-recap #recap-fine-body .blur-box-actions .pill-btn {
-    min-height: 30px !important;
-    padding: 3px 8px;
-    font-size: 11px;
-    line-height: 1.2;
+    min-height: 32px !important;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    line-height: 1.25;
     border-radius: 8px;
     white-space: nowrap;
     border: 1px solid var(--border-strong, rgba(148, 163, 184, 0.35));
@@ -11147,7 +11057,7 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
 #tab-recap #recap-fine-body .blur-box-actions {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     margin-left: auto;
     flex-shrink: 0;
 }
@@ -11155,7 +11065,7 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
     display: flex;
     flex-direction: row !important;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
 }
 #tab-recap #recap-fine-body .vcp-logo-toggle-row #btn-toggle-logo {
     flex: 1 1 auto;
@@ -11176,8 +11086,8 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
     align-items: center !important;
     justify-content: space-between !important;
     text-align: left !important;
-    gap: 5px 6px;
-    min-height: 36px;
+    gap: 6px 8px;
+    min-height: 38px;
     padding: 2px 0;
     margin: 0;
 }
@@ -11192,12 +11102,11 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
     margin-left: auto;
     flex-wrap: nowrap;
 }
-#tab-recap #recap-fine-body #recap-logo-controls .pill-btn,
-#tab-recap #recap-fine-body #recap-sub-font-custom-row .pill-btn {
+#tab-recap #recap-fine-body #recap-logo-controls .pill-btn {
     min-height: 32px !important;
     padding: 4px 10px;
-    font-size: 11px;
-    line-height: 1.2;
+    font-size: 11.5px;
+    line-height: 1.25;
     border-radius: 9px;
     white-space: nowrap;
     border: 1px solid var(--border-strong, rgba(148, 163, 184, 0.35));
@@ -11217,7 +11126,7 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
     justify-content: space-between;
     gap: 6px;
     font-size: 11px;
-    line-height: 1.3;
+    line-height: 1.35;
     margin: 0;
 }
 #tab-recap #recap-fine-body #recap-logo-vip-hint.hidden {
@@ -11225,33 +11134,13 @@ html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel {
 }
 #tab-recap #recap-fine-body #recap-logo-status {
     flex: 1 0 100%;
-    font-size: 10.5px;
-    line-height: 1.25;
+    font-size: 11px;
+    line-height: 1.3;
     color: var(--text-3);
     margin: 0;
 }
 #tab-recap #recap-fine-body #recap-logo-status:empty {
     display: none;
-}
-#tab-recap #recap-fine-body #recap-logo-pos-picker.vcp-row-4-pills {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 3px;
-    padding: 3px;
-    border-radius: 10px;
-    width: 100%;
-    box-sizing: border-box;
-}
-#tab-recap #recap-fine-body #recap-logo-pos-picker.vcp-row-4-pills .pill-btn {
-    min-height: 30px !important;
-    padding: 3px 2px;
-    font-size: 10px;
-    line-height: 1.2;
-    border-radius: 7px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: none;
 }
 #tab-recap #recap-fine-body .vcp-mini-expander {
     margin: 2px 0 0;
@@ -11264,55 +11153,40 @@ html[data-theme="dark"] #tab-recap #recap-fine-body .vcp-mini-expander {
     border-color: rgba(96, 165, 250, 0.18);
 }
 #tab-recap #recap-fine-body .vcp-mini-expander > .vcp-accordion-head {
-    min-height: 34px;
-    padding: 5px 10px;
-    font-size: 11.5px;
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-2);
 }
 #tab-recap #recap-fine-body .vcp-mini-expander > .vcp-accordion-body {
-    padding: 6px 8px 8px;
-    gap: 7px;
+    padding: 8px 10px 10px;
+    gap: 10px;
 }
-#tab-recap #recap-fine-body .vcp-mini-expander .dd-color-row {
+#tab-recap #recap-fine-body .vcp-mini-expander .dd-color-chooser-row {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) 52px;
+    gap: 8px;
+    align-items: stretch;
+    width: 100%;
     margin: 0;
 }
-#tab-recap #recap-fine-body .vcp-mini-expander .dd-color-field {
-    gap: 3px;
-    font-size: 10.5px;
-    line-height: 1.2;
-    min-width: 0;
-}
-#tab-recap #recap-fine-body .vcp-mini-expander .dd-color-field span {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-#tab-recap #recap-fine-body .vcp-mini-expander .dd-color-field input[type="color"] {
-    height: 28px;
-    padding: 1px;
-    border-radius: 6px;
-}
-#tab-recap #recap-fine-body .vcp-mini-expander .pill-group {
+#tab-recap #recap-fine-body .vcp-mini-expander .dd-active-color-input {
+    width: 100%;
+    height: 38px;
+    min-height: 38px;
     padding: 2px;
-    gap: 3px;
-    border-radius: 9px;
-}
-#tab-recap #recap-fine-body .vcp-mini-expander .pill-btn {
-    min-height: 28px !important;
-    padding: 2px 5px;
-    font-size: 10px;
-    line-height: 1.2;
-    border-radius: 7px;
+    cursor: pointer;
+    border: 1px solid var(--border-strong, rgba(148, 163, 184, 0.35));
+    border-radius: 8px;
+    background: var(--surface-2);
+    box-sizing: border-box;
 }
 #tab-recap #recap-fine-body .vcp-compact-check-row {
-    min-height: 36px;
-    padding: 5px 8px;
+    min-height: 40px;
+    padding: 7px 10px;
     margin: 0;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: 9px;
     background: var(--surface-2);
     border: 1px solid var(--border);

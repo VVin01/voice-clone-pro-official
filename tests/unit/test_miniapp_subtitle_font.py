@@ -106,20 +106,19 @@ def test_miniapp_html_contains_sub_font_picker():
     assert 'data-font="pyidaungsu"' in html_content
     assert 'data-font="noto_serif"' in html_content
 
-    # The default option (Padauk) is active
-    match = re.search(r'<button[^>]*data-font="padauk"[^>]*>', html_content)
+    # The default option (Padauk) is selected inside the compact <select> (Round 12 B2)
+    match = re.search(r'<option[^>]*value="padauk"[^>]*>', html_content)
     assert match is not None
-    assert "active" in match.group(0)
+    assert "selected" in match.group(0)
 
-    # Uses Liquid Glass pill-group structure
     picker_block = re.search(
-        r'<div[^>]*id="recap-sub-font-picker"[^>]*>(.*?)</div>',
+        r'<select[^>]*id="recap-sub-font-picker"[^>]*>(.*?)</select>',
         html_content,
         re.DOTALL,
     )
     assert picker_block is not None
-    assert "pill-group" in picker_block.group(0)
-    assert "pill-btn" in picker_block.group(0)
+    assert "studio-select" in html_content
+    assert 'value="custom"' in picker_block.group(0)
 
 
 # ── 4. i18n Translation Key Parity ─────────────────────────────────────────
@@ -171,7 +170,7 @@ def test_app_js_state_and_payload():
     assert 'recapSubFont: "padauk"' in app_js
     assert 'sub_font: state.recapSubFont || "padauk"' in app_js
     assert 'recap-sub-font-picker' in app_js
-    assert 'data-font' in app_js
+    assert 'subFontSel.value' in app_js
 
 
 # ── 6. Phone Width & Overflow Audit ───────────────────────────────────────

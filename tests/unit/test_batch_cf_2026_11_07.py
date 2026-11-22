@@ -62,7 +62,7 @@ def test_step4_eta_refresh_still_wired_in_cost_hint_and_picker():
     hub_start = APP_JS.index("function updateRecapSplitCostHint()")
     hub_end = APP_JS.index("window.repaintRecapCtaPrice", hub_start)
     assert "refreshRecapStep4Eta();" in APP_JS[hub_start:hub_end]
-    picker_start = APP_JS.index('const engineBtns = document.querySelectorAll("#recap-engine-picker .pill-btn")')
+    picker_start = APP_JS.index('const engineSel = document.getElementById("recap-engine-picker")')
     picker_end = APP_JS.index("refreshRecapEngineLock();", picker_start)
     assert "updateRecapSplitCostHint();" in APP_JS[picker_start:picker_end]
 

@@ -59,7 +59,7 @@ def _slice(start_marker: str, end_marker: str) -> str:
 def _gate_slice() -> str:
     """The CI block: pure helper + duration text + notice text +
     painter, plus the pre-existing recapNormalMaxSeconds it reads."""
-    head = _slice("function recapNormalMaxSeconds()", "function enableRecapSplitForLongVideo")
+    head = _slice("function recapNormalMaxSeconds()", "function recapDurationGateState(")
     body = _slice(
         "function recapDurationGateState(",
         "window.updateRecapDurationGate = updateRecapDurationGate;",

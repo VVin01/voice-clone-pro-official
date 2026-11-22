@@ -64,11 +64,7 @@ PREEXISTING_FINE_BODY_IDS = [
     "slider-font-size",
     "slider-font-size-ticks",
     "recap-sub-font-picker",
-    "recap-sub-font-custom-row",
-    "btn-sub-font-upload",
-    "btn-sub-font-clear",
     "input-sub-font-file",
-    "sub-font-custom-status",
     "recap-sub-l2-accordion",
     "btn-toggle-sub-l2-detail",
     "sub-l2-chevron",
@@ -258,17 +254,17 @@ def test_round11_three_compact_panels_structure_and_ordering():
         < logo.index('id="slider-logo-opacity"')
         < logo.index('id="recap-logo-pos-picker"')
     )
-    assert "vcp-row-4-pills" in logo
+    assert '<select id="recap-logo-pos-picker"' in logo
 
-    # Scoped Round 11 compact CSS rules exist in light, dark, and lite modes
+    # Scoped compact CSS rules exist in light, dark, and lite modes
     for selector in (
         "#tab-recap #recap-fine-body .vcp-compact-panel",
         'html[data-theme="dark"] #tab-recap #recap-fine-body .vcp-compact-panel',
         "html.lite #tab-recap #recap-fine-body .vcp-compact-panel",
         'html[data-theme="dark"].lite #tab-recap #recap-fine-body .vcp-compact-panel',
-        "#tab-recap #recap-fine-body .vcp-paired-row",
+        "#tab-recap #recap-fine-body .vcp-inline-field-row",
         "#tab-recap #recap-fine-body .vcp-mini-expander",
-        "#tab-recap #recap-fine-body #recap-logo-pos-picker.vcp-row-4-pills",
+        "#tab-recap #recap-fine-body .blur-box-controls-row",
     ):
         assert selector in STYLE_CSS, f"Missing CSS rule: {selector}"
 
@@ -508,15 +504,19 @@ const cases = [
             'slider-sub-x': {{ value: '45' }},
             'slider-sub-w': {{ value: '84' }},
             'recap-script-review-toggle': {{ checked: true }},
-            'recap-split-toggle': {{ checked: true }},
+            'recap-split-toggle': {{ checked: false }},
         }}
     }},
 ];
 
 function evalHarness(code, c) {{
+    const st = JSON.parse(JSON.stringify(c.state));
+    st.user = {{ is_admin: true, is_vip: true }};
+    st.recapSplitMinutes = 3;
     const ctx = {{
         window: {{}},
-        state: JSON.parse(JSON.stringify(c.state)),
+        state: st,
+        canUseRecapRenderQuality: () => true,
         document: {{
             getElementById: (id) => c.dom[id] || null,
             querySelector: () => null,

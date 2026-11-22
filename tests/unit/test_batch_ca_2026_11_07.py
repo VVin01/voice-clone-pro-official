@@ -76,11 +76,9 @@ def test_blur_box_rule_has_no_backdrop_filter():
 
 def test_blur_box_keeps_its_region_marking():
     declarations = _css_rule(".preview-blur-box")
-    # The tint (slightly stronger than the retired frosted fill)
-    # plus the dashed outline carry the "this region will blur"
-    # meaning now.
-    assert "background: rgba(120, 130, 150, 0.45);" in declarations
-    assert "border: 1.5px dashed" in declarations
+    # Round 12 Part A: translucent region fill + slim 1.5px solid outline.
+    assert "background: rgba(120, 130, 150, 0.35);" in declarations
+    assert "border: 1.5px solid" in declarations
     # The no-media placeholder tint is untouched.
     no_media = _css_rule(".preview-blur-box.no-media")
     assert "background: rgba(120, 130, 150, 0.16);" in no_media

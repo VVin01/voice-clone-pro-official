@@ -360,9 +360,10 @@ def _read(rel: str) -> str:
 def test_miniapp_split_aware_duration_contract():
     app_js = _read("app/webapp/static/js/app.js")
     api_py = _read("app/webapp/api.py")
-    # Client steering helpers (cap is never raised client-side either)
+    # Round 12 D6: auto-split helper removed from Mini App (split_video forced false);
+    # server-side split helpers remain intact.
     assert "function recapNormalMaxSeconds()" in app_js
-    assert "function enableRecapSplitForLongVideo()" in app_js
+    assert "function enableRecapSplitForLongVideo()" not in app_js
     assert "recap_split_max_duration_seconds" not in app_js
     assert "recap_split_max_duration_seconds" not in api_py
     # Server: submit + worker decisions and the admin exemption hook

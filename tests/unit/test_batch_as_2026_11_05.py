@@ -278,8 +278,9 @@ def test_preview_font_selection_changes_the_render(tmp_path):
 # ── AS-5: plumbing — picker → payload → submit all carry the font ──
 
 def test_font_picker_schedules_a_composite_refresh():
-    block = _function_block('const subFontBtns = document.querySelectorAll("#recap-sub-font-picker .pill-btn");', span=900)
-    assert "state.recapSubFont = btn.getAttribute(\"data-font\")" in block
+    # Round 12 B2/B3: #recap-sub-font-picker is a <select> dropdown (padauk/noto_sans/pyidaungsu/noto_serif/custom)
+    block = _function_block('const subFontSel = document.getElementById("recap-sub-font-picker");', span=900)
+    assert "state.recapSubFont = val;" in block
     assert "scheduleRecapCompositeRefresh();" in block
 
 

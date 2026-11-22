@@ -724,14 +724,10 @@ def test_aw_recap_step3_edge_pill_and_engine_lock():
     assert "function refreshRecapEngineLock()" in APP_JS
     assert "function canUseRecapCloneEngine()" in APP_JS
     block = APP_JS[APP_JS.index("function refreshRecapEngineLock()"):APP_JS.index("window.refreshRecapEngineLock")]
-    # Phase 5: VoxCPM Persona engine is unlocked for FREE users; only Own Clone Voice stays locked.
-    assert "btn.disabled = false;" in block
-    assert '"engine-locked"' in block
+    # Round 12 (Part C2): engine picker is a <select>, option disabled when locked.
     assert "recap-own-voice-card" in block
-    assert "#recap-engine-picker .pill-btn.engine-locked" in CSS
-    # The engine click handler refuses disabled (locked) pills.
-    handler = APP_JS[APP_JS.index("const engineBtns = document.querySelectorAll"):APP_JS.index("refreshRecapEngineLock();", APP_JS.index("const engineBtns"))]
-    assert "if (btn.disabled) return;" in handler
+    handler = APP_JS[APP_JS.index('const engineSel = document.getElementById("recap-engine-picker")'):APP_JS.index("refreshRecapEngineLock();", APP_JS.index('const engineSel = document.getElementById("recap-engine-picker")'))]
+    assert "if (opt && opt.disabled)" in handler
 
 
 def test_aw_i18n_keys_exist_in_both_languages():

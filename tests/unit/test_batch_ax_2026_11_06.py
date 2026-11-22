@@ -118,9 +118,9 @@ def test_ax_chips_carry_number_or_check_only():
         NAV)
     assert chips == [("1", "1", "recap_step1_title"), ("2", "2", "recap_step_nav_preview"),
                      ("3", "3", "recap_step_nav_voice"), ("4", "4", "recap_step4_title")], chips
-    # Step 1 and Step 2 in-card headers were removed in Round 10 (A2 & B2),
-    # leaving Steps 3 and 4 carrying recap_step_word in the card header.
-    assert TAB.count('data-i18n="recap_step_word"') == 2
+    # Round 10 (A2 & B2) removed Step 1 & Step 2 in-card headers, and
+    # Round 12 (C1 & D1) removed Step 3 & Step 4 in-card headers too.
+    assert TAB.count('data-i18n="recap_step_word"') == 0
     # The ✓ state is painted by markRecapStepDone on the same spans.
     assert 'pill.textContent = done ? "✓" : String(n);' in APP_JS
 
@@ -250,10 +250,11 @@ def test_ax_step4_choices_line():
     # active voice card, active ratio card) and refreshed with the quote.
     assert "function refreshRecapStep4Choices()" in APP_JS
     assert "refreshRecapStep4Choices();" in APP_JS
-    # Never overflows: flex line, title segment ellipsises.
-    assert re.search(r"\.recap-step4-choices \{[^}]*overflow: hidden", STYLE_CSS)
-    assert re.search(r"\.recap-step4-choice-title \{[^}]*min-width: 0", STYLE_CSS)
-    assert re.search(r"\.recap-step4-choice-title \{[^}]*text-overflow: ellipsis", STYLE_CSS)
+    # Round 12 (D3): compact vertical list of label:value choice rows inside Step 4.
+    assert re.search(r"\.recap-step4-choices \{[^}]*flex-direction: column", STYLE_CSS)
+    assert re.search(r"\.recap-choice-row \{[^}]*justify-content: space-between", STYLE_CSS)
+    assert re.search(r"\.recap-step4-choice-title[^{]*\{[^}]*min-width: 0", STYLE_CSS)
+    assert re.search(r"\.recap-step4-choice-title[^{]*\{[^}]*text-overflow: ellipsis", STYLE_CSS)
 
 
 # ── AX-5: compact source-language picker ──
@@ -365,10 +366,12 @@ def test_ax4r_output_card_is_step4s_opening_surface():
                    'id="recap-step4-output-empty"', 'id="recap-step4-facts"',
                    'data-i18n="recap_output_caption"'):
         assert marker in step4, marker
-    # Facts chips: canvas · duration · subtitles · title · blur · quality.
-    for fid in ("recap-fact-canvas", "recap-fact-duration", "recap-fact-subs",
-                "recap-fact-title", "recap-fact-blur", "recap-fact-quality"):
+    # Round 12 (D2): output format facts show canvas & duration only
+    # (voice/subtitles/blur moved to the 3-row choice summary).
+    for fid in ("recap-fact-canvas", "recap-fact-duration"):
         assert f'id="{fid}"' in step4, fid
+    for dead_fid in ("recap-fact-subs", "recap-fact-title", "recap-fact-blur", "recap-fact-quality"):
+        assert f'id="{dead_fid}"' not in step4, dead_fid
     # The no-source frame reuses Step 2's designed empty state language.
     assert 'id="recap-step4-output-empty"' in step4
     assert step4.count('data-i18n="recap_preview_empty_title"') >= 1
@@ -391,10 +394,7 @@ def test_ax4r_refresh_on_entry_and_swap_without_flash():
 def test_ax4r_facts_are_derived_from_live_config():
     assert "function refreshRecapStep4Facts()" in APP_JS
     for marker in ('"9:16": "1080×1920 · 9:16"', '"16:9": "1920×1080 · 16:9"',
-                   "state.recapSourceDuration", "state.recapBurnSubs",
-                   "state.recapProtection", "state.recapBlurSubs",
-                   "#recap-quality-picker .pill-btn.active",
-                   "formatRecapQuoteDuration(dur)"):
+                   "state.recapSourceDuration", "formatRecapQuoteDuration(dur)"):
         assert marker in APP_JS, marker
 
 
@@ -440,8 +440,8 @@ def test_ax6_toggles_sliders_groups_empty_state():
 
 
 def test_ax6_step4_chips_quote_card_and_cta():
-    assert re.search(r"\.recap-step4-choices \{[^}]*flex-wrap: wrap", STYLE_CSS)
-    assert re.search(r"\.recap-step4-choices > span \{[^}]*border-radius: 999px", STYLE_CSS)
+    assert re.search(r"\.recap-step4-choices \{[^}]*flex-direction: column", STYLE_CSS)
+    assert re.search(r"\.recap-choice-row \{[^}]*display: flex", STYLE_CSS)
     assert re.search(r"\.recap-step4-quote \{[^}]*border-box", STYLE_CSS)
     assert re.search(r"#btn-start-recap \{[^}]*"
                      r"linear-gradient\(135deg, #2563eb, #60a5fa\)", STYLE_CSS)

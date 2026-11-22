@@ -701,7 +701,7 @@
         </button>
         <button type="button" class="recap-steps-nav-item is-locked" data-step-toggle="4" aria-label="4" aria-disabled="true">
             <span class="recap-steps-nav-num" data-step-pill="4">4</span>
-            <span class="recap-steps-nav-name" data-i18n="recap_step4_title">ဖန်တီးရန်</span>
+            <span class="recap-steps-nav-name" data-i18n="recap_step4_title">စစ်ဆေးရန်</span>
         </button>
     </div>
 </div>
@@ -840,16 +840,15 @@
                         <div class="video-top-overlay">
                             <div class="preview-logo-watermark top-right hidden" id="preview-logo"></div>
                         </div>
-                        <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 85%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
+                        <div class="preview-blur-box draggable-box" id="preview-blur-box" style="top: 72%; height: 7%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
                             <div class="box-resize-handle top"></div>
                             <div class="box-resize-handle left"></div>
-                            <span class="drag-grip-icon">🌫️ ⠿ <span data-i18n="blur_handle_short">Blur</span></span>
-                            <span class="blur-label" data-i18n="blur_box_label">မူရင်းစာတန်းဖျက် Blur Box</span>
+                            <span class="drag-grip-icon" data-i18n="blur_handle_short">Blur</span>
                             <div class="box-resize-handle right"></div>
                             <div class="box-resize-handle bottom"></div>
                         </div>
                         <div class="preview-sub-box draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
-                            <span class="drag-grip-icon sub-grip">📝 ⠿ <span data-i18n="sub_box_short_label">Subtitle</span></span>
+                            <span class="drag-grip-icon sub-grip" data-i18n="sub_box_short_label">Subtitle</span>
                         </div>
                     </div>
                 </div>
@@ -959,46 +958,46 @@
                                 <span class="vcp-sub-sample recap-sub-live-badge sample-cinematic" id="recap-sub-style-live-preview" data-i18n="recap_sub_sample_specimen">မြန်မာစာတန်း</span>
                             </div>
                         </div>
-                        <!-- Row 3: Paired row — Font pills + Lines picker -->
-                        <div class="vcp-paired-row style-selector-grid-2">
-                            <div class="spec-col-half">
-                                <span class="style-lbl" data-i18n="recap_sub_font_label">စာလုံးဖောင့်:</span>
-                                <div class="pill-group sm" id="recap-sub-font-picker">
-                                    <button type="button" class="pill-btn active" data-font="padauk" data-i18n="recap_sub_font_padauk">Padauk</button>
-                                    <button type="button" class="pill-btn" data-font="noto_sans" data-i18n="recap_sub_font_noto_sans">Noto Sans</button>
-                                    <button type="button" class="pill-btn" data-font="pyidaungsu" data-i18n="recap_sub_font_pyidaungsu">Pyidaungsu</button>
-                                    <button type="button" class="pill-btn" data-font="noto_serif" data-i18n="recap_sub_font_noto_serif">Noto Serif</button>
-                                </div>
-                            </div>
-                            <div class="spec-col-half">
-                                <span class="style-lbl" data-i18n="recap_sub_lines_label">စာကြောင်းရေ:</span>
-                                <div class="pill-group sm" id="sub-lines-picker-toolbar">
-                                    <button type="button" class="pill-btn active" data-lines="1" data-i18n="sub_lines_one">၁ ကြောင်း</button>
-                                    <button type="button" class="pill-btn" data-lines="2" data-i18n="sub_lines_two">၂ ကြောင်း</button>
-                                    <button type="button" class="pill-btn" data-lines="3" data-i18n="sub_lines_three">၃ ကြောင်း</button>
-                                </div>
-                            </div>
+                        <!-- Row 3: Font dropdown (includes custom font upload option) -->
+                        <div class="style-selector-row vcp-compact-row vcp-inline-field-row">
+                            <span class="style-lbl" data-i18n="recap_sub_font_label">စာလုံးဖောင့်:</span>
+                            <select id="recap-sub-font-picker" class="studio-select glass-dropdown" data-i18n-aria="recap_sub_font_label" aria-label="စာလုံးဖောင့်:">
+                                <option value="padauk" data-font="padauk" data-i18n="recap_sub_font_padauk" selected>Padauk</option>
+                                <option value="noto_sans" data-font="noto_sans" data-i18n="recap_sub_font_noto_sans">Noto Sans</option>
+                                <option value="pyidaungsu" data-font="pyidaungsu" data-i18n="recap_sub_font_pyidaungsu">Pyidaungsu</option>
+                                <option value="noto_serif" data-font="noto_serif" data-i18n="recap_sub_font_noto_serif">Noto Serif</option>
+                                <option value="custom" data-font="custom" data-i18n="recap_sub_font_custom_upload">ကိုယ်ပိုင် Font တင်မည်</option>
+                            </select>
+                            <input type="file" id="input-sub-font-file" accept=".ttf,.otf" class="hidden-file-input">
                         </div>
-                        <!-- Row 4: Paired sliders — Font size + Box width -->
-                        <div class="vcp-paired-row style-selector-grid-2">
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="recap_sub_size_label">စာလုံးအရွယ်:</span>
-                                    <span class="slider-sub-est" id="val-font-chars-est">~32 chars/line</span>
-                                    <span class="slider-val" id="val-font-size">13pt</span>
-                                </div>
-                                <input type="range" min="10" max="26" step="0.1" value="13" class="studio-slider" id="slider-font-size">
-                                <div class="slider-ticks hidden" id="slider-font-size-ticks" aria-hidden="true"><span>13</span><span>16</span><span>19</span><span>22</span></div>
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="slider_sub_w">စာတန်း အနံ (%):</span>
-                                    <span class="slider-val" id="val-sub-w">92%</span>
-                                </div>
-                                <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-sub-w">
-                            </div>
+                        <!-- Row 4: Lines dropdown -->
+                        <div class="style-selector-row vcp-compact-row vcp-inline-field-row">
+                            <span class="style-lbl" data-i18n="recap_sub_lines_label">စာကြောင်းရေ:</span>
+                            <select id="sub-lines-picker-toolbar" class="studio-select glass-dropdown" data-i18n-aria="recap_sub_lines_label" aria-label="စာကြောင်းရေ:">
+                                <option value="1" data-lines="1" data-i18n="sub_lines_one" selected>၁ ကြောင်း</option>
+                                <option value="2" data-lines="2" data-i18n="sub_lines_two">၂ ကြောင်း</option>
+                                <option value="3" data-lines="3" data-i18n="sub_lines_three">၃ ကြောင်း</option>
+                            </select>
                         </div>
-                        <!-- Row 5: Slider — Vertical position -->
+                        <!-- Row 5: Slider — Font size -->
+                        <div class="slider-group vcp-compact-row">
+                            <div class="slider-header">
+                                <span data-i18n="recap_sub_size_label">စာလုံးအရွယ်:</span>
+                                <span class="slider-sub-est" id="val-font-chars-est">~32 chars/line</span>
+                                <span class="slider-val" id="val-font-size">13pt</span>
+                            </div>
+                            <input type="range" min="10" max="26" step="0.1" value="13" class="studio-slider" id="slider-font-size">
+                            <div class="slider-ticks hidden" id="slider-font-size-ticks" aria-hidden="true"><span>13</span><span>16</span><span>19</span><span>22</span></div>
+                        </div>
+                        <!-- Row 6: Slider — Box width -->
+                        <div class="slider-group vcp-compact-row">
+                            <div class="slider-header">
+                                <span data-i18n="slider_sub_w">စာတန်း အနံ (%):</span>
+                                <span class="slider-val" id="val-sub-w">92%</span>
+                            </div>
+                            <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-sub-w">
+                        </div>
+                        <!-- Row 7: Slider — Vertical position -->
                         <div class="slider-group vcp-compact-row">
                             <div class="slider-header">
                                 <span data-i18n="slider_sub_y">အောက်ခြေမှ အကွာအဝေး (%):</span>
@@ -1007,7 +1006,7 @@
                             <input type="range" min="0" max="60" value="5" class="studio-slider" id="slider-sub-y">
                         </div>
 
-                        <!-- Row 6: Mini-expander "အသေးစိတ်" -->
+                        <!-- Row 8: Mini-expander "အသေးစိတ်" -->
                         <div class="vcp-accordion vcp-mini-expander" id="recap-sub-l2-accordion">
                             <button type="button" class="vcp-accordion-head" id="btn-toggle-sub-l2-detail" onclick="toggleRecapSubL2Detail()" aria-expanded="false">
                                 <span data-i18n="recap_sub_l2_title">အသေးစိတ်</span>
@@ -1016,32 +1015,38 @@
                             <div class="vcp-accordion-body hidden" id="recap-sub-l2-body">
                                 <div class="recap-dd-style-custom" id="recap-style-custom-controls">
                                     <span class="style-lbl hidden" data-i18n="recap_style_custom_label">စတိုင်လ် အသေးစိတ်:</span>
-                                    <div class="dd-color-row">
-                                        <label class="dd-color-field"><span data-i18n="recap_text_color_label">စာသား အရောင်</span><input type="color" id="input-sub-text-color" value="#ffd94d"></label>
-                                        <label class="dd-color-field"><span data-i18n="recap_outline_color_label">အနားသတ် အရောင်</span><input type="color" id="input-sub-outline-color" value="#000000"></label>
-                                        <label class="dd-color-field"><span data-i18n="recap_bg_color_label">နောက်ခံ အရောင်</span><input type="color" id="input-sub-bg-color" value="#000000"></label>
+                                    <div class="dd-color-chooser-row" id="recap-sub-color-chooser-row">
+                                        <select id="recap-sub-color-target" class="studio-select glass-dropdown" data-i18n-aria="recap_style_custom_label" aria-label="စတိုင်လ် အသေးစိတ်:">
+                                            <option value="text" data-i18n="recap_color_target_text" selected>စာသား</option>
+                                            <option value="outline" data-i18n="recap_color_target_outline">အနားသတ်</option>
+                                            <option value="bg" data-i18n="recap_color_target_bg">နောက်ခံ</option>
+                                        </select>
+                                        <input type="color" id="input-sub-active-color" class="dd-active-color-input" value="#ffd94d">
                                     </div>
-                                    <div class="vcp-paired-row style-selector-grid-2">
-                                        <div class="slider-group">
-                                            <div class="slider-header">
-                                                <span data-i18n="recap_outline_width_label">အနားသတ် အထူ:</span>
-                                                <span class="slider-val" id="val-outline-width">—</span>
-                                            </div>
-                                            <input type="range" min="0" max="40" step="1" value="18" class="studio-slider" id="slider-outline-width">
+                                    <input type="color" id="input-sub-text-color" value="#ffd94d" class="hidden" aria-hidden="true" tabindex="-1">
+                                    <input type="color" id="input-sub-outline-color" value="#000000" class="hidden" aria-hidden="true" tabindex="-1">
+                                    <input type="color" id="input-sub-bg-color" value="#000000" class="hidden" aria-hidden="true" tabindex="-1">
+                                    <div class="slider-group vcp-compact-row">
+                                        <div class="slider-header">
+                                            <span data-i18n="recap_outline_width_label">အနားသတ် အထူ:</span>
+                                            <span class="slider-val" id="val-outline-width">—</span>
                                         </div>
-                                        <div class="slider-group">
-                                            <div class="slider-header">
-                                                <span data-i18n="recap_bg_opacity_label">နောက်ခံ အပြည့် %:</span>
-                                                <span class="slider-val" id="val-bg-opacity">75%</span>
-                                            </div>
-                                            <input type="range" min="0" max="100" step="1" value="75" class="studio-slider" id="slider-bg-opacity">
-                                        </div>
+                                        <input type="range" min="0" max="40" step="1" value="18" class="studio-slider" id="slider-outline-width">
                                     </div>
-                                    <div class="vcp-paired-row overlays-toggle-row vcp-paired-toggles">
+                                    <div class="slider-group vcp-compact-row">
+                                        <div class="slider-header">
+                                            <span data-i18n="recap_bg_opacity_label">နောက်ခံ အပြည့် %:</span>
+                                            <span class="slider-val" id="val-bg-opacity">75%</span>
+                                        </div>
+                                        <input type="range" min="0" max="100" step="1" value="75" class="studio-slider" id="slider-bg-opacity">
+                                    </div>
+                                    <div class="overlays-toggle-row vcp-compact-row">
                                         <button type="button" class="mini-toggle" id="btn-toggle-sub-shadow">
                                             <span class="t-lbl" data-i18n="recap_shadow_label">အရိပ်:</span>
                                             <span class="t-val" data-i18n="toggle_off">ပိတ်</span>
                                         </button>
+                                    </div>
+                                    <div class="overlays-toggle-row vcp-compact-row">
                                         <button type="button" class="mini-toggle active" id="btn-toggle-sub-bold">
                                             <span class="t-lbl" data-i18n="recap_bold_label">စာလုံးထူ:</span>
                                             <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
@@ -1049,7 +1054,7 @@
                                     </div>
                                 </div>
                                 <div class="editor-controls">
-                                    <div class="slider-group">
+                                    <div class="slider-group vcp-compact-row">
                                         <div class="slider-header">
                                             <span data-i18n="slider_sub_x">ဘယ်/ညာ အနေအထား (%):</span>
                                             <span class="slider-val" id="val-sub-x">50%</span>
@@ -1057,45 +1062,32 @@
                                         <input type="range" min="10" max="90" value="50" class="studio-slider" id="slider-sub-x">
                                     </div>
                                 </div>
-                                <div class="vcp-paired-row style-selector-grid-2">
-                                    <div class="spec-col-half">
-                                        <span class="style-lbl" data-i18n="recap_sub_pos_label">စာတန်း နေရာ:</span>
-                                        <div class="pill-group sm" id="sub-pos-picker">
-                                            <button type="button" class="pill-btn" data-pos-band="top" data-i18n="recap_sub_pos_top">အပေါ်</button>
-                                            <button type="button" class="pill-btn" data-pos-band="center" data-i18n="recap_sub_pos_center">အလယ်</button>
-                                            <button type="button" class="pill-btn active" data-pos-band="bottom" data-i18n="recap_sub_pos_bottom">အောက်</button>
-                                        </div>
-                                    </div>
-                                    <div class="spec-col-half" id="recap-sub-font-custom-row">
-                                        <span class="style-lbl" data-i18n="recap_font_custom_label">ကိုယ်ပိုင် Font:</span>
-                                        <div class="logo-manager-controls">
-                                            <label class="pill-btn" id="btn-sub-font-upload" for="input-sub-font-file"><span data-i18n="recap_font_upload_btn">Font တင်မည်</span></label>
-                                            <button type="button" class="pill-btn hidden" id="btn-sub-font-clear"><span data-i18n="recap_font_custom_clear">ဖယ်ရှားမည်</span></button>
-                                            <input type="file" id="input-sub-font-file" accept=".ttf,.otf" class="hidden-file-input">
-                                        </div>
-                                        <div class="logo-status" id="sub-font-custom-status"></div>
-                                    </div>
+                                <div class="style-selector-row vcp-compact-row vcp-inline-field-row">
+                                    <span class="style-lbl" data-i18n="recap_sub_pos_label">စာတန်း နေရာ:</span>
+                                    <select id="sub-pos-picker" class="studio-select glass-dropdown" data-i18n-aria="recap_sub_pos_label" aria-label="စာတန်း နေရာ:">
+                                        <option value="top" data-pos-band="top" data-i18n="recap_sub_pos_top">အပေါ်</option>
+                                        <option value="center" data-pos-band="center" data-i18n="recap_sub_pos_center">အလယ်</option>
+                                        <option value="bottom" data-pos-band="bottom" data-i18n="recap_sub_pos_bottom" selected>အောက်</option>
+                                    </select>
                                 </div>
-                                <div class="vcp-paired-row style-selector-grid-2">
-                                    <div class="spec-col-half">
-                                        <span class="style-lbl" data-i18n="sub_mode_label">စာတန်းထုတ် နည်းလမ်း:</span>
-                                        <div class="pill-group sm" id="recap-sub-render-mode">
-                                            <button type="button" class="pill-btn active" data-sub-mode="timeline" data-i18n="sub_mode_timeline">Timeline (PNG)</button>
-                                            <button type="button" class="pill-btn" data-sub-mode="ass" data-i18n="sub_mode_ass">Vector (ASS)</button>
-                                            <button type="button" class="pill-btn" data-sub-mode="karaoke" data-i18n="sub_mode_karaoke">Karaoke</button>
-                                            <button type="button" class="pill-btn" data-sub-mode="soft" data-i18n="sub_mode_soft">Soft CC (MP4)</button>
-                                            <button type="button" class="pill-btn" data-sub-mode="png" data-i18n="sub_mode_png">Classic PNG</button>
-                                        </div>
-                                    </div>
-                                    <div class="spec-col-half" id="recap-sub-effect-row">
-                                        <span class="style-lbl" data-i18n="sub_effect_label">Animation:</span>
-                                        <div class="pill-group sm" id="recap-sub-effect">
-                                            <button type="button" class="pill-btn active" data-sub-effect="none" data-i18n="sub_effect_none">ပုံမှန်</button>
-                                            <button type="button" class="pill-btn" data-sub-effect="fade" data-i18n="sub_effect_fade">Fade</button>
-                                            <button type="button" class="pill-btn" data-sub-effect="pop" data-i18n="sub_effect_pop">Pop</button>
-                                            <button type="button" class="pill-btn" data-sub-effect="karaoke" data-i18n="sub_effect_karaoke">Karaoke</button>
-                                        </div>
-                                    </div>
+                                <div class="style-selector-row vcp-compact-row vcp-inline-field-row">
+                                    <span class="style-lbl" data-i18n="sub_mode_label">စာတန်းထုတ် နည်းလမ်း:</span>
+                                    <select id="recap-sub-render-mode" class="studio-select glass-dropdown" data-i18n-aria="sub_mode_label" aria-label="စာတန်းထုတ် နည်းလမ်း:">
+                                        <option value="timeline" data-sub-mode="timeline" data-i18n="sub_mode_timeline" selected>Timeline (PNG)</option>
+                                        <option value="ass" data-sub-mode="ass" data-i18n="sub_mode_ass">Vector (ASS)</option>
+                                        <option value="karaoke" data-sub-mode="karaoke" data-i18n="sub_mode_karaoke">Karaoke</option>
+                                        <option value="soft" data-sub-mode="soft" data-i18n="sub_mode_soft">Soft CC (MP4)</option>
+                                        <option value="png" data-sub-mode="png" data-i18n="sub_mode_png">Classic PNG</option>
+                                    </select>
+                                </div>
+                                <div class="style-selector-row vcp-compact-row vcp-inline-field-row" id="recap-sub-effect-row">
+                                    <span class="style-lbl" data-i18n="sub_effect_label">Animation:</span>
+                                    <select id="recap-sub-effect" class="studio-select glass-dropdown" data-i18n-aria="sub_effect_label" aria-label="Animation:">
+                                        <option value="none" data-sub-effect="none" data-i18n="sub_effect_none" selected>ပုံမှန်</option>
+                                        <option value="fade" data-sub-effect="fade" data-i18n="sub_effect_fade">Fade</option>
+                                        <option value="pop" data-sub-effect="pop" data-i18n="sub_effect_pop">Pop</option>
+                                        <option value="karaoke" data-sub-effect="karaoke" data-i18n="sub_effect_karaoke">Karaoke</option>
+                                    </select>
                                 </div>
                                 <label class="script-review-row vcp-compact-check-row" for="toggle-embed-soft-subs">
                                     <input type="checkbox" id="toggle-embed-soft-subs" checked>
@@ -1106,15 +1098,15 @@
                     </div>
                     <div class="recap-detail-group dd-acc-group vcp-compact-panel" id="recap-blur-group" data-acc-title-key="recap_blur_group_title">
                         <div class="recap-detail-group-title" data-i18n="recap_blur_group_title">Blur Box ဆက်တင်များ</div>
-                        <!-- Row 1: Paired switch rows — Blur toggle + Auto-detect -->
-                        <div class="recap-frequent-settings vcp-paired-row vcp-paired-switches" id="recap-frequent-settings">
-                            <div class="overlays-toggle-row">
+                        <!-- Row 1 & 2: Full-width switch rows — Blur toggle + Auto-detect -->
+                        <div class="recap-frequent-settings vcp-blur-switches" id="recap-frequent-settings">
+                            <div class="overlays-toggle-row vcp-compact-row">
                                 <button type="button" class="mini-toggle active" id="btn-toggle-blur">
                                     <span class="t-lbl" data-i18n="recap_blur_subs_label">မူရင်းစာတန်း Blur</span>
                                     <span class="t-val" data-i18n="toggle_on">ဖွင့်</span>
                                 </button>
                             </div>
-                            <label class="script-review-row vcp-switch-row" for="recap-blur-autodetect-toggle">
+                            <label class="script-review-row vcp-switch-row vcp-compact-row" for="recap-blur-autodetect-toggle">
                                 <input type="checkbox" id="recap-blur-autodetect-toggle">
                                 <span class="script-review-main-text">
                                     <span class="t-lbl" data-i18n="recap_blur_autodetect_label">အလိုအလျောက် ရှာပြီး Blur</span>
@@ -1122,16 +1114,18 @@
                             </label>
                             <span class="script-review-hint vcp-blur-autodetect-hint" data-i18n="recap_blur_autodetect_hint">ပိတ်ထားလျှင် ကိုယ်တိုင် ဆွဲထားသော Box ကိုသာ Blur လုပ်မည်</span>
                         </div>
-                        <!-- Row 2: Box chips inline + Add / Delete pill buttons -->
+                        <!-- Row 3: Box list label + chips/actions row -->
                         <div class="blur-box-list-row vcp-compact-row" id="blur-box-list-row">
                             <span class="style-lbl" data-i18n="recap_blur_boxes_label">Blur Box စာရင်း:</span>
-                            <div class="blur-box-chips" id="blur-box-chips"></div>
-                            <div class="blur-box-actions">
-                                <button type="button" class="pill-btn sm" id="btn-blur-box-add"><span data-i18n="recap_blur_box_add">Box အသစ်</span></button>
-                                <button type="button" class="pill-btn sm" id="btn-blur-box-del"><span data-i18n="recap_blur_box_del">ဖျက်မည်</span></button>
+                            <div class="blur-box-controls-row">
+                                <div class="blur-box-chips" id="blur-box-chips"></div>
+                                <div class="blur-box-actions">
+                                    <button type="button" class="pill-btn sm" id="btn-blur-box-add"><span data-i18n="recap_blur_box_add">Box အသစ်</span></button>
+                                    <button type="button" class="pill-btn sm" id="btn-blur-box-del"><span data-i18n="recap_blur_box_del">ဖျက်မည်</span></button>
+                                </div>
                             </div>
                         </div>
-                        <!-- Row 3: Strength slider -->
+                        <!-- Row 4: Strength slider -->
                         <div class="slider-group vcp-compact-row">
                             <div class="slider-header">
                                 <span data-i18n="slider_blur_strength">Blur အား:</span>
@@ -1140,7 +1134,7 @@
                             <input type="range" min="4" max="40" value="18" class="studio-slider" id="slider-blur-strength">
                         </div>
 
-                        <!-- Row 4: Mini-expander "အသေးစိတ်" -->
+                        <!-- Row 5: Mini-expander "အသေးစိတ်" -->
                         <div class="vcp-accordion vcp-mini-expander" id="recap-blur-l2-accordion">
                             <button type="button" class="vcp-accordion-head" id="btn-toggle-blur-l2-detail" onclick="toggleRecapBlurL2Detail()" aria-expanded="false">
                                 <span data-i18n="recap_blur_l2_title">အသေးစိတ်</span>
@@ -1148,37 +1142,33 @@
                             </button>
                             <div class="vcp-accordion-body hidden" id="recap-blur-l2-body">
                                 <div class="editor-controls">
-                                    <div class="vcp-paired-row style-selector-grid-2">
-                                        <div class="slider-group">
-                                            <div class="slider-header">
-                                                <span data-i18n="slider_blur_x">အနေအထား X (%):</span>
-                                                <span class="slider-val" id="val-blur-x">4%</span>
-                                            </div>
-                                            <input type="range" min="0" max="96" value="4" class="studio-slider" id="slider-blur-x">
+                                    <div class="slider-group vcp-compact-row">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_x">အနေအထား X (%):</span>
+                                            <span class="slider-val" id="val-blur-x">4%</span>
                                         </div>
-                                        <div class="slider-group">
-                                            <div class="slider-header">
-                                                <span data-i18n="slider_blur_y">အနေအထား Y (%):</span>
-                                                <span class="slider-val" id="val-blur-y">85%</span>
-                                            </div>
-                                            <input type="range" min="10" max="95" value="85" class="studio-slider" id="slider-blur-y">
-                                        </div>
+                                        <input type="range" min="0" max="96" value="4" class="studio-slider" id="slider-blur-x">
                                     </div>
-                                    <div class="vcp-paired-row style-selector-grid-2">
-                                        <div class="slider-group">
-                                            <div class="slider-header">
-                                                <span data-i18n="slider_blur_w">အနံ W (%):</span>
-                                                <span class="slider-val" id="val-blur-w">92%</span>
-                                            </div>
-                                            <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-blur-w">
+                                    <div class="slider-group vcp-compact-row">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_y">အနေအထား Y (%):</span>
+                                            <span class="slider-val" id="val-blur-y">85%</span>
                                         </div>
-                                        <div class="slider-group">
-                                            <div class="slider-header">
-                                                <span data-i18n="slider_blur_h">အမြင့် H (%):</span>
-                                                <span class="slider-val" id="val-blur-h">7%</span>
-                                            </div>
-                                            <input type="range" min="3" max="22" value="7" class="studio-slider" id="slider-blur-h">
+                                        <input type="range" min="10" max="95" value="85" class="studio-slider" id="slider-blur-y">
+                                    </div>
+                                    <div class="slider-group vcp-compact-row">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_w">အနံ W (%):</span>
+                                            <span class="slider-val" id="val-blur-w">92%</span>
                                         </div>
+                                        <input type="range" min="10" max="100" value="92" class="studio-slider" id="slider-blur-w">
+                                    </div>
+                                    <div class="slider-group vcp-compact-row">
+                                        <div class="slider-header">
+                                            <span data-i18n="slider_blur_h">အမြင့် H (%):</span>
+                                            <span class="slider-val" id="val-blur-h">7%</span>
+                                        </div>
+                                        <input type="range" min="3" max="22" value="7" class="studio-slider" id="slider-blur-h">
                                     </div>
                                 </div>
                             </div>
@@ -1208,33 +1198,32 @@
                             </div>
                             <div class="logo-status" id="recap-logo-status"></div>
                         </div>
-                        <!-- Row 3: Paired sliders — Size + Opacity -->
-                        <div class="vcp-paired-row style-selector-grid-2">
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="recap_logo_size_label">Logo အရွယ်အစား:</span>
-                                    <span class="slider-val" id="val-logo-scale">16%</span>
-                                </div>
-                                <input type="range" id="slider-logo-scale" min="4" max="40" step="1" value="16" class="studio-slider">
+                        <!-- Row 3: Size slider -->
+                        <div class="slider-group vcp-compact-row">
+                            <div class="slider-header">
+                                <span data-i18n="recap_logo_size_label">Logo အရွယ်အစား:</span>
+                                <span class="slider-val" id="val-logo-scale">16%</span>
                             </div>
-                            <div class="slider-group">
-                                <div class="slider-header">
-                                    <span data-i18n="recap_logo_opacity_label">Logo အလင်းဖောက်မှု:</span>
-                                    <span class="slider-val" id="val-logo-opacity">70%</span>
-                                </div>
-                                <input type="range" id="slider-logo-opacity" min="10" max="100" step="5" value="70" class="studio-slider">
-                            </div>
+                            <input type="range" id="slider-logo-scale" min="4" max="40" step="1" value="16" class="studio-slider">
                         </div>
-                        <!-- Row 4: Position pills (one row of 4) -->
-                        <div class="style-selector-row vcp-compact-row">
+                        <!-- Row 4: Opacity slider -->
+                        <div class="slider-group vcp-compact-row">
+                            <div class="slider-header">
+                                <span data-i18n="recap_logo_opacity_label">Logo အလင်းဖောက်မှု:</span>
+                                <span class="slider-val" id="val-logo-opacity">70%</span>
+                            </div>
+                            <input type="range" id="slider-logo-opacity" min="10" max="100" step="5" value="70" class="studio-slider">
+                        </div>
+                        <!-- Row 5: Position dropdown -->
+                        <div class="style-selector-row vcp-compact-row vcp-inline-field-row">
                             <span class="style-lbl hidden" data-i18n="recap_specs_title">Logo အသေးစိတ်:</span>
                             <span class="style-lbl" data-i18n="recap_logo_pos_label">Logo နေရာ:</span>
-                            <div class="pill-group sm vcp-row-4-pills" id="recap-logo-pos-picker">
-                                <button type="button" class="pill-btn active" data-pos="top-right" data-i18n="pos_top_right">အပေါ် ညာ</button>
-                                <button type="button" class="pill-btn" data-pos="top-left" data-i18n="pos_top_left">အပေါ် ဘယ်</button>
-                                <button type="button" class="pill-btn" data-pos="bottom-right" data-i18n="pos_bottom_right">အောက် ညာ</button>
-                                <button type="button" class="pill-btn" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</button>
-                            </div>
+                            <select id="recap-logo-pos-picker" class="studio-select glass-dropdown" data-i18n-aria="recap_logo_pos_label" aria-label="Logo နေရာ:">
+                                <option value="top-right" data-pos="top-right" data-i18n="pos_top_right" selected>အပေါ် ညာ</option>
+                                <option value="top-left" data-pos="top-left" data-i18n="pos_top_left">အပေါ် ဘယ်</option>
+                                <option value="bottom-right" data-pos="bottom-right" data-i18n="pos_bottom_right">အောက် ညာ</option>
+                                <option value="bottom-left" data-pos="bottom-left" data-i18n="pos_bottom_left">အောက် ဘယ်</option>
+                            </select>
                         </div>
                     </div>
                     </div>
@@ -1247,24 +1236,19 @@
     </div>
 </div>
 <div class="card glass recap-step-card recap-step hidden" id="recap-step-3" data-step="3">
-    <div class="recap-step-head">
-        <span class="recap-step-word" data-i18n="recap_step_word">အဆင့်</span>
-        <span class="step-num-pill" data-step-pill="3">3</span>
-        <span class="recap-step-dot" aria-hidden="true">·</span>
-        <span class="step-title" data-i18n="recap_step2_title">ဇာတ်လမ်းပြောမည့် မြန်မာအသံ ရွေးပါ</span>
-    </div>
     <div class="recap-step-body" id="recap-step-3-body">
 
         <div class="capsule-field">
-                                                <span class="spec-lbl" data-i18n="recap_engine_label">ဇာတ်လမ်းပြော Engine:</span>
-        <div class="pill-group sm recap-engine-row seg-capsule" id="recap-engine-picker">
-                                                <span class="seg-capsule-pill" aria-hidden="true"></span>
-                                                <button type="button" class="pill-btn capsule-seg active" data-engine="voxcpm"><span class="seg-short" aria-hidden="true">🎙️</span><span class="seg-full" data-i18n="recap_engine_voxcpm">🎙️ Persona Voice</span></button>
-                                                <button type="button" class="pill-btn capsule-seg" data-engine="gemini"><span class="seg-short" aria-hidden="true">✨</span><span class="seg-full" data-i18n="recap_engine_gemini">✨ Gemini AI</span></button>
-                                                <button type="button" class="pill-btn capsule-seg" data-engine="edge"><span class="seg-short" aria-hidden="true">🎧</span><span class="seg-full" data-i18n="recap_engine_edge">🎧 Edge TTS</span></button>
-                                                <button type="button" class="pill-btn capsule-seg hidden" data-engine="none"><span class="seg-short" aria-hidden="true">📝</span><span class="seg-full" data-i18n="recap_engine_none">📝 No Voice</span></button>
-                                            </div>
-        <p class="vcp-engine-billing-hint" id="recap-engine-billing-hint" data-i18n="recap_engine_hint_voxcpm">🎙️ Persona 12 သံကို FREE / VIP အားလုံး သုံးနိုင်ပါတယ် (Recap Credit + Voice မိနစ် ပူးတွဲကုန်ကျပါမယ်) • ကိုယ်ပိုင်အသံက VIP အတွက်သာ ဖြစ်ပါတယ်</p>
+            <span class="spec-lbl" data-i18n="recap_engine_label">ဇာတ်လမ်းပြော Engine:</span>
+            <select id="recap-engine-picker" class="studio-select glass-dropdown" data-i18n-aria="recap_engine_label" aria-label="ဇာတ်လမ်းပြော Engine:">
+                <option value="voxcpm" data-engine="voxcpm" data-i18n="recap_engine_voxcpm" selected>🎙️ Persona Voice</option>
+                <option value="gemini" data-engine="gemini" data-i18n="recap_engine_gemini">✨ Gemini AI</option>
+                <option value="edge" data-engine="edge" data-i18n="recap_engine_edge">🎧 Edge TTS</option>
+            </select>
+            <details class="vcp-engine-billing-details mt-2" id="recap-engine-billing-details">
+                <summary><span data-i18n="recap_sub_l2_title">အသေးစိတ်</span><span aria-hidden="true">▾</span></summary>
+                <p class="vcp-engine-billing-hint" id="recap-engine-billing-hint" data-i18n="recap_engine_hint_voxcpm">🎙️ Persona 12 သံကို FREE / VIP အားလုံး သုံးနိုင်ပါတယ် (Recap Credit + Voice မိနစ် ပူးတွဲကုန်ကျပါမယ်) • ကိုယ်ပိုင်အသံက VIP အတွက်သာ ဖြစ်ပါတယ်</p>
+            </details>
         </div>
                                             <div class="recap-gemini-wrap hidden mt-2" id="recap-gemini-voice-wrap">
                                                 <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
@@ -1291,9 +1275,6 @@
                                 <div id="recap-persona-area">
                                 <!-- Batch BX: Edge-engine honesty note — shown only while the Edge engine is selected (syncRecapEngineAreas) -->
                                 <p id="recap-persona-engine-note" class="hint-line hidden" data-i18n="recap_persona_note_edge">Edge အသံဖြင့် ပြောပြပါမည် — ရွေးထားသော Persona အလိုက် ကိုသီဟ သို့မဟုတ် မနီလာ အသံ ဖြစ်ပါမည်။</p>
-                                <div class="vcp-persona-head-row">
-                                    <span class="vcp-billing-badge" id="recap-voice-billing-badge" data-i18n="recap_badge_credit_plus_min">Credit + မိနစ်</span>
-                                </div>
 
                                 <!-- FIRST: My Voice (Own-voice custom upload / saved voice) -->
                                 <div class="recap-own-voice-wrap hidden mt-2" id="recap-own-voice-wrap">
@@ -1301,7 +1282,6 @@
                                         <div class="v-avatar">🎙️</div>
                                         <div class="v-info">
                                             <span class="v-name" data-i18n="recap_own_voice_name">ကိုယ်ပိုင်အသံ</span>
-                                            <span class="v-desc" data-i18n="recap_own_voice_desc">တင်ထားတဲ့ ကိုယ့်အသံနဲ့ ဇာတ်လမ်းပြောမည်</span>
                                         </div>
                                         <span class="vcp-billing-badge is-vip" id="recap-own-voice-vip-tag" data-i18n="recap_badge_vip_only">👑 VIP သီးသန့်</span>
                                         <span class="own-voice-lock-badge hidden" id="recap-own-voice-lock-badge" aria-hidden="true">🔒</span>
@@ -1550,12 +1530,6 @@
     </div>
 </div>
 <div class="card glass recap-step-card recap-step hidden" id="recap-step-4" data-step="4">
-    <div class="recap-step-head">
-        <span class="recap-step-word" data-i18n="recap_step_word">အဆင့်</span>
-        <span class="step-num-pill" data-step-pill="4">4</span>
-        <span class="recap-step-dot" aria-hidden="true">·</span>
-        <span class="step-title" data-i18n="recap_step4_title">ဖန်တီးရန်</span>
-    </div>
     <div class="recap-step-body" id="recap-step-4-body">
         <div class="recap-output-card" id="recap-step4-output">
             <div class="recap-output-frame" id="recap-step4-output-frame">
@@ -1568,20 +1542,29 @@
             </div>
             <p class="recap-output-caption" data-i18n="recap_output_caption">ပြီးမယ့် ဗီဒီယိုရဲ့ ပုံစံပါ (လက်ရှိနေရာမှ နမူနာရုပ်ပုံ) — မကြိုက်တာ ရှိရင် မဖန်တီးခင် အဆင့် ၂ မှာ ပြန်ပြင်နိုင်ပါတယ်</p>
             <div class="recap-output-facts" id="recap-step4-facts">
-                <span class="recap-fact-chip" id="recap-fact-canvas"></span>
-                <span class="recap-fact-chip" id="recap-fact-duration"></span>
-                <span class="recap-fact-chip" id="recap-fact-subs"></span>
-                <span class="recap-fact-chip" id="recap-fact-title"></span>
-                <span class="recap-fact-chip" id="recap-fact-blur"></span>
-                <span class="recap-fact-chip" id="recap-fact-quality"></span>
-                <span class="recap-fact-chip" id="recap-fact-speed"></span>
-                <span class="recap-fact-chip" id="recap-fact-mirror"></span>
+                <div class="recap-format-fact-item">
+                    <span class="recap-format-fact-label" data-i18n="recap_fact_format_label">ပုံစံ</span>
+                    <span class="recap-format-fact-val" id="recap-fact-canvas"></span>
+                </div>
+                <div class="recap-format-fact-item">
+                    <span class="recap-format-fact-label" data-i18n="recap_fact_duration_label">ကြာချိန်</span>
+                    <span class="recap-format-fact-val" id="recap-fact-duration"></span>
+                </div>
             </div>
         </div>
         <div class="recap-step4-choices" id="recap-step4-choices">
-            <span class="recap-step4-choice-title" id="recap-step4-choice-title"></span>
-            <span class="recap-step4-choice-voice" id="recap-step4-choice-voice"></span>
-            <span class="recap-step4-choice-ratio" id="recap-step4-choice-ratio"></span>
+            <div class="recap-choice-row">
+                <span class="recap-choice-label" data-i18n="recap_choice_title_label">ဗီဒီယို</span>
+                <span class="recap-step4-choice-title" id="recap-step4-choice-title"></span>
+            </div>
+            <div class="recap-choice-row">
+                <span class="recap-choice-label" data-i18n="recap_choice_voice_label">အသံ</span>
+                <span class="recap-step4-choice-voice" id="recap-step4-choice-voice"></span>
+            </div>
+            <div class="recap-choice-row">
+                <span class="recap-choice-label" data-i18n="recap_choice_ratio_label">အချိုးအစား</span>
+                <span class="recap-step4-choice-ratio" id="recap-step4-choice-ratio"></span>
+            </div>
         </div>
         <div class="recap-step4-quote vcp-dual-quote-card">
             <div class="vcp-quote-voice-top">
@@ -1601,7 +1584,7 @@
         </div>
         <div class="recap-step4-quote-breakdown text-xs text-muted hidden" id="recap-step4-quote-breakdown"></div>
         <div class="recap-step4-eta text-xs text-muted hidden" id="recap-step4-eta"></div>
-        <div class="style-selector-row mt-2">
+        <div class="style-selector-row mt-2 hidden" id="recap-quality-row">
             <span class="style-lbl" data-i18n="recap_quality_label">Render အရည်အသွေး:</span>
             <div class="pill-group sm" id="recap-quality-picker">
                 <button type="button" class="pill-btn active" data-quality="standard" data-i18n="recap_quality_standard">ပုံမှန် (Standard)</button>
@@ -1610,22 +1593,6 @@
             </div>
             <span class="vcp-quality-surcharge-tag" id="recap-quality-max-surcharge-tag" data-i18n="recap_max_surcharge_badge">Max = +1 Credit</span>
         </div>
-        <details class="recap-step4-more-options mt-3">
-            <summary><span data-i18n="recap_more_options_label">⚙️ အခြားရွေးချယ်စရာများ</span><span aria-hidden="true">▾</span></summary>
-            <label class="script-review-row mt-2" for="recap-split-toggle">
-                <input type="checkbox" id="recap-split-toggle">
-                <span data-i18n="recap_split_label">✂️ ဗီဒီယိုကို အပိုင်းခွဲ ထုတ်မည်</span>
-            </label>
-            <div class="pill-group sm hidden mt-2" id="recap-split-minutes-wrap">
-                <span class="spec-lbl" data-i18n="recap_split_minutes_label">တစ်ပိုင်း ကြာချိန်:</span>
-                <span id="recap-split-minutes-picker">
-                    <button type="button" class="pill-btn" data-split-min="2" data-i18n="recap_split_min_2">2 မိနစ်</button>
-                    <button type="button" class="pill-btn active" data-split-min="3" data-i18n="recap_split_min_3">3 မိနစ်</button>
-                    <button type="button" class="pill-btn" data-split-min="5" data-i18n="recap_split_min_5">5 မိနစ်</button>
-                </span>
-            </div>
-            <p id="recap-split-cost-hint" class="hidden mt-2 recap-cost-hint"></p>
-        </details>
         <div class="vcp-insuf-min-card hidden" id="recap-insufficient-minutes-box" role="alert">
             <div class="vcp-insuf-min-title" id="recap-insuf-min-title" data-i18n="recap_insuf_min_title">⚠️ Voice မိနစ် မလုံလောက်သေးပါ</div>
             <p class="vcp-insuf-min-desc" id="recap-insuf-min-desc"></p>
@@ -1637,7 +1604,7 @@
         </div>
                             <div class="recap-action-cta-wrap mt-3">
                                 <button class="btn gold-gradient-btn massive-btn" id="btn-start-recap">
-            <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည် (1 Credit)</span>
+            <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည်</span>
         </button>
                             </div>
         <!-- Batch CI: persistent reason under the CTA — shown while a
@@ -1710,7 +1677,6 @@
             <div class="card-label" data-i18n="recap_parts_title">✂️ ခွဲထားသော အပိုင်းများ</div>
             <div class="dl-sub-buttons mt-2" id="recap-parts-list"></div>
         </div>
-        <p id="recap-split-note" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
         <p id="recap-blur-warning" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
         <p id="recap-fallback-note" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
         <p id="recap-cost-line" class="hidden mt-2" style="font-size:12px; opacity:0.85;"></p>
@@ -3450,7 +3416,7 @@
              Clicks forward to the real button — no duplicate logic. -->
         <div class="sticky-cta-bar hidden" id="sticky-cta-recap">
             <button type="button" class="btn gold-gradient-btn sticky-cta-btn" id="btn-start-recap-sticky">
-                <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည် (1 Credit)</span>
+                <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည်</span>
             </button>
         </div>
 

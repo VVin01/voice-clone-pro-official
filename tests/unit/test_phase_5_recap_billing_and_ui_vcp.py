@@ -1048,10 +1048,10 @@ def test_p5_frontend_steps_3_4_and_option_b_controls_present():
     # Cache token pinned
     assert INDEX_HTML.count("20261118_r164") == 4
 
-    # Step 3 controls & badges
+    # Step 3 controls & badges (Round 12 C3: billing badge removed; hint moved into collapsed details)
     for eid in (
+        "recap-engine-billing-details",
         "recap-engine-billing-hint",
-        "recap-voice-billing-badge",
         "recap-own-voice-vip-tag",
         "btn-recap-own-voice-vip",
         "btn-open-recap-lang-sheet",
@@ -1059,6 +1059,7 @@ def test_p5_frontend_steps_3_4_and_option_b_controls_present():
         "recap-lang-sheet-grid",
     ):
         assert f'id="{eid}"' in INDEX_HTML, eid
+    assert 'id="recap-voice-billing-badge"' not in INDEX_HTML
 
     # Step 4 Dual Quote Card, surcharge badge, 1-tap insufficient minutes fallback, Result & Failure
     for eid in (

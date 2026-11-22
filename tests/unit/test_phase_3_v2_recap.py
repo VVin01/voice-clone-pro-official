@@ -35,15 +35,15 @@ def test_v2_phase3_must_fix_1_overlay_grip_separation_and_unclipped_stage():
         "#tab-recap #preview-sub-box {",
         "pointer-events: none;",
         "#tab-recap #preview-sub-box .sub-grip",
-        "right: 6px;",
+        "left: 0;",
         "pointer-events: auto;",
         "#tab-recap #preview-blur-box.is-near-top .drag-grip-icon",
         "#tab-recap #preview-sub-box.is-near-top .sub-grip",
     ):
         assert marker in PHASE3_CSS, marker
 
-    # Preview = Output defaults preserved untouched in index.html
-    assert 'id="preview-blur-box" style="top: 85%; height: 7%;' in INDEX_HTML
+    # Round 12 Part A: default untouched blur visual sits above subtitle (72%); slider default remains 85
+    assert 'id="preview-blur-box" style="top: 72%; height: 7%;' in INDEX_HTML
     assert "bottom: 5%" in STYLE_CSS or "recapSubMargin" in APP_JS
 
 
@@ -124,6 +124,15 @@ _RETIRED_VIP_STATIC_IDS = {
     "val-crop-bottom", "val-crop-left", "val-crop-right", "val-crop-top",
     # Round 11: retired 12-card subtitle style grid (dropdown-only selector)
     "sub-style-cards-grid",
+    # Round 12 (B3, C3, D2, D6): custom-font inline row, voice billing badge,
+    # secondary Step-4 fact chips, and split-video UI removed.
+    "btn-sub-font-clear", "btn-sub-font-upload",
+    "recap-fact-blur", "recap-fact-mirror", "recap-fact-quality",
+    "recap-fact-speed", "recap-fact-subs", "recap-fact-title",
+    "recap-split-cost-hint", "recap-split-minutes-picker",
+    "recap-split-minutes-wrap", "recap-split-note", "recap-split-toggle",
+    "recap-sub-font-custom-row", "recap-voice-billing-badge",
+    "sub-font-custom-status",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "applyRecapMasterPreset('fb_story')",

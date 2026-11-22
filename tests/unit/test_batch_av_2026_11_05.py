@@ -118,8 +118,7 @@ SURVIVING_IDS = [
     "recap-preview-speed-group", "recap-speed-picker",
     # Batch AZ-11: "recap-lang-picker" (the AX-5 pill group) is
     # retired — the surviving language control is "recap-lang-more".
-    "recap-lang-more", "recap-split-toggle", "recap-split-minutes-wrap",
-    "recap-split-minutes-picker", "recap-split-cost-hint",
+    "recap-lang-more",
     "recap-script-review-toggle",
     "btn-start-recap", "recap-unverified-warning", "prefs-saved-note",
     "recap-inline-status", "recap-inline-status-text",
@@ -131,7 +130,7 @@ SURVIVING_IDS = [
     "recap-result-player", "btn-recap-dl-video", "btn-recap-send-telegram",
     "recap-oversize-note", "btn-recap-dl-audio", "btn-recap-dl-srt",
     "btn-recap-dl-script", "recap-parts-wrap", "recap-parts-list",
-    "recap-split-note", "recap-blur-warning", "recap-fallback-note",
+    "recap-blur-warning", "recap-fallback-note",
     "recap-cost-line", "recap-expiry-note", "recap-failed-box",
     "recap-failed-error", "recap-failed-refund", "btn-recap-retry",
     "recap-retry-note", "recap-retry-upload-missing",
@@ -298,8 +297,7 @@ def test_av_step3_holds_voice_speed_language_script_review():
 def test_av_step4_holds_quote_quality_split_and_cta():
     step4 = _step_slice(4)
     for marker in ('id="recap-step4-thumb"', 'id="recap-step4-quote-credits"',
-                   'id="recap-quality-picker"', 'id="recap-split-toggle"',
-                   'id="recap-split-minutes-wrap"', 'id="recap-split-cost-hint"',
+                   'id="recap-quality-picker"',
                    'id="btn-start-recap"', 'id="recap-unverified-warning"'):
         assert marker in step4, marker
     # The large quote is fed by the same function that paints the CTA.
@@ -334,13 +332,13 @@ def test_av_step_module_behaviour():
 # ── Drag handles: differentiated and off the subtitle text ──
 
 def test_av_grips_differentiated_and_offset():
-    # Batch DD: the title grip is gone with the title box.
-    assert "📝 ⠿" in TAB and "🏷️ ⠿" not in TAB and "🌫️ ⠿" in TAB
-    rule = re.search(r"\.preview-sub-box \.sub-grip,\s*\.preview-title-box \.title-grip \{([^}]+)\}",
-                     STYLE_CSS)
-    assert rule, "grip offset rule missing"
-    assert "position: absolute" in rule.group(1)
-    assert "translate(-50%, calc(-100% - 3px))" in rule.group(1)
+    # Round 12 (Part A): text-only short labels on both overlay corner tags,
+    # no duplicate .blur-label, and top-left external positioning.
+    assert "data-i18n=\"sub_box_short_label\">Subtitle<" in TAB
+    assert "data-i18n=\"blur_handle_short\">Blur<" in TAB
+    assert "blur-label" not in TAB
+    rule = re.search(r"#tab-recap #preview-sub-box \.sub-grip\s*\{([^}]+)\}", STYLE_CSS)
+    assert rule and "position: absolute" in rule.group(1) and "left: 0;" in rule.group(1)
 
 
 # ── i18n: new strings exist in BOTH locales ──
@@ -367,7 +365,7 @@ def test_av_touch_targets_and_text_fit_guards():
     assert re.search(r"\.recap-steps-nav-item \{[^}]*min-height: 44px", STYLE_CSS)
     assert re.search(r"\.recap-fine-header \{[^}]*min-height: 48px", STYLE_CSS)
     assert ".recap-steps-nav-label" not in STYLE_CSS
-    assert re.search(r"\.recap-step4-choice-title \{[^}]*text-overflow: ellipsis", STYLE_CSS)
+    assert re.search(r"\.recap-step4-choice-title[^{]*\{[^}]*text-overflow: ellipsis", STYLE_CSS)
     # Step-4 quote is genuinely large.
     assert re.search(r"\.recap-step4-quote-value \{[^}]*font-size: 30px", STYLE_CSS)
     # URL field uses the card's full width (flex guard + shrink-0 button).

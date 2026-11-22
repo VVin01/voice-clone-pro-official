@@ -166,12 +166,13 @@ async def test_au_purchased_submit_passes_quality_through(
     with caplog.at_level(logging.INFO, logger="app.webapp.api"):
         resp, req = await _submit(db_session, recap_runner, user, quality)
 
-    assert req.render_quality == quality
-    assert recap_runner[0]["req"].render_quality == quality
+    # Round 12 (Part D5): render quality chooser is admin-only; non-admin PURCHASED clamps to standard.
+    assert req.render_quality == "standard"
+    assert recap_runner[0]["req"].render_quality == "standard"
     job = await db_session.get(Job, resp["recap_id"])
     state = json.loads(job.recap_config)
-    assert state["config"]["render_quality"] == quality
-    assert _clamp_logs(caplog) == []
+    assert state["config"]["render_quality"] == "standard"
+    assert len(_clamp_logs(caplog)) == 1
 
 
 @pytest.mark.asyncio
@@ -219,9 +220,17 @@ def test_au_execution_tier_flag_passes_paid_and_admin(caplog, quality):
         applied = api_mod._clamp_recap_render_quality(
             req, user_id=890202, is_vip=True
         )
-    assert applied == quality
-    assert req.render_quality == quality
-    assert _clamp_logs(caplog) == []
+    assert applied == "standard"
+    assert req.render_quality == "standard"
+    assert len(_clamp_logs(caplog)) == 1
+
+    admin_req = _req(quality)
+    with caplog.at_level(logging.INFO, logger="app.webapp.api"):
+        applied_admin = api_mod._clamp_recap_render_quality(
+            admin_req, user_id=890202, is_admin=True
+        )
+    assert applied_admin == quality
+    assert admin_req.render_quality == quality
 
 
 def test_au_helper_reuses_purchased_or_admin_tier_test(monkeypatch):
@@ -230,7 +239,7 @@ def test_au_helper_reuses_purchased_or_admin_tier_test(monkeypatch):
     )
     req = _req("max")
     assert (
-        api_mod._clamp_recap_render_quality(req, user=purchased) == "max"
+        api_mod._clamp_recap_render_quality(req, user=purchased) == "standard"
     )
 
     admin = SimpleNamespace(
@@ -264,7 +273,6 @@ def test_au_client_quality_lock_uses_account_category_and_admin():
         APP_JS.index("function canUseRecapRenderQuality()") :
         APP_JS.index("window.refreshRecapQualityLock")
     ]
-    assert 'u.account_category === "PURCHASED"' in block
     assert "u.is_admin" in block
 
 
@@ -294,9 +302,9 @@ def test_au_client_profile_load_and_picker_guard_refresh_lock():
     assert APP_JS.count("refreshRecapQualityLock();") >= 4
     handler = APP_JS[
         APP_JS.index("// 6d. Render quality pills") :
-        APP_JS.index("// 6e. Narration engine pills")
+        APP_JS.index("// 6e. Narration engine select")
     ]
-    assert "if (btn.disabled) return;" in handler
+    assert "if (btn.disabled || !canUseRecapRenderQuality()) return;" in handler
 
 
 def test_au_client_locked_pills_are_dimmed_with_lock_marker():

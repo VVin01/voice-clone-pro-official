@@ -276,13 +276,13 @@ def test_miniapp_split_cost_hint_contracts():
     app_js = _read("app/webapp/static/js/app.js")
     html = _read("app/webapp/static/index.html")
     i18n_js = _read("app/webapp/static/js/i18n.js")
-    # Estimate + hint logic in the client, using second-level 1 Credit = 1 Min Final Output math.
+    # Estimate + hint logic in the client; Round 12 D6 removed #recap-split-cost-hint UI.
     assert "function estimateRecapSegmentParts(" in app_js
     assert "function updateRecapSplitCostHint()" in app_js
     assert "Math.round((effSec / 60) * 100) / 100" in app_js
-    assert 'id="recap-split-cost-hint"' in html
+    assert 'id="recap-split-cost-hint"' not in html
     assert 'tf("recap_segmented_cost"' in app_js
-    assert "data.parts_count" in app_js
+    assert "split_video: false" in app_js
     for key in (
         "recap_split_cost_estimate",
         "recap_split_cost_low_balance",

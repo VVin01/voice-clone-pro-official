@@ -160,14 +160,15 @@ def test_missing_font_file_falls_back_to_noto_sans(tmp_path, monkeypatch, caplog
 
 def test_picker_has_the_four_options_with_padauk_active():
     block = re.search(
-        r'id="recap-sub-font-picker">(.*?)</div>', INDEX_HTML, re.DOTALL
+        r'id="recap-sub-font-picker"[^>]*>(.*?)</select>', INDEX_HTML, re.DOTALL
     )
     assert block is not None
     body = block.group(1)
     for key in KEYS:
         assert f'data-font="{key}"' in body
-    m = re.search(r'<button[^>]*data-font="padauk"[^>]*>', body)
-    assert m is not None and "active" in m.group(0)
+    m = re.search(r'<option[^>]*value="padauk"[^>]*>', body)
+    assert m is not None and "selected" in m.group(0)
+    assert 'value="custom"' in body
     assert 'data-font="default"' not in body
     assert 'data-font="serif"' not in body
 

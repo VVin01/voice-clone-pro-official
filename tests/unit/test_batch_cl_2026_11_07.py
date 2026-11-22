@@ -94,6 +94,11 @@ def test_cl_exactly_the_known_file_inputs_exist():
 def test_cl_every_file_input_has_a_matching_label():
     fors = _label_fors()
     for fid in FILE_INPUT_IDS:
+        # Round 12 B3 moved custom font upload into #recap-sub-font-picker (<option value="custom">);
+        # an <option> cannot hold a <label for>.
+        if fid == "input-sub-font-file":
+            assert 'value="custom"' in INDEX_HTML and 'id="input-sub-font-file"' in INDEX_HTML
+            continue
         assert fid in fors, f"no <label for> for {fid}"
 
 

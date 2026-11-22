@@ -348,8 +348,6 @@ function runForLang(lang) {{
   ctx.refreshRecapStep4Choices();
   ctx.refreshRecapStep4Facts();
   const gemVoice = els['recap-step4-choice-voice'].textContent;
-  const subFact = els['recap-fact-subs'].textContent;
-  const speedFact = els['recap-fact-speed'].textContent;
 
   ctx.state.recapTtsEngine = 'edge';
   ctx.refreshRecapStep4Choices();
@@ -363,21 +361,20 @@ function runForLang(lang) {{
   ctx.refreshRecapStep4Choices();
   const cloneVoice = els['recap-step4-choice-voice'].textContent;
 
-  return {{ gemVoice, edgeVoice, personaVoice, cloneVoice, subFact, speedFact }};
+  return {{ gemVoice, edgeVoice, personaVoice, cloneVoice }};
 }}
 console.log(JSON.stringify({{ my: runForLang('my'), en: runForLang('en') }}));
 """
     res = _run_node(script)
-    assert 'id="recap-fact-speed"' in INDEX_HTML
-    assert 'id="recap-fact-mirror"' in INDEX_HTML
+    assert 'id="recap-fact-canvas"' in INDEX_HTML
+    assert 'id="recap-fact-duration"' in INDEX_HTML
+    assert 'id="recap-fact-speed"' not in INDEX_HTML
+    assert 'id="recap-fact-mirror"' not in INDEX_HTML
 
     assert "Gemini" in res["my"]["gemVoice"] and "ကိုအာကာ" in res["my"]["gemVoice"]
     assert "ကိုမင်း" not in res["my"]["gemVoice"]
     assert "Gemini" in res["en"]["gemVoice"] and "Ko Arkar" in res["en"]["gemVoice"]
     assert "Ko Min" not in res["en"]["gemVoice"]
-
-    assert "19pt" in res["my"]["subFact"] and "19pt" in res["en"]["subFact"]
-    assert "+20%" in res["my"]["speedFact"] and "+20%" in res["en"]["speedFact"]
 
     assert "ကိုမင်း" in res["my"]["edgeVoice"] and "Edge" in res["my"]["edgeVoice"]
     assert "Ko Min" in res["en"]["edgeVoice"] and "Edge" in res["en"]["edgeVoice"]
@@ -504,9 +501,7 @@ const mkGroup = (id) => {{
   els[id] = {{ id, querySelector: (s) => s === '.dd-acc-val' ? valEl : null, _val: valEl, classList: mkClassList() }};
 }};
 ['recap-preview-ratio-group','recap-subtitle-group','recap-blur-group','recap-logo-group'].forEach(mkGroup);
-['recap-fact-aspect','recap-fact-ratio','recap-fact-fill','recap-fact-zoom',
- 'recap-fact-subs','recap-fact-title','recap-fact-blur','recap-fact-quality',
- 'recap-fact-speed','recap-fact-mirror'].forEach(id => (els[id] = {{ id, innerText: '', textContent: '', classList: mkClassList() }}));
+['recap-fact-canvas', 'recap-fact-duration'].forEach(id => (els[id] = {{ id, innerText: '', textContent: '', classList: mkClassList() }}));
 
 const ctx = {{
   document: {{ getElementById: (id) => els[id] || null, querySelector: () => null }},
@@ -516,19 +511,20 @@ const ctx = {{
 }};
 vm.runInNewContext(i18nSrc + '; globalThis.__tr = translations;', ctx);
 ctx.t = (k) => (ctx.__tr.en && ctx.__tr.en[k]) || k;
+ctx.formatRecapQuoteDuration = (d) => '0:15';
 vm.runInNewContext({json.dumps(fns)}, ctx);
 
 ctx.refreshRecapStep2Summary();
 ctx.refreshRecapStep4Facts();
 const on = {{
   ratioAcc: els['recap-preview-ratio-group']._val.innerText || els['recap-preview-ratio-group']._val.textContent,
-  step4: els['recap-fact-mirror'].textContent,
+  canvasFact: els['recap-fact-canvas'].textContent,
 }};
 console.log(JSON.stringify({{ on }}));
 """
     res = _run_node(script)
     assert res["on"]["ratioAcc"] == "9:16 · blur"
-    assert "Mirror: on" in res["on"]["step4"]
+    assert res["on"]["canvasFact"] == "1080×1920 · 9:16"
 
 
 # ── Item 6: Round 10 B4 removed fill picker & fill disabled note ────────────

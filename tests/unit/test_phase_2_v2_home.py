@@ -140,6 +140,15 @@ _RETIRED_VIP_STATIC_IDS = {
     "slider-canvas-seek", "slider-crop-bottom", "slider-crop-left",
     "slider-crop-right", "slider-crop-top", "val-crop-bottom", "val-crop-left",
     "val-crop-right", "val-crop-top",
+    # Round 12 (B3, C3, D2, D6): custom-font inline row, voice billing badge,
+    # secondary Step-4 fact chips, and split-video UI removed.
+    "btn-sub-font-clear", "btn-sub-font-upload",
+    "recap-fact-blur", "recap-fact-mirror", "recap-fact-quality",
+    "recap-fact-speed", "recap-fact-subs", "recap-fact-title",
+    "recap-split-cost-hint", "recap-split-minutes-picker",
+    "recap-split-minutes-wrap", "recap-split-note", "recap-split-toggle",
+    "recap-sub-font-custom-row", "recap-voice-billing-badge",
+    "sub-font-custom-status",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",

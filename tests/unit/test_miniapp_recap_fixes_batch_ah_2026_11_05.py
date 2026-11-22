@@ -74,9 +74,8 @@ def _req(**kw):
 
 def test_exactly_one_script_review_toggle():
     assert INDEX_HTML.count('id="recap-script-review-toggle"') == 1
-    # The advanced-section copy is gone; the split toggle next to it
-    # is untouched and also unique.
-    assert INDEX_HTML.count('id="recap-split-toggle"') == 1
+    # Round 12 D6: split toggle removed from Step 4 HTML.
+    assert INDEX_HTML.count('id="recap-split-toggle"') == 0
 
 
 def test_twin_toggle_fully_removed():
@@ -362,9 +361,9 @@ def test_preview_toggles_line_class_from_setting():
 def test_grip_is_a_real_touch_target():
     grip = STYLE_CSS.index(".drag-grip-icon { touch-action: none;")
     block = STYLE_CSS[grip:grip + 300]
-    assert "min-width: 30px" in block
-    assert "border-radius: 999px" in block
-    assert "background: rgba(10, 12, 18, 0.55)" in block
+    assert "min-width: 24px" in block
+    assert "border-radius: 4px" in block
+    assert "background: rgba(10, 12, 18, 0.72)" in block
 
 
 def test_vertical_drag_clamp_is_a_parameter():

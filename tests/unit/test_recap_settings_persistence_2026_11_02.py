@@ -39,7 +39,7 @@ def test_restore_is_validated_not_blind():
     assert "if (allowed.includes(saved[k])) state[k] = saved[k];" in APP_JS
     assert 'typeof saved[k] === "boolean"' in APP_JS
     assert "recapCropTop: [0, 35]" in APP_JS
-    assert "recapSplitMinutes: [1, 10]" in APP_JS
+    assert "recapSplitMinutes: [1, 10]" not in APP_JS
 
 
 def test_restore_called_inside_setup_after_handlers():
@@ -62,11 +62,10 @@ def test_restore_resyncs_ui_controls():
     for needle in [
         'syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio)',
         "syncLockedRecapDefaultsToState();",
-        'syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine)',
+        'if (engineSelEl) engineSelEl.value = state.recapTtsEngine || "gemini";',
         # Batch AZ-11: the subtitle-style picker is a <select> now —
         # the restore re-sync sets its value directly (same state).
         'if (subStyleSel) subStyleSel.value = state.recapSubStyle;',
-        "splitToggleEl.checked = !!saved.recapSplitEnabled",
         "syncSubtitleFontSize(state.recapFontSize || 16)",
         "syncSubtitleLines(state.recapLines || 1)",
     ]:
@@ -79,7 +78,7 @@ def test_snapshot_covers_payload_fields():
     for field in ["recapRatio", "recapRatioFill", "recapMirror", "recapZoom",
                   "recapSpeed", "recapStoryStyle", "recapBurnSubs", "recapBlurSubs",
                   "recapLogo", "recapLogoPos", "recapSubStyle", "recapSubFont",
-                  "recapFontSize", "recapLines", "recapSplitMinutes",
+                  "recapFontSize", "recapLines",
                   "recapSourceLanguage", "recapRenderQuality", "recapTtsEngine",
                   "recapGeminiVoice", "recapVoice", "recapSplitEnabled",
                   "recapBlurY", "recapBlurH", "recapSubY"]:

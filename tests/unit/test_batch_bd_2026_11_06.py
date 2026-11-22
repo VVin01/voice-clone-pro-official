@@ -83,22 +83,13 @@ def test_speed_capsule_blur_repaired():
 
 def test_engine_picker_is_a_one_row_capsule():
     seg = _picker("recap-engine-picker", "recap-gemini-voice-wrap")
-    assert "seg-capsule" in INDEX_HTML.split('id="recap-engine-picker"', 1)[0].rsplit('class="', 1)[1]
-    assert '<span class="seg-capsule-pill" aria-hidden="true"></span>' in seg
-    assert seg.count("capsule-seg") == 4
-    # Behaviour hooks untouched.
-    for engine in ("voxcpm", "gemini", "edge", "none"):
-        assert f'data-engine="{engine}"' in seg
-    # Full labels keep their i18n keys — on the .seg-full span, NOT
-    # on the button (setLanguage's innerText pass would wipe the
-    # span structure if the key sat on the button itself).
-    for key in ("recap_engine_voxcpm", "recap_engine_gemini", "recap_engine_edge", "recap_engine_none"):
-        assert f'<span class="seg-full" data-i18n="{key}">' in seg
-    assert not re.search(r'<button[^>]*data-i18n="recap_engine_', INDEX_HTML)
-    # Compact labels are the labels' own emoji — no new strings.
-    for glyph in ("🎙️", "✨", "🎧", "📝"):
-        assert f'<span class="seg-short" aria-hidden="true">{glyph}</span>' in seg
-    # The field label moved above the track (speed-row pattern).
+    # Round 12 (Part C2): Step 3 engine picker is a <select> dropdown (no "none" option).
+    assert '<select id="recap-engine-picker"' in INDEX_HTML
+    for engine in ("voxcpm", "gemini", "edge"):
+        assert f'value="{engine}"' in seg and f'data-engine="{engine}"' in seg
+    assert 'value="none"' not in seg
+    for key in ("recap_engine_voxcpm", "recap_engine_gemini", "recap_engine_edge"):
+        assert f'data-i18n="{key}"' in seg
     field = INDEX_HTML.split('<div class="capsule-field">', 1)[1].split('id="recap-gemini-voice-wrap"', 1)[0]
     assert 'data-i18n="recap_engine_label"' in field
 
@@ -140,7 +131,6 @@ def test_seg_capsule_movers_and_call_sites():
     assert 'capsule.querySelector(".capsule-seg.active")' in APP_JS
     # Global lifecycle re-measures + picker-level hooks.
     assert APP_JS.count("moveSegPills()") >= 8
-    assert APP_JS.count('moveSegPill(document.getElementById("recap-engine-picker"))') == 2
     assert APP_JS.count('moveSegPill(document.getElementById("story-style-picker-quick"))') == 1
 
 

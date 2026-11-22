@@ -32,7 +32,7 @@ from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import case, delete, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -594,26 +594,31 @@ def _clamp_recap_render_quality(
     user: Optional[User] = None,
     user_id: Optional[int] = None,
     is_vip: Optional[bool] = None,
+    is_admin: Optional[bool] = None,
 ) -> str:
-    """Batch AU: render quality is a paid-tier benefit.
+    """Batch AU + Round 12 (Part D5): render quality chooser is admin-only.
 
-    FREE users always render with ``standard``; PURCHASED users and
-    admins keep the quality they selected. This is a clamp, never a
-    rejection: the requested job still runs, just with the free tier's
-    encoder preset. ``is_vip`` is the execution paths' existing
-    purchased-or-admin flag; submit paths pass the user and reuse the
-    same tier test as the custom-logo gate above.
+    Non-admin users (both FREE and PURCHASED/VIP) always render with
+    ``standard``; admins keep the quality they selected. This is a clamp,
+    never a rejection: the requested job still runs with ``standard``.
     """
     if req is None:
         return "standard"
-    if is_vip is None:
-        is_vip = _can_use_custom_logo(user) if user is not None else False
+    if is_admin is None:
+        if user is not None:
+            is_admin = bool(settings.is_admin(user.id))
+        elif user_id is not None:
+            is_admin = bool(settings.is_admin(user_id))
+        else:
+            is_admin = False
+    else:
+        is_admin = bool(is_admin)
     requested = req.render_quality
-    if is_vip or requested == "standard":
+    if is_admin or requested == "standard":
         return requested
     req.render_quality = "standard"
     logger.info(
-        "Recap render quality clamped for user %s: requested=%s applied=standard",
+        "Recap render quality clamped for non-admin user %s: requested=%s applied=standard",
         user_id if user_id is not None else (user.id if user is not None else None),
         requested,
     )
@@ -2283,6 +2288,7 @@ def _restore_script_ready_from_db(job, user=None) -> Optional[dict]:
         return None
     try:
         cfg = RecapConfigRequest(**state["config"])
+        _clamp_recap_render_quality(cfg, user_id=job.user_id)
     except Exception:
         return None
     source_url = getattr(job, "source_audio_path", None) or job.input_text or ""
@@ -2860,6 +2866,7 @@ def _recap_redispatch_plan(job, user, *, restore_credit_state: bool = True) -> d
     state = _load_persisted_recap_state(job)
     if state is not None:
         cfg = RecapConfigRequest(**state["config"])
+        _clamp_recap_render_quality(cfg, user_id=job.user_id)
         is_vip = bool(state.get("is_vip"))
         phase = state.get("phase") or ("script" if cfg.script_review else "full")
         credit_deducted = bool(state.get("credit_deducted")) if restore_credit_state else False
@@ -7360,7 +7367,7 @@ class RecapConfigRequest(BaseModel):
         return max(4, min(40, strength))
 
     @model_validator(mode="after")
-    def _clamp_blur_x(self):
+    def _clamp_blur_x(self, info: ValidationInfo):
         # Batch AG: keep the blur box inside the picture — blur_x is
         # clamped against the effective width (the submitted blur_w,
         # or the legacy 92 default when blur_w is absent) instead of
@@ -7384,6 +7391,17 @@ class RecapConfigRequest(BaseModel):
             self.crop_bottom = 12
             self.crop_left = 0
             self.crop_right = 0
+        # Round 12 (Part D5): force render_quality="standard" for non-admins when
+        # validation context identifies the caller (admin requests keep theirs).
+        ctx = info.context if info is not None and isinstance(info.context, dict) else None
+        if ctx is not None:
+            if "is_admin" in ctx:
+                if not bool(ctx["is_admin"]):
+                    self.render_quality = "standard"
+            elif "user" in ctx:
+                ctx_user = ctx.get("user")
+                if not (ctx_user is not None and settings.is_admin(ctx_user.id)):
+                    self.render_quality = "standard"
         return self
 
     @field_validator("protection_level")
@@ -8394,6 +8412,9 @@ async def _execute_recap_background_job(
     # split). Clamping the shared request here also covers configs
     # restored from a persisted job or a script-review snapshot.
     _clamp_recap_render_quality(req, user_id=user_id, is_vip=is_vip)
+    if not (user_id is not None and settings.is_admin(user_id)):
+        entry["max_quality_surcharge"] = 0
+        entry["render_quality"] = "standard"
     # Batch AW: the same execution choke point for the narration
     # engine — a free-tier job can never execute with clone narration,
     # however its config was persisted.
@@ -10825,7 +10846,7 @@ async def get_recap_eta_estimate(
     Unknown engine/quality values degrade to the product defaults —
     this is a display hint, never a gate."""
     quality = str(render_quality or "standard").strip().lower()
-    if quality not in recap_eta.QUALITY_FACTOR:
+    if quality not in recap_eta.QUALITY_FACTOR or not settings.is_admin(user.id):
         quality = "standard"
     eta_range = await _recap_submit_eta_range(tts_engine, duration_seconds, quality)
     return {"eta_range_seconds": eta_range}
@@ -11201,6 +11222,8 @@ async def render_recap_job(
         raise HTTPException(status_code=409, detail="Recap job cannot be resumed (source missing)")
 
     req = RecapConfigRequest(**snapshot)
+    _clamp_recap_render_quality(req, user=user, user_id=user.id)
+    entry["render_quality"] = req.render_quality
     entry["script_ready"] = False
     entry["status"] = "RUNNING"
     entry["eta_run_started_at"] = time.time()

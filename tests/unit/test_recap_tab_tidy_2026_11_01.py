@@ -73,7 +73,7 @@ def test_engine_picker_lives_in_step3_voice_card():
 
 def test_canvas_toolbar_and_ratio_docked_in_step2():
     step2 = HTML.index('id="recap-step-2"')
-    step3 = HTML.index('data-i18n="recap_step2_title"')
+    step3 = HTML.index('id="recap-step-3"')
     for el in ('id="recap-preview-ratio-group"', 'id="recap-mockup-wrap"',
                'id="recap-preview-controls-group"', 'id="canvas-no-thumb"'):
         assert step2 < HTML.index(el) < step3, el
@@ -85,7 +85,7 @@ def test_canvas_toolbar_and_ratio_docked_in_step2():
 def test_advanced_sections_redistributed_into_steps():
     # Batch AV: the advanced accordion was dissolved into the steps —
     # the transform group into Step 2's detail expandable, source
-    # language into Step 3, split into Step 4 — each section keeping
+    # language into Step 3, split removed in Round 12 D6 — each section keeping
     # its place in the overall flow.
     assert 'id="recap-advanced-accordion"' not in HTML
     assert 'id="recap-adv-section-frame"' not in HTML
@@ -97,7 +97,7 @@ def test_advanced_sections_redistributed_into_steps():
     # AZ-11: the language control is the compact dropdown now (the
     # pill group is retired); it still lives in Step 3.
     assert step3 < HTML.index('id="recap-lang-more"') < step4
-    assert HTML.index('id="recap-split-toggle"') > step4
+    assert 'id="recap-split-toggle"' not in HTML
 
 
 def test_story_style_picker_has_one_home_in_step3():
@@ -259,7 +259,8 @@ def test_split_minutes_use_western_digits():
     assert tr["my"]["recap_split_min_2"] == "2 မိနစ်"
     assert tr["my"]["recap_split_min_3"] == "3 မိနစ်"
     assert tr["my"]["recap_split_min_5"] == "5 မိနစ်"
-    assert ">2 မိနစ်<" in HTML and ">3 မိနစ်<" in HTML and ">5 မိနစ်<" in HTML
+    # Round 12 D6: split-video UI removed from Step 4 HTML.
+    assert 'id="recap-split-minutes-picker"' not in HTML
 
 
 def test_cache_buster_bumped_for_tidy():
@@ -289,36 +290,19 @@ def test_no_media_blur_box_is_label_less():
     # its label text otherwise stacks onto the subtitle sample.
     assert 'blurBoxEl.classList.toggle("no-media", !mediaVisible)' in APP_JS
     assert ".preview-blur-box.no-media { background: rgba(120, 130, 150, 0.16); }" in CSS
-    # Presentation only: the box and its state defaults are untouched.
-    assert 'id="preview-blur-box" style="top: 85%; height: 7%;' in HTML
-    assert 'data-i18n="blur_box_label"' in HTML
+    # Round 12 Part A: default untouched visual offset sits above subtitle (72%)
+    # and uses single top-left short tag (blur_handle_short); .blur-label is removed.
+    assert 'id="preview-blur-box" style="top: 72%; height: 7%;' in HTML
+    assert 'data-i18n="blur_handle_short"' in HTML
+    assert 'class="blur-label"' not in HTML
 
 
 # ── Return pass 2 (real-source findings F1–F4) ──────────────────────
 
 def test_blur_label_paints_only_while_editing():
-    # F1: the collision was a MEDIA-state defect too — the label is an
-    # editing affordance, hidden by default in every state...
-    m = re.search(r"\.preview-blur-box \.blur-label \{([^}]*)\}", CSS)
-    assert m and "display: none" in m.group(1)
-    # ...and shown only in its editing contexts: Mask toolbar tab
-    # active, the box being dragged/resized, or hover.
-    for sel in (".preview-blur-box.label-on .blur-label",
-                ".preview-blur-box.is-dragging .blur-label",
-                ".preview-blur-box:hover .blur-label"):
-        assert sel in CSS, sel
-    # Shown, it rides just above the blur band so it never shares the
-    # subtitle sample's centred text line at the shared default Y=85%.
-    shown = re.search(
-        r"\.preview-blur-box\.label-on \.blur-label,\s*"
-        r"\.preview-blur-box\.is-dragging \.blur-label,\s*"
-        r"\.preview-blur-box:hover \.blur-label \{([^}]*)\}", CSS)
-    assert shown and "position: absolute" in shown.group(1)
-    assert shown and "bottom: calc(100% + 1px)" in shown.group(1)
-    # Batch AV rewire: the fine-expandable toggle now drives
-    # .label-on (the Mask tab is gone; the blur group lives in the
-    # detail panel, and the label paints while that panel is open).
-    # Resizing still reuses the drag class for the duration.
+    # Round 12 Part A replaces .blur-label with the external top-left .drag-grip-icon
+    # ("Blur" via blur_handle_short), while preserving .label-on and .is-dragging hooks.
+    assert ".blur-label" not in CSS
     assert 'blurBox.classList.toggle("label-on", open)' in APP_JS
     assert 'previewBlur.classList.add("is-dragging")' in APP_JS
     assert 'previewBlur.classList.remove("is-dragging")' in APP_JS

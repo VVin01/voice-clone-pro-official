@@ -260,7 +260,7 @@ const translations = {
         recap_step2_title: "ဇာတ်လမ်းပြောမည့် မြန်မာအသံ ရွေးပါ",
         recap_step_nav_preview: "Settings ချိန်ရန်",
         recap_step_nav_voice: "အသံ",
-        recap_step4_title: "ဖန်တီးရန်",
+        recap_step4_title: "စစ်ဆေးရန်",
         recap_step_word: "အဆင့်",
         recap_lang_more_label: "နောက်ထပ် ဘာသာများ…",
         recap_fine_title: "အသေးစိတ် ပြင်ရန်",
@@ -404,7 +404,7 @@ const translations = {
         telegram_bg_assurance: "✨ ဒီမှာ စောင့်နေစရာ မလိုပါ — Render ပြီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ပေးပါမည်။",
         telegram_leave_hint: "💡 ဒီစာမျက်နှာကို ပိတ်သွားလို့ ရပါတယ်။ ဗီဒီယို အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ ပို့ပေးပါမည်။",
         recap_eta_text: "⏳ ခန့်မှန်းကြာချိန် တွက်ချက်နေပါတယ်…",
-        btn_start_recap: "⚡ 1-Click Recap ဖန်တီးမည် (1 Credit)",
+        btn_start_recap: "⚡ 1-Click Recap ဖန်တီးမည်",
         btn_start_recap_credits: "⚡ 1-Click Recap ဖန်တီးမည် ({credits} Credit)",
         // Deliverables
         recap_result_title: "🎉 Pro Movie Recap အဆင်သင့်ဖြစ်ပါပြီ!",
@@ -1707,6 +1707,15 @@ const translations = {
         vip_shared_benefits_recap: "✓ Watermark မပါ · ✓ Split Parts & HD Quality · ✓ ရက် ၃၀ သက်တမ်း",
         vip_shared_benefits_combo: "✓ 10% သက်သာ · ✓ Voice + Recap Wallet နှစ်မျိုးလုံး · ✓ ရက် ၃၀ သက်တမ်း",
         vip_shared_benefits_topup: "✓ ချက်ချင်း Wallet ထဲ ထည့်ပေးသည် · ✓ VIP Features များ အားလုံး ပါဝင်သည်",
+        recap_sub_font_custom_upload: "ကိုယ်ပိုင် Font တင်မည်",
+        recap_color_target_text: "စာသား",
+        recap_color_target_outline: "အနားသတ်",
+        recap_color_target_bg: "နောက်ခံ",
+        recap_fact_format_label: "ပုံစံ",
+        recap_fact_duration_label: "ကြာချိန်",
+        recap_choice_title_label: "ဗီဒီယို",
+        recap_choice_voice_label: "အသံ",
+        recap_choice_ratio_label: "အချိုးအစား",
     },
     en: {
         // App Top Bar & Brand
@@ -1964,7 +1973,7 @@ const translations = {
         recap_step2_title: "Choose the Narrator Voice",
         recap_step_nav_preview: "Settings",
         recap_step_nav_voice: "Voice",
-        recap_step4_title: "Create",
+        recap_step4_title: "Review",
         recap_step_word: "Step",
         recap_lang_more_label: "More languages…",
         recap_fine_title: "Fine-tune Details",
@@ -2106,7 +2115,7 @@ const translations = {
         telegram_bg_assurance: "✨ No need to wait here — your finished video is delivered straight to the Telegram Bot.",
         telegram_leave_hint: "💡 You can close this page. When your video is ready, the Telegram Bot will send it to you.",
         recap_eta_text: "⏳ Estimating the time…",
-        btn_start_recap: "⚡ Create 1-Click Recap (1 Credit)",
+        btn_start_recap: "⚡ Create 1-Click Recap",
         btn_start_recap_credits: "⚡ Create 1-Click Recap ({credits} Credits)",
         // Deliverables
         recap_result_title: "🎉 Your Pro Movie Recap Is Ready!",
@@ -3409,6 +3418,15 @@ const translations = {
         vip_shared_benefits_recap: "✓ No watermark · ✓ Split Parts & HD Quality · ✓ Valid for 30 days",
         vip_shared_benefits_combo: "✓ Save 10% · ✓ Voice + Recap wallets · ✓ Valid for 30 days",
         vip_shared_benefits_topup: "✓ Instant wallet credit · ✓ Includes all VIP perks",
+        recap_sub_font_custom_upload: "Upload Custom Font",
+        recap_color_target_text: "Text",
+        recap_color_target_outline: "Outline",
+        recap_color_target_bg: "Background",
+        recap_fact_format_label: "Format",
+        recap_fact_duration_label: "Duration",
+        recap_choice_title_label: "Video",
+        recap_choice_voice_label: "Voice",
+        recap_choice_ratio_label: "Ratio",
     }
 };
 

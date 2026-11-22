@@ -441,7 +441,6 @@ const state = {
     recapSubPosBand: "bottom",
     // Batch AA: identity of the last successfully loaded source
     recapLoadedSourceKey: null,
-    recapSplitMinutes: 3,
     recapSourceLanguage: "auto",
     recapRenderQuality: "standard",
     recapTtsEngine: "gemini",
@@ -1003,7 +1002,12 @@ function refreshStickyCtas() {
         const tabActive = !!(pane && pane.classList.contains("active"));
         btn.disabled = !!src.disabled;
         const recapBlocked = p.src === "btn-start-recap" && recapJobActive();
-        if (p.src === "btn-start-recap") src.classList.toggle("hidden", recapBlocked);
+        if (p.src === "btn-start-recap") {
+            src.classList.toggle("hidden", recapBlocked);
+            const srcSpan = src.querySelector(".btn-text");
+            const stickySpan = btn.querySelector(".btn-text");
+            if (srcSpan && stickySpan) stickySpan.innerText = srcSpan.innerText;
+        }
         // Batch BO (owner 2026-11-06 19:56): the recap 1-Click CTA
         // shows ONLY while the wizard's final step (Step 4) is the
         // current step. The source button lives inside the Step 4
@@ -1776,11 +1780,9 @@ function setSubmitButtonState(kind) {
     if (span) {
         if (isCreating) {
             span.innerText = t("submit_already_creating");
-        } else if (kind === "voice" || kind === "tts") {
+        } else {
             const key = span.getAttribute ? span.getAttribute("data-i18n") : null;
             span.innerText = (key && typeof t === "function") ? t(key) : (span.dataset.acOriginal || span.innerText);
-        } else {
-            span.innerText = span.dataset.acOriginal || span.innerText;
         }
     }
     // Round 7 Item 1: when the button shows the busy creating label, suppress
@@ -2182,7 +2184,6 @@ function collectAccountPrefs() {
     const sy = document.getElementById("slider-sub-y");
     const sxEl = document.getElementById("slider-sub-x");
     const swEl = document.getElementById("slider-sub-w");
-    const splitToggle = document.getElementById("recap-split-toggle");
     const lockedCrop = recapLockedCropForRatio(state.recapRatio);
     return {
         voice_persona: state.selectedPersona,
@@ -2197,7 +2198,7 @@ function collectAccountPrefs() {
         recapLogoScale: state.recapLogoScale || 0.16,
         recapLogoOpacity: state.recapLogoOpacity || 0.70,
         recapSourceLanguage: state.recapSourceLanguage,
-        recapRenderQuality: state.recapRenderQuality,
+        recapRenderQuality: (state.user && state.user.is_admin) ? state.recapRenderQuality : "standard",
         recapTtsEngine: state.recapTtsEngine,
         recapSyncCrop: !!state.recapSyncCrop,
         recapMirror: RECAP_LOCKED_MIRROR,
@@ -2205,14 +2206,14 @@ function collectAccountPrefs() {
         recapBlurSubs: !!state.recapBlurSubs,
         recapBlurAutoDetect: state.recapBlurAutoDetect !== false,
         recapLogo: !!state.recapLogo,
-        recapSplitEnabled: !!(splitToggle && splitToggle.checked),
+        recapSplitEnabled: false,
         recapCropTop: lockedCrop.crop_top,
         recapCropBottom: lockedCrop.crop_bottom,
         recapCropLeft: lockedCrop.crop_left,
         recapCropRight: lockedCrop.crop_right,
         recapFontSize: state.recapFontSize || 13,
         recapLines: state.recapLines || 1,
-        recapSplitMinutes: state.recapSplitMinutes || 3,
+        recapSplitMinutes: 3,
         recapSubMargin: sy ? parseInt(sy.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5),
         recapSettingsVersion: 3,
         recapSubX: sxEl ? parseInt(sxEl.value) : (state.recapSubX || 50),
@@ -2277,7 +2278,7 @@ function applyAccountPrefs(prefs) {
         "recapRenderQuality", "recapTtsEngine", "recapSyncCrop", "recapMirror",
         "recapBurnSubs", "recapBlurSubs", "recapBlurAutoDetect", "recapLogo", "recapCropTop",
         "recapCropBottom", "recapCropLeft", "recapCropRight", "recapFontSize",
-        "recapLines", "recapSplitMinutes", "recapSubY", "recapBlurStrength",
+        "recapLines", "recapSubY", "recapBlurStrength",
         "recapSubMargin", "recapSettingsVersion",
         "recapSubX", "recapSubW",
         // Batch DD keys (protection, free style controls,
@@ -2290,6 +2291,7 @@ function applyAccountPrefs(prefs) {
         "savedCustomVoiceId", "savedCustomVoiceName",
     ];
     recapKeys.forEach(k => { if (prefs[k] !== undefined) state[k] = prefs[k]; });
+    if (!(state.user && state.user.is_admin)) state.recapRenderQuality = "standard";
     syncLockedRecapDefaultsToState();
     if (typeof syncSavedCustomVoiceUi === "function") syncSavedCustomVoiceUi();
     state.recapSpeed = normalizeSpeedOption(state.recapSpeed);
@@ -4560,7 +4562,10 @@ function refreshLogoUi() {
         toggleBtn.classList.toggle("logo-locked", !canUse);
     }
     const posPicker = document.getElementById("recap-logo-pos-picker");
-    if (posPicker) posPicker.classList.toggle("logo-locked", !canUse);
+    if (posPicker) {
+        posPicker.classList.toggle("logo-locked", !canUse);
+        posPicker.disabled = !canUse;
+    }
 
     const controls = document.getElementById("recap-logo-controls");
     if (controls) controls.classList.toggle("hidden", !canUse);
@@ -4594,31 +4599,30 @@ function refreshLogoUi() {
     }
 }
 
-// Batch AU: render quality follows the same purchased-or-admin tier
+// Round 12 D5: render quality chooser is admin-only; non-admins are locked to "standard".
 function canUseRecapRenderQuality() {
     const u = state.user || {};
-    return !!(u.is_admin || u.account_category === "PURCHASED");
+    return !!u.is_admin;
 }
 function refreshRecapQualityLock() {
-    const u = state.user;
-    const tierKnown = !!(
-        u && (u.is_admin !== undefined || typeof u.account_category === "string")
-    );
-    const canUse = canUseRecapRenderQuality();
-    if (tierKnown && !canUse && state.recapRenderQuality !== "standard") {
+    const isAdmin = canUseRecapRenderQuality();
+    if (!isAdmin && state.recapRenderQuality !== "standard") {
         state.recapRenderQuality = "standard";
     }
+    const qRow = document.getElementById("recap-quality-row");
+    if (qRow) qRow.classList.toggle("hidden", !isAdmin);
+    const surchargeTag = document.getElementById("recap-quality-max-surcharge-tag");
+    if (surchargeTag) surchargeTag.classList.toggle("hidden", !isAdmin);
     document.querySelectorAll("#recap-quality-picker .pill-btn").forEach(btn => {
         const quality = btn.getAttribute("data-quality");
         if (quality === "high" || quality === "max") {
-            const locked = tierKnown && !canUse;
+            const locked = !isAdmin;
             btn.disabled = locked;
             btn.classList.toggle("quality-locked", locked);
             btn.setAttribute("aria-disabled", locked ? "true" : "false");
         }
         btn.classList.toggle("active", quality === state.recapRenderQuality);
     });
-    // Batch BE: if the lock just resolved a saved Max preference to
     if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
 }
 window.refreshRecapQualityLock = refreshRecapQualityLock;
@@ -4651,14 +4655,6 @@ function syncRecapEngineAreas() {
         billingHint.setAttribute("data-i18n", hintKey);
         billingHint.textContent = t(hintKey);
     }
-    const vBadge = document.getElementById("recap-voice-billing-badge");
-    if (vBadge) {
-        const isCreditOnly = eng !== "voxcpm";
-        const badgeKey = isCreditOnly ? "recap_badge_credit_only" : "recap_badge_credit_plus_min";
-        vBadge.setAttribute("data-i18n", badgeKey);
-        vBadge.textContent = t(badgeKey);
-        vBadge.classList.toggle("is-credit-only", isCreditOnly);
-    }
 }
 function refreshRecapEngineLock() {
     const u = state.user;
@@ -4667,16 +4663,10 @@ function refreshRecapEngineLock() {
     );
     const canUse = canUseRecapCloneEngine();
     // Phase 5: VoxCPM Persona engine is unlocked for ALL tiers (FREE + VIP + Admin).
-    document.querySelectorAll("#recap-engine-picker .pill-btn").forEach(btn => {
-        const engine = btn.getAttribute("data-engine");
-        if (engine === "voxcpm") {
-            btn.disabled = false;
-            btn.classList.remove("engine-locked");
-            btn.setAttribute("aria-disabled", "false");
-        }
-        btn.classList.toggle("active", engine === state.recapTtsEngine);
-    });
-    moveSegPill(document.getElementById("recap-engine-picker"));
+    const engineSel = document.getElementById("recap-engine-picker");
+    if (engineSel && ["voxcpm", "gemini", "edge"].includes(state.recapTtsEngine)) {
+        engineSel.value = state.recapTtsEngine;
+    }
     syncRecapEngineAreas();
     // Batch BV / Phase 5: Own Clone Voice remains VIP + Admin only, so
     const owCard = document.getElementById("recap-own-voice-card");
@@ -5301,16 +5291,6 @@ window.cancelVoiceJob = function() {
 function recapNormalMaxSeconds() {
     return state.user?.is_vip ? 600 : (state.user?.recap_max_duration_seconds || 120);
 }
-function enableRecapSplitForLongVideo() {
-    const toggle = document.getElementById("recap-split-toggle");
-    if (toggle && !toggle.checked) {
-        toggle.checked = true;
-        toggle.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-}
-function notifyRecapSplitAutoEnabled() {
-    showStudioToast(t("toast_split_auto"), 'info');
-}
 
 // ── Batch CI: duration-cap gate at the EARLIEST point ─────────────
 // The server enforces the FREE 120 s / VIP 600 s SOURCE cap only at
@@ -5433,36 +5413,20 @@ function formatRecapQuoteDuration(durationSec) {
 function updateRecapSplitCostHint() {
     updateRecapDurationGate();
     refreshRecapStep4Eta();
-    const hint = document.getElementById("recap-split-cost-hint");
-    if (!hint) return;
-    const toggle = document.getElementById("recap-split-toggle");
     const dur = Number(state.recapSourceDuration || 0);
-    const segmented = !!(toggle && toggle.checked && dur > recapNormalMaxSeconds() && state.user?.is_vip && !state.user?.is_admin);
     const maxAllowed = recapNormalMaxSeconds();
-    const effSec = dur > 0 ? (segmented ? dur : Math.min(dur, maxAllowed || dur)) : 60;
+    const effSec = dur > 0 ? Math.min(dur, maxAllowed || dur) : 60;
     const estCredits = dur > 0 ? Math.max(0.05, Math.round((effSec / 60) * 100) / 100) : 1;
     const ctaText = document.querySelector("#btn-start-recap .btn-text");
+    const stickyCtaText = document.querySelector("#btn-start-recap-sticky .btn-text");
+    const btnLabel = t("btn_start_recap");
+    if (ctaText) ctaText.textContent = btnLabel;
+    if (stickyCtaText) stickyCtaText.textContent = btnLabel;
     if (state.user?.is_admin) {
-        hint.classList.add("hidden");
-        if (ctaText) ctaText.textContent = t("btn_start_recap");
         setRecapStep4Quote(0);
         return;
     }
-    if (dur > 0) {
-        if (ctaText) ctaText.textContent = tf("btn_start_recap_credits", { credits: _fmtCreditNum(estCredits) });
-        const avail = Number(state.user?.available_recap_credits ?? state.user?.recap_credits ?? 0);
-        let msg = `${formatRecapQuoteDuration(dur)} ≈ ${_fmtCreditNum(estCredits)} Credit (1 Credit = 1 Min Output)`;
-        if (avail < estCredits) msg += " " + t("recap_split_cost_low_balance");
-        hint.textContent = msg;
-        hint.style.color = avail < estCredits ? "#f87171" : "";
-        hint.classList.remove("hidden");
-        setRecapStep4Quote(estCredits);
-    } else {
-        hint.classList.add("hidden");
-        hint.textContent = "";
-        if (ctaText) ctaText.textContent = t("btn_start_recap");
-        setRecapStep4Quote(1);
-    }
+    setRecapStep4Quote(dur > 0 ? estCredits : 1);
 }
 
 // Batch K: setLanguage's static sweep resets the CTA label — this
@@ -5720,10 +5684,8 @@ function getRecapEstVoiceSeconds() {
     if (eng !== "voxcpm") return 0;
     const dur = Number(state.recapSourceDuration || 0);
     if (!(dur > 0)) return 60;
-    const toggle = document.getElementById("recap-split-toggle");
-    const segmented = !!(toggle && toggle.checked && u && u.is_vip);
     const maxAllowed = recapNormalMaxSeconds();
-    const eff = segmented ? dur : Math.min(dur, maxAllowed || dur);
+    const eff = Math.min(dur, maxAllowed || dur);
     return Math.max(1, Math.ceil(eff * 1.0));
 }
 
@@ -5735,7 +5697,7 @@ function paintRecapDualQuote(creditsCost) {
 
     const creditMathEl = document.getElementById("recap-step4-credit-math");
     const surchargeTag = document.getElementById("recap-quality-max-surcharge-tag");
-    if (surchargeTag) surchargeTag.classList.add("hidden");
+    if (surchargeTag) surchargeTag.classList.toggle("hidden", !isAdmin);
     if (creditMathEl) {
         if (isAdmin) {
             creditMathEl.textContent = t("recap_step4_credit_admin");
@@ -5817,10 +5779,10 @@ window.switchRecapTtsEngine = function(engine) {
     const next = engine || "voxcpm";
     state.recapTtsEngine = next;
     state.recapInsufMinutesServer = null;
-    document.querySelectorAll("#recap-engine-picker .pill-btn").forEach(b => {
-        b.classList.toggle("active", b.getAttribute("data-engine") === next);
-    });
-    moveSegPills();
+    const engineSel = document.getElementById("recap-engine-picker");
+    if (engineSel && ["voxcpm", "gemini", "edge"].includes(next)) {
+        engineSel.value = next;
+    }
     syncRecapEngineAreas();
     refreshRecapStep4Choices();
     updateRecapSplitCostHint();
@@ -5871,7 +5833,7 @@ async function refreshRecapStep4Eta() {
         return;
     }
     const engine = state.recapTtsEngine || "voxcpm";
-    const quality = state.recapRenderQuality || "standard";
+    const quality = (state.user && state.user.is_admin) ? (state.recapRenderQuality || "standard") : "standard";
     const key = `${dur}|${engine}|${quality}|${currentLang}`;
     if (key === recapStep4EtaKey) return;
     recapStep4EtaKey = key;
@@ -5925,37 +5887,24 @@ function refreshRecapStep4Thumb() {
 }
 window.refreshRecapStep4Thumb = refreshRecapStep4Thumb;
 
-// Output facts chips (AX-4R): every value is derived from the live
+// Output format facts (Round 12 D2): ratio + resolution and duration only.
 function refreshRecapStep4Facts() {
     const set = (id, text) => {
         const el = document.getElementById(id);
         if (!el) return;
         el.textContent = text || "";
-        el.classList.toggle("hidden", !text);
+        const row = el.closest ? el.closest(".recap-format-fact-item") : null;
+        if (row) row.classList.toggle("hidden", !text);
+        else el.classList.toggle("hidden", !text);
     };
     const ratio = state.recapRatio || "9:16";
     const canvasMap = { "9:16": "1080×1920 · 9:16", "16:9": "1920×1080 · 16:9", "1:1": "1080×1080 · 1:1" };
     const canvas = canvasMap[ratio] ||
         ((state.recapSourceWidth && state.recapSourceHeight)
             ? state.recapSourceWidth + "×" + state.recapSourceHeight + " · Original" : "Original");
-    set("recap-fact-canvas", "📐 " + canvas);
+    set("recap-fact-canvas", canvas);
     const dur = state.recapSourceDuration || 0;
-    set("recap-fact-duration", dur > 0 ? "⏱️ " + formatRecapQuoteDuration(dur) : "");
-    if (state.recapBurnSubs !== false) {
-        const styleKey = "sub_style_" + (state.recapSubStyle || "yellow");
-        const styleName = t(styleKey);
-        const mKey = "sub_mode_" + (state.recapSubRenderMode || "timeline");
-        const mName = t(mKey);
-        set("recap-fact-subs", "📝 " + (styleName && styleName !== styleKey ? styleName : (state.recapSubStyle || "yellow")) + ` · ${state.recapFontSize || 16}pt` + (mName && mName !== mKey ? ` · ${mName}` : ""));
-    } else {
-        set("recap-fact-subs", "📝 " + t("recap_fact_off"));
-    }
-    set("recap-fact-title", "🛡️ " + t("recap_protection_" + RECAP_LOCKED_PROTECTION));
-    set("recap-fact-blur", "🌫️ " + t(state.recapBlurSubs !== false ? "recap_fact_on" : "recap_fact_off"));
-    const qBtn = document.querySelector("#recap-quality-picker .pill-btn.active");
-    set("recap-fact-quality", "🎞️ " + (qBtn ? qBtn.textContent.trim() : (state.recapRenderQuality || "standard")));
-    set("recap-fact-speed", "⚡ " + (state.recapSpeed || "+12%"));
-    set("recap-fact-mirror", RECAP_LOCKED_MIRROR ? "🪞 " + t("recap_fact_mirror_on") : "");
+    set("recap-fact-duration", dur > 0 ? formatRecapQuoteDuration(dur) : "");
 }
 window.refreshRecapStep4Facts = refreshRecapStep4Facts;
 
@@ -6519,15 +6468,8 @@ function setupRecapVisualEditor() {
 
         const maxAllowed = recapNormalMaxSeconds();
         let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
-        let splitAutoEnabled = false;
         if (isOverLimit && state.user?.is_admin) {
             isOverLimit = false; // admins are exempt from the cap
-        } else if (isOverLimit && state.user?.is_vip) {
-            // Split path: the server segments the source into
-            // <=10-min parts and processes each part.
-            enableRecapSplitForLongVideo();
-            splitAutoEnabled = true;
-            isOverLimit = false;
         }
         const btnStartRecap = document.getElementById("btn-start-recap");
         const durSpan = document.getElementById("recap-info-dur");
@@ -6550,7 +6492,6 @@ function setupRecapVisualEditor() {
                     btnStartRecap.disabled = false;
                     btnStartRecap.style.opacity = "";
                 }
-                if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
             }
         }
 
@@ -7026,6 +6967,15 @@ function setupRecapVisualEditor() {
         previewBlur.style.right = "auto";
         previewBlur.style.bottom = "auto";
         previewBlur.classList.toggle("is-near-top", (geom.centre - geom.height * 0.5) < 0.14);
+        let visualBlurY = "";
+        if (!state.recapBlurBoxTouched && previewSub && previewSub.style.display !== "none" && state.recapSubPosBand !== "top" && y >= 55) {
+                const offsetY = Math.max(12, y - 34);
+                const offsetGeom = blurBoxCanvasGeom(offsetY, h, x, w);
+                previewBlur.style.top = `${(offsetGeom.centre * 100).toFixed(3)}%`;
+                previewBlur.classList.toggle("is-near-top", (offsetGeom.centre - offsetGeom.height * 0.5) < 0.14);
+                visualBlurY = String(offsetY);
+        }
+        previewBlur.dataset.visualBlurY = visualBlurY;
         // Batch AK: the blur geometry feeds the composited frame —
         // a blur change re-renders it (debounced + hash-guarded).
         scheduleRecapCompositeRefresh();
@@ -7319,7 +7269,13 @@ function setupRecapVisualEditor() {
         state.recapBlurBoxTouched = true;
         if (sliderBlurY) sliderBlurY.value = y;
         syncBlurBoxVisual();
-    }, () => sliderBlurY ? parseFloat(sliderBlurY.value) : 85, () => {
+    }, () => {
+        if (!state.recapBlurBoxTouched && previewBlur.dataset.visualBlurY) {
+            const vy = parseFloat(previewBlur.dataset.visualBlurY);
+            if (Number.isFinite(vy)) return vy;
+        }
+        return sliderBlurY ? parseFloat(sliderBlurY.value) : 85;
+    }, () => {
         // Batch AA: mirror Batch P's subtitle drag — on letterboxed
         // layouts the box's canvas position moves ph× slower than
         // blur_y (picture-relative anchor), so scale the drag delta
@@ -7983,26 +7939,6 @@ function setupRecapVisualEditor() {
         });
     });
 
-    // 6b. Video Splitter: part length pills + toggle shows/hides them
-    const splitMinBtns = document.querySelectorAll("#recap-split-minutes-picker .pill-btn");
-    splitMinBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
-            haptic("selection");
-            splitMinBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            state.recapSplitMinutes = parseInt(btn.getAttribute("data-split-min") || "3", 10) || 3;
-            updateRecapSplitCostHint();
-        });
-    });
-    const splitToggle = document.getElementById("recap-split-toggle");
-    if (splitToggle) {
-        splitToggle.addEventListener("change", () => {
-            const wrap = document.getElementById("recap-split-minutes-wrap");
-            if (wrap) wrap.classList.toggle("hidden", !splitToggle.checked);
-            updateRecapSplitCostHint();
-        });
-    }
-
     // Batch AH: the Batch K twin-toggle sync is gone — there is
 
     // 6c. Source language (auto = detect; else a Whisper code).
@@ -8070,7 +8006,7 @@ function setupRecapVisualEditor() {
     const qualityBtns = document.querySelectorAll("#recap-quality-picker .pill-btn");
     qualityBtns.forEach(btn => {
         btn.addEventListener("click", () => {
-            if (btn.disabled) return;
+            if (btn.disabled || !canUseRecapRenderQuality()) return;
             haptic("selection");
             qualityBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
@@ -8083,26 +8019,23 @@ function setupRecapVisualEditor() {
     });
     refreshRecapQualityLock();
 
-    // 6e. Narration engine pills (VoxCPM persona / Gemini TTS / Edge
-    // TTS) + Gemini voice select. Batch AW: Edge keeps the persona
-    // area visible (the persona pick supplies the Edge base voice —
-    // no separate Edge picker); the voxcpm pill is locked for free
-    // profiles by refreshRecapEngineLock and disabled pills never
-    // fire (guard below, same as the quality pills).
-    const engineBtns = document.querySelectorAll("#recap-engine-picker .pill-btn");
-    engineBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
-            if (btn.disabled) return;
+    // 6e. Narration engine select (VoxCPM persona / Gemini TTS / Edge
+    // TTS) + Gemini voice select.
+    const engineSel = document.getElementById("recap-engine-picker");
+    if (engineSel) {
+        engineSel.addEventListener("change", () => {
+            const opt = engineSel.options[engineSel.selectedIndex];
+            if (opt && opt.disabled) {
+                engineSel.value = state.recapTtsEngine || "gemini";
+                return;
+            }
             haptic("selection");
-            engineBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            moveSegPill(document.getElementById("recap-engine-picker"));
-            state.recapTtsEngine = btn.getAttribute("data-engine") || "voxcpm";
+            state.recapTtsEngine = engineSel.value || "voxcpm";
             state.recapInsufMinutesServer = null;
             syncRecapEngineAreas();
             updateRecapSplitCostHint();
         });
-    });
+    }
     refreshRecapEngineLock();
     initRecapOwnVoice();
     const geminiVoiceSel = document.getElementById("recap-gemini-voice-select");
@@ -8298,38 +8231,37 @@ function setupRecapVisualEditor() {
     // 12. Subtitle Lines Picker (Synchronized across toolbar & advanced settings)
     function syncSubtitleLines(linesVal) {
         state.recapLines = parseInt(linesVal || "1");
-        document.querySelectorAll("#sub-lines-picker-toolbar .pill-btn").forEach(p => {
-            p.classList.toggle("active", parseInt(p.getAttribute("data-lines")) === state.recapLines);
-        });
+        const linesSel = document.getElementById("sub-lines-picker-toolbar");
+        if (linesSel) linesSel.value = String(state.recapLines);
         if (typeof updateSubtitleCharsEstimator === "function") updateSubtitleCharsEstimator();
         updateSubtitleVisualPreview();
         scheduleRecapCompositeRefresh();
         if (typeof window.refreshRecapStep2Summary === "function") window.refreshRecapStep2Summary();
     }
-    document.querySelectorAll("#sub-lines-picker-toolbar .pill-btn").forEach(pill => {
-        pill.addEventListener("click", () => {
+    const subLinesSel = document.getElementById("sub-lines-picker-toolbar");
+    if (subLinesSel) {
+        subLinesSel.addEventListener("change", () => {
             haptic("selection");
-            syncSubtitleLines(pill.getAttribute("data-lines"));
+            syncSubtitleLines(subLinesSel.value);
         });
-    });
+    }
 
     function syncSubtitleModeUi() {
         const mode = state.recapSubRenderMode || "timeline";
-        document.querySelectorAll("#recap-sub-render-mode .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-sub-mode") === mode);
-        });
+        const modeSel = document.getElementById("recap-sub-render-mode");
+        if (modeSel) modeSel.value = mode;
         const fxRow = document.getElementById("recap-sub-effect-row");
         if (fxRow) fxRow.classList.toggle("hidden", mode === "soft");
-        document.querySelectorAll("#recap-sub-effect .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-sub-effect") === (state.recapSubEffect || "none"));
-        });
+        const fxSel = document.getElementById("recap-sub-effect");
+        if (fxSel) fxSel.value = state.recapSubEffect || "none";
         const softCb = document.getElementById("toggle-embed-soft-subs");
         if (softCb) softCb.checked = state.recapEmbedSoftSubs !== false;
     }
-    document.querySelectorAll("#recap-sub-render-mode .pill-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
+    const subModeSel = document.getElementById("recap-sub-render-mode");
+    if (subModeSel) {
+        subModeSel.addEventListener("change", () => {
             haptic("selection");
-            state.recapSubRenderMode = btn.getAttribute("data-sub-mode") || "timeline";
+            state.recapSubRenderMode = subModeSel.value || "timeline";
             if (state.recapSubRenderMode === "karaoke") state.recapSubEffect = "karaoke";
             else if (state.recapSubRenderMode === "ass" && state.recapSubEffect === "none") state.recapSubEffect = "fade";
             syncSubtitleModeUi();
@@ -8337,17 +8269,18 @@ function setupRecapVisualEditor() {
             if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
             if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
         });
-    });
-    document.querySelectorAll("#recap-sub-effect .pill-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
+    }
+    const subFxSel = document.getElementById("recap-sub-effect");
+    if (subFxSel) {
+        subFxSel.addEventListener("change", () => {
             haptic("selection");
-            state.recapSubEffect = btn.getAttribute("data-sub-effect") || "none";
+            state.recapSubEffect = subFxSel.value || "none";
             if (state.recapSubEffect === "karaoke" && state.recapSubRenderMode === "timeline") state.recapSubRenderMode = "karaoke";
             syncSubtitleModeUi();
             if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
             if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
         });
-    });
+    }
     const embedSoftEl = document.getElementById("toggle-embed-soft-subs");
     if (embedSoftEl) {
         embedSoftEl.addEventListener("change", () => {
@@ -8356,22 +8289,28 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // 12b. Subtitle Font Picker (padauk / noto_sans / pyidaungsu / noto_serif)
-    const subFontBtns = document.querySelectorAll("#recap-sub-font-picker .pill-btn");
-    subFontBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
+    // 12b. Subtitle Font Picker (padauk / noto_sans / pyidaungsu / noto_serif / custom)
+    const subFontSel = document.getElementById("recap-sub-font-picker");
+    if (subFontSel) {
+        subFontSel.addEventListener("change", () => {
+            const val = subFontSel.value || "padauk";
+            if (val === "custom") {
+                subFontSel.value = state.recapSubFontCustomId ? "uploaded_custom" : (state.recapSubFont || "padauk");
+                const fontInp = document.getElementById("input-sub-font-file");
+                if (fontInp) fontInp.click();
+                return;
+            }
+            if (val === "uploaded_custom") return;
             haptic("selection");
-            subFontBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            state.recapSubFont = btn.getAttribute("data-font") || "padauk";
+            state.recapSubFontCustomId = "";
+            state.recapSubFontCustomName = "";
+            state.recapSubFont = val;
+            if (typeof ddSyncCustomFontUi === "function") ddSyncCustomFontUi();
             updateSubtitleVisualPreview();
-            // Batch AS (AS-5): the font renders inside the
-            // engine-composited frame, exactly like size/lines —
-            // without this refresh the composite kept the PREVIOUS
-            // font forever, so the picker looked dead in preview.
             scheduleRecapCompositeRefresh();
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
         });
-    });
+    }
 
     // ── Batch DD wiring (Step-2 rebuild) ─────────────────────────
     const ddAutoDetectEl = document.getElementById("recap-blur-autodetect-toggle");
@@ -8385,20 +8324,12 @@ function setupRecapVisualEditor() {
 
     // (1) Accordion header values.
     function refreshRecapStep2Summary() {
-        const styleName = t("sub_style_" + (state.recapSubStyle || "cinematic"));
         const setVal = (id, txt) => {
             const gEl = document.getElementById(id);
             const v = gEl ? gEl.querySelector(".dd-acc-val") : null;
             if (v) v.innerText = txt;
         };
         setVal("recap-preview-ratio-group", `${state.recapRatio || "9:16"} · ${RECAP_LOCKED_FILL}`);
-        setVal("recap-subtitle-group", `${state.recapFontSize || 13}pt · ${styleName} · ${state.recapLines || 1}`);
-        const nBoxes = (state.recapBlurBoxes || []).length;
-        const blurVal = state.recapBlurSubs === false
-            ? t("toggle_off")
-            : (state.recapBlurAutoDetect !== false ? "Auto" : `Manual · ×${Math.max(1, nBoxes)}`);
-        setVal("recap-blur-group", blurVal);
-        setVal("recap-logo-group", `${state.recapLogo !== false ? t("toggle_on") : t("toggle_off")} · ${state.recapLogoPos || "top-right"}`);
         const storyKey = state.recapStoryStyle || "pov";
         const storyPill = document.querySelector(`#story-style-picker-quick [data-story="${storyKey}"]`);
         setVal("recap-story-style-acc", storyPill ? storyPill.textContent.trim() : storyKey);
@@ -8441,12 +8372,14 @@ function setupRecapVisualEditor() {
                 vipSpan.textContent = plainTxt(t(vipKey));
                 head.appendChild(vipSpan);
             }
-            const valSpan = document.createElement("span");
-            valSpan.className = "dd-acc-val";
+            if (!inFine) {
+                const valSpan = document.createElement("span");
+                valSpan.className = "dd-acc-val";
+                head.appendChild(valSpan);
+            }
             const chev = document.createElement("span");
             chev.className = "dd-acc-chevron";
             chev.textContent = "▸";
-            head.appendChild(valSpan);
             head.appendChild(chev);
             const body = document.createElement("div");
             body.className = "dd-acc-body hidden";
@@ -8588,6 +8521,21 @@ function setupRecapVisualEditor() {
         refreshRecapStep2Summary();
         if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
     }
+    function ddColorHolderForTarget(target) {
+        if (target === "outline") return document.getElementById("input-sub-outline-color");
+        if (target === "bg") return document.getElementById("input-sub-bg-color");
+        return document.getElementById("input-sub-text-color");
+    }
+    function ddSyncActiveColorInput() {
+        const targetSel = document.getElementById("recap-sub-color-target");
+        const activeInp = document.getElementById("input-sub-active-color");
+        if (!activeInp) return;
+        const target = targetSel ? targetSel.value : "text";
+        const holder = ddColorHolderForTarget(target);
+        if (holder && /^#[0-9a-fA-F]{6}$/.test(holder.value || "")) {
+            activeInp.value = holder.value;
+        }
+    }
     function ddSeedStyleControls(styleKey) {
         const seed = DD_PRESET_SEED[styleKey];
         if (!seed) return;
@@ -8602,6 +8550,7 @@ function setupRecapVisualEditor() {
         if (oc) oc.value = seed.outline;
         const bc = document.getElementById("input-sub-bg-color");
         if (bc && seed.bg) bc.value = seed.bg;
+        ddSyncActiveColorInput();
         const ow = document.getElementById("slider-outline-width");
         if (ow) ow.value = Math.round(seed.ow * 10);
         const owVal = document.getElementById("val-outline-width");
@@ -8625,8 +8574,26 @@ function setupRecapVisualEditor() {
     }
     [["input-sub-text-color", "recapTextColor"], ["input-sub-outline-color", "recapOutlineColor"], ["input-sub-bg-color", "recapBgColor"]].forEach(([id, key]) => {
         const el = document.getElementById(id);
-        if (el) el.addEventListener("input", () => { state[key] = el.value; ddStyleChanged(); });
+        if (el) el.addEventListener("input", () => {
+            state[key] = el.value;
+            ddSyncActiveColorInput();
+            ddStyleChanged();
+        });
     });
+    const ddColorTargetSel = document.getElementById("recap-sub-color-target");
+    const ddActiveColorInp = document.getElementById("input-sub-active-color");
+    if (ddColorTargetSel) ddColorTargetSel.addEventListener("change", ddSyncActiveColorInput);
+    if (ddActiveColorInp) {
+        const pushActiveColor = (evName) => {
+            const target = ddColorTargetSel ? ddColorTargetSel.value : "text";
+            const holder = ddColorHolderForTarget(target);
+            if (!holder) return;
+            holder.value = ddActiveColorInp.value;
+            holder.dispatchEvent(new Event(evName, { bubbles: true }));
+        };
+        ddActiveColorInp.addEventListener("input", () => pushActiveColor("input"));
+        ddActiveColorInp.addEventListener("change", () => pushActiveColor("change"));
+    }
     const ddOwSlider = document.getElementById("slider-outline-width");
     if (ddOwSlider) ddOwSlider.addEventListener("input", () => {
         state.recapOutlineWidth = parseInt(ddOwSlider.value) / 10;
@@ -8641,6 +8608,7 @@ function setupRecapVisualEditor() {
             state.recapBgColor = "#000000";
             const bc = document.getElementById("input-sub-bg-color");
             if (bc) bc.value = "#000000";
+            ddSyncActiveColorInput();
         }
         const v = document.getElementById("val-bg-opacity");
         if (v) v.innerText = `${state.recapBgOpacity}%`;
@@ -8662,37 +8630,54 @@ function setupRecapVisualEditor() {
     ddBindMiniToggle("btn-toggle-sub-shadow", () => !!state.recapSubShadow, v => { state.recapSubShadow = v; });
     ddBindMiniToggle("btn-toggle-sub-bold", () => state.recapSubBold !== false, v => { state.recapSubBold = v; });
 
-    // (6) Subtitle position band pills (Top / Centre / Bottom).
+    // (6) Subtitle position band select (Top / Centre / Bottom).
     function ddSyncPosBandPills() {
-        document.querySelectorAll("#sub-pos-picker .pill-btn").forEach(b => {
-            b.classList.toggle("active", b.getAttribute("data-pos-band") === (state.recapSubPosBand || "bottom"));
-        });
+        const sel = document.getElementById("sub-pos-picker");
+        if (sel) sel.value = state.recapSubPosBand || "bottom";
     }
-    document.querySelectorAll("#sub-pos-picker .pill-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
+    const subPosSel = document.getElementById("sub-pos-picker");
+    if (subPosSel) {
+        subPosSel.addEventListener("change", () => {
             haptic("selection");
-            state.recapSubPosBand = btn.getAttribute("data-pos-band") || "bottom";
+            state.recapSubPosBand = subPosSel.value || "bottom";
             ddSyncPosBandPills();
             scheduleRecapCompositeRefresh();
             refreshRecapStep2Summary();
             if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
         });
-    });
-
-    // (7) Custom subtitle font: upload -> handle in state; the
-    function ddSyncCustomFontUi() {
-        const status = document.getElementById("sub-font-custom-status");
-        const has = !!state.recapSubFontCustomId;
-        if (status) status.innerText = has ? `${t("recap_font_custom_active")}: ${state.recapSubFontCustomName || ""}` : "";
-        const clr = document.getElementById("btn-sub-font-clear");
-        if (clr) clr.classList.toggle("hidden", !has);
     }
+
+    // (7) Custom subtitle font: upload -> handle in state; option lives inside #recap-sub-font-picker.
+    function ddSyncCustomFontUi() {
+        const fontSel = document.getElementById("recap-sub-font-picker");
+        if (!fontSel) return;
+        const customOpt = fontSel.querySelector('option[value="custom"]');
+        if (customOpt && typeof t === "function") {
+            customOpt.textContent = t("recap_sub_font_custom_upload");
+        }
+        let uploadedOpt = fontSel.querySelector('option[value="uploaded_custom"]');
+        const has = !!state.recapSubFontCustomId;
+        if (has) {
+            const fname = state.recapSubFontCustomName || state.recapSubFontCustomId;
+            if (!uploadedOpt) {
+                uploadedOpt = document.createElement("option");
+                uploadedOpt.value = "uploaded_custom";
+                if (customOpt) fontSel.insertBefore(uploadedOpt, customOpt);
+                else fontSel.appendChild(uploadedOpt);
+            }
+            uploadedOpt.textContent = `${t("recap_font_custom_active")}: ${fname}`;
+            fontSel.value = "uploaded_custom";
+        } else {
+            if (uploadedOpt) uploadedOpt.remove();
+            fontSel.value = state.recapSubFont || "padauk";
+        }
+    }
+    window.ddSyncCustomFontUi = ddSyncCustomFontUi;
     const ddFontInput = document.getElementById("input-sub-font-file");
     if (ddFontInput) ddFontInput.addEventListener("change", async () => {
         const f = ddFontInput.files && ddFontInput.files[0];
         if (!f) return;
-        const status = document.getElementById("sub-font-custom-status");
-        if (status) status.innerText = t("recap_font_uploading");
+        showStudioToast(t("recap_font_uploading"), "info");
         try {
             const fd = new FormData();
             fd.append("font_file", f);
@@ -8712,18 +8697,11 @@ function setupRecapVisualEditor() {
             scheduleRecapCompositeRefresh();
             if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
         } catch (e) {
-            if (status) status.innerText = t("recap_font_upload_error");
+            ddSyncCustomFontUi();
+            showStudioToast(t("recap_font_upload_error"), "warning");
         } finally {
             ddFontInput.value = "";
         }
-    });
-    const ddFontClear = document.getElementById("btn-sub-font-clear");
-    if (ddFontClear) ddFontClear.addEventListener("click", () => {
-        state.recapSubFontCustomId = "";
-        state.recapSubFontCustomName = "";
-        ddSyncCustomFontUi();
-        scheduleRecapCompositeRefresh();
-        if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
     });
 
     // (8) Restore-path control sync (called from restoreRecapSettings
@@ -8732,6 +8710,7 @@ function setupRecapVisualEditor() {
         setColor("input-sub-text-color", state.recapTextColor);
         setColor("input-sub-outline-color", state.recapOutlineColor);
         setColor("input-sub-bg-color", state.recapBgColor);
+        ddSyncActiveColorInput();
         if (state.recapOutlineWidth != null) {
             const ow = document.getElementById("slider-outline-width");
             if (ow) ow.value = Math.round(state.recapOutlineWidth * 10);
@@ -8818,20 +8797,18 @@ function setupRecapVisualEditor() {
         previewLogo.style.width = `${Math.max(4, Math.min(40, pct))}%`;
         previewLogo.style.opacity = String(Math.max(0.1, Math.min(1, state.recapLogoOpacity || 0.7)));
     };
-    const logoPosBtns = document.querySelectorAll("#recap-logo-pos-picker .pill-btn");
-    logoPosBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
+    const logoPosSel = document.getElementById("recap-logo-pos-picker");
+    if (logoPosSel) {
+        logoPosSel.addEventListener("change", () => {
             haptic("selection");
-            logoPosBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            state.recapLogoPos = btn.getAttribute("data-pos") || "top-right";
+            state.recapLogoPos = logoPosSel.value || "top-right";
             if (previewLogo) {
                 previewLogo.className = `preview-logo-watermark ${state.recapLogoPos}`;
                 applyLogoPreviewStyle();
             }
             scheduleRecapCompositeRefresh();
         });
-    });
+    }
     const slLogoScale = document.getElementById("slider-logo-scale");
     const slLogoOp = document.getElementById("slider-logo-opacity");
     if (slLogoScale) {
@@ -8985,15 +8962,8 @@ function setupRecapVisualEditor() {
                 updateRecapSplitCostHint();
                 const maxAllowed = recapNormalMaxSeconds();
                 let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
-                let splitAutoEnabled = false;
                 if (isOverLimit && state.user?.is_admin) {
                     isOverLimit = false; // admins are exempt from the cap
-                } else if (isOverLimit && state.user?.is_vip) {
-                    // Split path: the server segments the source into
-                    // <=10-min parts and processes each part.
-                    enableRecapSplitForLongVideo();
-                    splitAutoEnabled = true;
-                    isOverLimit = false;
                 }
                 const btnStartRecap = document.getElementById("btn-start-recap");
                 paintRecapInfoMeta(data, isOverLimit, maxAllowed);
@@ -9009,7 +8979,6 @@ function setupRecapVisualEditor() {
                         btnStartRecap.disabled = false;
                         btnStartRecap.style.opacity = "";
                     }
-                    if (splitAutoEnabled) notifyRecapSplitAutoEnabled();
                 }
 
                 if (platformSpan) platformSpan.innerText = data.platform || "Video";
@@ -9238,7 +9207,7 @@ function setupRecapVisualEditor() {
     const RECAP_SETTING_INTS = {
         recapCropTop: [0, 35], recapCropBottom: [0, 35],
         recapCropLeft: [0, 35], recapCropRight: [0, 35],
-        recapFontSize: [10, 30], recapLines: [1, 3], recapSplitMinutes: [1, 10],
+        recapFontSize: [10, 30], recapLines: [1, 3],
         recapBlurY: [0, 100], recapBlurH: [1, 50], recapSubY: [0, 100],
         recapSubMargin: [0, 95], recapSettingsVersion: [0, 10],
         recapBlurX: [0, 100], recapBlurW: [10, 100],
@@ -9256,8 +9225,7 @@ function setupRecapVisualEditor() {
         snap.recapZoom = state.recapZoom;
         snap.recapVoice = state.recapVoice;
         snap.recapGeminiVoice = state.recapGeminiVoice || "";
-        const st = document.getElementById("recap-split-toggle");
-        snap.recapSplitEnabled = !!(st && st.checked);
+        snap.recapSplitEnabled = false;
         const by = document.getElementById("slider-blur-y");
         const bh = document.getElementById("slider-blur-h");
         const bs = document.getElementById("slider-blur-strength");
@@ -9400,23 +9368,17 @@ function setupRecapVisualEditor() {
         if (canvas) canvas.classList.toggle("mirrored", !!state.recapMirror);
         syncPillGroup("#recap-speed-picker .speed-seg", "data-speed", state.recapSpeed);
         moveSpeedPill(document.getElementById("recap-speed-picker"));
-        syncPillGroup("#recap-split-minutes-picker .pill-btn", "data-split-min", state.recapSplitMinutes);
-        const splitToggleEl = document.getElementById("recap-split-toggle");
-        if (splitToggleEl) {
-            splitToggleEl.checked = !!saved.recapSplitEnabled;
-            const wrap = document.getElementById("recap-split-minutes-wrap");
-            if (wrap) wrap.classList.toggle("hidden", !splitToggleEl.checked);
-        }
         // AZ-11: the language pills are retired — the one dropdown
         // is painted by syncRecapLangViews (called just below).
         if (window.syncRecapLangViews) syncRecapLangViews();
         refreshRecapQualityLock();
         syncPillGroup("#recap-quality-picker .pill-btn", "data-quality", state.recapRenderQuality);
         // Batch AW: a saved "voxcpm" resolves to "gemini" for a free
-        // profile BEFORE the engine pills paint (the lock re-syncs the
-        // pill actives + the persona/Gemini areas from resolved state).
+        // profile BEFORE the engine select paints (the lock re-syncs the
+        // select + the persona/Gemini areas from resolved state).
         refreshRecapEngineLock();
-        syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine);
+        const engineSelEl = document.getElementById("recap-engine-picker");
+        if (engineSelEl) engineSelEl.value = state.recapTtsEngine || "gemini";
         const gv = document.getElementById("recap-gemini-voice-wrap");
         if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
         const pa = document.getElementById("recap-persona-area");
@@ -9448,8 +9410,9 @@ function setupRecapVisualEditor() {
         // Batch AK: the handle's classes are fixed (the style lives
         // in the composited frame, not in CSS classes).
         if (previewSub) previewSub.className = "preview-sub-box draggable-box";
-        syncPillGroup("#recap-sub-font-picker .pill-btn", "data-font", state.recapSubFont);
-        syncPillGroup("#recap-logo-pos-picker .pill-btn", "data-pos", state.recapLogoPos);
+        if (typeof ddSyncCustomFontUi === "function") ddSyncCustomFontUi();
+        const logoPosSelEl = document.getElementById("recap-logo-pos-picker");
+        if (logoPosSelEl) logoPosSelEl.value = state.recapLogoPos || "top-right";
         if (previewLogo) previewLogo.className = `preview-logo-watermark ${state.recapLogoPos}`;
         // Logo chip visibility follows the central rule (paid +
         // uploaded + toggle on), not the persisted toggle alone.
@@ -9500,7 +9463,8 @@ function setupRecapVisualEditor() {
     }
     restoreRecapSettings();
     (function syncInitialRecapDefaultsUi() {
-        syncPillGroup("#recap-engine-picker .pill-btn", "data-engine", state.recapTtsEngine);
+        const initEngineSel = document.getElementById("recap-engine-picker");
+        if (initEngineSel) initEngineSel.value = state.recapTtsEngine || "gemini";
         if (typeof syncRecapEngineAreas === "function") syncRecapEngineAreas();
         const subStyleSel = document.getElementById("sub-style-picker");
         if (subStyleSel && state.recapSubStyle) subStyleSel.value = state.recapSubStyle;
@@ -9544,7 +9508,8 @@ function setupRecapVisualEditor() {
             recapSpeed: normalizeSpeedOption(cfg.voice_speed), recapStoryStyle: cfg.story_style,
             recapSubStyle: cfg.sub_style, recapSubFont: cfg.sub_font,
             recapLogoPos: cfg.logo_pos, recapSourceLanguage: cfg.source_language,
-            recapRenderQuality: cfg.render_quality, recapTtsEngine: cfg.tts_engine,
+            recapRenderQuality: (state.user && state.user.is_admin) ? cfg.render_quality : "standard",
+            recapTtsEngine: cfg.tts_engine,
             recapMirror: RECAP_LOCKED_MIRROR,
             recapBurnSubs: cfg.burn_subtitles !== false,
             recapBlurSubs: cfg.blur_subtitles !== false,
@@ -9552,7 +9517,6 @@ function setupRecapVisualEditor() {
             recapCropTop: lockedCrop.crop_top, recapCropBottom: lockedCrop.crop_bottom,
             recapCropLeft: lockedCrop.crop_left, recapCropRight: lockedCrop.crop_right,
             recapFontSize: cfg.sub_font_size, recapLines: cfg.sub_lines,
-            recapSplitMinutes: cfg.split_minutes,
             recapBlurY: cfg.blur_y, recapBlurH: cfg.blur_h, recapSubY: cfg.sub_y,
             // Batch AK: the anchor round-trips as the bottom margin
             // — the job's own margin when it has one, else converted
@@ -9595,7 +9559,7 @@ function setupRecapVisualEditor() {
             recapSubRenderMode: cfg.sub_render_mode || "timeline",
             recapSubEffect: cfg.sub_effect || "none",
             recapEmbedSoftSubs: cfg.embed_soft_subs !== false,
-            recapSplitEnabled: !!cfg.split_video,
+            recapSplitEnabled: false,
         };
         try { localStorage.setItem(RECAP_SETTINGS_KEY, JSON.stringify(snap)); } catch (e) {}
         restoreRecapSettings();
@@ -9721,12 +9685,7 @@ async function handleStartRecap() {
     // Enforce the per-job cap: free 2 min, VIP 10 min, admins exempt.
     const maxRecapSec = recapNormalMaxSeconds();
     if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
-        && state.user?.is_vip && !state.user?.is_admin) {
-        enableRecapSplitForLongVideo();
-        notifyRecapSplitAutoEnabled();
-    }
-    if (state.recapSourceDuration && state.recapSourceDuration > maxRecapSec
-        && !state.user?.is_vip && !state.user?.is_admin) {
+        && !state.user?.is_admin) {
         const m = Math.floor(maxRecapSec / 60);
         showStudioToast(tf("toast_recap_over_limit", {
             tier: state.user?.is_vip ? "VIP" : t("tier_free_label"),
@@ -9847,7 +9806,7 @@ async function handleStartRecap() {
             duration_seconds: state.recapSourceDuration || null,
             script_review: !!((document.getElementById("recap-script-review-toggle") || {}).checked),
             source_language: state.recapSourceLanguage || "auto",
-            render_quality: state.recapRenderQuality || "standard",
+            render_quality: canUseRecapRenderQuality() ? (state.recapRenderQuality || "standard") : "standard",
             tts_engine: state.recapTtsEngine || "voxcpm",
             gemini_voice: (state.recapTtsEngine === "gemini" && state.recapGeminiVoice) ? state.recapGeminiVoice : null,
             // Batch BV: own-voice handle — only on the clone engine
@@ -9856,8 +9815,8 @@ async function handleStartRecap() {
             voice_ref_id: (state.recapTtsEngine === "voxcpm" && state.recapOwnVoiceSelected && state.recapOwnVoiceStatus === "ready")
                 ? state.recapOwnVoiceRefId
                 : null,
-            split_video: !!((document.getElementById("recap-split-toggle") || {}).checked),
-            split_minutes: state.recapSplitMinutes || 3,
+            split_video: false,
+            split_minutes: 3,
         };
 
         const res = await fetch("/api/recap/generate", {
@@ -10267,20 +10226,6 @@ function startRecapJobPolling(jobId) {
                     } else {
                         partsWrap.classList.add("hidden");
                     }
-                    const noteEl = document.getElementById("recap-split-note");
-                    if (noteEl) {
-                        let note = "";
-                        if (data.split_error) note = t("recap_split_failed");
-                        else if (data.split_note) note = data.split_note;
-                        // Segmented jobs: show the exact parts count and
-                        // the credits the job actually used (1 per part).
-                        if (!data.split_error && data.parts_count > 1 && data.credits_charged) {
-                            const costLine = tf("recap_segmented_cost", { parts: data.parts_count, credits: data.credits_charged });
-                            note = note ? (note + " " + costLine) : costLine;
-                        }
-                        noteEl.textContent = note;
-                        noteEl.classList.toggle("hidden", !note);
-                    }
                     // Blur no-coverage warning (blur safefix 2026-11-03):
                     // the job finished, but the engine found no source
                     // subtitle band to blur — tell the user to check
@@ -10310,14 +10255,11 @@ function startRecapJobPolling(jobId) {
                         fbNoteEl.classList.toggle("hidden", !fbText);
                     }
                     // Batch K: every completed recap shows its receipt —
-                    // the credits this job was actually charged — not
-                    // only segmented jobs (whose split note above
-                    // already carries the cost line).
+                    // the credits this job was actually charged.
                     const costEl = document.getElementById("recap-cost-line");
                     if (costEl) {
                         const charged = data.credits_charged;
-                        const costInNote = !data.split_error && data.parts_count > 1 && charged;
-                        if (typeof charged === "number" && charged > 0 && !costInNote) {
+                        if (typeof charged === "number" && charged > 0) {
                             costEl.textContent = tf("recap_cost_charged_line", { credits: charged });
                             costEl.classList.remove("hidden");
                         } else {
@@ -16953,6 +16895,9 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (typeof window.refreshRecapStep2Summary === "function") {
             window.refreshRecapStep2Summary();
+        }
+        if (typeof window.ddSyncCustomFontUi === "function") {
+            window.ddSyncCustomFontUi();
         }
         if (typeof window.syncSavedCustomVoiceUi === "function") {
             window.syncSavedCustomVoiceUi();

@@ -505,7 +505,9 @@ def test_recap_pills_meet_44px_floor_scoped():
 # ── (8) dynamic CTA price ────────────────────────────────────────────
 
 def test_cta_shows_segmented_estimate_when_known():
-    assert 'tf("btn_start_recap_credits"' in APP_JS
+    # Round 12 D4: Start Recap CTA shows only the action label without
+    # repeating the per-credit suffix.
+    assert 'tf("btn_start_recap_credits"' not in APP_JS
     assert 't("btn_start_recap")' in APP_JS
     # Language switches repaint the dynamic label via the window hook.
     assert "window.repaintRecapCtaPrice = updateRecapSplitCostHint" in APP_JS

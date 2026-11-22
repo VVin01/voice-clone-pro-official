@@ -191,7 +191,8 @@ def test_duration_essays_replaced_by_single_key():
 
 
 def test_hardcoded_toasts_moved_to_i18n():
-    assert 'showStudioToast(t("toast_split_auto"), \'info\')' in APP_JS
+    # Round 12 D6: auto-split helper & toast removed; scrub hint retired earlier.
+    assert "toast_split_auto" not in APP_JS
     assert "toast_scrub_hint" not in APP_JS
     assert 'showStudioToast(t("toast_slip_no_file"), \'info\')' in APP_JS
     assert "ငွေလွှဲပြေစာ ပုံကို ရွေးချယ်ပေးပါခင်ဗျာ" not in APP_JS

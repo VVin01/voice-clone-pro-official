@@ -53,15 +53,18 @@ def test_rs1_active_pill_paint_stays_inside_track():
 
 def test_rs6_pickers_are_equal_height_grids():
     block = _rs_block()
-    for pid in ("#recap-quality-picker", "#recap-logo-pos-picker",
+    # Round 12 (B2, B6): #recap-logo-pos-picker, #sub-lines-picker-toolbar,
+    # and #recap-sub-font-picker moved to compact <select> dropdowns;
+    # remaining pill/card grids stay equal-height grids.
+    for pid in ("#recap-quality-picker",
                 "#recap-fill-picker", "#recap-crop-presets-toolbar",
-                "#sub-lines-picker-toolbar", "#font-size-picker-toolbar",
-                "#recap-sub-font-picker", "#recap-speed-picker",
+                "#font-size-picker-toolbar",
+                "#recap-speed-picker",
                 "#sub-style-picker", "#story-style-picker-quick"):
         assert f"{pid}" in block, pid
     # One shared mechanism: grid rows sized 1fr so every option in a
     # picker shares the tallest option's height.
-    assert block.count("grid-auto-rows: 1fr") >= 10
+    assert block.count("grid-auto-rows: 1fr") >= 7
     assert ".ratio-pills-grid { grid-auto-rows: 1fr; }" in block
 
 
@@ -69,8 +72,8 @@ def test_rs7_column_counts_divide_evenly():
     block = _rs_block()
     # Size: 4 options, one even row (was 3+1).
     assert "#font-size-picker-toolbar { grid-template-columns: repeat(4, 1fr)" in block
-    # Logo Position: 4 options as 2x2.
-    assert "#recap-logo-pos-picker { grid-template-columns: repeat(2, 1fr)" in block
+    # Round 12 (B6): Logo Position is now a <select> dropdown.
+    assert 'id="recap-logo-pos-picker"' in HTML and "<select id=\"recap-logo-pos-picker\"" in HTML
     # Subtitle Style: Batch AZ-11 retired the 7-chip grid for ONE
     # compact dropdown — there is no chip grid left to divide; the
     # picker is a <select> (its options are pinned in the AZ tests).
