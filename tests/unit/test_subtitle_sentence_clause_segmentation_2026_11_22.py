@@ -464,3 +464,232 @@ def test_pause_gt_035s_still_blocks_merging_even_for_short_sentences():
     assert [c[2] for c in cues] == ["ကြည့်ပါ", "တွေ့ရဲ့လား"]
     assert cues[0][1] <= 0.91
     assert cues[1][0] >= 1.39
+
+
+# ── 4. Fragment Guard, Production 1:1 Geometry & Sub-0.4s Merge ─────────────
+
+
+def _subtitle_render_params_for_layout(
+    ratio: str,
+    src_size: tuple[int, int],
+    *,
+    font_size: int = 16,
+    sub_style: str = "cinematic",
+    sub_w: float = 0.92,
+) -> tuple[int, int, Path, int, dict[str, Any]]:
+    layout = core.frame_layout(ratio, "blur", src_size[0], src_size[1], crop_top=0.12, crop_bottom=0.12)
+    cw, ch, pw = int(layout["cw"]), int(layout["ch"]), int(layout["pw"])
+    overlays = {
+        "sub_lines": 1,
+        "subtitles_font_size": font_size,
+        "sub_style": sub_style,
+        "sub_w": sub_w,
+        "sub_font": "padauk",
+        "sub_bold": True,
+    }
+    font_px = core.subtitle_font_px(cw, ch, font_size, 1, layout)
+    font_path = core.overlays_font_path(overlays)
+    vis = core.build_subtitle_visuals(core.SUBTITLE_STYLE_PRESETS[sub_style], {}, ch, font_px)
+    stroke_px = int(vis.get("stroke_px", 1))
+    fit_max_w = core._subtitle_fit_width_px(overlays, pw)
+    pad_2 = 2 * _png_subs.png_pad_x(vis, font_px, stroke_px)
+    max_ink_w = max(80, fit_max_w - pad_2)
+    return max_ink_w, font_px, font_path, stroke_px, layout
+
+
+def _exists_zero_frag_word_split(
+    sentence: str,
+    max_width_px: int,
+    font_px: int,
+    font_path: Path,
+    stroke_px: int,
+) -> bool:
+    if core._display_text_width_px(sentence, font_px, font_path, stroke_px) <= max_width_px:
+        return True
+    words = [w for w in sentence.split() if w]
+    n = len(words)
+    if n < 4:
+        return False
+    can = [False] * (n + 1)
+    can[0] = True
+    for i in range(n):
+        if not can[i]:
+            continue
+        for j in range(i + 2, n + 1):
+            piece = " ".join(words[i:j])
+            if core._display_text_width_px(piece, font_px, font_path, stroke_px) > max_width_px:
+                break
+            if not core._is_tiny_fragment(piece):
+                can[j] = True
+    return can[n]
+
+
+def test_production_1x1_default_geometry_trace_and_golden_rc_1795341937_3be6be():
+    """Trace production 1:1 geometry and verify the 3 golden sentences from
+    rc_1795341937_3be6be never strand single words like 'ကျွန်တော်' or '<4 cluster'
+    connectives like 'ပြီးတော့' when a fuller segmentation fits."""
+    max_ink_w, font_px, font_path, stroke_px, layout = _subtitle_render_params_for_layout(
+        "1:1", (1080, 1920), font_size=16, sub_style="cinematic", sub_w=0.92
+    )
+    assert (layout["cw"], layout["ch"], layout["pw"], layout["ph"]) == (1080, 1080, 798, 1080)
+    assert font_px == 40
+    assert core._subtitle_fit_width_px({"sub_w": 0.92}, 798) == 734
+    assert max_ink_w == 722
+
+    # Yellow & glass default 1:1 ink widths for completeness
+    ink_yellow, *_ = _subtitle_render_params_for_layout("1:1", (1080, 1920), font_size=16, sub_style="yellow")
+    ink_glass, *_ = _subtitle_render_params_for_layout("1:1", (1080, 1920), font_size=16, sub_style="glass")
+    assert ink_yellow == 728
+    assert ink_glass == 698
+
+    s1 = "ပထမဆုံး တစ်လုတ်ကို ကျွန်တော် မြည်းကြည့်လိုက်မယ်"
+    s1_comma = "ပထမဆုံး တစ်လုတ်ကို ကျွန်တော်၊ မြည်းကြည့်လိုက်မယ်"
+    s2 = "ကြက်သွန်နီနဲ့ ဘူဒတ်ခ်ပွဲ ပါတယ်"
+    s3 = "ပြီးတော့ ကြက်ဥပြုတ်လည်း ပါသေးတယ်"
+
+    def _split_one(sent: str, mw: int = max_ink_w, fpx: int = font_px, st: int = stroke_px) -> list[str]:
+        cues, _ = core.pack_subtitle_cues_from_segments(
+            [{"audio_start": 0.0, "audio_end": 4.0, "speech_duration": 4.0, "text": sent}],
+            lines_per_cue=1,
+            max_width_px=mw,
+            font_px=fpx,
+            font_path=font_path,
+            stroke_px=st,
+        )
+        return [c[2] for c in cues]
+
+    # At production 1:1 default (722px, 40px font):
+    assert _split_one(s1) == ["ပထမဆုံး တစ်လုတ်ကို", "ကျွန်တော် မြည်းကြည့်လိုက်မယ်"]
+    assert _split_one(s2) == ["ကြက်သွန်နီနဲ့ ဘူဒတ်ခ်ပွဲ ပါတယ်"]
+    assert _split_one(s3) == ["ပြီးတော့ ကြက်ဥပြုတ်လည်း ပါသေးတယ်"]
+
+    # At tighter 1:1 geometries / larger font sizes forcing splits on all 3:
+    for mw, fpx, st in (
+        (600, 40, 2),
+        (520, 40, 2),
+        (505, 40, 2),
+        (716, 48, 3),  # 1:1 fs=19 cinematic
+        (684, 56, 3),  # 1:1 fs=22 glass
+    ):
+        for cand_s1 in (s1, s1_comma):
+            r1 = _split_one(cand_s1, mw=mw, fpx=fpx, st=st)
+            assert "ကျွန်တော်" not in r1, f"Lone subject stranded at mw={mw}, fpx={fpx}: {r1}"
+            if mw >= 505 and fpx == 40:
+                assert len(r1) == 2
+
+        r2 = _split_one(s2, mw=mw, fpx=fpx, st=st)
+        if len(r2) > 1:
+            assert r2 == ["ကြက်သွန်နီနဲ့", "ဘူဒတ်ခ်ပွဲ ပါတယ်"]
+            assert all(core._nonspace_cluster_count(p) >= 4 for p in r2)
+
+        r3 = _split_one(s3, mw=mw, fpx=fpx, st=st)
+        if len(r3) > 1:
+            assert r3 == ["ပြီးတော့ ကြက်ဥပြုတ်လည်း", "ပါသေးတယ်"]
+            assert "ပြီးတော့" not in r3
+            assert all(core._nonspace_cluster_count(p) >= 4 for p in r3)
+
+
+def test_fragment_guard_oracle_sweep_across_sentences_and_widths():
+    """For diverse Burmese sentences across multiple widths, no emitted cue may be
+    a single word or <4 grapheme clusters whenever a valid 0-fragment split exists."""
+    max_ink_w, font_px, font_path, stroke_px, _ = _subtitle_render_params_for_layout(
+        "1:1", (1080, 1920), font_size=16, sub_style="cinematic", sub_w=0.92
+    )
+    assert max_ink_w == 722
+    sentences = [
+        "ပထမဆုံး တစ်လုတ်ကို ကျွန်တော် မြည်းကြည့်လိုက်မယ်။",
+        "ပထမဆုံး တစ်လုတ်ကို ကျွန်တော်၊ မြည်းကြည့်လိုက်မယ်။",
+        "ကြက်သွန်နီနဲ့ ဘူဒတ်ခ်ပွဲ ပါတယ်။",
+        "ပြီးတော့ ကြက်ဥပြုတ်လည်း ပါသေးတယ်။",
+        "ပထမဆုံး တစ်လုတ်ကိုတော့ မင်းတို့ကို အရင် ကျွေးလိုက်မယ်။",
+        "ကျွန်တော့်မှာ ကြက်ဥပါသေးတာကို မင်းတို့ မေ့နေ ကြပြီထင်တယ်။",
+        "အာလူးရော ကြက်ဥပါ ကျွန်တော် ထပ်ပြီး ယူလိုက်ပါ သေးတယ်။",
+        "ဒါတွေကို အပြည့် သွတ်ပြီး မြိန်မြိန်ရှက်ရှက် စားပြတော့မှာပါ။",
+        "အခုတော့ ကျွန်တော်တို့ ခေါက်ဆွဲကို အတူတူ စားကြည့်ကြမယ်။",
+        "ပထမဆုံး တစ်လုတ်ကို ကျွန်တော် အရမ်းကြိုက်လို့ မြည်းကြည့်လိုက်မယ်။",
+        "ဒီနေ့ မနက်ခင်းမှာ ကျွန်တော် ဈေးကို သွားပြီးတော့ ဟင်းချက်ဖို့ ဝယ်လာတယ်။",
+        "ချိစ်လေးပါ ထပ်ထည့်လိုက်တော့ ပိုပြီး စားကောင်းသွားတာပေါ့။",
+        "ဒါပေမဲ့ အရသာက တကယ်ကို ကောင်းလွန်းနေတယ်။",
+        "ခေါက်ဆွဲနဲ့ ကြက်ဥကို တွဲပြီး စားလိုက်တယ်။",
+        "အစပ်က တဖြည်းဖြည်း တက်လာပြီလို့ ခံစားရတယ်။",
+    ]
+    for sent in sentences:
+        for mw in (440, 480, 520, 600, 680, max_ink_w):
+            cues, _ = core.pack_subtitle_cues_from_segments(
+                [{"audio_start": 0.0, "audio_end": 5.0, "speech_duration": 5.0, "text": sent}],
+                lines_per_cue=1,
+                max_width_px=mw,
+                font_px=font_px,
+                font_path=font_path,
+                stroke_px=stroke_px,
+            )
+            texts = [c[2] for c in cues]
+            for txt in texts:
+                assert "။" not in txt and "၊" not in txt
+                assert core._display_text_width_px(txt, font_px, font_path, stroke_px) <= mw
+            if len(texts) > 1 and _exists_zero_frag_word_split(sent, mw, font_px, font_path, stroke_px):
+                for txt in texts:
+                    assert not core._is_tiny_fragment(txt), (
+                        f"Avoidable tiny fragment {txt!r} in {texts} for {sent!r} @ mw={mw}"
+                    )
+
+
+def test_sub_04s_proportional_duration_piece_merges_into_neighbor():
+    """A piece whose proportional speech window would fall below 0.4s merges into an
+    eligible neighbor (or shifts its boundary within width cap) instead of emitting
+    a <0.4s / clamped 0.400s flash cue."""
+    max_ink_w, font_px, font_path, stroke_px, _ = _subtitle_render_params_for_layout(
+        "1:1", (1080, 1920), font_size=16, sub_style="cinematic", sub_w=0.92
+    )
+    # 1. Two complete sentences where S1's proportional share over [0.0..0.72s] is ~0.336s < 0.4s
+    #    and merged width <= 722px -> must merge into 1 cue instead of clamping to 0.400s.
+    text_fast_pair = "မြည်းကြည့်မယ်။ အရသာကောင်းတယ်။"
+    cues_pair, _ = core.pack_subtitle_cues_from_segments(
+        [{"audio_start": 0.0, "audio_end": 0.72, "speech_duration": 0.72, "text": text_fast_pair}],
+        lines_per_cue=1,
+        max_width_px=max_ink_w,
+        font_px=font_px,
+        font_path=font_path,
+        stroke_px=stroke_px,
+    )
+    assert [c[2] for c in cues_pair] == ["မြည်းကြည့်မယ် အရသာကောင်းတယ်"]
+    assert cues_pair[0][:2] == (0.0, 0.72)
+
+    # 2. Same-sentence sub-0.4s piece under skewed word_timings shifts boundary word when
+    #    both resulting cues stay <= max_width_px and no tiny fragment is introduced.
+    s_wt = "ပထမဆုံး တစ်လုတ်ကို ကျွန်တော် အရမ်း ကြိုက်မိတယ်"
+    skew_wt = [
+        {"start": 0.0, "end": 0.12, "text": "ပထမဆုံး"},
+        {"start": 0.12, "end": 0.25, "text": "တစ်လုတ်ကို"},
+        {"start": 0.25, "end": 0.85, "text": "ကျွန်တော်"},
+        {"start": 0.85, "end": 1.40, "text": "အရမ်း"},
+        {"start": 1.40, "end": 2.40, "text": "ကြိုက်မိတယ်"},
+    ]
+    cues_shifted, _ = core.pack_subtitle_cues_from_segments(
+        [{"audio_start": 0.0, "audio_end": 2.4, "speech_duration": 2.4, "text": s_wt, "word_timings": skew_wt}],
+        lines_per_cue=1,
+        max_width_px=550,
+        font_px=font_px,
+        font_path=font_path,
+        stroke_px=stroke_px,
+    )
+    assert [c[2] for c in cues_shifted] == ["ပထမဆုံး တစ်လုတ်ကို ကျွန်တော်", "အရမ်း ကြိုက်မိတယ်"]
+    assert cues_shifted[0][:2] == (0.0, 0.85)
+    assert cues_shifted[1][:2] == (0.85, 2.4)
+    for _, _, txt in cues_shifted:
+        assert not core._is_tiny_fragment(txt)
+        assert core._display_text_width_px(txt, font_px, font_path, stroke_px) <= 550
+
+    # 3. Hard width cap wins over merging when merged cue would exceed max_width_px.
+    text_rapid = "ပထမဆုံး တစ်လုတ်ကို ကျွန်တော် အရမ်းကြိုက်လို့ မြည်းကြည့်လိုက်မယ်။"
+    cues_rapid, _ = core.pack_subtitle_cues_from_segments(
+        [{"audio_start": 0.0, "audio_end": 1.05, "speech_duration": 1.05, "text": text_rapid}],
+        lines_per_cue=1,
+        max_width_px=520,
+        font_px=font_px,
+        font_path=font_path,
+        stroke_px=stroke_px,
+    )
+    for _, _, txt in cues_rapid:
+        assert core._display_text_width_px(txt, font_px, font_path, stroke_px) <= 520
+

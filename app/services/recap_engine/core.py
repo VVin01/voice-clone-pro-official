@@ -5546,6 +5546,17 @@ _SHORT_SENTENCE_MAX_WIDTH_FRAC = 0.38
 _SHORT_SENTENCE_MERGED_MAX_WIDTH_FRAC = 0.85
 _SHORT_SENTENCE_MERGED_MAX_CLUSTERS = 14
 
+_CLAUSE_START_CONNECTIVES: frozenset[str] = frozenset({
+    "ဒါပေမဲ့", "ဒါပေမယ့်",
+    "ပြီးတော့", "ပြီးနောက်", "ပြီးရင်",
+    "ဒါကြောင့်", "အဲ့ဒါကြောင့်", "အဲဒါကြောင့်", "ဒါနဲ့",
+    "အဲဒီနောက်", "အဲ့ဒီနောက်", "အဲ့ဒီတော့မှ", "အဲဒီတော့မှ",
+    "ဒီတော့", "အခုတော့", "အခု", "နောက်ပြီး", "ဒါ့အပြင်",
+})
+_FRAGMENT_MIN_CLUSTERS = 4
+_FRAGMENT_MIN_WORDS = 2
+_MIN_FULL_WIDTH_FRAC = 0.35
+
 
 def _display_text_width_px(
     text: str,
@@ -5564,6 +5575,18 @@ def _nonspace_cluster_count(text: str) -> int:
     disp = strip_burmese_subtitle_punctuation(text)
     compact = re.sub(r"\s+", "", disp)
     return len(myanmar_grapheme_clusters(compact)) if compact else 0
+
+
+def _piece_word_count(text: str) -> int:
+    disp = strip_burmese_subtitle_punctuation(text)
+    return len([w for w in disp.split() if w])
+
+
+def _is_tiny_fragment(text: str) -> bool:
+    return (
+        _nonspace_cluster_count(text) < _FRAGMENT_MIN_CLUSTERS
+        or _piece_word_count(text) < _FRAGMENT_MIN_WORDS
+    )
 
 
 def _split_burmese_sentences(flat: str) -> list[str]:
@@ -5681,6 +5704,7 @@ def _dp_split_burmese_clause(
         else:
             next_tok = next_unit
 
+        prev_word_clean = strip_burmese_subtitle_punctuation(prev_word)
         vetoed = False
         if next_tok in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS) and (
             not at_space or len(_get_word_toks(next_word)) == 1
@@ -5692,7 +5716,7 @@ def _dp_split_burmese_clause(
             vetoed = True
         elif at_space and next_tok in _STRANDED_VERB_AUX_TOKS:
             vetoed = True
-        elif prev_tok in _LINE_START_CONJUNCTIONS or prev_word in _LINE_START_CONJUNCTIONS:
+        elif prev_tok in _LINE_START_CONJUNCTIONS or prev_word_clean in _CLAUSE_START_CONNECTIVES:
             vetoed = True
 
         if vetoed:
@@ -5701,17 +5725,17 @@ def _dp_split_burmese_clause(
             tier = 6
         elif (
             prev_tok in _STRONG_CLAUSE_END_TOKS
-            or (prev_tok == "ပြီး" and prev_word not in _CLAUSE_ADVERBIAL_PYI_WORDS)
+            or (prev_tok == "ပြီး" and prev_word_clean not in _CLAUSE_ADVERBIAL_PYI_WORDS)
             or (prev2_tok in ("တာ", "တဲ့", "မှု") and prev_tok in ("ကို", "က", "မှာ", "နဲ့", "နှင့်"))
             or (
                 at_space
                 and prev_tok in _STD_CLAUSE_PARTICLE_TOKS
-                and prev_word not in _CLAUSE_ADVERBIAL_KO_WORDS
+                and prev_word_clean not in _CLAUSE_ADVERBIAL_KO_WORDS
                 and next_tok in _CLAUSE_OPENING_TOKS
             )
         ):
             tier = 5
-        elif prev_tok in _STD_CLAUSE_PARTICLE_TOKS and prev_word not in _CLAUSE_ADVERBIAL_KO_WORDS:
+        elif prev_tok in _STD_CLAUSE_PARTICLE_TOKS and prev_word_clean not in _CLAUSE_ADVERBIAL_KO_WORDS:
             tier = 4 if at_space else 3
         elif at_space and next_tok in _LINE_START_CONJUNCTIONS:
             tier = 3
@@ -5724,14 +5748,12 @@ def _dp_split_burmese_clause(
 
     valid_cuts = [0] + sorted(cut_penalty.keys()) + [n]
     m = len(valid_cuts)
-    total_w = max(1, _display_text_width_px(text, font_px, font_path, stroke_px))
 
-    min_k = [10**9] * m
-    min_k[0] = 0
-    edge_info: dict[tuple[int, int], tuple[str, int, int]] = {}
+    edges_from: list[list[tuple[int, str, int, int, int, float, int, int, bool]]] = [
+        [] for _ in range(m)
+    ]
+    edge_fills_below_35: set[float] = set()
     for i in range(m - 1):
-        if min_k[i] >= 10**9:
-            continue
         s_idx = valid_cuts[i]
         for j in range(i + 1, m):
             e_idx = valid_cuts[j]
@@ -5739,54 +5761,158 @@ def _dp_split_burmese_clause(
             if not piece:
                 continue
             pw = _display_text_width_px(piece, font_px, font_path, stroke_px)
-            if pw > eff_w:
-                if j == i + 1:
-                    cl = _nonspace_cluster_count(piece)
-                    edge_info[(i, j)] = (piece, pw, cl)
-                    if min_k[i] + 1 < min_k[j]:
-                        min_k[j] = min_k[i] + 1
+            oversized = pw > eff_w
+            if oversized and j > i + 1:
                 break
             cl = _nonspace_cluster_count(piece)
-            edge_info[(i, j)] = (piece, pw, cl)
-            if min_k[i] + 1 < min_k[j]:
-                min_k[j] = min_k[i] + 1
+            wc = _piece_word_count(piece)
+            fill = pw / float(eff_w)
+            is_short_cl = 1 if cl < _FRAGMENT_MIN_CLUSTERS else 0
+            is_frag = 1 if (cl < _FRAGMENT_MIN_CLUSTERS or wc < _FRAGMENT_MIN_WORDS) else 0
+            edges_from[i].append((j, piece, pw, cl, wc, fill, is_frag, is_short_cl, oversized))
+            if fill < _MIN_FULL_WIDTH_FRAC:
+                edge_fills_below_35.add(round(fill, 4))
+            if oversized:
+                break
 
-    k_min = min_k[m - 1]
-    if k_min >= 10**9 or k_min <= 1:
-        return [text]
-    ideal_w = total_w / float(k_min)
-
-    k_cost = 160.0
-    dp = [1e18] * m
-    parent = [-1] * m
-    dp[0] = 0.0
-    for i in range(m - 1):
-        cost_i = dp[i]
-        if cost_i >= 1e17:
-            continue
-        for j in range(i + 1, m):
-            info = edge_info.get((i, j))
-            if info is None:
+    def _solve_with_floor(
+        min_fill_floor: float,
+    ) -> tuple[tuple[int, int, int, float, float] | None, list[str] | None]:
+        inf_state = (10**9, 10**9, 10**9, 1e18, 1e18)
+        dp: list[tuple[int, int, int, float, float]] = [inf_state] * m
+        parent = [-1] * m
+        parent_piece = [""] * m
+        dp[0] = (0, 0, 0, 0.0, 0.0)
+        for i in range(m - 1):
+            st_i = dp[i]
+            if st_i[0] >= 10**9:
                 continue
-            _piece, pw, cl = info
-            c_pen = cut_penalty[valid_cuts[j]] if j < m - 1 else 0.0
-            stub_pen = 150.0 if cl <= 4 else 0.0
-            bal_pen = 40.0 * ((pw - ideal_w) / float(max(1, eff_w))) ** 2
-            cand = cost_i + k_cost + c_pen + stub_pen + bal_pen
-            if cand < dp[j]:
-                dp[j] = cand
-                parent[j] = i
+            f_i, sc_i, k_i, cp_i, bp_i = st_i
+            for j, piece, _pw, _cl, _wc, fill, is_frag, is_short_cl, oversized in edges_from[i]:
+                if not oversized and fill + 1e-6 < min_fill_floor:
+                    continue
+                c_pen = cut_penalty[valid_cuts[j]] if j < m - 1 else 0.0
+                low_pen = 60.0 * (max(0.0, 0.65 - fill) ** 2)
+                cand = (f_i + is_frag, sc_i + is_short_cl, k_i + 1, cp_i + c_pen, bp_i + low_pen)
+                if cand < dp[j]:
+                    dp[j] = cand
+                    parent[j] = i
+                    parent_piece[j] = piece
+        if dp[m - 1][0] >= 10**9:
+            return None, None
+        out_pcs: list[str] = []
+        cur = m - 1
+        while cur > 0:
+            out_pcs.append(parent_piece[cur])
+            cur = parent[cur]
+        out_pcs.reverse()
+        return dp[m - 1], out_pcs
 
-    pieces: list[str] = []
-    cur = m - 1
-    while cur > 0:
-        prev = parent[cur]
-        if prev < 0:
-            return [text]
-        pieces.append(edge_info[(prev, cur)][0])
-        cur = prev
-    pieces.reverse()
-    return pieces
+    base_score, base_pcs = _solve_with_floor(0.0)
+    if base_score is None or not base_pcs:
+        return [text]
+    best_frag, best_short_cl, best_k = base_score[0], base_score[1], base_score[2]
+
+    candidate_floors = [_MIN_FULL_WIDTH_FRAC] + sorted(edge_fills_below_35, reverse=True)
+    for fl in candidate_floors:
+        if fl <= 0.0:
+            break
+        sc, pcs = _solve_with_floor(fl)
+        if sc is not None and pcs is not None:
+            if (sc[0], sc[1], sc[2]) <= (best_frag, best_short_cl, best_k):
+                return pcs
+    return base_pcs
+
+
+def _rebalance_sentence_pieces(
+    pieces: list[str],
+    *,
+    max_width_px: int,
+    font_px: int,
+    font_path: Path | None,
+    stroke_px: int,
+) -> list[str]:
+    """Shift boundary words or merge neighboring pieces when a split left a
+    tiny fragment (<2 words or <4 clusters) or an under-filled piece (<35% width)."""
+    eff_w = max(80, int(max_width_px))
+
+    def _score(pcs: list[str]) -> tuple[int, int, int, float]:
+        frags = sum(1 for p in pcs if _is_tiny_fragment(p))
+        short_cls = sum(1 for p in pcs if _nonspace_cluster_count(p) < _FRAGMENT_MIN_CLUSTERS)
+        min_fill = min(
+            (_display_text_width_px(p, font_px, font_path, stroke_px) / float(eff_w))
+            for p in pcs
+        ) if pcs else 0.0
+        return (frags, short_cls, len(pcs), -round(min(min_fill, _MIN_FULL_WIDTH_FRAC), 4))
+
+    out = list(pieces)
+    for _ in range(8):
+        if len(out) <= 1:
+            break
+        weak_idxs = [
+            idx for idx, p in enumerate(out)
+            if _is_tiny_fragment(p)
+            or _display_text_width_px(p, font_px, font_path, stroke_px) < _MIN_FULL_WIDTH_FRAC * eff_w
+        ]
+        if not weak_idxs:
+            break
+        best_score = _score(out)
+        best_next: list[str] | None = None
+        for idx in weak_idxs:
+            for nb in (idx - 1, idx + 1):
+                if 0 <= nb < len(out):
+                    lo, hi = (nb, idx) if nb < idx else (idx, nb)
+                    merged = f"{out[lo]} {out[hi]}".strip()
+                    if _display_text_width_px(merged, font_px, font_path, stroke_px) <= eff_w:
+                        cand = out[:lo] + [merged] + out[hi + 1:]
+                        sc = _score(cand)
+                        if sc < best_score:
+                            best_score = sc
+                            best_next = cand
+            if idx > 0:
+                lwords = out[idx - 1].split()
+                if len(lwords) >= 2:
+                    moved = lwords[-1]
+                    moved_clean = strip_burmese_subtitle_punctuation(moved)
+                    l_last = strip_burmese_subtitle_punctuation(lwords[-2])
+                    new_l = " ".join(lwords[:-1]).strip()
+                    new_r = f"{moved} {out[idx]}".strip()
+                    if (
+                        new_l
+                        and _display_text_width_px(new_r, font_px, font_path, stroke_px) <= eff_w
+                        and l_last not in _CLAUSE_START_CONNECTIVES
+                        and moved_clean not in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS)
+                        and moved_clean not in _STRANDED_VERB_AUX_TOKS
+                    ):
+                        cand = out[:idx - 1] + [new_l, new_r] + out[idx + 1:]
+                        sc = _score(cand)
+                        if sc < best_score:
+                            best_score = sc
+                            best_next = cand
+            if idx + 1 < len(out):
+                rwords = out[idx + 1].split()
+                if len(rwords) >= 2:
+                    moved = rwords[0]
+                    moved_clean = strip_burmese_subtitle_punctuation(moved)
+                    r_next = strip_burmese_subtitle_punctuation(rwords[1])
+                    new_l = f"{out[idx]} {moved}".strip()
+                    new_r = " ".join(rwords[1:]).strip()
+                    if (
+                        new_r
+                        and _display_text_width_px(new_l, font_px, font_path, stroke_px) <= eff_w
+                        and moved_clean not in _CLAUSE_START_CONNECTIVES
+                        and r_next not in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS)
+                        and r_next not in _STRANDED_VERB_AUX_TOKS
+                    ):
+                        cand = out[:idx] + [new_l, new_r] + out[idx + 2:]
+                        sc = _score(cand)
+                        if sc < best_score:
+                            best_score = sc
+                            best_next = cand
+        if best_next is None:
+            break
+        out = best_next
+    return out
 
 
 def _split_sentence_at_clause_boundaries(
@@ -5802,6 +5928,20 @@ def _split_sentence_at_clause_boundaries(
     if _display_text_width_px(sentence, font_px, font_path, stroke_px) <= eff_w:
         return [sentence]
 
+    dp_pcs = _rebalance_sentence_pieces(
+        _dp_split_burmese_clause(
+            sentence,
+            max_width_px=eff_w,
+            font_px=font_px,
+            font_path=font_path,
+            stroke_px=stroke_px,
+        ),
+        max_width_px=eff_w,
+        font_px=font_px,
+        font_path=font_path,
+        stroke_px=stroke_px,
+    )
+
     if "၊" in sentence:
         raw_clauses = [p.strip() for p in re.findall(r"[^၊]+၊+|[^၊]+", sentence) if p.strip()]
         if len(raw_clauses) >= 2:
@@ -5815,9 +5955,9 @@ def _split_sentence_at_clause_boundaries(
                     grouped.append(cur)
                     cur = nxt
             grouped.append(cur)
-            out: list[str] = []
+            comma_pcs: list[str] = []
             for cl in grouped:
-                out.extend(
+                comma_pcs.extend(
                     _dp_split_burmese_clause(
                         cl,
                         max_width_px=eff_w,
@@ -5826,18 +5966,22 @@ def _split_sentence_at_clause_boundaries(
                         stroke_px=stroke_px,
                     )
                 )
-            return out
+            comma_frags = sum(1 for p in comma_pcs if _is_tiny_fragment(p))
+            dp_frags = sum(1 for p in dp_pcs if _is_tiny_fragment(p))
+            if (
+                all(
+                    _nonspace_cluster_count(p) >= _FRAGMENT_MIN_CLUSTERS
+                    and _display_text_width_px(p, font_px, font_path, stroke_px) >= _MIN_FULL_WIDTH_FRAC * eff_w
+                    for p in comma_pcs
+                )
+                and not (len(comma_pcs) == len(dp_pcs) and comma_frags > dp_frags)
+            ):
+                return comma_pcs
 
-    return _dp_split_burmese_clause(
-        sentence,
-        max_width_px=eff_w,
-        font_px=font_px,
-        font_path=font_path,
-        stroke_px=stroke_px,
-    )
+    return dp_pcs
 
 
-def _split_width_true_pieces(
+def _split_width_true_pieces_grouped(
     text: str,
     *,
     lines_per_cue: int = 1,
@@ -5845,15 +5989,9 @@ def _split_width_true_pieces(
     font_px: int,
     font_path: Path | None,
     stroke_px: int = 2,
-) -> list[str]:
-    """Segment a merged narration span by linguistic sentence/clause structure
-    while enforcing the locked-font ``max_width_px`` cap.
-
-    1. Segments into complete sentences at ``။`` / ``!`` / ``?``.
-    2. Only merges consecutive *very short* complete sentences that together fit
-       comfortably; never glues a sentence tail to the next sentence's head.
-    3. Any over-wide sentence splits strictly at natural clause boundaries.
-    """
+) -> list[tuple[str, int, bool]]:
+    """Segment a merged narration span and retain ``(piece, unit_id, is_complete_unit)``
+    metadata so callers can enforce duration/fragment merging within sentence rules."""
     clean = canonicalize_burmese_text(text)
     if not clean:
         return []
@@ -5897,8 +6035,8 @@ def _split_width_true_pieces(
             sentence_units.append(sentences[idx])
             idx += 1
 
-    pieces: list[str] = []
-    for unit in sentence_units:
+    grouped: list[tuple[str, int, bool]] = []
+    for unit_id, unit in enumerate(sentence_units):
         unit_lines = [
             ln.strip()
             for ln in _split_sentence_at_clause_boundaries(
@@ -5913,11 +6051,47 @@ def _split_width_true_pieces(
         if not unit_lines:
             continue
         if lines_cnt == 1 or len(unit_lines) == 1:
-            pieces.extend(unit_lines)
+            unit_cues = unit_lines
         else:
-            for k in range(0, len(unit_lines), lines_cnt):
-                pieces.append("\n".join(unit_lines[k:k + lines_cnt]))
-    return pieces or [flat]
+            unit_cues = [
+                "\n".join(unit_lines[k:k + lines_cnt])
+                for k in range(0, len(unit_lines), lines_cnt)
+            ]
+        is_complete = len(unit_cues) == 1
+        for cue in unit_cues:
+            grouped.append((cue, unit_id, is_complete))
+    return grouped or [(flat, 0, True)]
+
+
+def _split_width_true_pieces(
+    text: str,
+    *,
+    lines_per_cue: int = 1,
+    max_width_px: int,
+    font_px: int,
+    font_path: Path | None,
+    stroke_px: int = 2,
+) -> list[str]:
+    """Segment a merged narration span by linguistic sentence/clause structure
+    while enforcing the locked-font ``max_width_px`` cap.
+
+    1. Segments into complete sentences at ``။`` / ``!`` / ``?``.
+    2. Only merges consecutive *very short* complete sentences that together fit
+       comfortably; never glues a sentence tail to the next sentence's head.
+    3. Any over-wide sentence splits strictly at natural clause boundaries without
+       stranding tiny single-word or <4-cluster fragments when avoidable.
+    """
+    return [
+        piece
+        for piece, _, _ in _split_width_true_pieces_grouped(
+            text,
+            lines_per_cue=lines_per_cue,
+            max_width_px=max_width_px,
+            font_px=font_px,
+            font_path=font_path,
+            stroke_px=stroke_px,
+        )
+    ]
 
 
 def _coherent_segment_word_events(
@@ -5994,23 +6168,19 @@ def _coherent_segment_word_events(
     return clean_events, wt_max, wt_total
 
 
-def _allocate_span_cue_times(
+def _span_piece_raw_boundaries(
     span_segments: list[dict[str, Any]],
     piece_texts: list[str],
-) -> list[tuple[float, float, float]]:
-    """Distribute contiguous timestamps across a merged segment span for each
-    emitted cue piece, preferring coherent ``word_timings`` and otherwise
-    using grapheme-cluster share across each segment window, while enforcing
-    ``_CX_MIN_PIECE_SECONDS`` (0.4 s) when the span is long enough.
-    """
+) -> list[float]:
+    """Compute raw monotonic boundary timestamps ``[b_0, ..., b_k]`` across
+    ``span_segments`` for ``piece_texts`` using coherent ``word_timings``
+    where available and grapheme-cluster share otherwise."""
     if not span_segments or not piece_texts:
         return []
     span_start = round(float(span_segments[0]["start"]), 3)
     span_end = round(max(span_start, float(span_segments[-1]["end"])), 3)
-    last_sp_end = round(min(span_end, max(span_start, float(span_segments[-1]["speech_end"]))), 3)
-
     if len(piece_texts) == 1:
-        return [(span_start, span_end, last_sp_end)]
+        return [float(span_start), float(span_end)]
 
     seg_cluster_spans: list[tuple[float, float, float, float, Any]] = []
     cum_seg_c = 0.0
@@ -6068,7 +6238,28 @@ def _allocate_span_cue_times(
         raw_t = _time_at_cluster_pos((cum_p / pieces_total_c) * segs_total_c)
         boundaries.append(max(boundaries[-1], min(float(span_end), raw_t)))
     boundaries.append(float(span_end))
+    return boundaries
 
+
+def _allocate_span_cue_times(
+    span_segments: list[dict[str, Any]],
+    piece_texts: list[str],
+) -> list[tuple[float, float, float]]:
+    """Distribute contiguous timestamps across a merged segment span for each
+    emitted cue piece, preferring coherent ``word_timings`` and otherwise
+    using grapheme-cluster share across each segment window, while enforcing
+    ``_CX_MIN_PIECE_SECONDS`` (0.4 s) when the span is long enough.
+    """
+    if not span_segments or not piece_texts:
+        return []
+    span_start = round(float(span_segments[0]["start"]), 3)
+    span_end = round(max(span_start, float(span_segments[-1]["end"])), 3)
+    last_sp_end = round(min(span_end, max(span_start, float(span_segments[-1]["speech_end"]))), 3)
+
+    if len(piece_texts) == 1:
+        return [(span_start, span_end, last_sp_end)]
+
+    boundaries = _span_piece_raw_boundaries(span_segments, piece_texts)
     durs = [max(0.0, boundaries[i + 1] - boundaries[i]) for i in range(len(piece_texts))]
     total_dur = max(0.0, float(span_end) - float(span_start))
     if len(durs) > 1 and total_dur >= _CX_MIN_PIECE_SECONDS * len(durs):
@@ -6097,6 +6288,179 @@ def _allocate_span_cue_times(
         out.append((p_start, p_end, sp_end))
         cur = float(p_end)
     return out
+
+
+def _merge_sub_min_duration_pieces(
+    span_segments: list[dict[str, Any]],
+    grouped: list[tuple[str, int, bool]],
+    *,
+    lines_per_cue: int,
+    max_width_px: int,
+    font_px: int,
+    font_path: Path | None,
+    stroke_px: int,
+    min_duration: float = _CX_MIN_PIECE_SECONDS,
+) -> list[str]:
+    """Eliminate sub-0.4 s proportional cue pieces before timestamp allocation by
+    merging with an eligible neighbor (same sentence first, or adjacent complete
+    sentence) or shifting a boundary word when the width cap allows."""
+    if len(grouped) <= 1:
+        return [p for p, _, _ in grouped]
+
+    eff_w = max(80, int(max_width_px))
+    lines_cnt = min(3, max(1, int(lines_per_cue or 1)))
+    cur_grouped = list(grouped)
+
+    def _fit_merged_text(left_txt: str, right_txt: str) -> tuple[str, int] | None:
+        flat = re.sub(r"\s+", " ", f"{left_txt} {right_txt}").strip()
+        if lines_cnt == 1:
+            w = _display_text_width_px(flat, font_px, font_path, stroke_px)
+            return (flat, w) if w <= eff_w else None
+        left_lines = [ln.strip() for ln in left_txt.split("\n") if ln.strip()]
+        right_lines = [ln.strip() for ln in right_txt.split("\n") if ln.strip()]
+        stacked = left_lines + right_lines
+        if len(stacked) <= lines_cnt and all(
+            _display_text_width_px(ln, font_px, font_path, stroke_px) <= eff_w for ln in stacked
+        ):
+            w_max = max(_display_text_width_px(ln, font_px, font_path, stroke_px) for ln in stacked)
+            return ("\n".join(stacked), w_max)
+        reflowed = _dp_split_burmese_clause(
+            flat,
+            max_width_px=eff_w,
+            font_px=font_px,
+            font_path=font_path,
+            stroke_px=stroke_px,
+        )
+        if len(reflowed) <= lines_cnt and all(
+            _display_text_width_px(ln, font_px, font_path, stroke_px) <= eff_w for ln in reflowed
+        ):
+            w_max = max(_display_text_width_px(ln, font_px, font_path, stroke_px) for ln in reflowed)
+            return ("\n".join(reflowed), w_max)
+        return None
+
+    for _ in range(len(cur_grouped) + 2):
+        if len(cur_grouped) <= 1:
+            break
+        texts = [p for p, _, _ in cur_grouped]
+        bounds = _span_piece_raw_boundaries(span_segments, texts)
+        durs = [max(0.0, bounds[i + 1] - bounds[i]) for i in range(len(texts))]
+        short_idxs = sorted(
+            (i for i, d in enumerate(durs) if d < min_duration - 1e-6),
+            key=lambda i: durs[i],
+        )
+        if not short_idxs:
+            break
+
+        changed = False
+        for idx in short_idxs:
+            txt, uid, is_complete = cur_grouped[idx]
+
+            # 1. Prefer merging into an adjacent piece of the SAME sentence unit.
+            same_cands: list[tuple[int, int, str]] = []
+            for nb in (idx - 1, idx + 1):
+                if 0 <= nb < len(cur_grouped) and cur_grouped[nb][1] == uid:
+                    lo, hi = (nb, idx) if nb < idx else (idx, nb)
+                    fitted = _fit_merged_text(cur_grouped[lo][0], cur_grouped[hi][0])
+                    if fitted is not None:
+                        same_cands.append((fitted[1], lo, fitted[0]))
+            if same_cands:
+                same_cands.sort(key=lambda item: item[0])
+                _, lo, merged_txt = same_cands[0]
+                remain_same = sum(
+                    1 for k, (_, u, _) in enumerate(cur_grouped)
+                    if u == uid and k not in (lo, lo + 1)
+                )
+                cur_grouped[lo] = (merged_txt, uid, remain_same == 0)
+                cur_grouped.pop(lo + 1)
+                changed = True
+                break
+
+            # 2. Complete short sentence: may merge with an adjacent complete sentence.
+            if is_complete:
+                sent_cands: list[tuple[int, int, str, int]] = []
+                for nb in (idx - 1, idx + 1):
+                    if 0 <= nb < len(cur_grouped) and cur_grouped[nb][2]:
+                        lo, hi = (nb, idx) if nb < idx else (idx, nb)
+                        fitted = _fit_merged_text(cur_grouped[lo][0], cur_grouped[hi][0])
+                        if fitted is not None:
+                            sent_cands.append((fitted[1], lo, fitted[0], cur_grouped[lo][1]))
+                if sent_cands:
+                    sent_cands.sort(key=lambda item: item[0])
+                    _, lo, merged_txt, keep_uid = sent_cands[0]
+                    cur_grouped[lo] = (merged_txt, keep_uid, True)
+                    cur_grouped.pop(lo + 1)
+                    changed = True
+                    break
+
+            # 3. Same-sentence boundary shift (1-line mode) if merging exceeded width cap.
+            if lines_cnt == 1:
+                best_shift: tuple[float, int, str, str] | None = None
+                orig_frags = (1 if _is_tiny_fragment(txt) else 0)
+                if idx > 0 and cur_grouped[idx - 1][1] == uid:
+                    nb_txt = cur_grouped[idx - 1][0]
+                    lwords = nb_txt.split()
+                    if len(lwords) >= 2:
+                        moved = lwords[-1]
+                        moved_clean = strip_burmese_subtitle_punctuation(moved)
+                        l_last = strip_burmese_subtitle_punctuation(lwords[-2])
+                        new_l = " ".join(lwords[:-1]).strip()
+                        new_r = f"{moved} {txt}".strip()
+                        if (
+                            new_l
+                            and _display_text_width_px(new_r, font_px, font_path, stroke_px) <= eff_w
+                            and l_last not in _CLAUSE_START_CONNECTIVES
+                            and moved_clean not in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS)
+                            and moved_clean not in _STRANDED_VERB_AUX_TOKS
+                        ):
+                            old_pair_frags = orig_frags + (1 if _is_tiny_fragment(nb_txt) else 0)
+                            new_pair_frags = (1 if _is_tiny_fragment(new_l) else 0) + (1 if _is_tiny_fragment(new_r) else 0)
+                            if new_pair_frags <= old_pair_frags:
+                                cand_texts = list(texts)
+                                cand_texts[idx - 1] = new_l
+                                cand_texts[idx] = new_r
+                                c_bounds = _span_piece_raw_boundaries(span_segments, cand_texts)
+                                new_min = min(c_bounds[idx] - c_bounds[idx - 1], c_bounds[idx + 1] - c_bounds[idx])
+                                old_min = min(durs[idx - 1], durs[idx])
+                                if new_min > old_min + 1e-4:
+                                    best_shift = (new_min, idx - 1, new_l, new_r)
+                if idx + 1 < len(cur_grouped) and cur_grouped[idx + 1][1] == uid:
+                    nb_txt = cur_grouped[idx + 1][0]
+                    rwords = nb_txt.split()
+                    if len(rwords) >= 2:
+                        moved = rwords[0]
+                        moved_clean = strip_burmese_subtitle_punctuation(moved)
+                        r_next = strip_burmese_subtitle_punctuation(rwords[1])
+                        new_l = f"{txt} {moved}".strip()
+                        new_r = " ".join(rwords[1:]).strip()
+                        if (
+                            new_r
+                            and _display_text_width_px(new_l, font_px, font_path, stroke_px) <= eff_w
+                            and moved_clean not in _CLAUSE_START_CONNECTIVES
+                            and r_next not in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS)
+                            and r_next not in _STRANDED_VERB_AUX_TOKS
+                        ):
+                            old_pair_frags = orig_frags + (1 if _is_tiny_fragment(nb_txt) else 0)
+                            new_pair_frags = (1 if _is_tiny_fragment(new_l) else 0) + (1 if _is_tiny_fragment(new_r) else 0)
+                            if new_pair_frags <= old_pair_frags:
+                                cand_texts = list(texts)
+                                cand_texts[idx] = new_l
+                                cand_texts[idx + 1] = new_r
+                                c_bounds = _span_piece_raw_boundaries(span_segments, cand_texts)
+                                new_min = min(c_bounds[idx + 1] - c_bounds[idx], c_bounds[idx + 2] - c_bounds[idx + 1])
+                                old_min = min(durs[idx], durs[idx + 1])
+                                if new_min > old_min + 1e-4 and (best_shift is None or new_min > best_shift[0]):
+                                    best_shift = (new_min, idx, new_l, new_r)
+                if best_shift is not None:
+                    _, lo, new_a, new_b = best_shift
+                    cur_grouped[lo] = (new_a, uid, False)
+                    cur_grouped[lo + 1] = (new_b, uid, False)
+                    changed = True
+                    break
+
+        if not changed:
+            break
+
+    return [p for p, _, _ in cur_grouped]
 
 
 class SubtitleCuePacker:
@@ -6163,8 +6527,19 @@ class SubtitleCuePacker:
         span = self._run
         self._run = []
         joined = " ".join(s["text"] for s in span).strip()
-        pieces = _split_width_true_pieces(
+        grouped = _split_width_true_pieces_grouped(
             joined,
+            lines_per_cue=self.lines_per_cue,
+            max_width_px=self.max_width_px,
+            font_px=self.font_px,
+            font_path=self.font_path,
+            stroke_px=self.stroke_px,
+        )
+        if not grouped:
+            return []
+        pieces = _merge_sub_min_duration_pieces(
+            span,
+            grouped,
             lines_per_cue=self.lines_per_cue,
             max_width_px=self.max_width_px,
             font_px=self.font_px,
