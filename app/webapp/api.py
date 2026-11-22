@@ -7007,7 +7007,11 @@ def _build_clean_recap_script_file(
         script_file = job_dir / f"{job_id}_script.txt"
         plan_candidates = [
             job_dir / "edge_tts_smart_sync" / "smart_sync_plan_edge_tts.json",
+            job_dir / "workspace" / "edge_tts_smart_sync" / "smart_sync_plan_edge_tts.json",
             job_dir / "smart_sync_plan_edge_tts.json",
+            job_dir / "workspace" / "smart_sync_plan_edge_tts.json",
+            job_dir / "workspace" / "smart_sync_plan.json",
+            job_dir / "smart_sync_plan.json",
         ]
         timed_lines: List[str] = []
         plain_sentences: List[str] = []

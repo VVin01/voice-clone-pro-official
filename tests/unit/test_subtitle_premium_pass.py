@@ -161,8 +161,10 @@ def test_s2_pipeline_srt_ass_and_burn_share_exact_timings(tmp_path):
     parsed_ass = pq.parse_ass_source(ass_path)
     assert parsed_ass is not None
     assert [(round(a, 2), round(b, 2), t) for a, b, t in parsed_ass["cues"]] == [
-        (round(a, 2), round(b, 2), t) for a, b, t in final_cues
+        (round(a, 2), round(b, 2), core.strip_burmese_subtitle_punctuation(t))
+        for a, b, t in final_cues
     ]
+    assert all("။" not in t and "၊" not in t for _, _, t in parsed_ass["cues"])
 
 
 # ── S3: Subtitle Size & Scale Recalibration (D1) ───────────────────

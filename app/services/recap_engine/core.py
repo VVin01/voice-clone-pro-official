@@ -3992,7 +3992,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     dialogues = []
     for st_sec, en_sec, cue_text in cues:
-        c_text = canonicalize_burmese_text(cue_text)
+        c_text = strip_burmese_subtitle_punctuation(canonicalize_burmese_text(cue_text))
         if not c_text:
             continue
         # Batch AJ / L1: escape BEFORE the newline conversion below,
@@ -4472,6 +4472,25 @@ def canonicalize_burmese_text(text: str) -> str:
     # 5. Final NFC normalization (S6) guarantees canonical order even after
     #    combined rewrites so dotted-circle artifacts do not occur.
     return unicodedata.normalize("NFC", t)
+
+
+def strip_burmese_subtitle_punctuation(text: str) -> str:
+    """Display-only transform for subtitle outputs (PNG burn, SRT, ASS, preview).
+
+    Removes Burmese punctuation marks ``၊`` (U+104A) and ``။`` (U+104B) and
+    collapses any redundant spaces left behind, preserving explicit line breaks.
+    """
+    if not text:
+        return ""
+    lines_out: list[str] = []
+    for raw_line in str(text).replace("\r\n", "\n").split("\n"):
+        # Insert a space if ၊/။ separated two non-whitespace characters directly.
+        s = re.sub(r"[၊။]+(?=\S)(?![”’\"'\)\]}.,!?])", " ", raw_line)
+        s = re.sub(r"[၊။]+", "", s)
+        s = re.sub(r"[ \t]+", " ", s).strip()
+        if s:
+            lines_out.append(s)
+    return "\n".join(lines_out)
 
 
 BURMESE_PROTECTED_WORDS = sorted([
@@ -5487,9 +5506,335 @@ def split_burmese_subtitle_cues(
     return [(s, e, grp) for (s, e), grp in zip(spans, grouped_cues)]
 
 
-# ── Part D (2026-11-22): Cross-segment full-line width-true subtitle repack ──
+# ── Part D (2026-11-22): Sentence/clause-first width-true subtitle segmentation ──
 
 SUBTITLE_MERGE_MAX_GAP_SEC = 0.35
+
+# Tight adverbial modifiers where ပြီး / ကို binds forward into the verb/adjective
+# and must not be treated as a clause break.
+_CLAUSE_ADVERBIAL_PYI_WORDS: frozenset[str] = frozenset({
+    "ထပ်ပြီး", "ပိုပြီး", "တွဲပြီး", "ပြန်ပြီး", "ဆက်ပြီး",
+    "ပေါင်းပြီး", "လိုက်ပြီး", "ဝိုင်းပြီး", "စုပြီး", "ကူပြီး",
+})
+_CLAUSE_ADVERBIAL_KO_WORDS: frozenset[str] = frozenset({"တကယ်ကို", "အရမ်းကို", "တော်တော်ကို"})
+_STRONG_CLAUSE_END_TOKS: frozenset[str] = frozenset({
+    "ကိုတော့", "ကတော့", "မှာတော့", "တော့",
+    "ပြီးတော့", "ပြီးနောက်", "ပြီးရင်", "ဖြစ်ပြီး", "လျက်",
+    "တဲ့အခါ", "အခါ", "တာနဲ့", "တာမို့", "တာကြောင့်", "တဲ့အတွက်",
+    "သော်လည်း", "ကြောင့်", "အတွက်", "လို့",
+})
+_STD_CLAUSE_PARTICLE_TOKS: frozenset[str] = frozenset({
+    "ကို", "မှာ", "က", "နဲ့", "နှင့်", "ပါ", "လည်း", "ရော",
+    "မှ", "သို့", "ဖြင့်", "ကနေ", "ရဲ့", "၏", "သည်", "၌", "တွင်",
+    "တာ", "တဲ့", "ပဲ", "ပါတယ်", "ခဲ့တယ်", "တယ်", "နေတယ်", "နေတာ",
+    "ပါပဲ", "လိုက်တယ်", "လိုက်တာ", "ဖြစ်တယ်", "ရှိတယ်", "သွားတယ်",
+    "ပေါ့", "လေ", "နော်",
+})
+_CLAUSE_OPENING_TOKS: frozenset[str] = frozenset({
+    "ကျွန်တော်", "ကျွန်မ", "ကျွန်တော့်", "ကျွန်မရဲ့",
+    "မင်း", "မင်းတို့", "သူ", "သူက", "သူမ", "သူတို့",
+    "ဒါပေမဲ့", "ဒါပေမယ့်", "ဒါကြောင့်", "အဲ့ဒါကြောင့်", "အဲဒါကြောင့်",
+    "အဲဒီနောက်", "အဲ့ဒီနောက်", "ဒီတော့", "အခု",
+})
+_STRANDED_VERB_AUX_TOKS: frozenset[str] = frozenset({
+    "သေး", "ကြ", "လိုက်", "နေ", "ခဲ့", "သွား", "ဦး",
+    "ပါ", "မယ်", "တယ်", "ပြီ", "ဘူး", "ပေါ့", "တာ", "တဲ့",
+})
+
+_SHORT_SENTENCE_MAX_CLUSTERS = 6
+_SHORT_SENTENCE_MAX_WIDTH_FRAC = 0.38
+_SHORT_SENTENCE_MERGED_MAX_WIDTH_FRAC = 0.85
+_SHORT_SENTENCE_MERGED_MAX_CLUSTERS = 14
+
+
+def _display_text_width_px(
+    text: str,
+    font_px: int,
+    font_path: Path | None,
+    stroke_px: int,
+) -> int:
+    """Measure display width after stripping subtitle-hidden ``၊``/``။`` marks."""
+    disp = strip_burmese_subtitle_punctuation(text)
+    if not disp:
+        return 0
+    return _measure_text_width_px(disp, int(font_px), font_path, int(stroke_px))
+
+
+def _nonspace_cluster_count(text: str) -> int:
+    disp = strip_burmese_subtitle_punctuation(text)
+    compact = re.sub(r"\s+", "", disp)
+    return len(myanmar_grapheme_clusters(compact)) if compact else 0
+
+
+def _split_burmese_sentences(flat: str) -> list[str]:
+    """Segment narration into complete sentences without breaking embedded quotes."""
+    if not flat:
+        return []
+    raw = [p.strip() for p in re.findall(r"[^။!?]+[။!?]+[”’\"'\)\]}]*|[^။!?]+", flat) if p.strip()]
+    if len(raw) <= 1:
+        return raw or [flat]
+    out: list[str] = [raw[0]]
+    for nxt in raw[1:]:
+        first_word = nxt.split(" ", 1)[0]
+        first_toks = tokenize_burmese_words(first_word)
+        first_tok = first_toks[0] if first_toks else first_word
+        if first_tok in ("လို့", "ဟု", "ဆို", "တဲ့") or nxt[0] in "”’\"')]}.,!?။၊":
+            out[-1] = f"{out[-1]} {nxt}".strip()
+        else:
+            out.append(nxt)
+    return out
+
+
+def _dp_split_burmese_clause(
+    text: str,
+    *,
+    max_width_px: int,
+    font_px: int,
+    font_path: Path | None,
+    stroke_px: int,
+) -> list[str]:
+    """Split an over-wide Burmese sentence/clause at its highest-priority clause boundaries."""
+    eff_w = max(80, int(max_width_px))
+    if _display_text_width_px(text, font_px, font_path, stroke_px) <= eff_w:
+        return [text]
+
+    words = [w for w in text.split(" ") if w]
+    tokens: list[str] = []
+    tok_word: list[str] = []
+    for w_idx, word in enumerate(words):
+        need_sub = (
+            _display_text_width_px(word, font_px, font_path, stroke_px) > eff_w
+            or ("၊" in word and not word.endswith("၊"))
+            or ("။" in word and not word.endswith("။"))
+            or (len(words) <= 2 and len(myanmar_grapheme_clusters(word)) >= 10)
+        )
+        if need_sub:
+            for sub in tokenize_burmese_words(word):
+                if not sub:
+                    continue
+                if (
+                    _display_text_width_px(sub, font_px, font_path, stroke_px) > eff_w
+                    and len(myanmar_grapheme_clusters(sub)) > 1
+                ):
+                    for cl in myanmar_grapheme_clusters(sub):
+                        tokens.append(cl)
+                        tok_word.append(word)
+                else:
+                    tokens.append(sub)
+                    tok_word.append(word)
+        else:
+            tokens.append(word)
+            tok_word.append(word)
+        if w_idx < len(words) - 1:
+            tokens.append(" ")
+            tok_word.append(" ")
+
+    n = len(tokens)
+    if n <= 1:
+        return [text]
+
+    word_tok_cache: dict[str, list[str]] = {}
+
+    def _get_word_toks(w: str) -> list[str]:
+        cached = word_tok_cache.get(w)
+        if cached is None:
+            cached = [t for t in tokenize_burmese_words(w) if t.strip()]
+            word_tok_cache[w] = cached
+        return cached
+
+    tier_penalties = {
+        6: 0.0,
+        5: 10.0,
+        4: 55.0,
+        3: 80.0,
+        2: 220.0,
+        1: 420.0,
+        0: 2000.0,
+    }
+    cut_penalty: dict[int, float] = {}
+    for c in range(1, n):
+        if tokens[c] == " ":
+            continue
+        at_space = (tokens[c - 1] == " ")
+        p1_idx = c - 1
+        while p1_idx >= 0 and not tokens[p1_idx].strip():
+            p1_idx -= 1
+        prev_unit = tokens[p1_idx].strip() if p1_idx >= 0 else ""
+        prev_word = tok_word[p1_idx] if p1_idx >= 0 else ""
+        next_unit = tokens[c].strip()
+        next_word = tok_word[c]
+
+        if prev_unit == prev_word:
+            p_toks = _get_word_toks(prev_unit)
+            prev_tok = p_toks[-1] if p_toks else prev_unit
+            prev2_tok = p_toks[-2] if len(p_toks) >= 2 else ""
+        else:
+            prev_tok = prev_unit
+            p2_idx = p1_idx - 1
+            while p2_idx >= 0 and not tokens[p2_idx].strip():
+                p2_idx -= 1
+            prev2_tok = tokens[p2_idx].strip() if p2_idx >= 0 else ""
+
+        if next_unit == next_word:
+            n_toks = _get_word_toks(next_unit)
+            next_tok = n_toks[0] if n_toks else next_unit
+        else:
+            next_tok = next_unit
+
+        vetoed = False
+        if next_tok in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS) and (
+            not at_space or len(_get_word_toks(next_word)) == 1
+        ):
+            vetoed = True
+        elif next_unit in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS):
+            vetoed = True
+        elif next_tok and next_tok[0] in "။၊.,!?):]”’":
+            vetoed = True
+        elif at_space and next_tok in _STRANDED_VERB_AUX_TOKS:
+            vetoed = True
+        elif prev_tok in _LINE_START_CONJUNCTIONS or prev_word in _LINE_START_CONJUNCTIONS:
+            vetoed = True
+
+        if vetoed:
+            tier = 0
+        elif prev_tok.endswith("၊") or prev_unit.endswith("၊") or prev_tok in (",", ";", ":", "—"):
+            tier = 6
+        elif (
+            prev_tok in _STRONG_CLAUSE_END_TOKS
+            or (prev_tok == "ပြီး" and prev_word not in _CLAUSE_ADVERBIAL_PYI_WORDS)
+            or (prev2_tok in ("တာ", "တဲ့", "မှု") and prev_tok in ("ကို", "က", "မှာ", "နဲ့", "နှင့်"))
+            or (
+                at_space
+                and prev_tok in _STD_CLAUSE_PARTICLE_TOKS
+                and prev_word not in _CLAUSE_ADVERBIAL_KO_WORDS
+                and next_tok in _CLAUSE_OPENING_TOKS
+            )
+        ):
+            tier = 5
+        elif prev_tok in _STD_CLAUSE_PARTICLE_TOKS and prev_word not in _CLAUSE_ADVERBIAL_KO_WORDS:
+            tier = 4 if at_space else 3
+        elif at_space and next_tok in _LINE_START_CONJUNCTIONS:
+            tier = 3
+        elif at_space:
+            tier = 2
+        else:
+            tier = 1
+
+        cut_penalty[c] = tier_penalties[tier]
+
+    valid_cuts = [0] + sorted(cut_penalty.keys()) + [n]
+    m = len(valid_cuts)
+    total_w = max(1, _display_text_width_px(text, font_px, font_path, stroke_px))
+
+    min_k = [10**9] * m
+    min_k[0] = 0
+    edge_info: dict[tuple[int, int], tuple[str, int, int]] = {}
+    for i in range(m - 1):
+        if min_k[i] >= 10**9:
+            continue
+        s_idx = valid_cuts[i]
+        for j in range(i + 1, m):
+            e_idx = valid_cuts[j]
+            piece = "".join(tokens[s_idx:e_idx]).strip()
+            if not piece:
+                continue
+            pw = _display_text_width_px(piece, font_px, font_path, stroke_px)
+            if pw > eff_w:
+                if j == i + 1:
+                    cl = _nonspace_cluster_count(piece)
+                    edge_info[(i, j)] = (piece, pw, cl)
+                    if min_k[i] + 1 < min_k[j]:
+                        min_k[j] = min_k[i] + 1
+                break
+            cl = _nonspace_cluster_count(piece)
+            edge_info[(i, j)] = (piece, pw, cl)
+            if min_k[i] + 1 < min_k[j]:
+                min_k[j] = min_k[i] + 1
+
+    k_min = min_k[m - 1]
+    if k_min >= 10**9 or k_min <= 1:
+        return [text]
+    ideal_w = total_w / float(k_min)
+
+    k_cost = 160.0
+    dp = [1e18] * m
+    parent = [-1] * m
+    dp[0] = 0.0
+    for i in range(m - 1):
+        cost_i = dp[i]
+        if cost_i >= 1e17:
+            continue
+        for j in range(i + 1, m):
+            info = edge_info.get((i, j))
+            if info is None:
+                continue
+            _piece, pw, cl = info
+            c_pen = cut_penalty[valid_cuts[j]] if j < m - 1 else 0.0
+            stub_pen = 150.0 if cl <= 4 else 0.0
+            bal_pen = 40.0 * ((pw - ideal_w) / float(max(1, eff_w))) ** 2
+            cand = cost_i + k_cost + c_pen + stub_pen + bal_pen
+            if cand < dp[j]:
+                dp[j] = cand
+                parent[j] = i
+
+    pieces: list[str] = []
+    cur = m - 1
+    while cur > 0:
+        prev = parent[cur]
+        if prev < 0:
+            return [text]
+        pieces.append(edge_info[(prev, cur)][0])
+        cur = prev
+    pieces.reverse()
+    return pieces
+
+
+def _split_sentence_at_clause_boundaries(
+    sentence: str,
+    *,
+    max_width_px: int,
+    font_px: int,
+    font_path: Path | None,
+    stroke_px: int,
+) -> list[str]:
+    """Keep a fitting sentence whole; otherwise split only at natural clause boundaries."""
+    eff_w = max(80, int(max_width_px))
+    if _display_text_width_px(sentence, font_px, font_path, stroke_px) <= eff_w:
+        return [sentence]
+
+    if "၊" in sentence:
+        raw_clauses = [p.strip() for p in re.findall(r"[^၊]+၊+|[^၊]+", sentence) if p.strip()]
+        if len(raw_clauses) >= 2:
+            grouped: list[str] = []
+            cur = raw_clauses[0]
+            for nxt in raw_clauses[1:]:
+                cand = f"{cur} {nxt}".strip()
+                if _display_text_width_px(cand, font_px, font_path, stroke_px) <= eff_w:
+                    cur = cand
+                else:
+                    grouped.append(cur)
+                    cur = nxt
+            grouped.append(cur)
+            out: list[str] = []
+            for cl in grouped:
+                out.extend(
+                    _dp_split_burmese_clause(
+                        cl,
+                        max_width_px=eff_w,
+                        font_px=font_px,
+                        font_path=font_path,
+                        stroke_px=stroke_px,
+                    )
+                )
+            return out
+
+    return _dp_split_burmese_clause(
+        sentence,
+        max_width_px=eff_w,
+        font_px=font_px,
+        font_path=font_path,
+        stroke_px=stroke_px,
+    )
 
 
 def _split_width_true_pieces(
@@ -5501,9 +5846,13 @@ def _split_width_true_pieces(
     font_path: Path | None,
     stroke_px: int = 2,
 ) -> list[str]:
-    """Split a merged narration span using true pixel width (no 24-cluster cap),
-    preserving S1 meaningful breaks (။ -> ၊/particles -> space -> cluster) and
-    stranded-particle protection, respecting ``lines_per_cue``.
+    """Segment a merged narration span by linguistic sentence/clause structure
+    while enforcing the locked-font ``max_width_px`` cap.
+
+    1. Segments into complete sentences at ``။`` / ``!`` / ``?``.
+    2. Only merges consecutive *very short* complete sentences that together fit
+       comfortably; never glues a sentence tail to the next sentence's head.
+    3. Any over-wide sentence splits strictly at natural clause boundaries.
     """
     clean = canonicalize_burmese_text(text)
     if not clean:
@@ -5514,45 +5863,61 @@ def _split_width_true_pieces(
 
     lines_cnt = min(3, max(1, int(lines_per_cue or 1)))
     eff_w = max(80, int(max_width_px))
-    lines = _split_line_units_s1(
-        flat,
-        max_chars=None,
-        max_clusters=None,
-        max_width_px=eff_w,
-        font_px=int(font_px),
-        font_path=font_path,
-        stroke_px=int(stroke_px),
-        legacy_tail_merge=False,
-        pack_full_line=True,
-    )
-    lines = [ln for ln in lines if ln.strip()]
-    if not lines:
-        return [flat]
-    if lines_cnt == 1 or len(lines) == 1:
-        return lines
+    f_px = int(font_px)
+    s_px = int(stroke_px)
 
-    if len(lines) <= lines_cnt:
-        balanced = _format_cue_lines(
-            flat,
-            lines_cnt,
-            max_clusters=None,
-            max_width_px=eff_w,
-            font_px=int(font_px),
-            font_path=font_path,
-            stroke_px=int(stroke_px),
-        )
-        b_lines = [ln for ln in balanced.split("\n") if ln.strip()]
-        if len(b_lines) <= lines_cnt and all(
-            _measure_text_width_px(ln, int(font_px), font_path, int(stroke_px)) <= eff_w
-            for ln in b_lines
-        ):
-            return ["\n".join(b_lines)]
-        return ["\n".join(lines)]
+    sentences = _split_burmese_sentences(flat)
 
-    return [
-        "\n".join(lines[i:i + lines_cnt])
-        for i in range(0, len(lines), lines_cnt)
-    ]
+    def _is_very_short_sentence(sent: str) -> bool:
+        cl = _nonspace_cluster_count(sent)
+        w = _display_text_width_px(sent, f_px, font_path, s_px)
+        return cl <= _SHORT_SENTENCE_MAX_CLUSTERS and w <= _SHORT_SENTENCE_MAX_WIDTH_FRAC * eff_w
+
+    sentence_units: list[str] = []
+    idx = 0
+    while idx < len(sentences):
+        if _is_very_short_sentence(sentences[idx]):
+            group = sentences[idx]
+            nxt_idx = idx + 1
+            while nxt_idx < len(sentences) and _is_very_short_sentence(sentences[nxt_idx]):
+                cand = f"{group} {sentences[nxt_idx]}"
+                cand_w = _display_text_width_px(cand, f_px, font_path, s_px)
+                cand_cl = _nonspace_cluster_count(cand)
+                if (
+                    cand_w <= _SHORT_SENTENCE_MERGED_MAX_WIDTH_FRAC * eff_w
+                    and cand_cl <= _SHORT_SENTENCE_MERGED_MAX_CLUSTERS
+                ):
+                    group = cand
+                    nxt_idx += 1
+                else:
+                    break
+            sentence_units.append(group)
+            idx = nxt_idx
+        else:
+            sentence_units.append(sentences[idx])
+            idx += 1
+
+    pieces: list[str] = []
+    for unit in sentence_units:
+        unit_lines = [
+            ln.strip()
+            for ln in _split_sentence_at_clause_boundaries(
+                unit,
+                max_width_px=eff_w,
+                font_px=f_px,
+                font_path=font_path,
+                stroke_px=s_px,
+            )
+            if ln.strip()
+        ]
+        if not unit_lines:
+            continue
+        if lines_cnt == 1 or len(unit_lines) == 1:
+            pieces.extend(unit_lines)
+        else:
+            for k in range(0, len(unit_lines), lines_cnt):
+                pieces.append("\n".join(unit_lines[k:k + lines_cnt]))
+    return pieces or [flat]
 
 
 def _coherent_segment_word_events(
@@ -5809,10 +6174,12 @@ class SubtitleCuePacker:
         if not pieces:
             return []
         times = _allocate_span_cue_times(span, pieces)
-        return [
-            (st, en, txt, sp_en)
-            for (st, en, sp_en), txt in zip(times, pieces)
-        ]
+        out: list[tuple[float, float, str, float]] = []
+        for (st, en, sp_en), txt in zip(times, pieces):
+            disp_txt = strip_burmese_subtitle_punctuation(txt)
+            if disp_txt:
+                out.append((st, en, disp_txt, sp_en))
+        return out
 
 
 def pack_subtitle_cues_from_segments(
@@ -5910,7 +6277,7 @@ def _resolve_png_subtitle_job(
     # is byte-identical to the pre-Q burn (it is idempotent — the
     # pipeline's cues and the synced files are already canonical).
     cues = [
-        (a, b, canonicalize_burmese_text(t))
+        (a, b, strip_burmese_subtitle_punctuation(canonicalize_burmese_text(t)))
         for a, b, t in cues
     ]
     cues = [(a, b, t) for a, b, t in cues if t.strip()]
@@ -7056,7 +7423,7 @@ def extract_preview_with_overlays(
         # finished video will carry.
         fit_lines, fit_px, fit_visuals = fit_png_cue_lines(
             renderer,
-            canonicalize_burmese_text(sample),
+            strip_burmese_subtitle_punctuation(canonicalize_burmese_text(sample)),
             sub_lines, font_px,
             font_file, visuals,
             _subtitle_fit_width_px(overlays, pw),

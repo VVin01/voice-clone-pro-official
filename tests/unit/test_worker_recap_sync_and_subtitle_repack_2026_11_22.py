@@ -782,8 +782,8 @@ def test_bug2_production_shaped_segments_merge_fragments_into_full_lines():
     assert len(cues) <= 7
     assert len(cues) == len(speech_ends)
 
-    # Cue 1 ("ကျွန်တော် ဘူဒတ်") and Cue 2 ("ပြင်လိုက်တယ်။") MUST merge together
-    assert "ကျွန်တော် ဘူဒတ် ပြင်လိုက်တယ်။" in cues[0][2]
+    # Cue 1 ("ကျွန်တော် ဘူဒတ်") and Cue 2 ("ပြင်လိုက်တယ်။") MUST merge together (and display strips ။/၊)
+    assert "ကျွန်တော် ဘူဒတ် ပြင်လိုက်တယ်" in cues[0][2]
     # "ပထမဆုံးတစ်လုပ်ကို" merges into a full sentence with "စားလိုက်တာနဲ့ အရမ်းစပ်သွားတယ်။"
     assert any(
         "ပထမဆုံးတစ်လုပ်ကို" in c_txt and "စားလိုက်တာနဲ့" in c_txt
@@ -791,6 +791,7 @@ def test_bug2_production_shaped_segments_merge_fragments_into_full_lines():
     )
     # No cue ends with a dangling sentence-starting conjunction "ဒါပေမဲ့"
     for _, _, c_txt in cues:
+        assert "။" not in c_txt and "၊" not in c_txt
         assert not c_txt.strip().endswith(("ဒါပေမဲ့", "ဒါပေမယ့်"))
         # No tiny 1-4 cluster orphan cue (like "ပေါ့။")
         assert len(core.myanmar_grapheme_clusters(c_txt.replace(" ", ""))) > 4
@@ -984,7 +985,8 @@ async def test_e2e_worker_mode_recap_pipeline_merges_subtitles_and_syncs_bundle_
     # Verify Bug 2: SRT, ASS, and burned subtitle_cues all reflect the packed cues (< 8 input segments)
     srt_cues = _png_subs.parse_srt_cues(Path(res["subtitles_srt"]))
     assert 2 <= len(srt_cues) <= 5, f"Expected 8 segments to pack into 2..5 cues, got {len(srt_cues)}: {srt_cues}"
-    assert "ကျွန်တော် ဘူဒတ် ပြင်လိုက်တယ်။" in srt_cues[0][2]
+    assert "ကျွန်တော် ဘူဒတ် ပြင်လိုက်တယ်" in srt_cues[0][2]
+    assert all("။" not in c[2] and "၊" not in c[2] for c in srt_cues)
 
     plan_edge = json.loads(
         (worker_job_dir / "edge_tts_smart_sync" / "smart_sync_plan_edge_tts.json").read_text(encoding="utf-8")
@@ -996,12 +998,14 @@ async def test_e2e_worker_mode_recap_pipeline_merges_subtitles_and_syncs_bundle_
     ass_text = Path(res["subtitles_ass"]).read_text(encoding="utf-8")
     ass_dialogues = [ln for ln in ass_text.splitlines() if ln.startswith("Dialogue:")]
     assert len(ass_dialogues) == len(srt_cues)
+    assert all("။" not in ln and "၊" not in ln for ln in ass_dialogues)
 
     # Verify Bug 1: build script on worker, upload bundle to web_storage, verify web & bot resolution
     worker_outer_dir = worker_storage / "recap_output" / jid
     script_path = api_mod._build_clean_recap_script_file(
         worker_outer_dir, jid, "pov", res["subtitles_srt"]
     )
+    assert script_path and "။" in Path(script_path).read_text(encoding="utf-8")
     bundle = collect_recap_bundle_files(
         worker_outer_dir,
         video_path=res["final_video"],

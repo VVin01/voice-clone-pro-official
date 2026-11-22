@@ -342,7 +342,8 @@ def test_part_d_three_short_segments_merge_into_one_full_width_cue():
     assert cues[0][1] == pytest.approx(3.8, abs=0.01)
     assert "မနက်ခင်းမှာ" in cues[0][2]
     assert "သူထွက်လာတယ်" in cues[0][2]
-    assert "အိမ်ပြန်သွားပြီ။" in cues[0][2]
+    assert "အိမ်ပြန်သွားပြီ" in cues[0][2]
+    assert "။" not in cues[0][2] and "၊" not in cues[0][2]
     assert len(speech_ends) == 1
 
 
@@ -393,7 +394,9 @@ def test_part_d_long_span_splits_at_burmese_sentence_stop_with_proportional_timi
         stroke_px=2,
     )
     assert len(cues) == 2
-    assert cues[0][2].endswith("။")
+    assert cues[0][2] == core.strip_burmese_subtitle_punctuation(s1)
+    assert cues[1][2] == core.strip_burmese_subtitle_punctuation(s2)
+    assert all("။" not in c[2] and "၊" not in c[2] for c in cues)
     assert cues[0][0] == pytest.approx(0.0, abs=0.01)
     assert cues[1][1] == pytest.approx(6.1, abs=0.01)
     assert cues[1][0] >= cues[0][1]
