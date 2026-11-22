@@ -4,10 +4,12 @@ import asyncio
 import html
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
 import time
+from typing import Any
 from aiogram import Bot
 from aiogram.types import FSInputFile
 from sqlalchemy import select, update
@@ -167,6 +169,236 @@ async def sync_output_to_cloud(job_id: str, file_path: Path) -> bool:
     except Exception as e:
         logger.warning("Failed to sync output to cloud for job %s: %s", job_id, e)
         return False
+
+
+_RECAP_BUNDLE_SKIP_DIRS = frozenset({"work", "tts_parts", "tts_parts_short", "video_parts"})
+_RECAP_METADATA_MAX_BYTES = 5 * 1024 * 1024
+_RECAP_MIME_TYPES = {
+    ".mp4": "video/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".srt": "text/plain; charset=utf-8",
+    ".ass": "text/plain; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".json": "application/json",
+}
+
+
+def collect_recap_bundle_files(
+    job_dir: Path,
+    *,
+    video_path: str | Path | None = None,
+    audio_path: str | Path | None = None,
+    srt_path: str | Path | None = None,
+    ass_path: str | Path | None = None,
+    script_path: str | Path | None = None,
+    part_paths: list[str | Path] | None = None,
+) -> list[tuple[str, Path, str]]:
+    """Collect the deliverable files under ``job_dir`` for a finished recap job.
+
+    Returns a deduplicated list of ``(rel_posix_path, abs_path, role)`` strictly
+    inside ``job_dir``, omitting intermediate scratch/work directories and raw
+    downloaded source media.
+    """
+    base_dir = Path(job_dir).resolve()
+    if not base_dir.is_dir():
+        return []
+
+    items: list[tuple[str, Path, str]] = []
+    seen_paths: set[Path] = set()
+
+    def _add(candidate: str | Path | None, role: str) -> None:
+        if not candidate:
+            return
+        try:
+            p = Path(candidate).resolve()
+        except OSError:
+            return
+        if not p.is_file() or p in seen_paths:
+            return
+        try:
+            rel = p.relative_to(base_dir)
+        except ValueError:
+            logger.warning("Skipping recap bundle file outside job_dir %s: %s", base_dir, p)
+            return
+        if any(part.lower() in _RECAP_BUNDLE_SKIP_DIRS for part in rel.parts[:-1]):
+            return
+        seen_paths.add(p)
+        items.append((rel.as_posix(), p, role))
+
+    def _in_work_tree(p: Path) -> bool:
+        try:
+            rel = p.resolve().relative_to(base_dir)
+        except (OSError, ValueError):
+            return True
+        return any(part.lower() in _RECAP_BUNDLE_SKIP_DIRS for part in rel.parts[:-1])
+
+    _add(video_path, "video")
+    _add(audio_path, "audio")
+    _add(srt_path, "srt")
+    for srt_name in ("final_edge_tts_smart_sync.srt", "recap_myanmar_synced.srt"):
+        for cand in sorted(base_dir.rglob(srt_name)):
+            if not _in_work_tree(cand):
+                _add(cand, "srt")
+    _add(ass_path, "ass")
+    for ass_name in ("final_edge_tts_smart_sync.ass", "recap_myanmar_synced.ass"):
+        for cand in sorted(base_dir.rglob(ass_name)):
+            if not _in_work_tree(cand):
+                _add(cand, "ass")
+    _add(script_path, "script")
+    for p_item in (part_paths or []):
+        _add(p_item, "part")
+    parts_dir = base_dir / "parts"
+    if parts_dir.is_dir():
+        for pf in sorted(parts_dir.glob("recap_part_*.mp4")):
+            _add(pf, "part")
+    for plan_cand in sorted(base_dir.rglob("smart_sync_plan_edge_tts.json")):
+        if _in_work_tree(plan_cand):
+            continue
+        try:
+            if plan_cand.stat().st_size <= _RECAP_METADATA_MAX_BYTES:
+                _add(plan_cand, "metadata")
+        except OSError:
+            continue
+    return items
+
+
+async def sync_recap_bundle_to_cloud(
+    job_id: str,
+    job_dir: Path,
+    bundle_files: list[tuple[str, Path, str]],
+    *,
+    max_attempts: int = 3,
+    retry_delay: float = 1.5,
+) -> dict[str, Any]:
+    """Upload a finished recap job's deliverable bundle from a fleet worker to the web service.
+
+    Uses the exact same primary/token gate as ``sync_output_to_cloud`` so
+    single-process web runs perform zero HTTP uploads. Returns a structured
+    status dict including ``synced`` (bool), ``skipped`` (bool), and
+    ``remote_paths`` (role -> web-canonical saved path).
+    """
+    if getattr(settings, "instance_primary", True):
+        return {"synced": True, "skipped": True, "uploaded": [], "remote_paths": {}, "remote_paths_by_rel": {}}
+    worker_token = (getattr(settings, "worker_token", "") or "").strip()
+    if not worker_token:
+        return {"synced": True, "skipped": True, "uploaded": [], "remote_paths": {}, "remote_paths_by_rel": {}}
+
+    cloud_url = (
+        os.getenv("RENDER_EXTERNAL_URL", "").strip()
+        or os.getenv("MINI_APP_URL", "").strip()
+        or (getattr(settings, "mini_app_url", "") or "").strip()
+        or "https://voice-clone-studio-c1er.onrender.com"
+    ).rstrip("/")
+
+    if not bundle_files:
+        msg = f"No deliverable files found in {job_dir} for recap job {job_id}"
+        logger.error("Recap cloud sync aborted for %s: %s", job_id, msg)
+        return {"synced": False, "skipped": False, "uploaded": [], "error": msg, "remote_paths": {}, "remote_paths_by_rel": {}}
+
+    headers: dict[str, str] = {"X-Worker-Token": worker_token}
+    cf_secret = (getattr(settings, "cf_origin_secret", "") or "").strip()
+    if cf_secret:
+        headers["X-Origin-Secret"] = cf_secret
+
+    attempts = max(1, int(max_attempts))
+    uploaded: list[str] = []
+    remote_paths: dict[str, str] = {}
+    remote_paths_by_rel: dict[str, str] = {}
+
+    import httpx
+
+    url = f"{cloud_url}/api/internal/worker/upload-recap-file/{job_id}"
+    for rel_path, local_path, role in bundle_files:
+        if not local_path.is_file():
+            err_msg = f"Missing recap deliverable file for upload: {local_path}"
+            logger.error("Recap cloud sync failed for %s: %s", job_id, err_msg)
+            return {
+                "synced": False,
+                "skipped": False,
+                "uploaded": uploaded,
+                "failed_file": rel_path,
+                "error": err_msg,
+                "remote_paths": remote_paths,
+                "remote_paths_by_rel": remote_paths_by_rel,
+            }
+
+        ext = local_path.suffix.lower()
+        mime_type = _RECAP_MIME_TYPES.get(ext, "application/octet-stream")
+        upload_timeout = 300.0 if ext == ".mp4" else 90.0
+        last_err = ""
+        file_ok = False
+
+        for attempt in range(1, attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=upload_timeout) as client:
+                    with open(local_path, "rb") as fh:
+                        resp = await client.post(
+                            url,
+                            files={"file": (local_path.name, fh, mime_type)},
+                            data={"rel_path": rel_path, "role": role},
+                            headers=headers,
+                        )
+                if resp.is_success:
+                    try:
+                        payload = resp.json()
+                    except Exception:
+                        payload = {}
+                    saved_path = str(payload.get("saved_path") or "").strip()
+                    if saved_path:
+                        remote_paths_by_rel[rel_path] = saved_path
+                        if role and role not in remote_paths:
+                            remote_paths[role] = saved_path
+                    uploaded.append(rel_path)
+                    file_ok = True
+                    break
+                last_err = f"HTTP {resp.status_code}: {(resp.text or '')[:300]}"
+                if resp.status_code in (400, 403, 404, 409, 413):
+                    logger.error(
+                        "Recap cloud upload rejected permanently for job %s (%s): %s",
+                        job_id, rel_path, last_err,
+                    )
+                    break
+                logger.warning(
+                    "Recap cloud upload attempt %d/%d failed for job %s (%s): %s",
+                    attempt, attempts, job_id, rel_path, last_err,
+                )
+            except Exception as exc:
+                last_err = str(exc) or exc.__class__.__name__
+                logger.warning(
+                    "Recap cloud upload attempt %d/%d error for job %s (%s): %s",
+                    attempt, attempts, job_id, rel_path, last_err,
+                )
+
+            if attempt < attempts and retry_delay > 0:
+                await asyncio.sleep(float(retry_delay) * attempt)
+
+        if not file_ok:
+            logger.error(
+                "Recap cloud upload FAILED after %d attempt(s) for job %s (%s): %s",
+                attempts, job_id, rel_path, last_err,
+            )
+            return {
+                "synced": False,
+                "skipped": False,
+                "uploaded": uploaded,
+                "failed_file": rel_path,
+                "error": last_err or "upload_failed",
+                "remote_paths": remote_paths,
+                "remote_paths_by_rel": remote_paths_by_rel,
+            }
+
+    logger.info(
+        "✅ Recap bundle for job %s uploaded to web (%d files: %s)",
+        job_id, len(uploaded), ", ".join(uploaded),
+    )
+    return {
+        "synced": True,
+        "skipped": False,
+        "uploaded": uploaded,
+        "remote_paths": remote_paths,
+        "remote_paths_by_rel": remote_paths_by_rel,
+    }
 
 
 async def _voice_job_cancelled(session: AsyncSession, job: Job) -> bool:

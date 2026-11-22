@@ -812,6 +812,7 @@ def run_recap_pipeline(
         "final_video": result.get("final"),
         "audio": result.get("audio"),
         "subtitles_srt": result.get("subtitles_srt"),
+        "subtitles_ass": result.get("subtitles_ass"),
         "plan_path": str(plan_path),
         "job_dir": str(target_job_dir),
         "segments": result.get("segments", len(plan.get("segments", []))),

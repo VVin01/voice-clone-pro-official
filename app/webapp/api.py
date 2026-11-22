@@ -28,7 +28,7 @@ import html
 import math
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -5577,6 +5577,168 @@ async def upload_worker_job_result(
     }
 
 
+_ALLOWED_RECAP_BUNDLE_EXTS = frozenset({".mp4", ".mp3", ".wav", ".srt", ".ass", ".txt", ".json"})
+_RECAP_BUNDLE_MAX_BYTES = {
+    ".mp4": 500 * 1024 * 1024,
+    ".mp3": 100 * 1024 * 1024,
+    ".wav": 100 * 1024 * 1024,
+    ".srt": 10 * 1024 * 1024,
+    ".ass": 10 * 1024 * 1024,
+    ".txt": 10 * 1024 * 1024,
+    ".json": 10 * 1024 * 1024,
+}
+
+
+def _validate_recap_upload_target(job_id: str, raw_rel: str) -> tuple[str, Path, int]:
+    """Validate and resolve a recap worker upload relative path strictly inside ``recap_output/<job_id>``."""
+    if (
+        not job_id
+        or "/" in job_id
+        or "\\" in job_id
+        or ".." in job_id
+        or "\x00" in job_id
+    ):
+        raise HTTPException(status_code=400, detail="Invalid job_id")
+
+    rel_str = (raw_rel or "").strip()
+    if (
+        not rel_str
+        or rel_str.startswith("/")
+        or "\\" in rel_str
+        or ":" in rel_str
+        or "\x00" in rel_str
+    ):
+        raise HTTPException(status_code=400, detail="Invalid relative file path")
+
+    posix_rel = PurePosixPath(rel_str)
+    parts = posix_rel.parts
+    if not parts or any(p in ("", ".", "..", "/") for p in parts):
+        raise HTTPException(status_code=400, detail="Path traversal rejected")
+
+    ext = posix_rel.suffix.lower()
+    if ext not in _ALLOWED_RECAP_BUNDLE_EXTS:
+        raise HTTPException(status_code=400, detail=f"Disallowed recap file extension: {ext or 'none'}")
+
+    job_root = (settings.storage_root / "recap_output" / job_id).resolve()
+    dest_path = (job_root / Path(*parts)).resolve()
+    try:
+        if not dest_path.is_relative_to(job_root) or dest_path == job_root:
+            raise HTTPException(status_code=400, detail="Resolved path escapes job directory")
+    except AttributeError:
+        try:
+            dest_path.relative_to(job_root)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Resolved path escapes job directory")
+        if dest_path == job_root:
+            raise HTTPException(status_code=400, detail="Resolved path escapes job directory")
+
+    cur = job_root
+    for part in parts:
+        cur = cur / part
+        if cur.is_symlink():
+            raise HTTPException(status_code=400, detail="Symlink targets are not allowed")
+
+    max_bytes = _RECAP_BUNDLE_MAX_BYTES.get(ext, 10 * 1024 * 1024)
+    return posix_rel.as_posix(), dest_path, max_bytes
+
+
+@api_router.post("/internal/worker/upload-recap-file/{job_id}")
+async def upload_worker_recap_file(
+    job_id: str,
+    file: UploadFile = File(...),
+    rel_path: Optional[str] = Form(None),
+    role: Optional[str] = Form(None),
+    rel_path_hdr: Optional[str] = Header(None, alias="X-Recap-Rel-Path"),
+    auth_token: str = Header(None, alias="X-Worker-Token"),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Internal sync endpoint for fleet workers to upload recap deliverables into web storage."""
+    worker_token = (getattr(settings, "worker_token", "") or "").strip()
+    if not worker_token:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    supplied_token = auth_token.strip() if isinstance(auth_token, str) else ""
+    if not supplied_token or not hmac.compare_digest(supplied_token, worker_token):
+        raise HTTPException(status_code=403, detail="Unauthorized worker upload")
+
+    if isinstance(rel_path, str):
+        raw_rel_candidate = rel_path
+    elif isinstance(rel_path_hdr, str):
+        raw_rel_candidate = rel_path_hdr
+    else:
+        raw_rel_candidate = file.filename or ""
+
+    clean_rel, dest_path, max_bytes = _validate_recap_upload_target(
+        job_id,
+        raw_rel_candidate,
+    )
+
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not (
+        str(job_id).startswith("rc_")
+        or getattr(job, "job_type", None) == JobType.RECAP.value
+        or getattr(job, "recap_config", None) is not None
+    ):
+        raise HTTPException(status_code=400, detail="Job is not a recap job")
+
+    if job.status in (
+        JobStatus.CANCELLED.value,
+        JobStatus.FAILED.value,
+        JobStatus.SUCCESS.value,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is {job.status}; upload rejected",
+        )
+
+    _require_disk_headroom()
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest_path.parent / f".{dest_path.name}.tmp.{uuid.uuid4().hex[:8]}"
+
+    def _copy_recap_upload_sync() -> int:
+        written = 0
+        with open(tmp_path, "wb") as f_out:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Uploaded file exceeds the {max_bytes // (1024 * 1024)} MB limit",
+                    )
+                f_out.write(chunk)
+        os.replace(tmp_path, dest_path)
+        return written
+
+    try:
+        written_bytes = await asyncio.to_thread(_copy_recap_upload_sync)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+    clean_role = role.strip().lower() if isinstance(role, str) else ""
+    reg_entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if reg_entry is not None and clean_role in ("video", "audio", "srt", "script"):
+        reg_entry[f"{clean_role}_path"] = str(dest_path)
+
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "rel_path": clean_rel,
+        "role": clean_role,
+        "saved_path": str(dest_path),
+        "size_bytes": written_bytes,
+    }
+
+
 @api_router.get("/voices/sample/{slug}")
 @api_router.get("/voices/preview/{slug}")
 async def get_voice_sample_audio(
@@ -8842,6 +9004,7 @@ async def _execute_recap_background_job(
                 )
             )
         srt_path = recap_res.get("subtitles_srt")
+        ass_path = recap_res.get("subtitles_ass")
         script_path = _build_clean_recap_script_file(job_dir, job_id, req.story_style, srt_path)
 
         _fb_used, _fb_segs = _recap_fallback_info(job_dir)
@@ -8914,9 +9077,6 @@ async def _execute_recap_background_job(
             entry["warnings"] = list(recap_res.get("warnings") or [])
             entry["stage_timings"] = dict(recap_res.get("stage_timings") or {})
 
-        entry["status"] = "SUCCESS"
-        entry["progress_percent"] = 100
-        _recap_set_entry_label(entry, "🎉 Recap Video Generation Completed!", stage="finalize")
         entry["video_path"] = video_path
         entry["audio_path"] = audio_path
         entry["srt_path"] = srt_path
@@ -9000,6 +9160,56 @@ async def _execute_recap_background_job(
             )
             return
 
+        # Worker-mode bundle sync (2026-11-22 Bug 1 fix): when running on a
+        # fleet worker with separate container-local storage, upload ALL
+        # deliverables (MP4, voiceover MP3/WAV, SRT, ASS, script TXT, split
+        # parts, plan JSON) to vcp-web BEFORE committing terminal SUCCESS or
+        # sending the Telegram completion notification. Co-located web runs
+        # return skipped=True inside sync_recap_bundle_to_cloud with zero I/O.
+        from app.worker import collect_recap_bundle_files, sync_recap_bundle_to_cloud
+
+        _part_paths_for_sync = [
+            entry[k]
+            for k in sorted(entry.keys())
+            if re.fullmatch(r"part[1-9][0-9]*_path", str(k)) and entry.get(k)
+        ]
+        _bundle_files = collect_recap_bundle_files(
+            job_dir,
+            video_path=video_path,
+            audio_path=audio_path,
+            srt_path=srt_path,
+            ass_path=ass_path,
+            script_path=script_path,
+            part_paths=_part_paths_for_sync,
+        )
+        _worker_sync_active = (
+            not getattr(settings, "instance_primary", True)
+            and bool((getattr(settings, "worker_token", "") or "").strip())
+        )
+        if _worker_sync_active:
+            _recap_set_entry_label(entry, "☁️ Uploading recap files...", stage="upload")
+            if video_path and not any(role == "video" for _, _, role in _bundle_files):
+                logger.error(
+                    "Recap job %s: primary video missing from bundle in worker mode (%s)",
+                    job_id, video_path,
+                )
+                raise RuntimeError("Recap output video missing before web upload")
+
+        _sync_res = await sync_recap_bundle_to_cloud(job_id, job_dir, _bundle_files)
+        if not _sync_res.get("synced"):
+            _sync_err = _sync_res.get("error") or "unknown"
+            logger.error(
+                "Recap job %s: bundle sync to web failed (%s) — aborting completion so job fails/refunds instead of delivering broken links",
+                job_id, _sync_err,
+            )
+            raise RuntimeError(f"Recap output upload to web failed: {_sync_err}")
+
+        db_video_path = (
+            (_sync_res.get("remote_paths") or {}).get("video") or video_path
+            if not _sync_res.get("skipped")
+            else video_path
+        )
+
         # Update Job in database
         _succ_written = False
         final_script_text = None
@@ -9078,7 +9288,7 @@ async def _execute_recap_background_job(
                 recap_cfg_dict["partial_delivered"] = bool(_partial_delivered)
 
                 _succ_values = {
-                    "result_path": video_path,
+                    "result_path": db_video_path,
                     "finished_at": func.now(),
                     "final_script": final_script_text,
                     "output_duration_seconds": _real_seconds,
@@ -9218,6 +9428,10 @@ async def _execute_recap_background_job(
                 "longer active (cancelled); not delivering."
             )
             return
+
+        entry["status"] = "SUCCESS"
+        entry["progress_percent"] = 100
+        _recap_set_entry_label(entry, "🎉 Recap Video Generation Completed!", stage="finalize")
 
         # Batch AB: terminal state clears the stranded-reset count.
         await _clear_recap_stranded_reset_count(job_id)
@@ -11275,16 +11489,18 @@ async def download_recap_file(
     # must be an admin). Files on disk with no job record are not served.
     if not _recap_registry_owner_ok(job_id, user):
         raise HTTPException(status_code=404, detail="Recap file not found")
-    _reg_dl_entry = RECAP_JOBS_REGISTRY.get(job_id)
-    if _reg_dl_entry is not None:
-        _reg_dl_status = str(_reg_dl_entry.get("status") or "").upper()
-        if _reg_dl_status not in ("COMPLETED", "SUCCESS"):
-            raise HTTPException(status_code=404, detail="Recap file not ready or not found")
     job_row = None
     if job_id not in RECAP_JOBS_REGISTRY:
         job_row = await _require_job_owner(db, job_id, user)
     else:
         job_row = await db.get(Job, job_id)
+        if job_row is not None:
+            _reconcile_recap_registry_with_db_job(job_id, job_row)
+    _reg_dl_entry = RECAP_JOBS_REGISTRY.get(job_id)
+    if _reg_dl_entry is not None:
+        _reg_dl_status = str(_reg_dl_entry.get("status") or "").upper()
+        if _reg_dl_status not in ("COMPLETED", "SUCCESS"):
+            raise HTTPException(status_code=404, detail="Recap file not ready or not found")
     if job_row is not None and job_row.status != JobStatus.SUCCESS.value:
         raise HTTPException(status_code=404, detail="Recap file not ready or not found")
     db_result_path = None

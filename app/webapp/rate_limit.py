@@ -109,6 +109,7 @@ MAX_CONTENT_LENGTH: dict[str, int] = {
     "/api/recap/upload_sub_font": 15 * 1024 * 1024,
     "/api/user/logo": 10 * 1024 * 1024,
     "/api/internal/worker/upload-result": 500 * 1024 * 1024,
+    "/api/internal/worker/upload-recap-file": 500 * 1024 * 1024,
 }
 
 TOO_MANY_DETAIL = "တောင်းဆိုမှု များနေပါသည်။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။"

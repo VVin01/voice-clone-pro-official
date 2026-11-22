@@ -4611,6 +4611,13 @@ def _subtitle_fit_width_px(overlays: dict[str, Any] | None, picture_w: int) -> i
     return max(120, int(round(_sub_w_fraction(overlays) * pw)))
 
 
+_LINE_START_CONJUNCTIONS: frozenset[str] = frozenset({"ဒါပေမဲ့", "ဒါပေမယ့်"})
+_PACK_EXTRA_END_PARTICLES: frozenset[str] = frozenset({
+    "ကတော့", "မှာတော့", "ကိုတော့", "ပါတော့တယ်",
+    "တာ", "တဲ့", "ပေါ့", "ပါပဲ", "လေ", "နော်",
+})
+
+
 def _split_line_units_s1(
     text: str,
     *,
@@ -4621,10 +4628,17 @@ def _split_line_units_s1(
     font_path: Path | None = None,
     stroke_px: int = 2,
     legacy_tail_merge: bool = False,
+    pack_full_line: bool = False,
 ) -> list[str]:
     """Split text into single lines respecting grapheme clusters, word boundaries,
     stranded-particle rules, priority breaks (sentence -> clause/particle ->
     space -> cluster), visual width cap, and cluster/char bounds (S1).
+
+    When ``pack_full_line=True`` (used by the Part D cross-segment packer),
+    space-delimited Burmese clauses are tokenized for clean mid-clause fit,
+    fill ratio is measured against the target width budget rather than truncated
+    fit, and break tiers prioritize filling lines to ~72–95% without leaving
+    stranded particles or sentence-starting conjunctions at line ends.
     """
     flat = re.sub(r"\s+", " ", str(text or "").replace("\r\n", " ").replace("\n", " ")).strip()
     if not flat:
@@ -4648,7 +4662,8 @@ def _split_line_units_s1(
     tokens: list[str] = []
     words = [w for w in flat.split(" ") if w]
     for w_idx, word in enumerate(words):
-        if ("။" in word or "၊" in word) or not _fits(word):
+        has_myanmar = pack_full_line and any("\u1000" <= ch <= "\u109F" for ch in word)
+        if has_myanmar or ("။" in word or "၊" in word) or not _fits(word):
             for sub in tokenize_burmese_words(word):
                 if not sub:
                     continue
@@ -4708,6 +4723,7 @@ def _split_line_units_s1(
 
         full_fit = "".join(tokens[start:end]).strip()
         full_w = max(1, _measure_text_width_px(full_fit, font_px, font_path, stroke_px) if max_width_px is not None else _unit_len(full_fit))
+        target_w = max(full_w, int(max_width_px)) if (pack_full_line and max_width_px is not None) else full_w
         best_tier = -1
         best_cut = end
 
@@ -4717,28 +4733,59 @@ def _split_line_units_s1(
                 continue
             nxt = _next_nonspace(c)
             if nxt and (nxt in STRANDED_LINE_START_PARTICLES or nxt[0] in "။၊.,!?):]”’"):
-                continue
+                if not (pack_full_line and nxt in _LINE_START_CONJUNCTIONS):
+                    continue
             prev_ns = _prev_nonspace(c, start)
             at_space = (tokens[c - 1] == " ") or (c < n_tok and tokens[c] == " ")
             if max_width_px is not None:
                 lw = _measure_text_width_px(left, font_px, font_path, stroke_px)
             else:
                 lw = _unit_len(left)
-            fill = lw / full_w
+            fill = lw / target_w
 
-            # Avoid breaking mid-word between non-space tokens inside one unsplit word
-            in_space_word = not at_space and not prev_ns.endswith(("။", "၊")) and prev_ns not in PARTICLE_SYLS and prev_ns not in STRANDED_LINE_START_PARTICLES
-
-            if prev_ns.endswith("။") and fill >= 0.30:
-                tier = 4
-            elif (prev_ns.endswith("၊") or prev_ns in PARTICLE_SYLS or prev_ns in ("တာ", "တဲ့")) and fill >= 0.35:
-                tier = 3
-            elif at_space and fill >= 0.35:
-                tier = 2
-            elif not in_space_word:
-                tier = 1
+            if pack_full_line:
+                is_end_particle = (
+                    prev_ns.endswith("၊")
+                    or (
+                        (prev_ns in PARTICLE_SYLS or prev_ns in _PACK_EXTRA_END_PARTICLES)
+                        and prev_ns not in _LINE_START_CONJUNCTIONS
+                    )
+                )
+                dangling_conj = prev_ns in _LINE_START_CONJUNCTIONS
+                in_space_word = (
+                    (not at_space and not prev_ns.endswith(("။", "၊")) and not is_end_particle and prev_ns not in STRANDED_LINE_START_PARTICLES)
+                    or dangling_conj
+                )
+                if prev_ns.endswith("။") and fill >= 0.55:
+                    tier = 7
+                elif is_end_particle and fill >= 0.72:
+                    tier = 6
+                elif at_space and not dangling_conj and fill >= 0.72:
+                    tier = 5
+                elif prev_ns.endswith("။") and fill >= 0.42:
+                    tier = 4
+                elif is_end_particle and fill >= 0.55:
+                    tier = 3
+                elif at_space and not dangling_conj and fill >= 0.55:
+                    tier = 2
+                elif not in_space_word and fill >= 0.45:
+                    tier = 1
+                else:
+                    tier = 0
             else:
-                tier = 0
+                # Avoid breaking mid-word between non-space tokens inside one unsplit word
+                in_space_word = not at_space and not prev_ns.endswith(("။", "၊")) and prev_ns not in PARTICLE_SYLS and prev_ns not in STRANDED_LINE_START_PARTICLES
+
+                if prev_ns.endswith("။") and fill >= 0.30:
+                    tier = 4
+                elif (prev_ns.endswith("၊") or prev_ns in PARTICLE_SYLS or prev_ns in ("တာ", "တဲ့")) and fill >= 0.35:
+                    tier = 3
+                elif at_space and fill >= 0.35:
+                    tier = 2
+                elif not in_space_word:
+                    tier = 1
+                else:
+                    tier = 0
 
             # Prefer higher priority tier; inside same tier prefer rightmost (higher c).
             if tier > best_tier or (tier == best_tier and c > best_cut):
@@ -4761,6 +4808,21 @@ def _split_line_units_s1(
             if _fits(merged_tail):
                 chunks[-2] = merged_tail
                 chunks.pop()
+            elif pack_full_line:
+                prev_words = [w for w in chunks[-2].split(" ") if w]
+                if len(prev_words) >= 2:
+                    moved = prev_words[-1]
+                    if moved not in (STRANDED_LINE_START_PARTICLES - _LINE_START_CONJUNCTIONS):
+                        cand_prev = " ".join(prev_words[:-1]).strip()
+                        cand_last = (moved + sep + chunks[-1]).strip()
+                        if len(prev_words) >= 3 and prev_words[-2] in _LINE_START_CONJUNCTIONS:
+                            cand_prev2 = " ".join(prev_words[:-2]).strip()
+                            cand_last2 = (prev_words[-2] + " " + moved + sep + chunks[-1]).strip()
+                            if cand_prev2 and _fits(cand_prev2) and _fits(cand_last2):
+                                cand_prev, cand_last = cand_prev2, cand_last2
+                        if cand_prev and _fits(cand_prev) and _fits(cand_last):
+                            chunks[-2] = cand_prev
+                            chunks[-1] = cand_last
 
     return [c for c in chunks if c] or [flat]
 
@@ -5461,6 +5523,7 @@ def _split_width_true_pieces(
         font_path=font_path,
         stroke_px=int(stroke_px),
         legacy_tail_merge=False,
+        pack_full_line=True,
     )
     lines = [ln for ln in lines if ln.strip()]
     if not lines:
@@ -5495,9 +5558,17 @@ def _split_width_true_pieces(
 def _coherent_segment_word_events(
     seg_text: str,
     word_timings: list[dict[str, Any]] | None,
+    *,
+    seg_start: float | None = None,
+    seg_end: float | None = None,
 ) -> tuple[list[tuple[float, float, int]], float, int] | None:
-    """Return ``(events[(st, en, tok_len)], wt_max, wt_total)`` when segment
-    WordBoundary timings coherently cover ``seg_text``; else None.
+    """Return ``(events[(abs_st, abs_en, cluster_len)], wt_end, wt_total)`` when
+    segment WordBoundary timings coherently cover ``seg_text``; else None.
+
+    Normalizes both segment-relative timings (produced per-segment by Edge TTS,
+    starting near 0.0) and job-absolute timings onto the job timeline
+    ``[seg_start, seg_end]`` using Myanmar grapheme-cluster weights so cue
+    boundaries track spoken words without offset drift.
     """
     if not word_timings:
         return None
@@ -5515,19 +5586,46 @@ def _coherent_segment_word_events(
         if not tok or en < st or st < prev_s - 0.05:
             continue
         prev_s = max(prev_s, st)
-        clean_events.append((max(0.0, st), max(0.0, st, en), len(tok)))
+        tok_units = max(1, len(myanmar_grapheme_clusters(tok)))
+        clean_events.append((max(0.0, st), max(0.0, st, en), tok_units))
     if len(clean_events) < 2:
         return None
+    wt_min = clean_events[0][0]
     wt_max = max(en for _, en, _ in clean_events)
-    if wt_max <= 0.1:
+    if wt_max <= 0.1 or (wt_max - wt_min) <= 0.05:
         return None
     wt_total = sum(ln for _, _, ln in clean_events)
-    unit_total = len(re.sub(r"\s+", "", seg_text or ""))
-    if wt_total < 4 or unit_total < 4:
+    unit_total = len(myanmar_grapheme_clusters(re.sub(r"\s+", "", seg_text or "")))
+    if wt_total < 3 or unit_total < 3:
         return None
     ratio = wt_total / float(unit_total)
     if ratio < 0.65 or ratio > 1.35:
         return None
+
+    if seg_start is not None and seg_end is not None and seg_end > seg_start:
+        s_st = float(seg_start)
+        s_en = float(seg_end)
+        seg_dur = s_en - s_st
+        is_job_absolute = (
+            s_st > 0.25
+            and wt_min >= s_st - 0.25
+            and wt_max <= s_en + 0.35
+        )
+        mapped: list[tuple[float, float, int]] = []
+        if is_job_absolute:
+            for ev_st, ev_en, tok_u in clean_events:
+                st_a = max(s_st, min(s_en, ev_st))
+                en_a = max(st_a, min(s_en, ev_en))
+                mapped.append((st_a, en_a, tok_u))
+        else:
+            base_t = wt_min if (wt_min >= 0.25 and (wt_max - wt_min) > 0.1) else 0.0
+            span_t = max(0.1, wt_max - base_t)
+            for ev_st, ev_en, tok_u in clean_events:
+                st_a = s_st + max(0.0, min(1.0, (ev_st - base_t) / span_t)) * seg_dur
+                en_a = max(st_a, s_st + max(0.0, min(1.0, (ev_en - base_t) / span_t)) * seg_dur)
+                mapped.append((st_a, en_a, tok_u))
+        return mapped, s_en, wt_total
+
     return clean_events, wt_max, wt_total
 
 
@@ -5553,12 +5651,16 @@ def _allocate_span_cue_times(
     cum_seg_c = 0.0
     for s in span_segments:
         c_len = float(max(1, len(myanmar_grapheme_clusters(re.sub(r"\s+", "", s["text"])))))
-        wt_info = _coherent_segment_word_events(s["text"], s.get("word_timings"))
+        s_st_f = float(s["start"])
+        s_en_f = float(s["end"])
+        wt_info = _coherent_segment_word_events(
+            s["text"], s.get("word_timings"), seg_start=s_st_f, seg_end=s_en_f
+        )
         seg_cluster_spans.append((
             cum_seg_c,
             cum_seg_c + c_len,
-            float(s["start"]),
-            float(s["end"]),
+            s_st_f,
+            s_en_f,
             wt_info,
         ))
         cum_seg_c += c_len
@@ -5571,7 +5673,7 @@ def _allocate_span_cue_times(
                 seg_c = max(1.0, c1 - c0)
                 u = max(0.0, min(1.0, (clamped - c0) / seg_c))
                 if wt_info is not None:
-                    events, wt_max, wt_total = wt_info
+                    events, _wt_end, wt_total = wt_info
                     target = u * float(wt_total)
                     seen = 0.0
                     bt: float | None = None
@@ -5584,8 +5686,7 @@ def _allocate_span_cue_times(
                         seen += tl
                     if bt is None:
                         bt = events[-1][1]
-                    u_t = max(0.0, min(1.0, bt / wt_max))
-                    return s_st + u_t * max(0.0, s_en - s_st)
+                    return max(s_st, min(s_en, bt))
                 return s_st + u * max(0.0, s_en - s_st)
         return float(span_end)
 
@@ -8658,6 +8759,8 @@ class EdgeSmartSync:
                 "audio": str(paths.voice),
                 "plan": str(paths.plan),
                 "final": None,
+                "subtitles_srt": str(srt_file) if srt_file.is_file() else None,
+                "subtitles_ass": str(ass_file) if ass_file.is_file() else None,
                 "segments": len(timing),
                 "stage_timings": dict(_stage_timings),
             }
