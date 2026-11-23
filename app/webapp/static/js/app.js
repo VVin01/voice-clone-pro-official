@@ -1006,6 +1006,13 @@ function handleTelegramBackButton() {
     }
     const activePane = document.querySelector(".tab-pane.active");
     const activeTabId = activePane ? activePane.id : "tab-home";
+    if (activeTabId === "tab-recap-job") {
+        if (typeof window.backToStudio === "function") {
+            window.backToStudio("recap");
+            syncTelegramBackButton();
+            return;
+        }
+    }
     if (activeTabId === "tab-recap") {
         if (state.recapDetailOpen && typeof window.backToStudio === "function") {
             window.backToStudio("recap");
@@ -1197,7 +1204,9 @@ function renderStageStepper(el, labels, activeIndex, completeAll) {
     if (el.dataset.stageKey === key) return;
     el.dataset.stageKey = key;
     el.innerHTML = labels.map((label, i) => {
-        const cls = completeAll || i < activeIndex ? "done" : (i === activeIndex ? "active" : "upcoming");
+        const cls = completeAll || (activeIndex >= 0 && i < activeIndex)
+            ? "done"
+            : (i === activeIndex ? "active" : "upcoming");
         const mark = cls === "done" ? "✓ " : "";
         return `<span class="stage-chip ${cls}">${mark}${label}</span>${i < labels.length - 1 ? '<span class="stage-arrow">›</span>' : ""}`;
     }).join("");
@@ -1211,17 +1220,53 @@ function setVoiceStage(mode) {
     else if (mode === "working") renderStageStepper(el, voiceStageLabels(), 1, false);
     else renderStageStepper(el, voiceStageLabels(), 0, false);
 }
-function setRecapStage(stepStr, status) {
+const RECAP_STAGE_KEY_TO_STEP = {
+    download: 1,
+    transcribe: 2,
+    context: 2,
+    translate: 2,
+    plan: 2,
+    script_ready: 2,
+    tts: 3,
+    sync: 4,
+    png: 4,
+    overlay: 4,
+    mux: 4,
+    finalize: 4,
+    split: 4,
+};
+function resolveRecapStageIndex(job) {
+    if (!job) return 0;
+    if (job.status === "SUCCESS") return 4;
+    const stageKey = String(job.progress_stage || "").trim().toLowerCase();
+    if (stageKey && Object.prototype.hasOwnProperty.call(RECAP_STAGE_KEY_TO_STEP, stageKey)) {
+        return RECAP_STAGE_KEY_TO_STEP[stageKey];
+    }
+    if (job.status === "SCRIPT_READY") return 2;
+    if (job.status === "WAITING_CHOICE") return 3;
+    const rawIdx = parseInt(String(job.stage_index || 0), 10) || 0;
+    if (rawIdx >= 1) return Math.min(4, rawIdx);
+    return 0;
+}
+window.resolveRecapStageIndex = resolveRecapStageIndex;
+function setRecapStage(stepStr, status, progressStage) {
     const el = document.getElementById("recap-stage-stepper");
     if (!el) return;
     if (status === "SUCCESS") { renderStageStepper(el, recapStageLabels(), 3, true); return; }
-    if (status === "SCRIPT_READY") { renderStageStepper(el, recapStageLabels(), 1, false); return; }
-    if (status === "WAITING_CHOICE") { renderStageStepper(el, recapStageLabels(), 2, false); return; }
-    const n = parseInt(String(stepStr || "0").split("/")[0], 10) || 0;
+    const stageKey = String(progressStage || "").trim().toLowerCase();
+    let n = (stageKey && Object.prototype.hasOwnProperty.call(RECAP_STAGE_KEY_TO_STEP, stageKey))
+        ? RECAP_STAGE_KEY_TO_STEP[stageKey]
+        : 0;
+    if (!n) {
+        if (status === "SCRIPT_READY") n = 2;
+        else if (status === "WAITING_CHOICE") n = 3;
+        else n = parseInt(String(stepStr || "0").split("/")[0], 10) || 0;
+    }
     if (n >= 4) renderStageStepper(el, recapStageLabels(), 3, false);
     else if (n === 3) renderStageStepper(el, recapStageLabels(), 2, false);
     else if (n === 2) renderStageStepper(el, recapStageLabels(), 1, false);
-    else renderStageStepper(el, recapStageLabels(), 0, false);
+    else if (n === 1) renderStageStepper(el, recapStageLabels(), 0, false);
+    else renderStageStepper(el, recapStageLabels(), -1, false);
 }
 window.setVoiceStage = setVoiceStage;
 window.setRecapStage = setRecapStage;
@@ -1827,13 +1872,13 @@ window.liveJobOpen = function(jobId, kind) {
     closeLiveJobsSheet();
     const job = LiveJobs.jobs.get(jobId);
     if (kind === "recap") {
-        switchTab("tab-recap");
         if (job && job.status === "SUCCESS") {
+            switchTab("tab-recap");
             openRecapInPlayer(jobId);
         } else if (job && liveJobsIsTerminal(job.status)) {
             openHistoryHub();
         } else {
-            openRecapDetail(jobId);
+            openCurrentRecapDetail(jobId);
         }
     } else if (kind === "tts") {
         switchTab("tab-tts");
@@ -1862,9 +1907,10 @@ window.liveJobOpen = function(jobId, kind) {
 state.voiceDetailOpen = false;
 state.recapDetailOpen = false;
 function showStudioInlineStatus(kind, text) {
-    // Round 7 Item 2: Voice progress lives in the dedicated detail view and
-    // running-jobs bar only — never render an inline status strip in Voice Studio.
-    if (kind === "voice") return;
+    // Round 7 Item 2 + Round 15 Part B: Voice and Recap progress live in their
+    // dedicated detail views and Active Jobs sheet only — never render an inline
+    // status strip inside either studio.
+    if (kind === "voice" || kind === "recap") return;
     const line = document.getElementById(kind + "-inline-status");
     const label = document.getElementById(kind + "-inline-status-text");
     if (label && text) label.innerText = text;
@@ -1913,28 +1959,78 @@ function openVoiceDetail(jobId) {
 }
 window.openVoiceDetail = openVoiceDetail;
 function openRecapDetail(jobId) {
-    const recapTab = document.getElementById("tab-recap");
-    if (recapTab && !recapTab.classList.contains("active")) switchTab("tab-recap");
-    if (typeof showRecapStep === "function") showRecapStep(4);
+    const activePane = (typeof document !== "undefined" && typeof document.querySelector === "function")
+        ? document.querySelector(".tab-pane.active")
+        : null;
+    if (activePane && activePane.id && activePane.id !== "tab-recap-job") {
+        state.recapJobReturnTab = activePane.id;
+    } else if (!state.recapJobReturnTab || state.recapJobReturnTab === "tab-recap-job") {
+        state.recapJobReturnTab = "tab-home";
+    }
+    const fallbackActive = (typeof LiveJobs !== "undefined" && LiveJobs && typeof LiveJobs.activeJobs === "function")
+        ? LiveJobs.activeJobs().find(j => j.kind === "recap")
+        : null;
+    const targetId = jobId || state.recapJobId || (fallbackActive && fallbackActive.id) || null;
+    if (targetId) {
+        state.recapJobId = targetId;
+        if (typeof recapFormJobId !== "undefined") recapFormJobId = targetId;
+    }
+    if (typeof recapFormNotice !== "undefined") recapFormNotice = null;
     state.recapDetailOpen = true;
+    if (typeof switchTab === "function") {
+        switchTab("tab-recap-job");
+    }
     const box = document.getElementById("recap-progress-box");
     if (box) {
         box.classList.remove("hidden");
-        box.scrollIntoView({ behavior: "smooth" });
     }
-    if (jobId && !state.recapPollTimer) startRecapJobPolling(jobId);
-    syncTelegramBackButton();
+    if (typeof ensureRecapFormStoreSubscription === "function") {
+        ensureRecapFormStoreSubscription();
+    }
+    const tracked = (targetId && typeof LiveJobs !== "undefined" && LiveJobs && LiveJobs.jobs)
+        ? LiveJobs.jobs.get(targetId)
+        : null;
+    if (typeof renderRecapFormProgress === "function") {
+        if (tracked) {
+            renderRecapFormProgress(tracked);
+        } else {
+            renderRecapFormProgress({
+                id: targetId || recapFormJobId || "",
+                kind: "recap",
+                status: "QUEUED",
+                stage_index: 0,
+                stage_total: 4,
+                progress_percent: 0,
+            });
+        }
+    }
+    if (targetId && !state.recapPollTimer && typeof startRecapJobPolling === "function") {
+        startRecapJobPolling(targetId);
+    }
+    if (typeof syncTelegramBackButton === "function") syncTelegramBackButton();
 }
 window.openRecapDetail = openRecapDetail;
 window.openCurrentVoiceDetail = function() { openVoiceDetail(state.activeJobId); };
-window.openCurrentRecapDetail = function() { openRecapDetail(state.recapJobId); };
+window.openCurrentRecapDetail = function(jobId) {
+    const fallbackActive = (typeof LiveJobs !== "undefined" && LiveJobs && typeof LiveJobs.activeJobs === "function")
+        ? LiveJobs.activeJobs().find(j => j.kind === "recap")
+        : null;
+    openRecapDetail(jobId || state.recapJobId || (fallbackActive && fallbackActive.id) || null);
+};
 window.backToStudio = function(kind) {
     if (kind === "recap") {
         state.recapDetailOpen = false;
         const box = document.getElementById("recap-progress-box");
         if (box) box.classList.add("hidden");
-        const tab = document.getElementById("tab-recap");
-        if (tab) tab.scrollIntoView({ behavior: "smooth" });
+        const returnTab = (state.recapJobReturnTab && state.recapJobReturnTab !== "tab-recap-job")
+            ? state.recapJobReturnTab
+            : "tab-recap";
+        if (typeof switchTab === "function") {
+            switchTab(returnTab);
+        } else {
+            const tab = document.getElementById(returnTab) || document.getElementById("tab-recap");
+            if (tab && typeof tab.scrollIntoView === "function") tab.scrollIntoView({ behavior: "smooth" });
+        }
     } else {
         state.voiceDetailOpen = false;
         const box = document.getElementById("voice-progress-box");
@@ -3819,15 +3915,6 @@ async function loadUserProfile() {
             const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 15000) : (data.character_limit_free ?? 3000));
             const curLen = (document.getElementById("voice-text-input")?.value || "").length;
             charCount.innerText = `${curLen} / ${limit} ${t("char_counter_unit")}`;
-        }
-
-        const recapLimitText = document.getElementById("recap-tier-limit-text");
-        if (recapLimitText) {
-            if (data.is_vip) {
-                recapLimitText.innerText = t("recap_tier_vip_text");
-            } else {
-                recapLimitText.innerText = t("recap_tier_free_text");
-            }
         }
 
         updateGateBanner(data);
@@ -10382,14 +10469,12 @@ async function handleStartRecap() {
     if (resultBox) resultBox.classList.add("hidden");
     const failedBoxOnStart = document.getElementById("recap-failed-box");
     if (failedBoxOnStart) failedBoxOnStart.classList.add("hidden");
-    // Batch AC: the studio survives submit — no scroll-away and the
-    showStudioInlineStatus("recap", t("recap_stage1_status"));
+    // Round 15 Parts B & C: no inline status strip on Step 1; progress renders
+    // honestly from the LiveJobs store inside the dedicated Recap Job sub-view.
     if (progressFill) paintProgressBarFill(progressFill, { status: "QUEUED", progress_percent: 0 });
-    setRecapStage("1/4", null);
-    // R40 deck F-1/F-2: the first status/ETA lines named the vendor
-    // engine ("Groq Cloud Whisper Turbo", "Groq Turbo Engine + 1080p
-    // Cinema Compositing") — vendor names out, structure kept.
-    if (statusMsg) statusMsg.innerText = t("recap_stage1_status");
+    setRecapStage("0/4", "QUEUED");
+    if (statusMsg) statusMsg.innerText = t("live_job_queued");
+    if (stepText) stepText.innerText = "";
 
     // Batch CB Item 3: the hardcoded submit-time estimate
 
@@ -10494,37 +10579,32 @@ let recapFormNotice = null;     // a poller health notice owning the status line
 let recapFormStoreSubscribed = false;
 
 function renderRecapFormProgress(job) {
-    if (!job || job.id !== recapFormJobId) return;
+    if (!job) return;
+    if (recapFormJobId && job.id && job.id !== recapFormJobId) return;
     if (recapFormNotice) return; // a poller notice owns the status line
+    const titleEl = document.getElementById("recap-job-title");
     const statusMsg = document.getElementById("recap-status-msg");
     const stepText = document.getElementById("recap-step-text");
     const progressFill = document.getElementById("recap-progress-fill");
-    // Batch CB Item 4: while the job overruns its initial estimate,
-    // the status line (here AND the inline line below) switches to
-    // the honest overrun copy — the stage + elapsed come from this
-    // same store job, the flag from the detail poller's ETA extra.
+    const cancelBtn = document.getElementById("btn-recap-cancel");
+    if (titleEl) {
+        const cleanTitle = String(job.title || "").trim();
+        titleEl.innerText = cleanTitle;
+        titleEl.classList.toggle("hidden", !cleanTitle);
+    }
     const formStatusText = (recapFormEtaOverrun && !liveJobsIsTerminal(job.status))
         ? liveJobOverrunText(job)
         : liveJobStageText(job);
     if (statusMsg) statusMsg.innerText = formStatusText;
-    // Batch BT: the studio INLINE status line is the surface the
-    // user actually watches after a 1-Click submit (Batch AC keeps
-    // the detail box closed) — but showStudioInlineStatus wrote it
-    // exactly once at submit (the stage-1 text) and nothing ever
-    // updated it again, so it sat on "[1/4] …" for the whole run
-    // and even after the job finished. Paint it from this same
-    // store job with the same text source, and keep the line
-    // visible while a job is tracked. Terminal jobs paint their
-    // outcome text exactly like the pill; the result/failed boxes
-    // stay the detail poller's business. (The recapFormNotice
-    // early-return above covers this line too — a parked poller
-    // health notice owns the status text, inline included.)
-    const inlineLine = document.getElementById("recap-inline-status");
-    const inlineText = document.getElementById("recap-inline-status-text");
-    if (inlineText) inlineText.innerText = formStatusText;
-    if (inlineLine) inlineLine.classList.remove("hidden");
     if (progressFill) {
         paintProgressBarFill(progressFill, job);
+    }
+    const resolvedStage = resolveRecapStageIndex(job);
+    const stageTotal = Number(job.stage_total) || 4;
+    if (cancelBtn) {
+        const isTerminal = liveJobsIsTerminal(job.status);
+        cancelBtn.classList.toggle("hidden", isTerminal);
+        cancelBtn.disabled = isTerminal;
     }
     if (stepText) {
         if (liveJobsIsTerminal(job.status)) {
@@ -10532,24 +10612,25 @@ function renderRecapFormProgress(job) {
         } else if (job.status === "WAITING_CHOICE") {
             stepText.innerText = `${t("recap_waiting_choice_detail")} · ${t("recap_waiting_choice_bot_hint")}`;
         } else {
-            const stepBits = [`${t("recap_step_label")} ${job.stage_index || 0}/${job.stage_total || 4}`];
+            const stepBits = [];
+            if (resolvedStage >= 1) {
+                stepBits.push(`${t("recap_step_label")} ${resolvedStage}/${stageTotal}`);
+            }
             if (typeof job.queue_position === "number" && job.queue_position > 0) {
                 stepBits.push(tf("recap_queue_ahead", { count: job.queue_position }));
             }
-            // Batch CB: the ETA bit is the remaining RANGE (no
-            // 1-minute floor); during an overrun the status line
-            // carries the honest copy and the bit stays off rather
-            // than contradicting it.
+            if (!recapFormEtaOverrun && typeof job.elapsed_seconds === "number" && job.elapsed_seconds > 0) {
+                stepBits.push(tf("live_job_elapsed", { sec: job.elapsed_seconds }));
+            }
             const etaText = recapFormEtaOverrun ? "" : formatEtaRangeText(recapFormEtaRange, "remaining");
             if (etaText) {
                 stepBits.push(etaText);
             }
-            if (stepBits.length === 1) stepBits.push(t("queue_notice_recap"));
+            if (stepBits.length === 0) stepBits.push(t("queue_notice_recap"));
             stepText.innerText = stepBits.join(" • ");
         }
     }
-    setRecapStage(`${job.stage_index || 0}/${job.stage_total || 4}`, job.status);
-    if (job.progress_stage === "sync" || job.progress_stage === "png") setRecapStage("4/4", job.status);
+    setRecapStage(`${resolvedStage}/${stageTotal}`, job.status, job.progress_stage);
 }
 
 function ensureRecapFormStoreSubscription() {
@@ -10566,15 +10647,6 @@ function ensureRecapFormStoreSubscription() {
                 const stepText = document.getElementById("recap-step-text");
                 if (statusMsg) statusMsg.innerText = "";
                 if (stepText) stepText.innerText = "";
-                // Batch BT: the inline line mirrors the detail
-                // lines here too — the store no longer reports the
-                // job, so no surface may keep a stale stage text
-                // frozen on it (that frozen stage text is the very
-                // defect this batch fixes). The line element itself
-                // stays in place, emptied like the detail lines;
-                // the poller's job-gone path owns the toast + box.
-                const inlineText = document.getElementById("recap-inline-status-text");
-                if (inlineText) inlineText.innerText = "";
             }
             return;
         }
@@ -10641,6 +10713,10 @@ function startRecapJobPolling(jobId) {
         try { localStorage.removeItem("vcp_active_recap_job_id"); } catch (e) {}
         if (btn) btn.disabled = false;
         if (progressBox) progressBox.classList.add("hidden");
+        const jobPane = document.getElementById("tab-recap-job");
+        if (jobPane && jobPane.classList.contains("active") && typeof window.backToStudio === "function") {
+            window.backToStudio("recap");
+        }
         showStudioToast(t("poll_job_gone"), 'error', 6000);
     }
 
@@ -10738,6 +10814,12 @@ function startRecapJobPolling(jobId) {
                 LiveJobs.track({ id: jobId, kind: "recap", status: "SUCCESS", progress_percent: 100, stage_index: 4, stage_total: 4 });
                 if (btn) btn.disabled = false;
                 if (progressBox) progressBox.classList.add("hidden");
+                const jobPaneDone = document.getElementById("tab-recap-job");
+                if (jobPaneDone && jobPaneDone.classList.contains("active")) {
+                    state.recapDetailOpen = false;
+                    if (typeof switchTab === "function") switchTab("tab-recap");
+                    if (typeof showRecapStep === "function") showRecapStep(4);
+                }
                 if (resultBox) {
                     resultBox.classList.remove("hidden");
                 }
@@ -10893,6 +10975,12 @@ function startRecapJobPolling(jobId) {
                 refreshStickyCtas();
                 haptic("error");
                 if (progressBox) progressBox.classList.add("hidden");
+                const jobPaneFailed = document.getElementById("tab-recap-job");
+                if (jobPaneFailed && jobPaneFailed.classList.contains("active")) {
+                    state.recapDetailOpen = false;
+                    if (typeof switchTab === "function") switchTab("tab-recap");
+                    if (typeof showRecapStep === "function") showRecapStep(4);
+                }
 
                 const errMsg = data.error_message || "";
                 // The stored error is technical text (e.g. a raw yt-dlp
@@ -10985,6 +11073,10 @@ function startRecapJobPolling(jobId) {
                 if (typeof setSubmitButtonState === "function") setSubmitButtonState("recap");
                 refreshStickyCtas();
                 if (progressBox) progressBox.classList.add("hidden");
+                const jobPaneCancelled = document.getElementById("tab-recap-job");
+                if (jobPaneCancelled && jobPaneCancelled.classList.contains("active") && typeof window.backToStudio === "function") {
+                    window.backToStudio("recap");
+                }
                 let cancelToast = t("recap_cancelled_toast");
                 if (data.credit_refunded) {
                     cancelToast += " " + tf("recap_refunded_line", { credits: data.credits_refunded || data.credits_charged || 1 });
@@ -11035,6 +11127,10 @@ async function cancelRecapJobById(jobId) {
             LiveJobs.track({ id: jobId, kind: "recap", status: "CANCELLED", progress_percent: 0 });
             const pBox = document.getElementById("recap-progress-box");
             if (pBox) pBox.classList.add("hidden");
+            const jobPaneOnCancel = document.getElementById("tab-recap-job");
+            if (jobPaneOnCancel && jobPaneOnCancel.classList.contains("active") && typeof window.backToStudio === "function") {
+                window.backToStudio("recap");
+            }
             const sBox = document.getElementById("recap-script-box");
             if (sBox) sBox.classList.add("hidden");
             const startBtn = document.getElementById("btn-start-recap");
@@ -17106,10 +17202,6 @@ function refreshPhase1to4LanguageSurfaces() {
                 catTag.removeAttribute("data-i18n");
                 catTag.innerText = state.user.is_admin ? "ADMIN ⭐" : (state.user.is_vip ? t("vip_member_pro") : t("vip_member_free"));
             }
-            const recapLimitText = document.getElementById("recap-tier-limit-text");
-            if (recapLimitText) {
-                recapLimitText.innerText = t(state.user.is_vip ? "recap_tier_vip_text" : "recap_tier_free_text");
-            }
         }
         if (state && state.user && typeof paintHomeStatusStrip === "function") {
             paintHomeStatusStrip(state.user);
@@ -17137,6 +17229,12 @@ function refreshPhase1to4LanguageSurfaces() {
         }
         if (Array.isArray(window._lastAdminPricingPlans) && typeof renderAdminPricingList === "function") {
             renderAdminPricingList(window._lastAdminPricingPlans);
+        }
+        if (typeof recapFormJobId !== "undefined" && recapFormJobId && typeof LiveJobs !== "undefined" && LiveJobs && LiveJobs.jobs) {
+            const trackedRecap = LiveJobs.jobs.get(recapFormJobId);
+            if (trackedRecap && typeof renderRecapFormProgress === "function") {
+                renderRecapFormProgress(trackedRecap);
+            }
         }
         if (typeof updateVoicePreflight === "function") {
             updateVoicePreflight();

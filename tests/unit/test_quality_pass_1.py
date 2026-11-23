@@ -330,7 +330,7 @@ def test_2d_and_2e_png_and_stage_telemetry_and_2h_capsule():
     assert ".recap-steps-capsule" in STYLE_CSS
     assert "flex: 1 1 0;" in STYLE_CSS
     assert "flex: 2.8 1 auto;" in STYLE_CSS
-    assert INDEX_HTML.count("?v=20261123_round14") == 5
+    assert INDEX_HTML.count("?v=20261123_round15") == 5
     assert "r148" not in INDEX_HTML
 
 

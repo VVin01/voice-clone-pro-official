@@ -25,7 +25,15 @@ def gemini_proxy() -> str:
 
 class AIService:
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+        if not self.api_key:
+            try:
+                from app.services.key_rotation import collect_gemini_key_pool
+                pool = collect_gemini_key_pool()
+                if pool:
+                    self.api_key = pool[0][1]
+            except Exception:
+                pass
         if not self.api_key:
             raise ValueError("⚠️ GEMINI_API_KEY မတွေ့ပါ! .env ဖိုင်ကို စစ်ဆေးပါ။")
         self.proxy = gemini_proxy()

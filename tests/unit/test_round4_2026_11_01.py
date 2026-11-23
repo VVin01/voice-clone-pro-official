@@ -379,18 +379,20 @@ async def test_fg_history_recap_fallback_comes_from_plan_json(db_session, storag
 def test_fi_band_conversion_uses_picture_rect():
     from app.services.recap_engine.core import frame_layout, source_band_to_canvas_box
 
+    # Round 15 Part I: 640x480 is never upscaled to 1080x1920 — blur canvas sits at 1.0x native width (640x1138),
+    # picture rect is (640, 480). Band conversion still maps strictly into the picture rect.
     layout = frame_layout("9:16", "blur", 640, 480)
-    assert (layout["cw"], layout["ch"]) == (1080, 1920)
-    assert (layout["pw"], layout["ph"]) == (1080, 810)
+    assert (layout["cw"], layout["ch"]) == (640, 1138)
+    assert (layout["pw"], layout["ph"]) == (640, 480)
     oy = layout["oy"]
 
     # A genuine subtitle band at source y=0.70, h=0.10 must land ON the
-    # picture: centre oy + 0.70*810 canvas px, height 81 px.
+    # picture: centre oy + 0.70*480 canvas px, height 48 px.
     box = source_band_to_canvas_box({"x": 0.0, "y": 0.70, "w": 1.0, "h": 0.10}, layout)
     assert box["x"] == 0.0 and box["w"] == 1.0
-    assert box["y"] == round((oy + 0.70 * 810) / 1920, 4)
-    assert box["h"] == round(81 / 1920, 4)
-    # The old pass-through would have put it at 0.70 (canvas y=1344).
+    assert box["y"] == round((oy + 0.70 * 480) / 1138, 4)
+    assert box["h"] == round(48 / 1138, 4)
+    # The old pass-through would have put it at 0.70.
     assert box["y"] != 0.70
 
 

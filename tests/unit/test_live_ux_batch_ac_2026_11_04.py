@@ -396,9 +396,11 @@ def test_studio_survives_submit_pins():
     assert "scrollIntoView" not in recap_submit.replace(insuf_branch, "")
     assert "textInput.value =" not in voice_submit
     assert "urlInput.value =" not in recap_submit
-    # Slim inline status line carries the job in Recap studio (Voice uses #voice-progress-box directly since Round 7/13).
-    assert 'showStudioInlineStatus("recap"' in recap_submit
-    assert 'id="recap-inline-status"' in INDEX_HTML
+    # Round 15 Part B retired the redundant #recap-inline-status strip on Recap Step 1
+    # (matching Voice's Round 7 removal); active-job tracking lives in the Active Jobs pill/sheet
+    # and the dedicated #tab-recap-job sub-view (Round 15 Part C).
+    assert 'showStudioInlineStatus("recap"' not in recap_submit
+    assert 'id="recap-inline-status"' not in INDEX_HTML
     # (b) A second, ADJUSTED submit is possible — through the
     # duplicate-submit guard (see the guard pins below): the button
     # re-arms when any setting/input changes. A parallel submit while
@@ -526,7 +528,7 @@ def test_new_i18n_keys_in_both_languages():
 
 
 def test_cache_bump_r62():
-    assert INDEX_HTML.count("?v=20261123_round14") == 5
+    assert INDEX_HTML.count("?v=20261123_round15") == 5
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────

@@ -238,8 +238,8 @@ def test_history_actions_switch_to_owning_tab_before_mutating():
     player_fn = APP_JS[APP_JS.index("async function openRecapInPlayer(recapJobId)"):APP_JS.index("window.openRecapInPlayer")]
 
     assert voice_det.index('switchTab("tab-voice")') < voice_det.index('getElementById("voice-progress-box")')
-    assert recap_det.index('switchTab("tab-recap")') < recap_det.index('getElementById("recap-progress-box")')
-    assert "showRecapStep(4)" in recap_det
+    # Round 15 Part C: openRecapDetail switches to dedicated #tab-recap-job sub-view.
+    assert recap_det.index('switchTab("tab-recap-job")') < recap_det.index('getElementById("recap-progress-box")')
     assert script_ed.index('switchTab("tab-recap")') < script_ed.index('getElementById("recap-script-box")')
     assert "showRecapStep(4)" in script_ed
     assert retry_fn.index('switchTab("tab-recap")') < retry_fn.index('getElementById("recap-failed-box")')
@@ -292,4 +292,4 @@ def test_phase6_i18n_parity_and_cache_token():
     for key in required:
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5

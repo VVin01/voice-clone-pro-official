@@ -725,11 +725,9 @@ def test_new_i18n_keys_exist_in_both_languages():
 
 
 def test_step_label_is_localized():
-    # Batch BR: the form's step line is composed by the store
-    # renderer from the LiveJobs job (stage_index/stage_total) —
-    # the same merged values the pill shows — not from the detail
-    # poller's private data.progress_step any more.
-    assert '`${t("recap_step_label")} ${job.stage_index || 0}/${job.stage_total || 4}`' in APP_JS
+    # Batch BR + Round 15 Part C: the form's step line is composed by the store
+    # renderer from the resolved LiveJobs stage (never hardcoded "0/4" on queued jobs).
+    assert '`${t("recap_step_label")} ${resolvedStage}/${stageTotal}`' in APP_JS
     assert '`${t("recap_step_label")} ${data.progress_step}`' not in APP_JS
     assert "`Step ${data.progress_step}`" not in APP_JS
 
@@ -750,5 +748,5 @@ def test_action_fallback_errors_are_localized():
 
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
     assert "20261103_r44" not in INDEX_HTML

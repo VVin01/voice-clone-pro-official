@@ -255,7 +255,7 @@
     </style>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20261123_round14">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261123_round15">
 </head>
 <body class="dark-theme gate-locked" data-profile-loading="1" data-splash-active="1">
     <div id="vcp-splash" class="vcp-splash" role="button" tabindex="0" aria-label="Voice Clone Pro">
@@ -264,7 +264,7 @@
                 <span class="vcp-splash-glow" aria-hidden="true"></span>
                 <span class="vcp-splash-ring r1" aria-hidden="true"></span>
                 <span class="vcp-splash-ring r2" aria-hidden="true"></span>
-                <img class="vcp-splash-logo" src="/static/img/brand-logo.svg?v=20261123_round14" alt="Voice Clone Pro logo" width="96" height="96">
+                <img class="vcp-splash-logo" src="/static/img/brand-logo.svg?v=20261123_round15" alt="Voice Clone Pro logo" width="96" height="96">
             </div>
             <div class="vcp-splash-wordmark">VOICE CLONE <span class="vcp-splash-pro">PRO</span></div>
             <div class="vcp-splash-tagline">AI VOICE &amp; RECAP STUDIO</div>
@@ -292,7 +292,7 @@
         <header class="top-nav">
             <div class="brand">
                 <div class="brand-crest">
-                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261123_round14" alt="Voice Clone Pro logo" width="28" height="28">
+                    <img class="brand-logo-img" src="/static/img/brand-logo.svg?v=20261123_round15" alt="Voice Clone Pro logo" width="28" height="28">
                 </div>
                 <div class="brand-text">
                     <div class="brand-title-wrap">
@@ -1851,26 +1851,6 @@
         <p id="recap-overlimit-notice-step4" class="recap-overlimit-notice hidden mt-2" role="alert"></p>
     </div>
 </div>
-<div class="studio-inline-status hidden" id="recap-inline-status">
-    <span id="recap-inline-status-text"></span>
-    <button type="button" class="mini-chip" onclick="openCurrentRecapDetail()"><span data-i18n="studio_inline_view">အသေးစိတ် ကြည့်မည်</span></button>
-</div>
-<div class="card glass progress-card hidden mt-3" id="recap-progress-box">
-    <button type="button" class="btn secondary-btn mb-2" onclick="backToStudio('recap')"><span data-i18n="studio_back_btn">← စတူဒီယိုသို့ ပြန်မည်</span></button>
-    <div class="progress-status-header">
-        <span class="spinner-wave" id="recap-spinner">⚡</span>
-        <span class="status-msg" id="recap-status-msg" data-i18n="recap_processing_msg">Recap ဖန်တီးနေသည်…</span>
-    </div>
-    <div class="stage-stepper" id="recap-stage-stepper" aria-hidden="true"></div>
-    <div class="progress-bar-track">
-        <div class="progress-bar-fill indeterminate" id="recap-progress-fill" style="width: 100%;"></div>
-    </div>
-    <div class="eta-tag" id="recap-step-text" data-i18n="recap_eta_text">⏳ ခန့်မှန်းကြာချိန် တွက်ချက်နေပါတယ်…</div>
-    <div class="telegram-leave-hint" data-i18n="telegram_leave_hint">💡 ဒီစာမျက်နှာကို ပိတ်သွားလို့ ရပါတယ်။ ဗီဒီယို အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ ပို့ပေးပါမည်။</div>
-    <button type="button" class="btn secondary-btn mt-2" id="btn-recap-cancel" onclick="cancelCurrentRecapJob()">
-        <span data-i18n="btn_cancel_job">⏹️ ပယ်ဖျက်မည်</span>
-    </button>
-</div>
 <div class="card glass script-card hidden mt-3" id="recap-script-box">
     <div class="result-title" data-i18n="recap_script_title">📝 Narration Script ပြင်ရန်</div>
     <div class="script-hint" data-i18n="recap_script_hint">မြန်မာ narration စာကြောင်းများကို စစ်ပြီး ပြင်နိုင်ပါသည်။ Save လုပ်ပြီးမှ Render နှိပ်ပါ — ပြင်ထားသော စာကြောင်းများကိုသာ အသံ ပြန်ထုတ်ပါမည်။</div>
@@ -1924,16 +1904,6 @@
                 <details class="recap-notes-collapse mt-3">
                     <summary><span data-i18n="recap_step1_notes_toggle">ℹ️ သတိပြုရန်နှင့် ကန့်သတ်ချက်များ</span><span aria-hidden="true">▾</span></summary>
                     <p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
-
-                    <!-- Studio Tier Limit & Watermark Policy -->
-                    <div class="studio-alert-carousel" id="studio-alert-carousel">
-                        <div class="carousel-track" id="carousel-track">
-                            <!-- Slide 0: Tier Limit & Watermark Policy -->
-                            <div class="carousel-slide active" data-slide="0" id="recap-limit-pill">
-                                <span class="slide-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 Free: အများဆုံး ၂ မိနစ် (Watermark ပါမည်) • VIP: ၁၀ မိနစ်အထိ (Watermark မပါ)</span>
-                            </div>
-                        </div>
-                    </div>
                 </details>
 
 
@@ -3511,6 +3481,30 @@
                 </div>
             </section>
 
+            <!-- ════ SUB-VIEW: RECAP JOB PROGRESS (Round 15 Part C) ════ -->
+            <section id="tab-recap-job" class="tab-pane">
+                <div class="pane-header">
+                    <button type="button" class="vcp-subview-back-btn" id="btn-recap-job-back" onclick="backToStudio('recap')" data-i18n="recap_job_back_btn">← ပြန်သွားမည်</button>
+                    <h2 data-i18n="recap_job_view_title">🎬 အလုပ် အခြေအနေ</h2>
+                </div>
+                <div class="card glass vcp-card progress-card recap-job-progress-card hidden" id="recap-progress-box">
+                    <div class="recap-job-title-row hidden" id="recap-job-title"></div>
+                    <div class="stage-stepper" id="recap-stage-stepper" aria-hidden="true"></div>
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill indeterminate" id="recap-progress-fill" style="width: 100%;"></div>
+                    </div>
+                    <div class="progress-status-header">
+                        <span class="spinner-wave" id="recap-spinner">⚡</span>
+                        <span class="status-msg" id="recap-status-msg" data-i18n="live_job_queued">တန်းစီနေသည်</span>
+                    </div>
+                    <div class="eta-tag" id="recap-step-text"></div>
+                    <div class="telegram-leave-hint" data-i18n="telegram_leave_hint">💡 ဒီစာမျက်နှာကို ပိတ်သွားလို့ ရပါတယ်။ ဗီဒီယို အဆင်သင့်ဖြစ်ပါက Telegram Bot က သင့်ထံ ပို့ပေးပါမည်။</div>
+                    <button type="button" class="btn secondary-btn mt-2" id="btn-recap-cancel" onclick="cancelCurrentRecapJob()">
+                        <span data-i18n="btn_cancel_job">⏹️ ပယ်ဖျက်မည်</span>
+                    </button>
+                </div>
+            </section>
+
         </main>
 
         <!-- ════ STICKY CREATE CTA (Recap only) ════
@@ -3725,7 +3719,7 @@
     </div>
 
     <!-- Scripts: i18n localization engine first, then app controller -->
-    <script src="/static/js/i18n.js?v=20261123_round14"></script>
-    <script src="/static/js/app.js?v=20261123_round14"></script>
+    <script src="/static/js/i18n.js?v=20261123_round15"></script>
+    <script src="/static/js/app.js?v=20261123_round15"></script>
 </body>
 </html>

@@ -468,7 +468,7 @@ def test_result_card_shows_expiry_and_receipt_lines():
     box = INDEX_HTML.index('id="recap-result-box"')
     expiry = INDEX_HTML.index('data-i18n="history_expiry_note"', box)
     cost = INDEX_HTML.index('id="recap-cost-line"', box)
-    card_end = INDEX_HTML.index('id="studio-alert-carousel"', box)
+    card_end = INDEX_HTML.index('id="recap-failed-box"', box)
     assert box < cost < card_end
     assert box < expiry < card_end
     assert 'tf("recap_cost_charged_line"' in APP_JS
@@ -550,5 +550,5 @@ def test_batch_k_key_sets_stay_symmetric():
 # ── static version lockstep ──────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261123_round14") == 5
+    assert INDEX_HTML.count("?v=20261123_round15") == 5
     assert "20261103_r42" not in INDEX_HTML

@@ -383,6 +383,6 @@ def test_persona_filter_chips_wrap_without_clipping():
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_static_token_is_r67():
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
     for text in (INDEX_HTML, APP_JS, I18N_JS, STYLE_CSS):
         assert "20261104_r66" not in text

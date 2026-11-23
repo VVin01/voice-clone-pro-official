@@ -46,7 +46,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_dr_cache_token_is_r140():
     html = (REPO / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261123_round14") == 5
+    assert html.count("20261123_round15") == 5
     assert "r139" not in html
 
 
@@ -194,44 +194,36 @@ def _behaviours(tokens, default="ok", **overrides):
     return out
 
 
-# ── 2: reserve-first paid walk ──────────────────────────────────────
+# ── 2: unified pool walk (Round 15 Part F retired reserve-first) ────
 
 def test_dr_paid_walk_attempts_reserve_before_shared(tmp_path, monkeypatch):
-    toks = _pool(8)  # positional reserve = last 2 (hf_t6, hf_t7)
+    # Round 15 Part F retired paid-only reserve ordering; paid walks use the
+    # same health + round-robin order across the single shared pool.
+    toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
     record: list = []
-    # The first reserve token refuses at the gate; the walk must
-    # stay inside the reserve class (hf_t7 next) and succeed there —
-    # shared tokens are never attempted.
-    behaviours = _behaviours(toks, hf_t6="gate:5")
+    behaviours = _behaviours(toks, hf_t0="gate:5")
     _patch_clients(monkeypatch, behaviours, _write_wav(tmp_path / "ok.wav"), record)
     out = engine.synthesize(
         text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
         allow_fallback=False, tier="paid",
     )
     assert out.is_file()
-    assert record == [("spaceA", "hf_t6"), ("spaceA", "hf_t7")]
+    assert record == [("spaceA", "hf_t0"), ("spaceA", "hf_t1")]
 
 
 def test_dr_paid_walk_designated_reserve_leads(tmp_path, monkeypatch):
-    # HF_RESERVE_TOKENS pattern (DP): a designated token is reserve
-    # even mid-pool in a pool too small for a positional slice.
+    # Round 15 Part F merges HF_RESERVE_TOKENS into get_available_hf_tokens()
+    # without giving it special paid-first priority.
+    monkeypatch.setenv("HF_TOKENS", "hf_a,hf_b,hf_c")
     monkeypatch.setenv("HF_RESERVE_TOKENS", "hf_pro")
-    toks = ["hf_a", "hf_b", "hf_pro", "hf_c"]
-    engine = _engine(tmp_path, monkeypatch, toks)
-    record: list = []
-    _patch_clients(monkeypatch, _behaviours(toks), _write_wav(tmp_path / "ok.wav"), record)
-    engine.synthesize(
-        text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
-        allow_fallback=False, tier="paid",
-    )
-    assert record[0] == ("spaceA", "hf_pro")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    pool = vx.get_available_hf_tokens()
+    assert pool == ["hf_a", "hf_b", "hf_c", "hf_pro"]
 
 
 def test_dr_paid_walk_health_class_still_dominates(tmp_path, monkeypatch):
-    # A COOLING reserve token (health class 2) must not jump ahead
-    # of healthy shared tokens (health class 0): the reserve class
-    # only orders WITHIN a health class.
+    # Cooling tokens (health class 2) never jump ahead of healthy tokens (class 0).
     toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
     now = time.time()
@@ -257,9 +249,7 @@ def test_dr_free_walk_first_attempt_stays_shared(tmp_path, monkeypatch):
         text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
         allow_fallback=False, tier="free",
     )
-    attempted = {tok for _sp, tok in record}
-    assert record[0][1] not in {"hf_t6", "hf_t7"}
-    assert attempted & {"hf_t6", "hf_t7"} == set()  # DP exclusion intact
+    assert record[0] == ("spaceA", "hf_t0")
 
 
 # ── 3: wider park trigger ───────────────────────────────────────────
@@ -274,8 +264,7 @@ def test_dr_free_walk_first_attempt_stays_shared(tmp_path, monkeypatch):
 def _deadline_behaviours(toks):
     return _behaviours(
         toks,
-        hf_t6="gate:5", hf_t7="slow:0.8",   # paid walk order (reserve first)
-        hf_t0="gate:5", hf_t1="slow:0.8",   # free walk order (shared only)
+        hf_t0="gate:5", hf_t1="slow:0.8",   # unified pool walk order (Round 15 Part F)
     )
 
 
@@ -293,8 +282,8 @@ def test_dr_paid_deadline_cut_with_quota_refusal_parks(tmp_path, monkeypatch):
             text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
             allow_fallback=False, tier="paid", total_timeout=1.1,
         )
-    # The walk was cut after the two mixed attempts, reserve first.
-    assert record == [("spaceA", "hf_t6"), ("spaceA", "hf_t7")]
+    # The walk was cut after the two mixed attempts on the unified pool.
+    assert record == [("spaceA", "hf_t0"), ("spaceA", "hf_t1")]
     assert any("🅿️" in line for line in logs)
 
 
@@ -323,7 +312,7 @@ def test_dr_paid_deadline_cut_pure_congestion_does_not_park(tmp_path, monkeypatc
     logs: list = []
     engine = _engine(tmp_path, monkeypatch, toks, logs=logs)
     record: list = []
-    behaviours = _behaviours(toks, hf_t6="slow:0.8", hf_t7="slow:0.8")
+    behaviours = _behaviours(toks, hf_t0="slow:0.8", hf_t1="slow:0.8")
     _patch_clients(monkeypatch, behaviours, _write_wav(tmp_path / "ok.wav"), record)
     with pytest.raises(RuntimeError) as excinfo:
         engine.synthesize(

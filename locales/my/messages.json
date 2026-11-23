@@ -420,8 +420,6 @@
     "warn_blur_no_source_band": "⚠️ မူရင်းစာတန်း နေရာကို ရှာမတွေ့ပါ — Blur Box နေရာကို ပြန်စစ်ပေးပါ။",
     "upload_too_large_1gb": "ဗီဒီယိုဖိုင်က 1 GB ထက် ကြီးနေပါတယ် — 1 GB အောက် ဖိုင်ကို ရွေးချယ်ပါ။",
     "alert_btn_view_result": "ကြည့်ရှုမည်",
-    "recap_tier_vip_text": "🎬 VIP အဖွဲ့ဝင်: ဗီဒီယိုကြာချိန် ၁၀ မိနစ်အထိ • Watermark ကင်းလွတ်ခွင့် ရရှိထားပါသည် ✨",
-    "recap_tier_free_text": "🎬 အခမဲ့အသုံးပြုသူ: အများဆုံး ၂ မိနစ် (Watermark ပါဝင်မည်) • VIP ရယူပါက Watermark မပါဝင်ပါ",
     "tier_free_label": "အခမဲ့ (Free)",
     "text_too_long_vip_note": " စာလုံးရေ 15,000 အထိ သုံးလိုပါက Plan ဝယ်ယူနိုင်ပါသည်။",
     "recap_over_max_vip": "အများဆုံး {max} မိနစ်ထက် ကျော်လွန်နေပါသည်",

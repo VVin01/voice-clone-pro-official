@@ -72,7 +72,7 @@ def test_part_a_step1_dropzone_header_and_notes():
     assert "recap-step-head" not in step1_block.group(0)
     assert 'data-i18n="recap_step1_title"' in INDEX_HTML
 
-    # A3: Notes expander contains only shortened rights note + alert carousel
+    # A3: Notes expander contains only shortened rights note (Round 15 Part A retired tier pill carousel)
     notes_match = re.search(
         r'class="[^"]*recap-notes-collapse[^"]*".*?</details>',
         INDEX_HTML,
@@ -81,7 +81,7 @@ def test_part_a_step1_dropzone_header_and_notes():
     assert notes_match
     notes_html = notes_match.group(0)
     assert 'data-i18n="recap_rights_note"' in notes_html
-    assert 'id="studio-alert-carousel"' in notes_html
+    assert 'id="studio-alert-carousel"' not in notes_html
     assert "recap_platforms_note" not in notes_html
     assert "link_help_recap" not in notes_html
 

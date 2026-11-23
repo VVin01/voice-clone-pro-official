@@ -116,6 +116,13 @@ AI_TIMEOUT_SECONDS = 45
 # changed — the recap planner keeps its full walk.
 AI_MAX_ATTEMPTS = 8
 
+# Round 15 Part E: Group/Private AI routes Groq PRIMARY -> Gemini FALLBACK.
+# Groq answers in ~1-2 s per call; bounding per-request timeout and attempts
+# preserves headroom for the Gemini fallback inside the 45 s envelope.
+GROQ_TEXT_MODEL = _key_rotation.GROQ_TEXT_MODEL
+GROQ_AI_TIMEOUT_SECONDS = 15.0
+GROQ_AI_MAX_ATTEMPTS = 6
+
 # Escalation approval (admin DM buttons) + FAQ cache tuning.
 ESCALATION_CALLBACK_PREFIX = "gai_esc"
 ESCALATION_EXPIRY_SECONDS = 24 * 3600  # pending records die after 24h
@@ -1602,6 +1609,57 @@ def _ask_gemini_sync(prompt: str, *, client_factory: Callable[[str], Any] | None
     )
 
 
+def _ask_groq_sync(
+    prompt: str,
+    *,
+    requester: Callable[..., Any] | None = None,
+) -> str:
+    """Primary Group/Private AI call against the multi-account Groq pool."""
+    return _key_rotation.ask_groq_text_sync(
+        prompt,
+        model=GROQ_TEXT_MODEL,
+        temperature=0.25,
+        max_tokens=4096,
+        timeout_seconds=GROQ_AI_TIMEOUT_SECONDS,
+        max_attempts=GROQ_AI_MAX_ATTEMPTS,
+        requester=requester,
+    )
+
+
+def _ask_ai_sync(
+    prompt: str,
+    *,
+    client_factory: Callable[[str], Any] | None = None,
+    groq_requester: Callable[..., Any] | None = None,
+) -> str:
+    """Group & Private AI routing: Groq PRIMARY -> Gemini FALLBACK.
+
+    Tries Groq llama-3.3-70b-versatile across the health-ordered multi-account
+    Groq pool first. When no Groq keys are configured or Groq fails/exhausts,
+    falls back to the existing Gemini pool chain (_ask_gemini_sync). Raises
+    only when BOTH providers fail (callers degrade to silence).
+    """
+    groq_err: Exception | None = None
+    if groq_requester is not None or _key_rotation.collect_groq_key_pool():
+        try:
+            return _ask_groq_sync(prompt, requester=groq_requester)
+        except Exception as exc:
+            groq_err = exc
+            logger.warning(
+                "group_ai_admin: Groq primary failed (%s: %s); falling back to Gemini",
+                type(exc).__name__,
+                exc,
+            )
+    try:
+        return _ask_gemini_sync(prompt, client_factory=client_factory)
+    except Exception as gem_exc:
+        if groq_err is not None:
+            raise RuntimeError(
+                f"group_ai_admin: Groq primary ({groq_err}) and Gemini fallback ({gem_exc}) both failed"
+            ) from gem_exc
+        raise
+
+
 async def ask_group_admin_ai(
     *,
     text: str,
@@ -1611,6 +1669,7 @@ async def ask_group_admin_ai(
     context_lines: list[str] | None = None,
     replied_to_text: str | None = None,
     client_factory: Callable[[str], Any] | None = None,
+    groq_requester: Callable[..., Any] | None = None,
 ) -> tuple[str, str | None]:
     """Ask the AI for a decision; ANY failure degrades to silence.
 
@@ -1628,7 +1687,12 @@ async def ask_group_admin_ai(
     )
     try:
         raw = await asyncio.wait_for(
-            asyncio.to_thread(_ask_gemini_sync, prompt, client_factory=client_factory),
+            asyncio.to_thread(
+                _ask_ai_sync,
+                prompt,
+                client_factory=client_factory,
+                groq_requester=groq_requester,
+            ),
             timeout=AI_TIMEOUT_SECONDS,
         )
     except Exception as exc:
@@ -1741,6 +1805,7 @@ async def draft_escalation_answer(
     reason: str,
     is_group: bool = True,
     client_factory: Callable[[str], Any] | None = None,
+    groq_requester: Callable[..., Any] | None = None,
 ) -> str | None:
     """Draft a suggested public answer for an escalation.
 
@@ -1759,7 +1824,12 @@ async def draft_escalation_answer(
     )
     try:
         raw = await asyncio.wait_for(
-            asyncio.to_thread(_ask_gemini_sync, prompt, client_factory=client_factory),
+            asyncio.to_thread(
+                _ask_ai_sync,
+                prompt,
+                client_factory=client_factory,
+                groq_requester=groq_requester,
+            ),
             timeout=AI_TIMEOUT_SECONDS,
         )
     except Exception as exc:

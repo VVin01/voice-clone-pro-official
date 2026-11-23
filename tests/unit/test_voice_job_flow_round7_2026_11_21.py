@@ -190,18 +190,19 @@ def test_round7_item2_voice_inline_status_removed_recap_kept():
     assert 'id="voice-inline-status"' not in INDEX_HTML
     assert 'id="voice-inline-status-text"' not in INDEX_HTML
     assert "#voice-inline-status" not in STYLE_CSS
-    # Recap inline strip stays intact and untouched.
-    assert 'id="recap-inline-status"' in INDEX_HTML
-    assert 'id="recap-inline-status-text"' in INDEX_HTML
+    # Round 15 Part B retired #recap-inline-status as well; both Voice and Recap
+    # omit inline status strips on the studio form.
+    assert 'id="recap-inline-status"' not in INDEX_HTML
+    assert 'id="recap-inline-status-text"' not in INDEX_HTML
 
     voice_submit = APP_JS[
         APP_JS.index("async function handleVoiceGenerate()"):
         APP_JS.index("function startJobPolling")
     ]
     assert 'showStudioInlineStatus("voice"' not in voice_submit
-    assert 'showStudioInlineStatus("recap"' in APP_JS
+    assert 'showStudioInlineStatus("recap"' not in APP_JS
 
-    # Shared updater ignores voice but still updates recap/tts.
+    # Shared updater ignores both voice and recap, while still updating tts if present.
     fn_inline = APP_JS[
         APP_JS.index("function showStudioInlineStatus(kind, text)"):
         APP_JS.index("window.showStudioInlineStatus = showStudioInlineStatus;")
@@ -215,23 +216,29 @@ function mkEl() {{
 const els = {{
     'voice-inline-status': mkEl(), 'voice-inline-status-text': mkEl(),
     'recap-inline-status': mkEl(), 'recap-inline-status-text': mkEl(),
+    'tts-inline-status': mkEl(), 'tts-inline-status-text': mkEl(),
 }};
 const ctx = {{ document: {{ getElementById: (id) => els[id] || null }} }};
 vm.runInNewContext({json.dumps(fn_inline)}, ctx);
 ctx.showStudioInlineStatus('voice', 'should not render');
-ctx.showStudioInlineStatus('recap', 'Recap stage 1');
+ctx.showStudioInlineStatus('recap', 'should not render');
+ctx.showStudioInlineStatus('tts', 'TTS stage 1');
 console.log(JSON.stringify({{
     voiceHidden: els['voice-inline-status'].classList.contains('hidden'),
     voiceText: els['voice-inline-status-text'].innerText,
     recapHidden: els['recap-inline-status'].classList.contains('hidden'),
     recapText: els['recap-inline-status-text'].innerText,
+    ttsHidden: els['tts-inline-status'].classList.contains('hidden'),
+    ttsText: els['tts-inline-status-text'].innerText,
 }}));
 """
     out = _run_node(script)
     assert out["voiceHidden"] is True
     assert out["voiceText"] == ""
-    assert out["recapHidden"] is False
-    assert out["recapText"] == "Recap stage 1"
+    assert out["recapHidden"] is True
+    assert out["recapText"] == ""
+    assert out["ttsHidden"] is False
+    assert out["ttsText"] == "TTS stage 1"
 
 
 def test_round7_item2_voice_terminal_state_sync_detail_and_dialog_node():

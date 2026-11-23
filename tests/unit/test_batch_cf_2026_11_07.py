@@ -70,19 +70,16 @@ def test_step4_eta_refresh_still_wired_in_cost_hint_and_picker():
 # ── Item 2: the static minute-claim slide is gone ────────────────
 
 def test_carousel_no_longer_carries_queue_notice_slide():
-    block = _carousel_block()
-    assert "queue_notice_recap" not in block
-    # The slide was the key's only HTML surface.
+    # Round 15 Part A retired the entire #studio-alert-carousel tier pill.
+    assert 'id="studio-alert-carousel"' not in INDEX_HTML
     assert 'data-i18n="queue_notice_recap"' not in INDEX_HTML
 
 
 def test_carousel_keeps_limit_slide_without_minute_claim():
-    # Round 13 simplified the carousel to a single tier-limit notice slide (no dots/prev/next).
-    block = _carousel_block()
-    slides = re.findall(r'class="carousel-slide[^"]*" data-slide="(\d+)"', block)
-    assert slides == ["0"]
-    assert block.count('class="carousel-slide active"') == 1
-    assert 'data-i18n="recap_limit_notice"' in block
+    # Round 15 Part A deleted the tier pill carousel; recap_rights_note stays in the notes expander.
+    assert 'id="studio-alert-carousel"' not in INDEX_HTML
+    assert 'id="recap-limit-pill"' not in INDEX_HTML
+    assert 'data-i18n="recap_rights_note"' in INDEX_HTML
 
 
 def test_carousel_rotator_is_count_agnostic():
@@ -135,20 +132,20 @@ def test_retired_keys_carry_no_digit_minute_claim():
 
 
 def test_recap_step_text_placeholder_matches_neutral_value():
-    # The static pre-paint copy inside #recap-step-text mirrors the
-    # my recap_eta_text value — it must be the neutral line too.
+    # Round 15 Part C keeps #recap-step-text empty pre-paint so queued jobs
+    # never flash hardcoded 0/4 or stale ETA text before LiveJobs paints.
     match = re.search(
-        r'id="recap-step-text" data-i18n="recap_eta_text">([^<]*)<',
+        r'id="recap-step-text">([^<]*)<',
         INDEX_HTML,
     )
     assert match is not None
-    assert match.group(1) == _i18n_values("recap_eta_text")[0]
+    assert match.group(1) == ""
 
 
 # ── Release pin: cache token (split-literal, sweep-proof) ────────
 
 def test_cache_token_is_followup1():
-    token = "20261123_" + "round14"
+    token = "20261123_" + "round15"
     stale = "20261104_r" + "99"
     assert INDEX_HTML.count(token) == 5
     assert stale not in INDEX_HTML

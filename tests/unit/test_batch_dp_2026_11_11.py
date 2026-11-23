@@ -48,7 +48,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_dp_cache_token_is_r140():
     html = (REPO / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261123_round14") == 5
+    assert html.count("20261123_round15") == 5
     assert "r137" not in html
 
 
@@ -67,63 +67,66 @@ def _pool(n, prefix="hf_t"):
     return [f"{prefix}{i}" for i in range(n)]
 
 
+# ── Item 1: HF reserve retired in Round 15 Part F (single shared pool) ──
+# Round 15 Part F retired the paid-only reserve slice and merged
+# HF_RESERVE_TOKENS into get_available_hf_tokens() so every tier shares
+# the full HF token pool under the same health/cooldown/rotation rules.
+
 def test_dp_reserve_positional_31_pool():
-    toks = _pool(31)
-    reserve = VoxCPMEngine._reserve_token_set(toks)
-    assert reserve == set(toks[-7:])  # 31 // 4 = 7
+    assert not hasattr(VoxCPMEngine, "_reserve_token_set")
+    assert not hasattr(VoxCPMEngine, "_designated_reserve_tokens")
 
 
-def test_dp_reserve_positional_edges():
-    assert VoxCPMEngine._reserve_token_set(_pool(8)) == set(_pool(8)[-2:])
-    assert VoxCPMEngine._reserve_token_set(_pool(12)) == set(_pool(12)[-3:])
-    assert VoxCPMEngine._reserve_token_set(_pool(40)) == set(_pool(40)[-8:])  # cap 8
-    assert VoxCPMEngine._reserve_token_set(_pool(7)) == set()  # pool < 8 → 0
-    assert VoxCPMEngine._reserve_token_set([]) == set()
+def test_dp_reserve_positional_edges(monkeypatch):
+    monkeypatch.setenv("HF_TOKENS", ",".join(_pool(8)))
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HF_RESERVE_TOKENS", raising=False)
+    assert vx.get_available_hf_tokens() == _pool(8)
 
 
 def test_dp_reserve_learned_rich_anywhere():
-    toks = _pool(5)  # small pool: no positional reserve
+    toks = _pool(5)
     VoxCPMEngine._token_balances = {toks[0]: 900.0, toks[1]: 899.99}
-    reserve = VoxCPMEngine._reserve_token_set(toks)
-    assert toks[0] in reserve       # >= 900 s is rich
-    assert toks[1] not in reserve   # below the line stays shared
+    assert not hasattr(VoxCPMEngine, "_RESERVE_RICH_BALANCE")
 
 
-def test_dp_reserve_none_never_reserve():
-    toks = _pool(10) + [None]
-    reserve = VoxCPMEngine._reserve_token_set(toks)
-    assert None not in reserve
-    assert reserve == set(_pool(10)[-2:])
+def test_dp_reserve_none_never_reserve(monkeypatch):
+    monkeypatch.setenv("HF_TOKENS", ",".join(_pool(3)))
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HF_RESERVE_TOKENS", raising=False)
+    assert None not in vx.get_available_hf_tokens()
 
 
 def test_dp_reserve_designated_position_zero(monkeypatch):
-    # Amendment: a designated token is reserve even at pool position
-    # 0, with unknown balance, in a pool too small for positional.
+    # Round 15 Part F: HF_RESERVE_TOKENS merges into the single shared pool.
+    monkeypatch.setenv("HF_TOKENS", "hf_a,hf_b,hf_c,hf_d")
     monkeypatch.setenv("HF_RESERVE_TOKENS", "hf_pro")
-    toks = ["hf_pro", "hf_a", "hf_b", "hf_c", "hf_d"]
-    reserve = VoxCPMEngine._reserve_token_set(toks)
-    assert "hf_pro" in reserve
-    # The control: non-designated, non-positional, unknown balance.
-    assert "hf_a" not in reserve
-    assert "hf_d" not in reserve
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    pool = vx.get_available_hf_tokens()
+    assert "hf_pro" in pool
+    assert {"hf_a", "hf_b", "hf_c", "hf_d", "hf_pro"} <= set(pool)
 
 
 def test_dp_reserve_designated_parsing_tolerates_separators(monkeypatch):
-    monkeypatch.setenv(
-        "HF_RESERVE_TOKENS", " hf_a,hf_b;hf_c  hf_d\n'hf_e' ,, ; "
-    )
-    assert VoxCPMEngine._designated_reserve_tokens() == {
+    monkeypatch.delenv("HF_TOKENS", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setenv("HF_RESERVE_TOKENS", " hf_a,hf_b;hf_c  hf_d\n'hf_e' ,, ; ")
+    assert set(vx.get_available_hf_tokens()) == {
         "hf_a", "hf_b", "hf_c", "hf_d", "hf_e",
     }
     monkeypatch.setenv("HF_RESERVE_TOKENS", "")
-    assert VoxCPMEngine._designated_reserve_tokens() == set()
+    assert vx.get_available_hf_tokens() == []
     monkeypatch.delenv("HF_RESERVE_TOKENS")
-    assert VoxCPMEngine._designated_reserve_tokens() == set()
+    assert vx.get_available_hf_tokens() == []
 
 
 def test_dp_reserve_designated_not_in_pool_ignored(monkeypatch):
-    monkeypatch.setenv("HF_RESERVE_TOKENS", "hf_ghost")
-    assert VoxCPMEngine._reserve_token_set(_pool(4)) == set()
+    # Round 15 Part F: tokens listed only in HF_RESERVE_TOKENS are INCLUDED
+    # in the unified pool rather than gated/ignored.
+    monkeypatch.setenv("HF_TOKENS", ",".join(_pool(4)))
+    monkeypatch.setenv("HF_RESERVE_TOKENS", "hf_pro_only")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    assert "hf_pro_only" in vx.get_available_hf_tokens()
 
 
 # ── Item 1: walk behaviour (DI-style fake clients) ──────────────────
@@ -206,7 +209,8 @@ def _behaviours(tokens, default="ok", **overrides):
 
 
 def test_dp_free_walk_never_attempts_reserve(tmp_path, monkeypatch):
-    toks = _pool(8)  # reserve = last 2 (hf_t6, hf_t7)
+    # Round 15 Part F: reserve retired — free walk succeeds on the single shared pool.
+    toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
     record: list = []
     _patch_clients(monkeypatch, _behaviours(toks), _write_wav(tmp_path / "ok.wav"), record)
@@ -215,37 +219,45 @@ def test_dp_free_walk_never_attempts_reserve(tmp_path, monkeypatch):
         allow_fallback=False, tier="free",
     )
     assert out.is_file()
-    attempted = {tok for _sp, tok in record}
-    assert "hf_t6" not in attempted and "hf_t7" not in attempted
+    assert len(record) == 1
 
 
 def test_dp_free_walk_reserve_excluded_even_when_shared_dead(tmp_path, monkeypatch):
+    # Round 15 Part F: with the paid-only reserve retired, free tier CAN reach
+    # healthy tokens anywhere in the unified pool (including the former tail slice)
+    # when the first tokens are cooling down.
     toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
+    now = time.time()
+    monkeypatch.setattr(
+        VoxCPMEngine, "_token_cooldowns",
+        {tok: now + 1800 for tok in toks[:6]},
+    )
     record: list = []
     behaviours = _behaviours(toks, default="gate:5", hf_t6="ok", hf_t7="ok")
     _patch_clients(monkeypatch, behaviours, _write_wav(tmp_path / "ok.wav"), record)
-    with pytest.raises(VoxCPMQuotaExhaustedError):
-        engine.synthesize(
-            text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
-            allow_fallback=False, tier="free",
-        )
-    attempted = {tok for _sp, tok in record}
-    assert "hf_t6" not in attempted and "hf_t7" not in attempted
-
-
-def test_dp_free_walk_learned_rich_excluded(tmp_path, monkeypatch):
-    toks = _pool(8)
-    VoxCPMEngine._token_balances = {"hf_t0": 2400.0}  # rich at position 0
-    engine = _engine(tmp_path, monkeypatch, toks)
-    record: list = []
-    _patch_clients(monkeypatch, _behaviours(toks), _write_wav(tmp_path / "ok.wav"), record)
-    engine.synthesize(
+    out = engine.synthesize(
         text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
         allow_fallback=False, tier="free",
     )
+    assert out.is_file()
     attempted = {tok for _sp, tok in record}
-    assert "hf_t0" not in attempted
+    assert "hf_t6" in attempted or "hf_t7" in attempted
+
+
+def test_dp_free_walk_learned_rich_excluded(tmp_path, monkeypatch):
+    # Round 15 Part F: learned-rich tokens are no longer gated off from free tier.
+    toks = _pool(8)
+    VoxCPMEngine._token_balances = {"hf_t0": 2400.0}
+    engine = _engine(tmp_path, monkeypatch, toks)
+    record: list = []
+    _patch_clients(monkeypatch, _behaviours(toks), _write_wav(tmp_path / "ok.wav"), record)
+    out = engine.synthesize(
+        text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
+        allow_fallback=False, tier="free",
+    )
+    assert out.is_file()
+    assert record[0] == ("spaceA", "hf_t0")
 
 
 def test_dp_free_fully_blocked_falls_back_when_allowed(tmp_path, monkeypatch):
@@ -273,28 +285,23 @@ def test_dp_free_fully_blocked_falls_back_when_allowed(tmp_path, monkeypatch):
 
 
 def test_dp_paid_walk_reserve_first_since_dr(tmp_path, monkeypatch):
-    # Batch DR (2026-11-12) REVERSED the DP paid order pinned here
-    # originally ("drains shared before reserve"): the 2026-11-11
-    # evening evidence showed paid walks dying on the failover-
-    # budget clock before ever reaching the reserve, so paid walks
-    # now lead with the reserve inside each health class. The full
-    # DR assertions live in test_batch_dr_2026_11_12.py.
+    # Round 15 Part F retired paid-only reserve sorting; paid and free both walk
+    # the single shared pool in uniform health + round-robin order.
     toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
     record: list = []
     _patch_clients(monkeypatch, _behaviours(toks), _write_wav(tmp_path / "ok.wav"), record)
-    engine.synthesize(
+    out = engine.synthesize(
         text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav",
         allow_fallback=False, tier="paid",
     )
-    # First attempt is a RESERVE token (DR order).
-    assert record[0][1] in {"hf_t6", "hf_t7"}
+    assert out.is_file()
+    assert record[0][1] == "hf_t0"
 
 
 def test_dp_paid_walk_can_use_reserve(tmp_path, monkeypatch):
-    # The evening scenario: shared tokens are quota-dead (cooling —
-    # health class sorts them last), the reserve is healthy. A paid
-    # walk lands on the reserve; the reserve is its guaranteed floor.
+    # Healthy tokens anywhere in the unified pool still serve paid when cooling
+    # tokens sit in health class 2.
     toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
     now = time.time()
@@ -315,14 +322,14 @@ def test_dp_paid_walk_can_use_reserve(tmp_path, monkeypatch):
 
 
 def test_dp_default_tier_is_free(tmp_path, monkeypatch):
-    # An unplumbed caller (no tier kwarg) can never spend the reserve.
+    # Unplumbed caller (no tier kwarg) walks the unified pool cleanly.
     toks = _pool(8)
     engine = _engine(tmp_path, monkeypatch, toks)
     record: list = []
     _patch_clients(monkeypatch, _behaviours(toks), _write_wav(tmp_path / "ok.wav"), record)
-    engine.synthesize(text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav", allow_fallback=False)
-    attempted = {tok for _sp, tok in record}
-    assert "hf_t6" not in attempted and "hf_t7" not in attempted
+    out = engine.synthesize(text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav", allow_fallback=False)
+    assert out.is_file()
+    assert record[0][1] == "hf_t0"
 
 
 # ── Item 3: choice state, prompt, i18n ──────────────────────────────

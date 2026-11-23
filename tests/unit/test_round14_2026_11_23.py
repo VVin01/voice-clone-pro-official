@@ -405,9 +405,9 @@ async def test_part_e3_upload_voice_ref_body_cap_50mb_matches_handler():
 
 def test_global_rule_4_asset_version_stamp_round14():
     assert "?v=20261123_followup1" not in INDEX_HTML
-    assert INDEX_HTML.count("?v=20261123_round14") == 5
+    assert INDEX_HTML.count("?v=20261123_round15") == 5
     serve_src = inspect.getsource(server_mod.serve_index)
-    assert "?v=20261123_round14" in serve_src
+    assert "?v=20261123_round15" in serve_src
 
 
 @pytest.mark.asyncio

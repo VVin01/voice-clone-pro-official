@@ -1049,7 +1049,7 @@ async def test_part_c_cross_type_concurrent_submit_and_script_ready_cancel_vs_ex
 
 def test_p5_frontend_steps_3_4_and_option_b_controls_present():
     # Cache token pinned
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
 
     # Step 3 controls (Round 13 retired billing-details collapsible, own-voice VIP tag, and language sheet).
     for eid in ("recap-engine-picker", "recap-own-voice-card", "recap-persona-select"):

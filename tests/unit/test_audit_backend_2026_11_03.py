@@ -51,8 +51,8 @@ from app.worker import _user_facing_worker_error, process_single_job
 def test_engine_pool_params_present():
     from app.db.session import engine
 
-    assert settings.db_pool_size == 10
-    assert settings.db_max_overflow == 20
+    assert settings.db_pool_size == 5
+    assert settings.db_max_overflow == 2
     assert settings.db_pool_timeout == 30
     assert settings.db_pool_recycle == 1800
 

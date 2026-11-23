@@ -8676,6 +8676,7 @@ html[data-theme="dark"] #tab-downloader .pane-header h2,
 html[data-theme="dark"] #tab-vip .pane-header h2,
 html[data-theme="dark"] #tab-history .pane-header h2,
 html[data-theme="dark"] #tab-profile .pane-header h2,
+html[data-theme="dark"] #tab-recap-job .pane-header h2,
 html[data-theme="dark"] #tab-admin .pane-header h2,
 html[data-theme="dark"] #tab-admin .adm-settings-master-title {
     color: #F8FAFC;
@@ -10086,19 +10087,22 @@ html[data-theme="dark"] #tab-home #home-hero-card #home-status-strip {
 /* Item 3: History filter row + uniform labeled refresh chip */
 #tab-history,
 #tab-downloader,
-#tab-profile {
+#tab-profile,
+#tab-recap-job {
     gap: 10px;
 }
 #tab-history .pane-header,
 #tab-downloader .pane-header,
-#tab-profile .pane-header {
+#tab-profile .pane-header,
+#tab-recap-job .pane-header {
     padding: 0 2px;
     gap: 2px;
     margin-bottom: 0;
 }
 #tab-history .pane-header .vcp-subview-back-btn,
 #tab-downloader .pane-header .vcp-subview-back-btn,
-#tab-profile .pane-header .vcp-subview-back-btn {
+#tab-profile .pane-header .vcp-subview-back-btn,
+#tab-recap-job .pane-header .vcp-subview-back-btn {
     align-self: flex-start;
     min-height: 40px;
     margin-bottom: 2px;
@@ -11594,5 +11598,67 @@ html[data-theme="dark"] #tab-recap .recap-output-caption.recap-output-caption-ca
 #tab-profile #vip-grants-list,
 #tab-profile #vip-orders-list,
 #tab-profile #vip-tx-list {
+    margin-top: 2px;
+}
+
+/* Round 15 — Part C: Dedicated Recap Job Progress sub-view (compact & quiet) */
+#tab-recap-job .recap-job-progress-card {
+    margin-top: 0;
+    padding: 14px;
+    gap: 10px;
+}
+#tab-recap-job .recap-job-title-row {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.45;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+#tab-recap-job .stage-stepper {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 0;
+}
+#tab-recap-job .stage-stepper .stage-arrow {
+    display: none;
+}
+#tab-recap-job .stage-stepper .stage-chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-width: 0;
+    padding: 5px 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#tab-recap-job .progress-status-header {
+    gap: 8px;
+    align-items: flex-start;
+}
+#tab-recap-job .status-msg {
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+#tab-recap-job .eta-tag {
+    font-size: 12px;
+    line-height: 1.5;
+}
+#tab-recap-job .eta-tag:empty {
+    display: none;
+}
+#tab-recap-job .telegram-leave-hint {
+    font-size: 12px;
+    padding: 9px 11px;
+    line-height: 1.55;
+}
+#tab-recap-job #btn-recap-cancel {
+    width: 100%;
     margin-top: 2px;
 }

@@ -420,8 +420,6 @@
     "warn_blur_no_source_band": "⚠️ Source subtitle position not found — please check the blur box position.",
     "upload_too_large_1gb": "Video is larger than 1 GB — please choose a file under 1 GB.",
     "alert_btn_view_result": "View Result",
-    "recap_tier_vip_text": "🎬 VIP Member: Up to 10 Minutes per Recap • Watermark-Free Output ✨",
-    "recap_tier_free_text": "🎬 Free Creator: Max 2 Minutes (Watermark Included) • Upgrade to VIP for Watermark-Free",
     "tier_free_label": "Free",
     "text_too_long_vip_note": " Upgrade to VIP to generate up to 15,000 characters.",
     "recap_over_max_vip": "Exceeds max {max}m",

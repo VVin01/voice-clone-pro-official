@@ -120,7 +120,7 @@ async def test_static_cache_policy_immutable_versioned_and_preserves_unversioned
     async def _async_resp():
         return SimpleNamespace(headers={})
 
-    h_ver = await _call("/static/js/app.js", "v=20261123_round14")
+    h_ver = await _call("/static/js/app.js", "v=20261123_round15")
     assert h_ver["Cache-Control"] == "public, max-age=31536000, immutable"
 
     h_font = await _call("/static/fonts/Padauk-Regular.ttf")
@@ -473,7 +473,8 @@ def test_group_ai_tokens_and_webapp_audit_fixes():
     assert "max-height: 62vh;" in css
     assert "#tab-recap .ratio-btn.active .ratio-sub" in css
     assert "Unknown" not in app_js or "unknown|weba|webk|tdesktop|macos" in app_js
-    assert 'setRecapStage("4/4", job.status)' in app_js
+    # Round 15 Part C: setRecapStage resolves stage truth via resolveRecapStageIndex(job)
+    assert "setRecapStage(`${resolvedStage}/${stageTotal}`, job.status, job.progress_stage)" in app_js
     assert "window._lastReferralStats" in app_js
     assert "pill.disabled = knownTotal > 0 && pSec > knownTotal" in app_js
     assert "if (res.status === 403) { hubHistoryCache = [];" in app_js
@@ -488,7 +489,7 @@ async def test_serve_index_auto_cache_busts_immutable_assets():
     from app.webapp.server import serve_index, _get_static_asset_cache_tag
 
     disk_html = (REPO_ROOT / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
-    assert disk_html.count("?v=20261123_round14") == 5
+    assert disk_html.count("?v=20261123_round15") == 5
 
     tag = _get_static_asset_cache_tag()
     assert tag.startswith("20261123_") and len(tag) == 19
@@ -496,5 +497,5 @@ async def test_serve_index_auto_cache_busts_immutable_assets():
     resp = await serve_index()
     body = resp.body.decode("utf-8")
     assert body.count(f"?v={tag}") == 5
-    assert "?v=20261123_round14" not in body
+    assert "?v=20261123_round15" not in body
     assert resp.headers.get("cache-control") == "no-cache, no-store, must-revalidate, max-age=0"

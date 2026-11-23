@@ -295,10 +295,11 @@ def test_frontend_batch3_ia_subtitles_and_budget():
     js = _read_static("js/app.js")
     i18n = _read_static("js/i18n.js")
 
-    # Part D (2026-11-23) bumped cache stamp to ?v=20261123_round14 (5 assets incl. splash logo).
-    assert html.count("?v=20261123_round14") == 5
+    # Part D (2026-11-23) bumped cache stamp to ?v=20261123_round15 (5 assets incl. splash logo).
+    assert html.count("?v=20261123_round15") == 5
     assert 'id="btn-top-history"' in html
-    assert html.count('class="vcp-subview-back-btn"') == 3
+    # Round 15 Part C added the 4th dedicated sub-view (#tab-recap-job) with .vcp-subview-back-btn.
+    assert html.count('class="vcp-subview-back-btn"') == 4
     assert 'id="vip-wallet-tts-val"' in html
     assert '09790760003' not in html
     for dom_id in (

@@ -137,16 +137,16 @@ def test_br_renderer_uses_pill_text_source_and_store_step_fields():
     assert "? liveJobOverrunText(job)" in body
     assert ": liveJobStageText(job);" in body
     assert "if (statusMsg) statusMsg.innerText = formStatusText;" in body
-    # Step line: composed from the store job's stage fields — the
-    # same merged values renderLiveJobsPill's lead job carries.
-    assert '`${t("recap_step_label")} ${job.stage_index || 0}/${job.stage_total || 4}`' in body
+    # Step line: composed from the store job's resolved stage (Round 15 Part C avoids
+    # rendering "0/4" on queued jobs before real stage data arrives).
+    assert '`${t("recap_step_label")} ${resolvedStage}/${stageTotal}`' in body
     # Queue position comes from the store job too (the bulk payload
     # carries it); the boilerplate fallback matches the old line.
     assert 'tf("recap_queue_ahead", { count: job.queue_position })' in body
     assert 'stepBits.push(t("queue_notice_recap"));' in body
     # Fill + stage stepper follow the same store job (Quality Pass §2F removes the 10% floor).
     assert "paintProgressBarFill(progressFill, job);" in body
-    assert "setRecapStage(`${job.stage_index || 0}/${job.stage_total || 4}`, job.status);" in body
+    assert "setRecapStage(`${resolvedStage}/${stageTotal}`, job.status, job.progress_stage);" in body
     # Terminal store jobs clear the step line (the outcome text
     # itself comes from liveJobStageText, as on the pill).
     assert "if (liveJobsIsTerminal(job.status)) {" in body
@@ -155,7 +155,7 @@ def test_br_renderer_uses_pill_text_source_and_store_step_fields():
 
 def test_br_renderer_only_paints_the_tracked_job():
     body = _renderer_body()
-    assert "if (!job || job.id !== recapFormJobId) return;" in body
+    assert "if (recapFormJobId && job.id && job.id !== recapFormJobId) return;" in body
     # Poller start is what marks the tracked job and arms the
     # subscription (every entry route — submit, resume, History —
     # funnels through startRecapJobPolling).
@@ -298,5 +298,5 @@ def test_br_prefill_still_sets_title_from_job_config():
 # ── Token ────────────────────────────────────────────────────────
 
 def test_br_cache_token_is_r89():
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
     assert "20261104_r88" not in INDEX_HTML

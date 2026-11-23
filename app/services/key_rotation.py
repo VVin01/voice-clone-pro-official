@@ -86,6 +86,8 @@ MODEL_DAILY_CAPS: dict[str, int] = {
     "gemini-3.5-flash-lite": 500,
     "gemini-3.1-flash-lite": 500,
     "gemini-flash-lite-latest": 500,
+    # Groq text models (Round 15 Part E — Nov 2026 free tier: 1,000 RPD / 12K TPM / 100K TPD per account).
+    "llama-3.3-70b-versatile": 1000,
 }
 
 # Conservative daily cap assumed for a model missing from
@@ -870,7 +872,7 @@ def collect_gemini_key_pool(env: Mapping[str, str] | None = None) -> list[tuple[
     seen: set[str] = set()
 
     def add(label: str, value: object) -> None:
-        key = str(value or "").strip()
+        key = str(value or "").strip().strip("'\"")
         if key and key not in seen:
             pool.append((label, key))
             seen.add(key)
@@ -897,16 +899,237 @@ def collect_gemini_key_pool(env: Mapping[str, str] | None = None) -> list[tuple[
     return pool
 
 
+# ---------------------------------------------------------------------------
+# Groq TEXT provider (Round 15 Part E)
+#
+# Multi-account Groq key pool using existing GROQ_API_KEYS / GROQ_API_KEY env
+# vars (deduplicated). Tracked under a separate KeyHealth provider ("groq_text")
+# from Whisper ("groq") because Groq enforces independent rate limits for chat
+# completions (llama-3.3-70b-versatile: 30 RPM / 1K RPD / 12K TPM / 100K TPD
+# per account) versus audio transcription (28,800 audio-seconds/day).
+# ---------------------------------------------------------------------------
+
+GROQ_TEXT_PROVIDER = "groq_text"
+GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
+GROQ_TEXT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_FREE_TPM_CAP = 12000
+_GROQ_TEXT_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+
+class GroqPromptTooLargeError(RuntimeError):
+    """Raised when a prompt exceeds Groq's per-minute token cap (~12K TPM)."""
+
+
+def estimate_prompt_tokens(prompt: str) -> int:
+    """Estimate token count for a mixed English/Burmese prompt.
+
+    ASCII text runs ~4 chars/token; non-ASCII (e.g. Myanmar script, 3 UTF-8
+    bytes per codepoint) runs ~1 token/char in Llama-3 BPE. Used to skip the
+    Groq recap fallback gracefully before hitting Groq's 12K TPM free cap.
+    """
+    text = str(prompt or "")
+    if not text:
+        return 0
+    ascii_chars = sum(1 for ch in text if ord(ch) < 128)
+    non_ascii_chars = len(text) - ascii_chars
+    return int(ascii_chars / 4.0 + non_ascii_chars)
+
+
+def collect_groq_key_pool(env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
+    """Collect configured Groq API keys from existing env names, deduplicated.
+
+    Reads GROQ_API_KEYS (comma/semicolon/whitespace separated), any numbered
+    GROQ_API_KEY_<N> (numeric order), and GROQ_API_KEY. Labels never contain
+    raw key material.
+    """
+    merged: Mapping[str, str] = os.environ if env is None else env
+    pool: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(label: str, value: object) -> None:
+        key = str(value or "").strip().strip("'\"")
+        if key and key not in seen:
+            pool.append((label, key))
+            seen.add(key)
+
+    csv_keys = str(merged.get("GROQ_API_KEYS") or "").strip()
+    if csv_keys:
+        for idx, raw_k in enumerate(re.split(r"[,;\n]+", csv_keys)):
+            add(f"GROQ_API_KEYS[{idx + 1}]", raw_k)
+
+    key_nums = sorted(
+        int(m.group(1))
+        for m in (re.fullmatch(r"GROQ_API_KEY_(\d+)", str(k or "").strip()) for k in merged)
+        if m
+    )
+    for n in key_nums:
+        add(f"GROQ_API_KEY_{n}", merged.get(f"GROQ_API_KEY_{n}"))
+
+    add("GROQ_API_KEY", merged.get("GROQ_API_KEY"))
+    return pool
+
+
+def _is_groq_oversize_error(status_code: int, body_text: str) -> bool:
+    if status_code == 413:
+        return True
+    if status_code == 429:
+        low = str(body_text or "").lower()
+        if "request too large" in low or ("tokens per minute" in low and "requested" in low):
+            return True
+    return False
+
+
+def ask_groq_text_sync(
+    prompt: str,
+    *,
+    model: str = GROQ_TEXT_MODEL,
+    temperature: float = 0.25,
+    max_tokens: int = 4096,
+    timeout_seconds: float = 20.0,
+    max_attempts: int | None = None,
+    json_mode: bool = False,
+    max_prompt_tokens: int | None = None,
+    requester: Callable[..., object] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Run one chat-completion call against the health-ordered Groq key pool.
+
+    Rotates across healthy unique keys via ``health_for("groq_text")``.
+    Cools dead keys (401/403) key-wide and rate-limited keys (429) per-model.
+    Raises ``GroqPromptTooLargeError`` without cooling keys when the prompt
+    exceeds ``max_prompt_tokens`` or Groq responds with HTTP 413 / TPM oversize.
+    """
+    if max_prompt_tokens is not None:
+        est_tokens = estimate_prompt_tokens(prompt)
+        if est_tokens > int(max_prompt_tokens):
+            raise GroqPromptTooLargeError(
+                f"groq_text: prompt estimated at ~{est_tokens} tokens exceeds cap ({max_prompt_tokens})"
+            )
+
+    pool = collect_groq_key_pool(env)
+    if not pool:
+        raise RuntimeError("groq_text: no Groq API key configured")
+
+    health = health_for(GROQ_TEXT_PROVIDER)
+    pool_keys = [key for _label, key in pool]
+    label_by_key = {key: label for label, key in pool}
+    ordered_keys = health.order_for_model(pool_keys, model)
+    candidate_pool = [(label_by_key[k], k) for k in ordered_keys]
+
+    post_fn = requester
+    if post_fn is None:
+        import requests
+
+        post_fn = requests.post
+
+    payload: dict[str, object] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    last_exc: Exception | None = None
+    attempts = 0
+    for label, key in candidate_pool:
+        if max_attempts is not None and attempts >= int(max_attempts):
+            break
+        attempts += 1
+        try:
+            resp = post_fn(
+                GROQ_TEXT_ENDPOINT,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": _GROQ_TEXT_USER_AGENT,
+                },
+                json=payload,
+                timeout=timeout_seconds,
+            )
+            status_code = int(getattr(resp, "status_code", 0) or 0)
+            if status_code == 200:
+                body = resp.json()
+                choices = body.get("choices") if isinstance(body, dict) else None
+                content = ""
+                if isinstance(choices, list) and choices:
+                    msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+                    if isinstance(msg, dict):
+                        content = str(msg.get("content") or "").strip()
+                if content:
+                    health.mark_success(key)
+                    health.record_usage(key, model)
+                    return content
+                last_exc = RuntimeError(f"groq_text: empty response from {model} ({label})")
+                continue
+
+            body_text = str(getattr(resp, "text", "") or "")[:300]
+            if _is_groq_oversize_error(status_code, body_text):
+                raise GroqPromptTooLargeError(
+                    f"groq_text: prompt rejected as oversize (HTTP {status_code}) on {model}"
+                )
+            if status_code in (401, 403):
+                health.mark_failure(key)
+                last_exc = RuntimeError(f"groq_text: auth failure HTTP {status_code} ({label})")
+                logger.warning(
+                    "groq_text: key %s (#%s) rejected with HTTP %s; cooled down",
+                    label, key_id(key), status_code,
+                )
+                continue
+            if status_code == 429:
+                health.mark_failure(key, model=model)
+                last_exc = RuntimeError(f"groq_text: rate limit HTTP 429 ({label})")
+                logger.warning(
+                    "groq_text: key %s (#%s) hit HTTP 429 on %s; trying next key",
+                    label, key_id(key), model,
+                )
+                continue
+            last_exc = RuntimeError(f"groq_text: HTTP {status_code} ({label}): {body_text[:120]}")
+            logger.warning(
+                "groq_text: key %s (#%s) failed HTTP %s; trying next key",
+                label, key_id(key), status_code,
+            )
+        except GroqPromptTooLargeError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            low = str(exc).lower()
+            if any(m in low for m in ("401", "403", "invalid_api_key", "invalid api key", "unauthorized")):
+                health.mark_failure(key)
+            elif any(m in low for m in ("429", "rate_limit", "rate limit", "quota")):
+                health.mark_failure(key, model=model)
+            logger.warning(
+                "groq_text: key %s (#%s) error (%s); trying next key",
+                label, key_id(key), type(exc).__name__,
+            )
+
+    raise RuntimeError(
+        f"groq_text: Groq pool exhausted after {attempts} attempts: {last_exc}"
+    )
+
+
 __all__ = [
     "DEFAULT_COOLDOWN_SECONDS",
     "DEFAULT_MODEL_DAILY_CAP",
+    "GROQ_FREE_TPM_CAP",
+    "GROQ_TEXT_ENDPOINT",
+    "GROQ_TEXT_MODEL",
+    "GROQ_TEXT_PROVIDER",
     "MODEL_DAILY_CAPS",
+    "GroqPromptTooLargeError",
     "KeyHealth",
+    "ask_groq_text_sync",
     "botsetting_sync_delete",
     "botsetting_sync_read",
     "botsetting_sync_write",
     "collect_gemini_key_pool",
+    "collect_groq_key_pool",
     "configure_sync_store",
+    "estimate_prompt_tokens",
     "flush_all_persistence",
     "health_for",
     "key_id",

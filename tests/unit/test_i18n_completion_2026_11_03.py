@@ -70,7 +70,7 @@ MYANMAR_RE = re.compile(r"[က-ဿ၊။]")
 
 # ── batch F key inventory ────────────────────────────────────────────
 UI_KEYS = [
-    "alert_btn_view_result", "recap_tier_vip_text", "recap_tier_free_text",
+    "alert_btn_view_result",
     "tier_free_label", "text_too_long_vip_note", "recap_over_max_vip",
     "recap_over_max_free", "recap_over_limit_label", "recap_stage1_status",
     "recap_eta_estimate", "dl_open_in_browser_tab", "admin_media_gone_title",
@@ -440,5 +440,5 @@ def test_server_progress_labels_use_locales():
 # ── (g) cache-bust version ───────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261123_round14") == 5
+    assert INDEX_HTML.count("?v=20261123_round15") == 5
     assert "20261103_r41" not in INDEX_HTML

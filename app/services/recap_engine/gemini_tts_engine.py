@@ -505,13 +505,13 @@ def collect_gemini_keys(environ: Optional[dict] = None) -> list[str]:
                 found.append((int(m.group(1)), str(value).strip()))
         return [v for _n, v in sorted(found)]
 
-    keys = numbered(r"GEMINI_IMAGE_PROJECT_(\d+)_KEY")
-    if not keys:
-        keys = numbered(r"GEMINI_API_KEY_(\d+)")
-    if not keys and env.get("GEMINI_API_KEYS"):
-        keys = [p.strip() for p in str(env["GEMINI_API_KEYS"]).split(",") if p.strip()]
-    if not keys and env.get("GEMINI_API_KEY"):
-        keys = [str(env["GEMINI_API_KEY"]).strip()]
+    keys: list[str] = []
+    keys.extend(numbered(r"GEMINI_IMAGE_PROJECT_(\d+)_KEY"))
+    keys.extend(numbered(r"GEMINI_API_KEY_(\d+)"))
+    if env.get("GEMINI_API_KEYS"):
+        keys.extend(p.strip().strip("'\"") for p in str(env["GEMINI_API_KEYS"]).split(",") if p.strip())
+    if env.get("GEMINI_API_KEY"):
+        keys.append(str(env["GEMINI_API_KEY"]).strip().strip("'\""))
     return list(dict.fromkeys(k for k in keys if k))
 
 

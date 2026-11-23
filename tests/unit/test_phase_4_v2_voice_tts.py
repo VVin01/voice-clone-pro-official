@@ -12,7 +12,7 @@ if "VCP UI REBUILD V2 — PHASE 5:" in PHASE4_CSS:
 
 
 def test_v2_phase4_cache_token_current():
-    assert INDEX_HTML.count("?v=20261123_round14") == 5
+    assert INDEX_HTML.count("?v=20261123_round15") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 

@@ -103,5 +103,5 @@ def test_bh2_loader_no_longer_captures_the_node_at_start():
 
 
 def test_bh4_token_bumped_to_r81():
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
     assert "20261104_r80" not in INDEX_HTML

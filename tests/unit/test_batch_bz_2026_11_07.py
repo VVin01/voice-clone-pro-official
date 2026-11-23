@@ -378,7 +378,7 @@ def test_tts_prefill_logic_retired_in_round8():
 # ===========================================================================
 
 def test_cache_token_is_r97():
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
     # Split literal: the previous token must be absent, written so a
     # future token sweep cannot rewrite this negative assertion.
     assert ("20261104_r" + "96") not in INDEX_HTML

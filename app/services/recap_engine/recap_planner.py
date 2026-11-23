@@ -1418,6 +1418,61 @@ def _extract_json_payload(raw_text: str) -> Any:
         raise
 
 
+# Round 15 Part E: Recap planning stays Gemini PRIMARY -> Groq FALLBACK
+# (llama-3.3-70b-versatile) when the Gemini chain is exhausted. Groq's free
+# 12K tokens/min cap per account means oversize prompts must skip gracefully.
+GROQ_RECAP_FALLBACK_MODEL = "llama-3.3-70b-versatile"
+GROQ_RECAP_MAX_PROMPT_TOKENS = 12000
+
+
+def _try_groq_json_fallback(
+    prompt: str,
+    *,
+    log: LogFn | None = None,
+    requester: Callable[..., Any] | None = None,
+) -> tuple[bool, Any]:
+    """Attempt Groq llama-3.3-70b-versatile JSON fallback after Gemini exhaustion.
+
+    Returns ``(True, parsed_json)`` on recovery, or ``(False, None)`` when no
+    Groq keys are configured, the prompt exceeds the 12K TPM cap, or Groq fails.
+    """
+    if _key_rotation is None:
+        return False, None
+    if requester is None and not _key_rotation.collect_groq_key_pool():
+        return False, None
+    est_tokens = _key_rotation.estimate_prompt_tokens(prompt)
+    if est_tokens > GROQ_RECAP_MAX_PROMPT_TOKENS:
+        if log:
+            log(
+                f"⏭️ Skipping Groq recap fallback: prompt (~{est_tokens} tokens) "
+                f"exceeds Groq free TPM cap ({GROQ_RECAP_MAX_PROMPT_TOKENS})."
+            )
+        return False, None
+    try:
+        raw_text = _key_rotation.ask_groq_text_sync(
+            prompt,
+            model=GROQ_RECAP_FALLBACK_MODEL,
+            temperature=0.25,
+            max_tokens=4096,
+            timeout_seconds=45.0,
+            json_mode=True,
+            max_prompt_tokens=GROQ_RECAP_MAX_PROMPT_TOKENS,
+            requester=requester,
+        )
+        parsed = _extract_json_payload(raw_text)
+        if log:
+            log(f"✅ Recap planning recovered via Groq fallback ({GROQ_RECAP_FALLBACK_MODEL}).")
+        return True, parsed
+    except _key_rotation.GroqPromptTooLargeError as exc:
+        if log:
+            log(f"⏭️ Skipping Groq recap fallback (oversize): {exc}")
+        return False, None
+    except Exception as exc:
+        if log:
+            log(f"⚠️ Groq recap fallback failed: {exc}")
+        return False, None
+
+
 def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = None,
                  rotation_tier: str | None = None) -> Any:
     """Run one logical Gemini request with model/key failover.
@@ -1430,6 +1485,10 @@ def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = 
     "wide" across every non-tail model, None keeps the natural chain
     head. Rotation happens once per logical call, before the retry
     loop, so validation retries keep the call's starting point.
+
+    Round 15 Part E: when the Gemini chain is exhausted, attempts one Groq
+    fallback leg (``llama-3.3-70b-versatile``) unless the prompt exceeds
+    Groq's 12K TPM cap. No Groq call is ever made when Gemini succeeds.
     """
     begin = getattr(ai, "_recap_begin_gemini_call", None)
     if callable(begin):
@@ -1444,6 +1503,9 @@ def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = 
         # bounded only by pool x chain size.
         http_attempts += 1
         if http_attempts > GEMINI_JSON_MAX_HTTP_ATTEMPTS:
+            ok_groq, groq_payload = _try_groq_json_fallback(prompt, log=log)
+            if ok_groq:
+                return groq_payload
             pool_size = int(getattr(ai, "_recap_key_pool_size", 1) or 1)
             model_count = int(getattr(ai, "_recap_model_pool_size", 1) or 1)
             if log:
@@ -1524,6 +1586,9 @@ def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = 
                     except Exception as model_exc:
                         raise RuntimeError(f"Gemini model switch failed: {model_exc}") from model_exc
 
+                ok_groq, groq_payload = _try_groq_json_fallback(prompt, log=log)
+                if ok_groq:
+                    return groq_payload
                 pool_size = int(getattr(ai, "_recap_key_pool_size", 1) or 1)
                 model_count = int(getattr(ai, "_recap_model_pool_size", 1) or 1)
                 if log:
@@ -1542,6 +1607,9 @@ def _gemini_json(ai: Any, prompt: str, *, retries: int = 3, log: LogFn | None = 
                             continue  # exact same prompt; validation retry is untouched
                     except Exception as model_exc:
                         raise RuntimeError(f"Gemini model switch failed: {model_exc}") from model_exc
+                ok_groq, groq_payload = _try_groq_json_fallback(prompt, log=log)
+                if ok_groq:
+                    return groq_payload
                 if log:
                     log(f"⛔ Final Gemini model failed with service/timeout error: {exc}")
                 raise RuntimeError(f"Gemini fallback chain exhausted after service/timeout error: {exc}") from exc

@@ -55,7 +55,9 @@ def test_stage_steppers_present_and_wired():
     # stage_total are derived server-side from progress_step),
     # painted by the store renderer; the detail poller no longer
     # calls setRecapStage from its private response.
-    assert "setRecapStage(`${job.stage_index || 0}/${job.stage_total || 4}`, job.status)" in APP_JS
+    # Round 15 Part C: setRecapStage receives the resolved stage and progress_stage
+    # from the LiveJobs store renderer (no hardcoded 0/4 on queued jobs).
+    assert "setRecapStage(`${resolvedStage}/${stageTotal}`, job.status, job.progress_stage)" in APP_JS
     assert "setRecapStage(data.progress_step, data.status)" not in APP_JS
 
 

@@ -482,6 +482,7 @@ def run_recap_pipeline(
     # R39: the render layout is computed once, up front — the subtitle
     # plate geometry (92% band, line-fitted height, letterbox rim
     # anchor) and the source-band conversion below both need it.
+    _max_short_side = 1080 if paid_tier else 720
     _layout = None
     try:
         _src_w0, _src_h0 = probe_video_size(ffprobe_bin, source)
@@ -489,6 +490,7 @@ def run_recap_pipeline(
             output_ratio, frame_fill, _src_w0, _src_h0,
             crop_top=crop_top, crop_bottom=crop_bottom,
             crop_left=crop_left, crop_right=crop_right,
+            max_short_side=_max_short_side,
         )
     except Exception as layout_err:
         _log(f"⚠️ Layout probe skipped ({layout_err}); subtitle plate keeps the legacy box")
@@ -579,6 +581,7 @@ def run_recap_pipeline(
                     output_ratio, frame_fill, _src_w, _src_h,
                     crop_top=crop_top, crop_bottom=crop_bottom,
                     crop_left=crop_left, crop_right=crop_right,
+                    max_short_side=_max_short_side,
                 )
             _canvas_bands = [
                 source_band_to_canvas_box(band, _band_layout)
@@ -984,6 +987,7 @@ def generate_recap_preview(
     out_path = Path(output_image_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    _p_max_short = 720 if is_vip is False else 1080
     overlays: dict[str, Any] = {}
     blur_boxes: list[dict] = []
     if blur_subtitles:
@@ -1003,6 +1007,7 @@ def generate_recap_preview(
                 output_ratio, frame_fill, _p_src_w, _p_src_h,
                 crop_top=crop_top, crop_bottom=crop_bottom,
                 crop_left=crop_left, crop_right=crop_right,
+                max_short_side=_p_max_short,
             )
             _p_plate = subtitle_plate_box(
                 _p_layout["cw"], _p_layout["ch"], _p_layout,
@@ -1030,6 +1035,7 @@ def generate_recap_preview(
                         output_ratio, frame_fill, _p_src_w2, _p_src_h2,
                         crop_top=crop_top, crop_bottom=crop_bottom,
                         crop_left=crop_left, crop_right=crop_right,
+                        max_short_side=_p_max_short,
                     )
                 _p_bands = [
                     source_band_to_canvas_box(band, _p_band_layout)
@@ -1175,6 +1181,7 @@ def generate_recap_preview(
         zoom_factor=protection_zoom_factor(protection_level, zoom_factor),
         sample_text=sample_text,
         ffprobe=ffprobe_bin,
+        max_short_side=_p_max_short,
     )
     return str(res)
 

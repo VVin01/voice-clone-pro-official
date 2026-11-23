@@ -877,17 +877,80 @@ def probe_video_size(ffprobe: str, path: Path | str) -> tuple[int, int]:
     return width, height
 
 
-def output_canvas(ratio: str, source_w: int = 0, source_h: int = 0) -> tuple[int, int]:
-    """Final frame size: 16:9 = 1920x1080, 9:16 = 1080x1920, 1:1 = 1080x1080, Original = the
-    source shape (long side at most 1920)."""
+def output_canvas(
+    ratio: str,
+    source_w: int = 0,
+    source_h: int = 0,
+    *,
+    max_short_side: int | None = None,
+    fill: str = "blur",
+    crop_top: float = 0.0,
+    crop_bottom: float = 0.0,
+    crop_left: float = 0.0,
+    crop_right: float = 0.0,
+) -> tuple[int, int]:
+    """Final frame size capped by BOTH the tier cap AND 1.0x native source scale.
+
+    Round 15 Part I (never upscale):
+      * Tier cap: VIP/default = 1080 short side (1920x1080 / 1080x1920 / 1080x1080),
+        Free = 720 short side (1280x720 / 720x1280 / 720x720).
+      * When source dimensions are known (source_w > 0 and source_h > 0), output
+        dimensions = min(tier cap, the dimensions produced at 1.0x source scale)
+        under the active ratio/crop/fill framing, so the main foreground layer is
+        never scaled above 100% of its native pixels.
+      * When source meets or exceeds the tier cap, output equals the tier cap
+        (byte-for-byte identical to the pre-Round-15 geometry).
+    """
+    ratio = ratio if ratio in OUTPUT_RATIOS else "16:9"
+    fill = fill if fill in FRAME_FILLS else "blur"
+    cap_short = (
+        1080
+        if (max_short_side is None or int(max_short_side) <= 0)
+        else _even(int(max_short_side))
+    )
+    cap_long = _even(cap_short * 16.0 / 9.0)
+    sw, sh = int(source_w or 0), int(source_h or 0)
+
+    if ratio == "Original":
+        if sw > 0 and sh > 0:
+            scale = min(1.0, cap_long / max(sw, sh), cap_short / min(sw, sh))
+            return _even(sw * scale), _even(sh * scale)
+        return cap_long, cap_short
+
     if ratio == "9:16":
-        return 1080, 1920
-    if ratio == "1:1":
-        return 1080, 1080
-    if ratio == "Original" and source_w > 0 and source_h > 0:
-        scale = min(1.0, OUTPUT_LONG_SIDE / max(source_w, source_h))
-        return _even(source_w * scale), _even(source_h * scale)
-    return 1920, 1080
+        cap_w, cap_h = cap_short, cap_long
+    elif ratio == "1:1":
+        cap_w, cap_h = cap_short, cap_short
+    else:
+        cap_w, cap_h = cap_long, cap_short
+
+    if sw <= 0 or sh <= 0:
+        return cap_w, cap_h
+
+    ct = max(0.0, min(0.35, float(crop_top or 0.0)))
+    cb = max(0.0, min(0.35, float(crop_bottom or 0.0)))
+    cl = max(0.0, min(0.35, float(crop_left or 0.0)))
+    cr = max(0.0, min(0.35, float(crop_right or 0.0)))
+    has_crop = (ct > 0.001 or cb > 0.001 or cl > 0.001 or cr > 0.001)
+    if has_crop and (cl + cr < 0.90) and (ct + cb < 0.90):
+        c_sw = _even(sw * (1.0 - cl - cr))
+        c_sh = _even(sh * (1.0 - ct - cb))
+    else:
+        c_sw, c_sh = sw, sh
+
+    if fill == "crop":
+        # Crop-to-fill scales by max(cw/c_sw, ch/c_sh); keeping <= 1.0x requires
+        # both canvas dimensions <= cropped source dimensions.
+        k = min(1.0, c_sw / float(cap_w), c_sh / float(cap_h))
+    else:
+        # Fit framing (blur/black) scales by min(cw/c_sw, ch/c_sh); at 1.0x
+        # source scale the smallest matching-aspect canvas enclosing (c_sw, c_sh)
+        # has factor max(c_sw/cap_w, c_sh/cap_h).
+        k = min(1.0, max(c_sw / float(cap_w), c_sh / float(cap_h)))
+
+    if k >= 1.0:
+        return cap_w, cap_h
+    return min(cap_w, _even(cap_w * k)), min(cap_h, _even(cap_h * k))
 
 
 def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
@@ -895,12 +958,24 @@ def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
                  crop_top: float = 0.0,
                  crop_bottom: float = 0.0,
                  crop_left: float = 0.0,
-                 crop_right: float = 0.0) -> dict[str, Any]:
+                 crop_right: float = 0.0,
+                 *,
+                 max_short_side: int | None = None) -> dict[str, Any]:
     """Everything _visual_filters needs; `canvas` overrides the size (the preview draws smaller)."""
     ratio = ratio if ratio in OUTPUT_RATIOS else "16:9"
-    cw, ch = canvas or output_canvas(ratio, source_w, source_h)
-    cw, ch = _even(cw), _even(ch)
     fill = fill if fill in FRAME_FILLS else "blur"
+    cw, ch = canvas or output_canvas(
+        ratio,
+        source_w,
+        source_h,
+        max_short_side=max_short_side,
+        fill=fill,
+        crop_top=crop_top,
+        crop_bottom=crop_bottom,
+        crop_left=crop_left,
+        crop_right=crop_right,
+    )
+    cw, ch = _even(cw), _even(ch)
     sw, sh = int(source_w or 0) or cw, int(source_h or 0) or ch
 
     if ratio == "Original":
@@ -933,6 +1008,8 @@ def frame_layout(ratio: str, fill: str, source_w: int, source_h: int,
         ox, oy = 0, 0
     else:
         scale = min(cw / c_sw, ch / c_sh) if c_sw and c_sh else 1.0
+        if canvas is None and source_w and source_h:
+            scale = min(1.0, scale)
         pw, ph = min(cw, _even(c_sw * scale)), min(ch, _even(c_sh * scale))
         ox, oy = _even((cw - pw) / 2.0) if cw > pw else 0, _even((ch - ph) / 2.0) if ch > ph else 0
 
@@ -7641,6 +7718,7 @@ def extract_preview_with_overlays(
     crop_bottom: float = 0.12,
     crop_left: float = 0.0,
     crop_right: float = 0.0,
+    max_short_side: int | None = None,
 ) -> Path:
     """Extracts a single representative frame with layout, blur box, and sample 1-line subtitle applied."""
     source = Path(source_video).resolve()
@@ -7676,6 +7754,7 @@ def extract_preview_with_overlays(
         crop_bottom=crop_bottom,
         crop_left=crop_left,
         crop_right=crop_right,
+        max_short_side=max_short_side,
     )
     cw, ch = int(layout["cw"]), int(layout["ch"])
     pw, ph = int(layout.get("pw", cw)), int(layout.get("ph", ch))
@@ -8455,6 +8534,7 @@ class EdgeSmartSync:
             crop_bottom=self.crop_bottom,
             crop_left=self.crop_left,
             crop_right=self.crop_right,
+            max_short_side=(1080 if self.paid_tier else 720),
         )
         crop_msg = (
             f" | Crop={self.crop_top*100:.0f}%T/{self.crop_bottom*100:.0f}%B/{self.crop_left*100:.0f}%L/{self.crop_right*100:.0f}%R"

@@ -179,21 +179,48 @@ def _step_slice(n: int, end: int | None = None) -> str:
 
 # ── Inventory: nothing lost, removals are exactly the documented set ──
 
-# Deliberately retired after Batch AV:
+# Deliberately retired or relocated after Batch AV:
 # - recap-lang-more (Round 13: source_language auto)
 # - recap-unverified-warning (Part C: strict Step 1 URL gate)
 # - carousel-dots / btn-carousel-prev / btn-carousel-next (Round 13 single-slide notice)
+# - studio-alert-carousel / carousel-track / recap-limit-pill / recap-tier-limit-text (Round 15 Part A)
+# - recap-inline-status / recap-inline-status-text (Round 15 Part B)
+# - recap-progress-box and its children relocated out of #tab-recap into #tab-recap-job (Round 15 Part C)
 _POST_AV_RETIRED = {
     "recap-lang-more",
     "recap-unverified-warning",
     "carousel-dots",
     "btn-carousel-prev",
     "btn-carousel-next",
+    "studio-alert-carousel",
+    "carousel-track",
+    "recap-limit-pill",
+    "recap-tier-limit-text",
+    "recap-inline-status",
+    "recap-inline-status-text",
+}
+
+_POST_AV_MOVED_TO_RECAP_JOB_SUBVIEW = {
+    "recap-progress-box",
+    "recap-spinner",
+    "recap-status-msg",
+    "recap-stage-stepper",
+    "recap-progress-fill",
+    "recap-step-text",
+    "btn-recap-cancel",
 }
 
 
 def test_av_every_surviving_control_id_still_exists():
-    missing = [i for i in SURVIVING_IDS if i not in _POST_AV_RETIRED and f'id="{i}"' not in TAB]
+    job_pane = INDEX_HTML[INDEX_HTML.index('id="tab-recap-job"'):]
+    missing = [
+        i for i in SURVIVING_IDS
+        if i not in _POST_AV_RETIRED
+        and (
+            (i in _POST_AV_MOVED_TO_RECAP_JOB_SUBVIEW and f'id="{i}"' not in job_pane)
+            or (i not in _POST_AV_MOVED_TO_RECAP_JOB_SUBVIEW and f'id="{i}"' not in TAB)
+        )
+    ]
     assert missing == [], f"controls lost in the AV restructure: {missing}"
 
 
@@ -316,9 +343,10 @@ def test_av_step4_holds_quote_quality_split_and_cta():
 
 
 def test_av_info_tail_below_the_step_flow():
+    # Round 15 Part A retired the tier pill/alert carousel; recap_rights_note stays in the notes expander.
     rights_at = TAB.index("recap_rights_note")
-    carousel_at = TAB.index('id="studio-alert-carousel"')
-    assert TAB.index('id="recap-step-4"') < rights_at < carousel_at
+    assert TAB.index('id="recap-step-4"') < rights_at
+    assert 'id="studio-alert-carousel"' not in TAB
 
 
 def test_av_step_module_behaviour():
@@ -388,5 +416,5 @@ def test_av_touch_targets_and_text_fit_guards():
 
 
 def test_av_cache_token_bumped():
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
     assert "r70" not in INDEX_HTML

@@ -321,14 +321,14 @@ async def ask_private_ai(
     )
     try:
         raw = await asyncio.wait_for(
-            asyncio.to_thread(gai._ask_gemini_sync, prompt),
+            asyncio.to_thread(gai._ask_ai_sync, prompt),
             timeout=gai.AI_TIMEOUT_SECONDS,
         )
     except Exception as exc:
-        logger.warning("private_ai: Gemini call failed: %s", exc)
+        logger.warning("private_ai: AI call failed: %s", exc)
         return gai.DECISION_AI_FAILED, None
     if not raw or not str(raw).strip():
-        logger.warning("private_ai: Gemini returned an empty response")
+        logger.warning("private_ai: AI returned an empty response")
         return gai.DECISION_AI_FAILED, None
     return gai.parse_ai_decision(str(raw))
 

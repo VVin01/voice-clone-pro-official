@@ -844,7 +844,7 @@ async def serve_index():
     index_file = STATIC_DIR / "index.html"
     if index_file.is_file():
         html = index_file.read_text(encoding="utf-8").replace(
-            "?v=20261123_round14",
+            "?v=20261123_round15",
             f"?v={_get_static_asset_cache_tag()}",
         )
         return HTMLResponse(

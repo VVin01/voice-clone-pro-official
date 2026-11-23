@@ -15,7 +15,7 @@ PHASE3_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 3") :]
 
 
 def test_v2_phase3_cache_token_current():
-    assert INDEX_HTML.count("?v=20261123_round14") == 5
+    assert INDEX_HTML.count("?v=20261123_round15") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -142,6 +142,9 @@ _RETIRED_VIP_STATIC_IDS = {
     "adm-set-daily-job-limit", "adm-set-group-ai", "adm-set-tiered-pricing",
     "adm-set-tutorial-video-enabled", "adm-set-voice-daily-free",
     "adm-set-voice-daily-paid", "adm-tut-recap-title",
+    # Round 15 (2026-11-23 Parts A & B)
+    "studio-alert-carousel", "carousel-track", "recap-limit-pill",
+    "recap-tier-limit-text", "recap-inline-status", "recap-inline-status-text",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "applyRecapMasterPreset('fb_story')",
@@ -178,6 +181,8 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "generateRecapAiThumbnail()",
     "saveAiThumbnailSettings()",
     "filterAdminPricing('topup')",
+    # Round 15 Part B
+    "openCurrentRecapDetail()",
 }
 
 

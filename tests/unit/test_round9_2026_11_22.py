@@ -60,9 +60,9 @@ def test_round9_a2_help_paragraphs_moved_to_notes_expander():
     notes_block = recap_tab[
         recap_tab.index('class="recap-notes-collapse') : recap_tab.index("</details>", recap_tab.index('class="recap-notes-collapse'))
     ]
-    rights_idx = notes_block.index('data-i18n="recap_rights_note"')
-    carousel_idx = notes_block.index('id="studio-alert-carousel"')
-    assert rights_idx < carousel_idx
+    # Round 15 Part A retired #studio-alert-carousel; recap_rights_note stays intact inside notes expander.
+    assert 'data-i18n="recap_rights_note"' in notes_block
+    assert 'id="studio-alert-carousel"' not in notes_block
     assert 'recap_platforms_note' not in recap_tab
     assert 'link_help_recap' not in recap_tab
 

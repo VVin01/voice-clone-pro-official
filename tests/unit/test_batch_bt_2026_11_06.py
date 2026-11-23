@@ -112,60 +112,43 @@ def _collect_prefs_body() -> str:
     )
 
 
-# ── BT-A: the inline line renders from the store renderer ────────
+# ── BT-A: status surface renders from the store renderer ─────────
+# Round 15 Parts B & C removed the redundant #recap-inline-status strip on
+# Recap Step 1 and moved #recap-progress-box into its dedicated #tab-recap-job
+# sub-view, where #recap-status-msg renders the exact same formStatusText
+# (liveJobStageText / liveJobOverrunText) behind the tracked-job + notice guards.
 
 def test_bt_renderer_paints_inline_line_from_store_job():
     body = _renderer_body()
-    # The inline line is painted with the pill's own text function
-    # on the same merged store job as the detail stage line.
-    # Batch CB: both lines now paint the composed formStatusText —
-    # which IS liveJobStageText(job) except while the poller's
-    # overrun flag is set (Item 4's overrun sentence takes both).
-    assert 'const inlineLine = document.getElementById("recap-inline-status");' in body
-    assert 'const inlineText = document.getElementById("recap-inline-status-text");' in body
-    assert "if (inlineText) inlineText.innerText = formStatusText;" in body
-    # …and kept visible while a job is tracked.
-    assert 'if (inlineLine) inlineLine.classList.remove("hidden");' in body
-    # Both status surfaces use the identical text source.
-    assert body.count("innerText = formStatusText;") == 2
+    assert 'getElementById("recap-inline-status")' not in body
+    assert 'getElementById("recap-inline-status-text")' not in body
+    assert "if (statusMsg) statusMsg.innerText = formStatusText;" in body
     assert ": liveJobStageText(job);" in body
 
 
 def test_bt_inline_paint_sits_behind_tracked_job_and_notice_guards():
     body = _renderer_body()
-    # Another job's store update can never repaint the inline line:
-    # the tracked-job guard precedes every paint in the renderer.
-    guard = body.index("if (!job || job.id !== recapFormJobId) return;")
-    paint = body.index("if (inlineText) inlineText.innerText = formStatusText;")
+    guard = body.index("if (recapFormJobId && job.id && job.id !== recapFormJobId) return;")
+    paint = body.index("if (statusMsg) statusMsg.innerText = formStatusText;")
     assert guard < paint
-    # A parked poller health notice owns the status text — inline
-    # included: the notice early-return also precedes the paint.
     notice = body.index("if (recapFormNotice) return;")
     assert notice < paint
 
 
 def test_bt_inline_terminal_paints_outcome_like_the_pill():
     body = _renderer_body()
-    paint = body.index("if (inlineText) inlineText.innerText = formStatusText;")
-    # No terminal special-case parks the inline line on its last
-    # in-progress text: the unconditional paint (the store job's
-    # outcome text on a terminal job, exactly as the pill renders)
-    # comes before the step line's own terminal-clearing block, and
-    # the renderer never hides the inline line.
+    paint = body.index("if (statusMsg) statusMsg.innerText = formStatusText;")
     terminal_block = body.index("if (liveJobsIsTerminal(job.status)) {")
     assert paint < terminal_block
-    assert 'inlineLine.classList.add("hidden")' not in body
-    assert 'inlineText.innerText = "";' not in body
+    assert 'id="recap-inline-status"' not in INDEX_HTML
 
 
 def test_bt_removed_store_job_empties_inline_text_too():
     sub = _subscription_body()
     removed = sub.index("if (opts && opts.removed) {")
-    inline = sub.index('const inlineText = document.getElementById("recap-inline-status-text");')
-    empty = sub.index('if (inlineText) inlineText.innerText = "";')
-    # Inside the removed branch, for the tracked job only — mirroring
-    # the detail lines so no surface keeps a stale stage frozen.
-    assert removed < inline < empty
+    status = sub.index('const statusMsg = document.getElementById("recap-status-msg");')
+    empty = sub.index('if (statusMsg) statusMsg.innerText = "";')
+    assert removed < status < empty
     assert "if (job.id === recapFormJobId) {" in sub
 
 
@@ -174,17 +157,15 @@ def test_bt_voice_inline_status_flow_untouched():
     # Recap renderer scope: no voice elements, no voice writes.
     assert "voice-inline-status" not in body
     assert "voice-inline-status" not in _subscription_body()
-    # Round 7 Item 2: voice inline status strip was removed from Voice Studio
-    # (progress lives in the dedicated detail view & running-jobs bar only),
-    # while Recap's inline strip stays intact.
+    # Round 7 Item 2 removed voice inline strip; Round 15 Part B removed recap inline strip too.
     assert 'showStudioInlineStatus("voice", t("preparing_msg"));' not in APP_JS
-    assert 'if (kind === "voice") return;' in APP_JS
+    assert 'if (kind === "voice" || kind === "recap") return;' in APP_JS
 
 
 def test_bt_submit_still_seeds_stage1_inline_text():
-    # The submit-time seed stays (it is the line's first paint before
-    # the store's first notify); the renderer takes over from there.
-    assert 'showStudioInlineStatus("recap", t("recap_stage1_status"));' in APP_JS
+    # Round 15 Part B retired showStudioInlineStatus("recap", ...) on submit;
+    # the helper remains (guarding voice & recap) for other studios.
+    assert 'showStudioInlineStatus("recap"' not in APP_JS
     assert 'function showStudioInlineStatus(kind, text) {' in APP_JS
 
 
@@ -253,5 +234,5 @@ def test_bt_server_half_of_save_then_fresh_load_cycle():
 # ── Cache token ──────────────────────────────────────────────────
 
 def test_bt_cache_token_is_r91():
-    assert INDEX_HTML.count("20261123_round14") == 5
+    assert INDEX_HTML.count("20261123_round15") == 5
     assert "20261104_r90" not in INDEX_HTML

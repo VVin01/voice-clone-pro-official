@@ -412,10 +412,15 @@ def _resolve_result_path(result: Any) -> Optional[str]:
 
 
 def get_available_hf_tokens() -> List[str]:
-    """Discover configured Hugging Face tokens for increased rate limits and priority queue."""
+    """Discover configured Hugging Face tokens for the single shared caller pool.
+
+    Round 15 Part F: all configured tokens across HF_TOKEN, HUGGINGFACE_TOKEN,
+    HF_TOKENS, and HF_RESERVE_TOKENS are merged and deduplicated into ONE pool
+    for every tier (free, purchased, admin). There is no paid-only reserve.
+    """
     tokens: List[str] = []
-    # 1. Environment variables
-    for env_var in ("HF_TOKEN", "HUGGINGFACE_TOKEN", "HF_TOKENS"):
+    # 1. Environment variables (includes former HF_RESERVE_TOKENS merged into the general pool)
+    for env_var in ("HF_TOKEN", "HUGGINGFACE_TOKEN", "HF_TOKENS", "HF_RESERVE_TOKENS"):
         val = os.getenv(env_var, "").strip()
         if val:
             for part in re.split(r"[,;\s\n]+", val):
@@ -541,66 +546,12 @@ class VoxCPMEngine:
             return (2, -bal)
         return (0, -bal)
 
-    # Batch DP (Item 1): the paid reserve. A slice of the caller pool
-    # that FREE-tier walks never touch, so an evening of free traffic
-    # cannot drain the whole ZeroGPU pool before a paid job arrives.
-    # The reserve set is the UNION of three definitions:
-    #   * PRIMARY — operator-designated tokens (owner amendment
-    #     2026-11-11): token VALUES listed in the HF_RESERVE_TOKENS
-    #     env var are reserve from cold start, deterministically —
-    #     this is how the PRO account's token (2,400 s/day, by far
-    #     the largest balance) is made paid-only;
-    #   * the LAST ``reserve_n`` tokens of the configured
-    #     (discovery-order) list;
-    #   * any token whose learned balance is rich (>= 900 s — the
-    #     accounts that carry a paid job through an evening).
-    # The anonymous caller (None) is never reserve. With fewer than
-    # 8 configured tokens there is no positional reserve at all — a
-    # tiny pool cannot afford to strand most of itself.
-    _RESERVE_MIN_POOL = 8
-    _RESERVE_RICH_BALANCE = 900.0
-
-    @classmethod
-    def _designated_reserve_tokens(cls) -> set:
-        """Operator-designated reserve token VALUES from the
-        HF_RESERVE_TOKENS env var — comma/semicolon/whitespace
-        separated, parsed exactly like get_available_hf_tokens
-        parses the pool (split + quote strip). Read live on every
-        reserve computation; never persisted anywhere."""
-        raw = os.getenv("HF_RESERVE_TOKENS", "") or ""
-        out: set = set()
-        for part in re.split(r"[,;\s\n]+", raw):
-            tok = part.strip().strip("'\"")
-            if tok:
-                out.add(tok)
-        return out
-
-    @classmethod
-    def _reserve_token_set(cls, discovery_order_tokens) -> set:
-        """The reserve set for a pool in DISCOVERY (configured) order:
-        designated ∪ positional-last-slice ∪ learned-rich.
-
-        Positional membership must come from the configured order,
-        never from a health/balance-sorted walk order: the last
-        entries of a sorted list would be the cooling tokens, which
-        is the opposite of a reserve. Rich tokens join from the
-        class-level learned balances (Batch DI); designated tokens
-        join by exact value from HF_RESERVE_TOKENS."""
-        toks = [t for t in (discovery_order_tokens or []) if t]
-        reserve: set = set()
-        designated = cls._designated_reserve_tokens()
-        for tok in toks:
-            if tok in designated:
-                reserve.add(tok)
-        n = len(toks)
-        if n >= cls._RESERVE_MIN_POOL:
-            reserve_n = max(2, min(8, n // 4))
-            reserve.update(toks[-reserve_n:])
-        for tok in toks:
-            bal = cls._token_balances.get(str(tok))
-            if bal is not None and bal >= cls._RESERVE_RICH_BALANCE:
-                reserve.add(tok)
-        return reserve
+    # Round 15 Part F (owner direction 2026-11-23): SINGLE-POOL RULE.
+    # The paid-only HF token reserve (Batch DP / DR) is permanently retired.
+    # Every configured token — all tokens in HF_TOKENS plus any token still
+    # listed in HF_RESERVE_TOKENS — is merged into ONE general caller pool
+    # (get_available_hf_tokens) available equally to all tiers (free,
+    # purchased, admin). Do NOT reintroduce tier-based token gating here.
     # Batch AJ (M12): cooldown persistence backstop. The in-memory
     # dict above stays keyed by raw token (existing behaviour/tests),
     # but the PERSISTED form — BotSetting key "aj_hf:cooldowns" via
@@ -963,38 +914,11 @@ class VoxCPMEngine:
         # key = (health class, balance tier, -balance, rotated
         # position). Space priority is untouched — pairs below still
         # iterate the configured space order inside each token round.
-        # Batch DP (Item 1): tier-aware walk. The reserve set is
-        # computed from the CONFIGURED token order (self.hf_tokens),
-        # never from the health-sorted pool below. Free walks have
-        # reserve pairs filtered out entirely further down.
-        # ``tier`` defaults to "free" — the safe side: an unplumbed
-        # caller can never spend the reserve.
-        # Batch DR REVERSAL (2026-11-12): DP sorted the reserve class
-        # AFTER non-reserve within a health class — drain the shared
-        # tokens first, the reserve stays a guaranteed floor. The
-        # 2026-11-11 evening evidence killed that design: paid
-        # segments burned their whole 45 s failover budget on slow
-        # attempts and fragmented shared balances (75–94 s left vs
-        # 94–180 s admission asks) and died on the clock before the
-        # walk ever REACHED a reserve pair — VIP and admin segments
-        # fell back to Edge while the PRO reserve sat untouched.
-        # Paid walks therefore lead with the reserve INSIDE each
-        # health class: the health class still dominates (a cooling
-        # reserve token never jumps healthy shared tokens), and the
-        # balance ordering still applies within each class. Free
-        # walks are untouched.
-        _dp_paid = str(tier or "free").strip().lower() == "paid"
-        _dp_reserve = VoxCPMEngine._reserve_token_set(self.hf_tokens)
-
+        # Round 15 Part F: single shared pool for every tier — token ordering
+        # depends strictly on health class, last-known balance, and rotation
+        # position (no tier-based reserve prioritization or filtering).
         def _walk_sort_key(item):
             _pos, _tok = item
-            if _dp_paid:
-                return (
-                    _token_sort_key(_tok),
-                    0 if _tok in _dp_reserve else 1,
-                    *VoxCPMEngine._balance_sort_key(_tok),
-                    _pos,
-                )
             return (
                 _token_sort_key(_tok),
                 *VoxCPMEngine._balance_sort_key(_tok),
@@ -1029,21 +953,6 @@ class VoxCPMEngine:
             (sp, tok) for sp, tok in pairs
             if not self._pair_blocked_by_job(sp, tok)
         ]
-        # Batch DP (Item 1): a FREE walk never touches reserve tokens.
-        # If the reserve filter (with the job-memory filter above)
-        # leaves nothing, the call takes the existing quota-exhausted
-        # path below via all_pairs_blocked — free behaviour is
-        # otherwise byte-identical to before.
-        if not _dp_paid and _dp_reserve:
-            _pre_reserve = len(pairs)
-            pairs = [
-                (sp, tok) for sp, tok in pairs if tok not in _dp_reserve
-            ]
-            if len(pairs) != _pre_reserve:
-                self._log(
-                    f"🛡️ VoxCPM reserve: held {len(_dp_reserve)} token(s) "
-                    "for the paid tier (free call)"
-                )
         all_pairs_blocked = total_pairs > 0 and not pairs
         if all_pairs_blocked:
             self._log(
@@ -1369,7 +1278,7 @@ class VoxCPMEngine:
             # with ZERO quota refusals does not match this clause in
             # either tier, and the free tail is unchanged.
             _dr_clause = (
-                _dp_paid
+                str(tier or "free").strip().lower() == "paid"
                 and deadline_cut
                 and attempts_made >= 1
                 and quota_failures >= 1
