@@ -451,7 +451,7 @@ async def test_part_e_group_and_private_ai_groq_primary_and_gemini_fallback(monk
     )
     assert res == (gai.DECISION_REPLY, "စမ်းသပ်ဖြေကြားချက်ပါရှင့်။")
     assert res.moderation == {"category": "none", "confidence": 0.0}
-    assert groq_models_seen == [(kr.GROQ_TEXT_ENDPOINT, "llama-3.3-70b-versatile")]
+    assert groq_models_seen == [(kr.GROQ_TEXT_ENDPOINT, "qwen/qwen3.8-27b")]
     assert gemini_called == []  # Gemini never touched when Groq succeeds
 
     # Private AI shares the exact Groq-primary path via gai._ask_ai_sync

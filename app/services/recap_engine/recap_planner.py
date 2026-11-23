@@ -1421,7 +1421,7 @@ def _extract_json_payload(raw_text: str) -> Any:
 # Round 15 Part E: Recap planning stays Gemini PRIMARY -> Groq FALLBACK
 # (llama-3.3-70b-versatile) when the Gemini chain is exhausted. Groq's free
 # 12K tokens/min cap per account means oversize prompts must skip gracefully.
-GROQ_RECAP_FALLBACK_MODEL = "llama-3.3-70b-versatile"
+GROQ_RECAP_FALLBACK_MODEL = "qwen/qwen3.8-27b"
 GROQ_RECAP_MAX_PROMPT_TOKENS = 12000
 
 

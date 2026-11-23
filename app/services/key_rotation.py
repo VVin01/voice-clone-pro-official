@@ -88,6 +88,7 @@ MODEL_DAILY_CAPS: dict[str, int] = {
     "gemini-flash-lite-latest": 500,
     # Groq text models (Round 15 Part E — Nov 2026 free tier: 1,000 RPD / 12K TPM / 100K TPD per account).
     "llama-3.3-70b-versatile": 1000,
+    "qwen/qwen3.8-27b": 1000,
 }
 
 # Conservative daily cap assumed for a model missing from
@@ -910,7 +911,7 @@ def collect_gemini_key_pool(env: Mapping[str, str] | None = None) -> list[tuple[
 # ---------------------------------------------------------------------------
 
 GROQ_TEXT_PROVIDER = "groq_text"
-GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
+GROQ_TEXT_MODEL = "qwen/qwen3.8-27b"
 GROQ_TEXT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_FREE_TPM_CAP = 12000
 _GROQ_TEXT_USER_AGENT = (
