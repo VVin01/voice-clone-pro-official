@@ -3572,6 +3572,62 @@ function openProfileView() {
 }
 window.openProfileView = openProfileView;
 
+let _profilePhotoState = { userId: null, url: null, status: "idle" };
+
+function _paintProfileAvatarImg(avatarEl, objUrl, fallbackChar) {
+    if (!avatarEl || !objUrl) return;
+    const existing = avatarEl.querySelector("img.profile-avatar-img");
+    if (existing && existing.getAttribute("src") === objUrl) return;
+    avatarEl.textContent = "";
+    const img = document.createElement("img");
+    img.className = "profile-avatar-img";
+    img.src = objUrl;
+    img.alt = "";
+    img.decoding = "async";
+    img.onerror = () => {
+        if (avatarEl.contains(img)) avatarEl.textContent = fallbackChar || "👤";
+    };
+    avatarEl.appendChild(img);
+}
+
+function _maybeLoadProfilePhoto(avatarEl, userId, fallbackChar) {
+    if (!avatarEl || !userId) return;
+    const profilePane = document.getElementById("tab-profile");
+    if (!profilePane || !profilePane.classList.contains("active")) return;
+    if (_profilePhotoState.userId !== userId) {
+        if (_profilePhotoState.url && typeof URL !== "undefined" && URL.revokeObjectURL) {
+            try { URL.revokeObjectURL(_profilePhotoState.url); } catch (_) {}
+        }
+        _profilePhotoState = { userId: userId, url: null, status: "idle" };
+    }
+    if (_profilePhotoState.status === "loaded" && _profilePhotoState.url) {
+        _paintProfileAvatarImg(avatarEl, _profilePhotoState.url, fallbackChar);
+        return;
+    }
+    if (_profilePhotoState.status === "loading" || _profilePhotoState.status === "none") {
+        return;
+    }
+    _profilePhotoState.status = "loading";
+    Promise.resolve()
+        .then(() => fetchAuthImageUrl("/api/user/me/photo"))
+        .then((objUrl) => {
+            if (_profilePhotoState.userId !== userId) return;
+            if (!objUrl) {
+                _profilePhotoState.status = "none";
+                return;
+            }
+            _profilePhotoState.url = objUrl;
+            _profilePhotoState.status = "loaded";
+            const currentAvatar = document.getElementById("profile-ident-avatar");
+            if (currentAvatar) _paintProfileAvatarImg(currentAvatar, objUrl, fallbackChar);
+        })
+        .catch(() => {
+            if (_profilePhotoState.userId === userId) {
+                _profilePhotoState.status = "none";
+            }
+        });
+}
+
 function paintProfileView(data) {
     const u = data || (typeof state !== "undefined" && state && state.user) || null;
     const tgUser = typeof state !== "undefined" && state && state.tg && state.tg.initDataUnsafe && state.tg.initDataUnsafe.user;
@@ -3597,7 +3653,13 @@ function paintProfileView(data) {
         const ch = fullName
             ? Array.from(fullName)[0].toUpperCase()
             : (cleanUsername ? Array.from(cleanUsername)[0].toUpperCase() : "");
-        avatarEl.textContent = ch || "👤";
+        const fallbackChar = ch || "👤";
+        if (_profilePhotoState.userId === cleanId && _profilePhotoState.status === "loaded" && _profilePhotoState.url) {
+            _paintProfileAvatarImg(avatarEl, _profilePhotoState.url, fallbackChar);
+        } else {
+            avatarEl.textContent = fallbackChar;
+        }
+        _maybeLoadProfilePhoto(avatarEl, cleanId, fallbackChar);
     }
     if (nameEl) {
         nameEl.textContent = fullName;

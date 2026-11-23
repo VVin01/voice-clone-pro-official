@@ -17,7 +17,7 @@ PHASE2_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 2") :]
 
 
 def test_v2_phase2_cache_token_current():
-    assert INDEX_HTML.count("?v=20261123_followup1") == 5
+    assert INDEX_HTML.count("?v=20261123_round14") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 

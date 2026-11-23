@@ -253,5 +253,5 @@ def test_bt_server_half_of_save_then_fresh_load_cycle():
 # ── Cache token ──────────────────────────────────────────────────
 
 def test_bt_cache_token_is_r91():
-    assert INDEX_HTML.count("20261123_followup1") == 5
+    assert INDEX_HTML.count("20261123_round14") == 5
     assert "20261104_r90" not in INDEX_HTML

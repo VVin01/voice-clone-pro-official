@@ -11486,3 +11486,113 @@ html[data-theme="dark"] #tab-recap .recap-output-caption.recap-output-caption-ca
     border-color: rgba(148, 163, 184, 0.24);
     color: #cbd5e1;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   2026-11-23 ROUND 14 — Part A: Full-width Voice/TTS preview buttons
+   ════════════════════════════════════════════════════════════════════════════ */
+.preview-btn-row {
+    width: 100%;
+    display: flex;
+}
+#tab-tts .voice-selected-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
+.preview-recap-voice-btn {
+    flex-wrap: nowrap;
+}
+.preview-recap-voice-btn .preview-icon,
+.preview-recap-voice-btn .preview-btn-icon {
+    flex-shrink: 0;
+    font-size: 15px;
+    line-height: 1;
+}
+.preview-recap-voice-btn .preview-btn-label {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Round 14 — Part C: Real Telegram profile photo inside avatar circle */
+#tab-profile .profile-avatar-circle {
+    overflow: hidden;
+}
+.profile-avatar-circle img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
+/* Round 14 — Part D2 & D3: Scoped Profile ledger pills (1 row) & compact density */
+#tab-profile {
+    gap: 10px;
+}
+#tab-profile .profile-wallet-orders-section {
+    gap: 10px;
+}
+#tab-profile .card,
+#tab-profile .vcp-card,
+#tab-profile .profile-identity-card {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding: 14px;
+    gap: 8px;
+}
+#tab-profile .stats-card {
+    gap: 8px;
+}
+#tab-profile .profile-section-heading,
+#tab-profile .card-label {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.45;
+    margin-bottom: 0;
+    padding-inline-start: 0;
+}
+#tab-profile .profile-section-heading {
+    padding: 2px 2px 0;
+}
+#tab-profile .vcp-tx-card-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
+#tab-profile .vcp-tx-filters {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+}
+#tab-profile .vcp-tx-filters .mini-chip {
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    padding: 4px 6px;
+    justify-content: center;
+    white-space: nowrap;
+    font-size: 12px;
+}
+#tab-profile .stats-row {
+    gap: 8px;
+}
+#tab-profile .stats-row .stat-col:not(:first-child) {
+    padding: 8px 10px;
+    border-radius: 12px;
+}
+#tab-profile .profile-ref-stats-grid {
+    gap: 8px;
+    margin-top: 2px;
+}
+#tab-profile .profile-ref-stat-box {
+    padding: 8px 10px;
+    border-radius: 12px;
+}
+#tab-profile #vip-grants-list,
+#tab-profile #vip-orders-list,
+#tab-profile #vip-tx-list {
+    margin-top: 2px;
+}

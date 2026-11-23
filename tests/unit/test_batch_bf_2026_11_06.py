@@ -64,7 +64,7 @@ DESIGN_PASSAGE = 'မင်္ဂလာပါ။ နေ့စဉ် ပြော
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_bf_cache_token_is_r79():
-    assert HTML.count("20261123_followup1") == 5
+    assert HTML.count("20261123_round14") == 5
     assert "20261104_r75" not in HTML
 
 

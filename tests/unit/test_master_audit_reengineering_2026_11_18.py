@@ -295,8 +295,8 @@ def test_frontend_batch3_ia_subtitles_and_budget():
     js = _read_static("js/app.js")
     i18n = _read_static("js/i18n.js")
 
-    # Part D (2026-11-23) bumped cache stamp to ?v=20261123_followup1 (5 assets incl. splash logo).
-    assert html.count("?v=20261123_followup1") == 5
+    # Part D (2026-11-23) bumped cache stamp to ?v=20261123_round14 (5 assets incl. splash logo).
+    assert html.count("?v=20261123_round14") == 5
     assert 'id="btn-top-history"' in html
     assert html.count('class="vcp-subview-back-btn"') == 3
     assert 'id="vip-wallet-tts-val"' in html

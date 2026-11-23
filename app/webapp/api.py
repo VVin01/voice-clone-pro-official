@@ -31,7 +31,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import case, delete, select, func, update, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1128,7 +1128,6 @@ async def _recap_active_job_count(db, user_id: int) -> int:
         res = await db.execute(
             select(Job.id).where(
                 Job.user_id == user_id,
-                Job.job_type == JobType.RECAP.value,
                 Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
             )
         )
@@ -3983,6 +3982,166 @@ async def get_user_profile(
         "telegram_max_upload_mb": get_telegram_max_upload_mb(),
         "local_bot_api_active": is_local_bot_api_active(),
     }
+
+
+_PROFILE_PHOTO_CACHE_TTL_SECONDS = 24 * 3600
+_PROFILE_PHOTO_HEADERS = {"Cache-Control": "private, max-age=3600"}
+
+
+def _select_profile_photo_size(sizes: List[Any]) -> Any:
+    """Pick the largest size <= 512px of the first photo, or largest-but-one."""
+    if len(sizes) <= 1:
+        return sizes[0]
+    under_512 = [
+        s for s in sizes
+        if isinstance(getattr(s, "width", None), int)
+        and isinstance(getattr(s, "height", None), int)
+        and getattr(s, "width", 0) > 0
+        and getattr(s, "height", 0) > 0
+        and max(s.width, s.height) <= 512
+    ]
+    if under_512:
+        return max(under_512, key=lambda s: max(s.width, s.height))
+    return sizes[-2]
+
+
+def _write_profile_photo_meta(meta_path: Path, file_unique_id: str, fetched_at: float) -> None:
+    tmp = meta_path.with_name(f"{meta_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(
+        json.dumps({"file_unique_id": file_unique_id, "fetched_at": fetched_at}),
+        encoding="utf-8",
+    )
+    os.replace(tmp, meta_path)
+
+
+def _write_profile_photo_bytes(photo_path: Path, img_bytes: bytes) -> None:
+    tmp = photo_path.with_name(f"{photo_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_bytes(img_bytes)
+    os.replace(tmp, photo_path)
+
+
+@api_router.get("/user/me/photo")
+async def get_user_profile_photo(
+    user: User = Depends(get_current_user),
+):
+    """Fetch and disk-cache the authenticated user's own Telegram profile photo."""
+    user_id = int(user.id)
+    cache_dir = settings.storage_root / "cache" / "profile_photos"
+    photo_path = cache_dir / f"{user_id}.jpg"
+    meta_path = cache_dir / f"{user_id}.json"
+    now = time.time()
+
+    has_cached_photo = False
+    try:
+        has_cached_photo = photo_path.is_file() and photo_path.stat().st_size > 0
+    except OSError:
+        has_cached_photo = False
+
+    cached_unique_id = ""
+    cached_fetched_at: Optional[float] = None
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(meta, dict):
+                cached_unique_id = str(meta.get("file_unique_id") or "")
+                raw_ts = meta.get("fetched_at")
+                if raw_ts is not None:
+                    cached_fetched_at = float(raw_ts)
+        except Exception:
+            cached_unique_id = ""
+            cached_fetched_at = None
+
+    if (
+        has_cached_photo
+        and cached_fetched_at is not None
+        and 0 <= (now - cached_fetched_at) < _PROFILE_PHOTO_CACHE_TTL_SECONDS
+    ):
+        try:
+            return Response(
+                content=photo_path.read_bytes(),
+                media_type="image/jpeg",
+                headers=_PROFILE_PHOTO_HEADERS,
+            )
+        except OSError:
+            has_cached_photo = False
+
+    def _serve_stale_or_404():
+        if has_cached_photo:
+            try:
+                return Response(
+                    content=photo_path.read_bytes(),
+                    media_type="image/jpeg",
+                    headers=_PROFILE_PHOTO_HEADERS,
+                )
+            except OSError:
+                pass
+        return JSONResponse(status_code=404, content={"detail": "Profile photo not available"})
+
+    bot = None
+    try:
+        bot = create_telegram_bot(token=settings.bot_token)
+        result = await bot.get_user_profile_photos(user_id, limit=1)
+        photos = getattr(result, "photos", None) or []
+        if not photos or not photos[0]:
+            try:
+                photo_path.unlink(missing_ok=True)
+                meta_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return JSONResponse(status_code=404, content={"detail": "Profile photo not available"})
+
+        chosen = _select_profile_photo_size(list(photos[0]))
+        unique_id = str(getattr(chosen, "file_unique_id", "") or "")
+        if has_cached_photo and cached_unique_id and unique_id and unique_id == cached_unique_id:
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                _write_profile_photo_meta(meta_path, unique_id, now)
+            except OSError:
+                pass
+            return Response(
+                content=photo_path.read_bytes(),
+                media_type="image/jpeg",
+                headers=_PROFILE_PHOTO_HEADERS,
+            )
+
+        tg_file = await bot.get_file(chosen.file_id)
+        file_path = getattr(tg_file, "file_path", None)
+        if not file_path:
+            return _serve_stale_or_404()
+
+        dl_obj = await bot.download_file(file_path)
+        if isinstance(dl_obj, (bytes, bytearray)):
+            img_bytes = bytes(dl_obj)
+        elif hasattr(dl_obj, "read"):
+            img_bytes = dl_obj.read()
+        else:
+            img_bytes = b""
+        if not img_bytes:
+            return _serve_stale_or_404()
+
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            _write_profile_photo_bytes(photo_path, img_bytes)
+            _write_profile_photo_meta(meta_path, unique_id, now)
+        except OSError as cache_err:
+            logger.warning("Could not write profile photo cache for user %s: %s", user_id, cache_err)
+
+        return Response(
+            content=img_bytes,
+            media_type="image/jpeg",
+            headers=_PROFILE_PHOTO_HEADERS,
+        )
+    except Exception as exc:
+        logger.warning("Profile photo fetch failed for user %s: %s", user_id, exc)
+        return _serve_stale_or_404()
+    finally:
+        if bot is not None:
+            session_obj = getattr(bot, "session", None)
+            if session_obj is not None and hasattr(session_obj, "close"):
+                try:
+                    await session_obj.close()
+                except Exception:
+                    pass
 
 
 @api_router.post("/user/verify-membership")
@@ -10878,15 +11037,17 @@ async def create_recap_job(
         _verified_dur = _verified_url_info.get("duration")
         if _verified_dur and float(_verified_dur) > 0:
             checked_duration = float(_verified_dur)
-
-    if (not checked_duration or checked_duration <= 0) and req.url:
-        try:
-            if not req.url.startswith(("http://", "https://")) and os.path.isfile(req.url):
+    elif _req_url and not _req_url.startswith(("http://", "https://")):
+        _local_probe_str = _req_url.strip("'\"")
+        if _local_probe_str and os.path.isfile(_local_probe_str):
+            try:
                 from app.services.recap_engine.core import probe_duration, find_ffprobe
                 ffprobe_bin = find_ffprobe()
-                checked_duration = probe_duration(ffprobe_bin, Path(req.url))
-        except Exception as probe_err:
-            logger.warning(f"Could not pre-probe video duration for {req.url}: {probe_err}")
+                _probed_dur = probe_duration(ffprobe_bin, Path(_local_probe_str))
+                if _probed_dur is not None and float(_probed_dur) > 0:
+                    checked_duration = float(_probed_dur)
+            except Exception as probe_err:
+                logger.warning(f"Could not pre-probe video duration for {req.url}: {probe_err}")
 
     submit_decision = "ok"
     estimated_parts = None

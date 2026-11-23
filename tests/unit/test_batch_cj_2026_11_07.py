@@ -416,5 +416,5 @@ global.fetch = async () => ({ ok: true, status: 200, blob: async () => ({}) });
 # ── Release pin: cache token r107 ───────────────────────────────────
 
 def test_cj_cache_token_is_r107():
-    assert INDEX_HTML.count("20261123_followup1") == 5
+    assert INDEX_HTML.count("20261123_round14") == 5
     assert ("20261104_r" + "106") not in INDEX_HTML

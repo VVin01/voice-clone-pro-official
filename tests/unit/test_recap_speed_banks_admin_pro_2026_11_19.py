@@ -317,7 +317,7 @@ def test_frontend_admin_pro_and_bundle_budget():
     admin_pro = (ROOT / "app/webapp/static/js/admin_pro.js").read_text(encoding="utf-8")
     assert 'id="extra-payment-accounts"' in html
     assert '<option value="TTS">' in html
-    assert html.count("?v=20261123_followup1") == 5
+    assert html.count("?v=20261123_round14") == 5
     assert "/static/js/admin_pro.js" in app_js
     for marker in ("admp-banks-card", "admp-orders-bar", "admp-expiring-card", "admp-bc-aud", "admp-audit-bar", "admp-runtime-card"):
         assert marker in admin_pro

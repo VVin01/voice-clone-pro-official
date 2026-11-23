@@ -379,7 +379,7 @@ def test_section8_frontend_toast_lite_toggle_and_bundle_budget():
     assert ".lite-pill-btn" in STYLE_CSS
     assert 'id="btn-lite-toggle"' in INDEX_HTML
     assert 'onclick="toggleLiteMode()"' in INDEX_HTML
-    assert INDEX_HTML.count("?v=20261123_followup1") == 5
+    assert INDEX_HTML.count("?v=20261123_round14") == 5
 
     assert "function toggleLiteMode()" in APP_JS
     assert "function syncLiteModeUiState(" in APP_JS

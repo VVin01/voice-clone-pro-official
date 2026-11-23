@@ -133,6 +133,6 @@ def test_ba_no_header_element_removed():
 
 
 def test_ba_cache_token_is_r79():
-    # Part D (2026-11-23) bumped asset version stamp to 20261123_followup1 (5 assets incl. splash logo).
-    assert INDEX_HTML.count("20261123_followup1") == 5
+    # Part D (2026-11-23) bumped asset version stamp to 20261123_round14 (5 assets incl. splash logo).
+    assert INDEX_HTML.count("20261123_round14") == 5
     assert "20261104_r73" not in INDEX_HTML

@@ -249,4 +249,4 @@ def test_frontend_income_and_banned_split_wiring():
 
 def test_cache_version_r52():
     index_html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert index_html.count("?v=20261123_followup1") == 5
+    assert index_html.count("?v=20261123_round14") == 5

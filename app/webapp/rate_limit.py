@@ -93,6 +93,7 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
 # unauthenticated-cost amplifier without a cap.
 GET_RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/recap/frame": (30, 60),
+    "/api/user/me/photo": (30, 60),
 }
 
 # path prefix -> max Content-Length in bytes, when the client sends one.
@@ -104,7 +105,7 @@ MAX_CONTENT_LENGTH: dict[str, int] = {
     "/api/vip/submit-slip": 10 * 1024 * 1024,
     "/api/voices/generate-with-audio": 55 * 1024 * 1024,
     "/api/recap/upload_video": 1024 * 1024 * 1024,
-    "/api/recap/upload_voice_ref": 25 * 1024 * 1024,
+    "/api/recap/upload_voice_ref": 50 * 1024 * 1024,
     "/api/recap/upload_sub_font": 15 * 1024 * 1024,
     "/api/user/logo": 10 * 1024 * 1024,
     "/api/internal/worker/upload-result": 500 * 1024 * 1024,

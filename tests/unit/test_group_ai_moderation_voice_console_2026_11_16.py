@@ -7,7 +7,7 @@ Covers:
 - Admin-only Ban callback execution
 - Part 2: Voice message understanding (Gemini ASR transcription, duration/size caps, daily cap, silence on failure)
 - Part 3: Mini App Admin Tab Group AI Console (knowledge sheet save/reset, 8k cap, budgets, recent actions, guardrail precedence)
-- Cache bust version 20261123_followup1 verification
+- Cache bust version 20261123_round14 verification
 """
 
 import io
@@ -563,8 +563,8 @@ def test_guardrail_precedence_in_prompt():
 
 
 def test_cache_bust_version_is_r159():
-    """Cache token bumped to 20261123_followup1 across index.html."""
+    """Cache token bumped to 20261123_round14 across index.html."""
     from pathlib import Path
     index_html = (Path(__file__).parent.parent.parent / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
-    assert index_html.count("?v=20261123_followup1") == 5
+    assert index_html.count("?v=20261123_round14") == 5
     assert "20261116_r158" not in index_html

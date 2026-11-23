@@ -120,6 +120,11 @@ def resolve_binary(explicit: str | None, executable: str, common: Iterable[str] 
     raise FileNotFoundError(f"{executable} မတွေ့ပါ။ config.json / PATH ကိုစစ်ပါ။")
 
 
+def find_ffprobe() -> str:
+    """Locate the ffprobe executable via resolve_binary."""
+    return resolve_binary(None, "ffprobe", [r"C:\ffmpeg\bin\ffprobe.exe"])
+
+
 # A user's PC got "WSServerHandshakeError: 403, message='Invalid response status'" on every try (2026-10-12):
 # Microsoft's voice service refused the connection. It refuses many VPN / proxy servers: here the direct
 # route worked while the same request through a v2rayN server got 403. edge-tts already corrects a wrong clock
