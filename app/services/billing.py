@@ -367,9 +367,30 @@ async def expire_due_grants_for_user(
     *,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Thread/task-safe lazy expiration sweep for a single user."""
+    """Thread/task-safe lazy expiration sweep for a single user.
+
+    Lock-free fast pre-check avoids acquiring `_user_wallet_lock` and PostgreSQL
+    `FOR UPDATE` row locks on read paths when no active timed grant is overdue.
+    """
+    now_utc = _as_utc(now) or utc_now()
+    active_expiries = (
+        await session.execute(
+            select(WalletGrant.expires_at).where(
+                WalletGrant.user_id == user_id,
+                WalletGrant.status == "ACTIVE",
+                WalletGrant.expires_at.is_not(None),
+            )
+        )
+    ).scalars().all()
+    if not any(_as_utc(exp) is not None and _as_utc(exp) <= now_utc for exp in active_expiries):
+        return {
+            "expired_grants": 0,
+            "expired_voice_seconds": 0,
+            "expired_recap_seconds": 0,
+            "downgraded_to_free": False,
+        }
     async with _user_wallet_lock(user_id):
-        return await _expire_due_grants_locked(session, user_id, now=now)
+        return await _expire_due_grants_locked(session, user_id, now=now_utc)
 
 
 async def list_user_grants(
@@ -576,18 +597,42 @@ async def sweep_expired_grants_and_reminders(
     }
 
 
-async def get_wallet_snapshot(session: AsyncSession, user_id: int) -> dict[str, Any]:
-    """Return all 4 dual-wallet balances + active grants / earliest expiration metadata."""
-    await expire_due_grants_for_user(session, user_id)
-    user = await session.get(User, user_id)
-    bal = await get_minute_balance(session, user_id)
+async def get_wallet_snapshot(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    preloaded_user: User | None = None,
+    preloaded_balance: MinuteBalance | None = None,
+) -> dict[str, Any]:
+    """Return all 4 dual-wallet balances + active grants / earliest expiration metadata.
+
+    Queries `list_user_grants` first (FEFO puts the earliest active timed grant first);
+    only invokes `expire_due_grants_for_user` (with row locks) when an active grant is
+    actually overdue, avoiding redundant queries and lock serialization on warm reads.
+    """
+    now_utc = utc_now()
+    grants = await list_user_grants(session, user_id, include_expired=True, limit=25, now=now_utc)
+    has_due_grant = any(
+        g["status"] == "ACTIVE"
+        and g["expires_at"] is not None
+        and _as_utc(datetime.fromisoformat(g["expires_at"])) <= now_utc
+        for g in grants
+    )
+    if has_due_grant:
+        await expire_due_grants_for_user(session, user_id, now=now_utc)
+        user = await session.get(User, user_id)
+        bal = await get_minute_balance(session, user_id)
+        grants = await list_user_grants(session, user_id, include_expired=True, limit=25, now=now_utc)
+    else:
+        user = preloaded_user if preloaded_user is not None else await session.get(User, user_id)
+        bal = preloaded_balance if preloaded_balance is not None else await get_minute_balance(session, user_id)
+
     is_admin = settings.is_admin(user_id)
     recap_avail_sec = get_recap_available_seconds(user) if user else 0
     recap_res_sec = get_recap_reserved_seconds(user) if user else 0
     voice_avail_sec = int(bal.clone_spendable_seconds) if bal else 0
     voice_res_sec = int(bal.reserved_seconds) if bal else 0
 
-    grants = await list_user_grants(session, user_id, include_expired=True, limit=25)
     active_with_bal = [
         g for g in grants
         if g["status"] == "ACTIVE" and (g["remaining_voice_minutes"] > 0 or g["remaining_recap_credits"] > 0)

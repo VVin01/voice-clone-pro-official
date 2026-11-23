@@ -2,13 +2,58 @@ from __future__ import annotations
 
 import json
 import logging
-from sqlalchemy import select
+import time
+from typing import Iterable, Mapping
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.schema import AuditLog, BotSetting
 
 logger = logging.getLogger(__name__)
+
+# Short-TTL in-process cache for BotSetting reads on persistent DB binds.
+# Keyed by (id(sync_engine), str(sync_engine.url)) -> {setting_key: (value_or_sentinel, expires_at)}.
+# Automatically invalidated on set_dynamic_setting(), load_dynamic_settings(), and any
+# SQLAlchemy Session flush touching a BotSetting row. Bypassed on :memory: SQLite binds
+# so isolated unit tests always read live session state directly via a single batched query.
+_DYNAMIC_SETTINGS_CACHE_TTL_SECONDS = 15.0
+_CACHE_MISS_SENTINEL = object()
+_DYNAMIC_SETTINGS_CACHE: dict[tuple[int, str], dict[str, tuple[object, float]]] = {}
+
+
+def _bind_cache_key(session: AsyncSession) -> tuple[int, str] | None:
+    try:
+        bind = session.get_bind()
+    except Exception:
+        return None
+    if bind is None:
+        return None
+    sync_engine = getattr(bind, "engine", bind)
+    url_str = str(getattr(sync_engine, "url", "") or "")
+    if ":memory:" in url_str:
+        return None
+    return (id(sync_engine), url_str)
+
+
+def invalidate_dynamic_settings_cache(key: str | None = None) -> None:
+    """Invalidate cached BotSetting entries (one key or all keys across binds)."""
+    if key is None:
+        _DYNAMIC_SETTINGS_CACHE.clear()
+        return
+    for bucket in _DYNAMIC_SETTINGS_CACHE.values():
+        bucket.pop(key, None)
+
+
+@event.listens_for(Session, "after_flush")
+def _invalidate_cache_on_bot_setting_flush(session: Session, flush_context) -> None:
+    touched_keys: set[str] = set()
+    for obj in (*session.new, *session.dirty, *session.deleted):
+        if isinstance(obj, BotSetting) and getattr(obj, "key", None):
+            touched_keys.add(str(obj.key))
+    for k in touched_keys:
+        invalidate_dynamic_settings_cache(k)
 
 
 def _loggable_value(key: str, value) -> str:
@@ -189,6 +234,7 @@ async def load_dynamic_settings(session: AsyncSession, *, quiet: bool = False) -
                         _LAST_LOGGED_SETTINGS[key] = parsed_val
             except Exception as e:
                 logger.warning("Failed to cast dynamic setting '%s' with value '%s': %s", key, _loggable_value(key, raw_val), e)
+    invalidate_dynamic_settings_cache()
     return loaded
 
 
@@ -236,6 +282,7 @@ async def set_dynamic_setting(
         )
 
     await session.flush()
+    invalidate_dynamic_settings_cache(key)
 
     # 3. Only now — persistence succeeded — apply to in-memory settings.
     if key in SETTING_TYPES:
@@ -262,4 +309,57 @@ async def get_dynamic_setting(session: AsyncSession, key: str, default: str | No
     if row is not None:
         return row.value
     return getattr(settings, key, default)
+
+
+async def get_dynamic_settings_batch(
+    session: AsyncSession,
+    keys: Iterable[str],
+    defaults: Mapping[str, str | None] | None = None,
+) -> dict[str, str | None]:
+    """Fetch multiple BotSetting keys in ONE SQL query (with short-TTL in-process cache).
+
+    Preserves exact ``get_dynamic_setting`` fallback semantics for every key:
+    DB ``BotSetting.value`` wins if a row exists, otherwise ``getattr(settings, key, default)``.
+    """
+    key_list = list(dict.fromkeys(str(k) for k in keys))
+    if not key_list:
+        return {}
+
+    fallback_map = defaults or {}
+    cache_key = _bind_cache_key(session)
+    now = time.monotonic()
+    db_values: dict[str, object] = {}
+    missing_keys: list[str] = []
+
+    if cache_key is not None:
+        bucket = _DYNAMIC_SETTINGS_CACHE.setdefault(cache_key, {})
+        for k in key_list:
+            entry = bucket.get(k)
+            if entry is not None and entry[1] > now:
+                db_values[k] = entry[0]
+            else:
+                missing_keys.append(k)
+    else:
+        missing_keys = key_list
+
+    if missing_keys:
+        stmt = select(BotSetting.key, BotSetting.value).where(BotSetting.key.in_(missing_keys))
+        rows = (await session.execute(stmt)).all()
+        found = {str(k): v for k, v in rows}
+        exp = now + _DYNAMIC_SETTINGS_CACHE_TTL_SECONDS
+        bucket = _DYNAMIC_SETTINGS_CACHE.setdefault(cache_key, {}) if cache_key is not None else None
+        for k in missing_keys:
+            val = found.get(k, _CACHE_MISS_SENTINEL)
+            db_values[k] = val
+            if bucket is not None:
+                bucket[k] = (val, exp)
+
+    result: dict[str, str | None] = {}
+    for k in key_list:
+        raw = db_values.get(k, _CACHE_MISS_SENTINEL)
+        if raw is not _CACHE_MISS_SENTINEL and raw is not None:
+            result[k] = raw
+        else:
+            result[k] = getattr(settings, k, fallback_map.get(k))
+    return result
 

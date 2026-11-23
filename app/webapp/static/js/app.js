@@ -3420,7 +3420,6 @@ async function loadUserProfile() {
         }
         const data = await res.json();
         state.user = data;
-        paintPlanHowText();
         const expPill = document.getElementById("home-expiry-pill");
         if (expPill) {
             if (data.earliest_days_left != null && data.earliest_expires_at) {

@@ -275,27 +275,45 @@ async def grant_daily_free_allowance(
     - Existing already-granted `monthly_free_seconds` in wallets stay untouched.
     - Admins are exempt; PURCHASED/VIP users are unaffected (they spend purchased balances).
     - Idempotent within a UTC day via DailyFreeAllowanceGrant unique constraint (user_id, day).
+    - Fast read-only path avoids acquiring a PostgreSQL `FOR UPDATE` row lock on `users`
+      for admins, PURCHASED users, and repeat same-day calls so concurrent `/api/user/me`
+      requests never serialize behind a row lock.
     """
-    _locked_user = (await session.execute(
-        select(User).where(User.id == user_id).with_for_update()
-    )).scalar_one_or_none()
-    balance = await get_minute_balance(session, user_id)
-
     if settings.is_admin(user_id):
-        return False, balance
-
-    if _locked_user is not None and _locked_user.account_category == AccountCategory.PURCHASED.value:
+        balance = await get_minute_balance(session, user_id)
         return False, balance
 
     current_day = day or get_current_daily_period()
     allowance_seconds = max(0, int(getattr(settings, "free_daily_allowance_seconds", 180) or 0))
     if allowance_seconds <= 0:
+        balance = await get_minute_balance(session, user_id)
+        return False, balance
+
+    # Lock-free fast check: reuse identity-map User if already loaded (e.g. get_current_user)
+    user_fast = await session.get(User, user_id)
+    if user_fast is not None and user_fast.account_category == AccountCategory.PURCHASED.value:
+        balance = await get_minute_balance(session, user_id)
+        return False, balance
+
+    balance = await get_minute_balance(session, user_id)
+    if balance.last_daily_grant_date == current_day:
         return False, balance
 
     stmt = select(DailyFreeAllowanceGrant).where(
         DailyFreeAllowanceGrant.user_id == user_id,
         DailyFreeAllowanceGrant.day == current_day,
     )
+    if (await session.execute(stmt)).scalar_one_or_none() is not None:
+        return False, balance
+
+    # Slow path (at most once per UTC day per eligible FREE user): acquire User row lock
+    # to serialize against concurrent consume_seconds / grant calls.
+    _locked_user = (await session.execute(
+        select(User).where(User.id == user_id).with_for_update()
+    )).scalar_one_or_none()
+    if _locked_user is not None and _locked_user.account_category == AccountCategory.PURCHASED.value:
+        return False, balance
+
     existing = (await session.execute(stmt)).scalar_one_or_none()
     if existing is not None:
         return False, balance
@@ -1699,21 +1717,19 @@ async def admin_adjust_balance(
 
 async def get_referral_stats(session: AsyncSession, user_id: int) -> dict:
     """Return rewarded referrals count and earned minutes (uncapped)."""
-    count_stmt = select(func.count()).select_from(ReferralReward).where(ReferralReward.referrer_id == user_id)
-    rewarded_count = (await session.execute(count_stmt)).scalar() or 0
+    earned_rows = (
+        await session.execute(
+            select(ReferralReward.seconds).where(ReferralReward.referrer_id == user_id)
+        )
+    ).scalars().all()
+    rewarded_count = len(earned_rows)
+    earned_seconds = sum(int(sec or 0) for sec in earned_rows)
 
     pending_stmt = select(func.count()).select_from(Referral).where(
         Referral.referrer_id == user_id,
         Referral.status == "PENDING",
     )
     pending_count = (await session.execute(pending_stmt)).scalar() or 0
-
-    earned_rows = (
-        await session.execute(
-            select(ReferralReward.seconds).where(ReferralReward.referrer_id == user_id)
-        )
-    ).scalars().all()
-    earned_seconds = sum(int(sec or 0) for sec in earned_rows)
 
     return {
         "rewarded_referrals": rewarded_count,

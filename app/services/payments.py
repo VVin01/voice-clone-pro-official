@@ -174,7 +174,7 @@ DEFAULT_PRICING_PLANS = [
 _DEFAULT_BY_CODE = {p["code"]: p for p in DEFAULT_PRICING_PLANS}
 
 
-async def _ensure_pricing_plans_seeded(session: AsyncSession) -> None:
+async def _seed_and_load_pricing_plans(session: AsyncSession) -> tuple[bool, list[PricingPlan]]:
     """Idempotently seed all 10 official v3 plans and deactivate legacy DB rows safely."""
     existing_rows = list((await session.execute(select(PricingPlan))).scalars().all())
     by_code = {row.code: row for row in existing_rows}
@@ -225,15 +225,27 @@ async def _ensure_pricing_plans_seeded(session: AsyncSession) -> None:
                 is_active=True,
             )
             session.add(plan)
+            existing_rows.append(plan)
             changed = True
 
     if changed:
         await session.flush()
+    return changed, existing_rows
+
+
+async def _ensure_pricing_plans_seeded(session: AsyncSession) -> None:
+    """Idempotently seed all 10 official v3 plans and deactivate legacy DB rows safely."""
+    await _seed_and_load_pricing_plans(session)
 
 
 async def get_all_pricing_plans(session: AsyncSession) -> list[PricingPlan]:
     """Retrieve all non-legacy pricing plans (active + disabled) for admin management."""
-    await _ensure_pricing_plans_seeded(session)
+    changed, rows = await _seed_and_load_pricing_plans(session)
+    if not changed:
+        legacy_codes = set(LEGACY_PLAN_CATALOGUE.keys())
+        filtered = [r for r in rows if r.code not in legacy_codes]
+        filtered.sort(key=lambda r: (int(r.sort_order or 0), int(r.id or 0)))
+        return filtered
     stmt = (
         select(PricingPlan)
         .where(~PricingPlan.code.in_(list(LEGACY_PLAN_CATALOGUE.keys())))
@@ -244,7 +256,12 @@ async def get_all_pricing_plans(session: AsyncSession) -> list[PricingPlan]:
 
 async def get_active_pricing_plans(session: AsyncSession) -> list[PricingPlan]:
     """Retrieve active official pricing plans, seeding any missing catalogue rows."""
-    await _ensure_pricing_plans_seeded(session)
+    changed, rows = await _seed_and_load_pricing_plans(session)
+    if not changed:
+        legacy_codes = set(LEGACY_PLAN_CATALOGUE.keys())
+        filtered = [r for r in rows if bool(r.is_active) and r.code not in legacy_codes]
+        filtered.sort(key=lambda r: (int(r.sort_order or 0), int(r.id or 0)))
+        return filtered
     stmt = (
         select(PricingPlan)
         .where(
@@ -789,20 +806,41 @@ async def list_payment_accounts(
 ) -> list[dict]:
     """Return ordered list of payment/bank accounts.
 
-    Reads ``payment_accounts_json`` from BotSetting; if absent or empty,
-    synthesizes the primary KBZPay & WavePay entries from legacy settings
+    Reads ``payment_accounts_json`` + legacy payment keys in ONE batched dynamic-settings
+    call (0 SQL on warm cache hit, 1 SQL on cold miss); if ``payment_accounts_json`` is
+    absent or empty, synthesizes the primary KBZPay & WavePay entries from legacy settings
     so existing deployments work seamlessly without migration.
     """
-    legacy = await get_payment_account_info(session)
-    row = (
-        await session.execute(
-            select(BotSetting).where(BotSetting.key == "payment_accounts_json")
-        )
-    ).scalar_one_or_none()
+    from app.services.dynamic_settings import get_dynamic_settings_batch
+
+    pay_vals = await get_dynamic_settings_batch(
+        session,
+        (
+            "payment_accounts_json",
+            "payment_kpay_number",
+            "payment_kpay_name",
+            "payment_wave_number",
+            "payment_wave_name",
+        ),
+        defaults={
+            "payment_accounts_json": "",
+            "payment_kpay_number": "",
+            "payment_kpay_name": "",
+            "payment_wave_number": "",
+            "payment_wave_name": "",
+        },
+    )
+    legacy = {
+        "kpay_number": pay_vals.get("payment_kpay_number") or "",
+        "kpay_name": pay_vals.get("payment_kpay_name") or "",
+        "wave_number": pay_vals.get("payment_wave_number") or "",
+        "wave_name": pay_vals.get("payment_wave_name") or "",
+    }
+    raw_json = pay_vals.get("payment_accounts_json")
     accounts: list[dict] = []
-    if row and row.value:
+    if raw_json:
         try:
-            parsed = json.loads(row.value)
+            parsed = json.loads(raw_json)
             if isinstance(parsed, list):
                 seen: set[str] = set()
                 for idx, raw_item in enumerate(parsed):

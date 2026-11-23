@@ -3619,210 +3619,305 @@ async def _ensure_referral_code(db: AsyncSession, user: User) -> str:
     return code
 
 
+def _resolve_parallel_read_factory(base_db: AsyncSession, extra_sessions: int):
+    """Return an async_sessionmaker on base_db's AsyncEngine if safe to open sibling read sessions.
+
+    Respects the shared Supabase Postgres session-mode pool budget across web + worker
+    processes: never fans out on :memory: SQLite, when base_db has uncommitted ORM state,
+    or when the pool has fewer than (extra_sessions + 2) free connections available
+    (preventing self-inflicted pool checkout deadlocks under concurrency bursts).
+    """
+    if base_db.new or base_db.dirty or base_db.deleted:
+        return None
+    try:
+        from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+        from app.db.session import engine as _global_engine
+
+        bind = base_db.get_bind()
+        if bind is None:
+            return None
+        sync_engine = getattr(bind, "engine", bind)
+        url_str = str(getattr(sync_engine, "url", "") or "")
+        if ":memory:" in url_str:
+            return None
+        pool = getattr(sync_engine, "pool", None)
+        if pool is not None and hasattr(pool, "size") and hasattr(pool, "checkedout"):
+            cap = int(pool.size()) + max(0, int(getattr(pool, "_max_overflow", 0) or 0))
+            if cap > 0 and (cap - int(pool.checkedout())) < (extra_sessions + 2):
+                return None
+        async_bind = (
+            _global_engine
+            if getattr(_global_engine, "sync_engine", None) is sync_engine
+            else getattr(base_db, "bind", None)
+        )
+        if not isinstance(async_bind, AsyncEngine):
+            return None
+        return async_sessionmaker(
+            bind=async_bind,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+    except Exception:
+        return None
+
+
 @api_router.get("/user/me")
 async def get_user_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Retrieve user's VIP status, minute balance, allowance, and platform config."""
-    from app.services.dynamic_settings import get_dynamic_setting
+    from sqlalchemy import func as _func
+    from app.models.schema import Referral, ReferralReward
+    from app.services.billing import get_wallet_snapshot
+    from app.services.dynamic_settings import get_dynamic_settings_batch
+    from app.services.ledger import (
+        MAX_REFERRALS_REWARDED,
+        REFERRAL_REWARD_SECONDS,
+        grant_daily_free_allowance,
+    )
+
+    user_id = int(user.id)
+    is_admin = settings.is_admin(user_id)
+    is_vip_initial = (user.account_category == AccountCategory.PURCHASED.value) or is_admin
+
     # Daily free allowance: grant it here too (the bot /start flow
     # and the voice submit path already do) so a Mini-App-first or
     # new-day FREE user sees their real daily allowance (180s/UTC day,
-    # non-accumulating). Idempotent per UTC day.
+    # non-accumulating). Idempotent per UTC day; repeat same-day,
+    # PURCHASED, and admin calls take zero row locks and perform no write.
+    bal = None
     try:
-        from app.services.ledger import grant_daily_free_allowance
-
-        _granted, _bal = await grant_daily_free_allowance(db, user.id)
-        if _granted:
+        _granted, bal = await grant_daily_free_allowance(db, user_id)
+        if _granted or db.new or db.dirty or db.deleted:
             await db.commit()
     except Exception:
         try:
             await db.rollback()
         except Exception:
             pass
-    bal = await db.get(MinuteBalance, user.id)
+        bal = await db.get(MinuteBalance, user_id)
+
+    # Heal NULL referral_code lazily (0 SQL when already populated).
+    referral_code = ""
+    try:
+        referral_code = await _ensure_referral_code(db, user)
+    except Exception:
+        referral_code = getattr(user, "referral_code", None) or ""
+
     # Batch AW: the headline balance is the CLONE-SPENDABLE figure —
-    # referral seconds are TTS-only since the re-scope and are exposed
-    # separately as tts_balance_seconds (the TTS tab's balance), never
-    # folded into the voice-clone totals.
+    # TTS-only referral seconds stay separate from voice-clone totals.
     seconds_left = bal.clone_spendable_seconds if bal else 0
     tts_seconds_left = int(bal.referral_seconds or 0) if bal else 0
-    is_admin = settings.is_admin(user.id)
 
-    # Batch BZ: today's TTS picture for the header 🎧 chip and the
-    # Home "today's free" card — computed through the SAME helpers the
-    # TTS submit path enforces with (tts_daily_limit_minutes +
-    # tts_cap_consumed_seconds), so the displayed number can never
-    # disagree with enforcement. remaining = referral + (cap −
-    # consumed): referral seconds are spent before the cap is touched.
-    # Admins are exempt from the cap → nulls (the UI paints ∞), the
-    # same treatment the header gives admin balances. A quota failure
-    # must never break the profile read.
+    char_limit = (
+        settings.character_limit_purchased
+        if is_vip_initial
+        else settings.character_limit_free
+    )
+
+    _default_tut_link = getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28")
+    _me_setting_defaults: dict[str, str] = {
+        "tutorial_video_link": _default_tut_link,
+        "tutorial_video_enabled": "true",
+        "tutorial_voice_title": getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
+        "tutorial_voice_link": _default_tut_link,
+        "tutorial_voice_enabled": "true",
+        "tutorial_recap_title": getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
+        "tutorial_recap_link": _default_tut_link,
+        "tutorial_recap_enabled": "true",
+        "recap_demo_asset": getattr(settings, "recap_demo_asset", ""),
+        **{k: getattr(settings, k, v) for k, v in TUTORIAL_EXTRA_LINKS.items()},
+    }
+
+    async def _group_wallet_and_thumb(sess: AsyncSession):
+        snap = await get_wallet_snapshot(
+            sess,
+            user_id,
+            preloaded_user=user,
+            preloaded_balance=bal,
+        )
+        if sess.new or sess.dirty or sess.deleted:
+            try:
+                await sess.commit()
+            except Exception:
+                pass
+        thumb = await _safe_get_monthly_thumbnail_usage(sess)
+        return snap, thumb
+
+    async def _group_jobs_and_tts(sess: AsyncSession):
+        recap_id = None
+        voice_id = None
+        tts_id = None
+        try:
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+            stmt_active = (
+                select(Job)
+                .where(
+                    Job.user_id == user_id,
+                    or_(
+                        Job.status == JobStatus.WAITING_CHOICE.value,
+                        (
+                            (Job.created_at >= recent_cutoff)
+                            & Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value])
+                        ),
+                    ),
+                )
+                .order_by(Job.created_at.desc())
+                .limit(8)
+            )
+            res_act = await sess.execute(stmt_active)
+            for aj in res_act.scalars().all():
+                is_rc = (aj.job_type == JobType.RECAP.value or aj.id.startswith("rc_") or aj.engine == "recap")
+                is_tts_job = (aj.job_type == JobType.TTS.value)
+                if is_rc and not recap_id:
+                    recap_id = aj.id
+                elif is_tts_job and not tts_id:
+                    tts_id = aj.id
+                elif not is_rc and not is_tts_job and not voice_id:
+                    voice_id = aj.id
+        except Exception:
+            pass
+
+        tts_consumed_val = None
+        tts_consumed_ok = False
+        if not is_admin:
+            try:
+                from app.services.tts_service import tts_cap_consumed_seconds
+
+                tts_consumed_val = await tts_cap_consumed_seconds(sess, user_id)
+                tts_consumed_ok = True
+            except Exception:
+                tts_consumed_val = None
+                tts_consumed_ok = False
+        return recap_id, voice_id, tts_id, tts_consumed_ok, tts_consumed_val
+
+    async def _group_settings_counts_and_referrals(sess: AsyncSession):
+        cfg_map = await get_dynamic_settings_batch(
+            sess,
+            _me_setting_defaults.keys(),
+            defaults=_me_setting_defaults,
+        )
+
+        cj_count = None
+        pending_ref_count = 0
+        try:
+            scalar_stmt = select(
+                select(_func.count(Job.id))
+                .where(
+                    Job.user_id == user_id,
+                    Job.status == JobStatus.SUCCESS.value,
+                )
+                .scalar_subquery()
+                .label("completed_jobs"),
+                select(_func.count())
+                .select_from(Referral)
+                .where(
+                    Referral.referrer_id == user_id,
+                    Referral.status == "PENDING",
+                )
+                .scalar_subquery()
+                .label("pending_referrals"),
+            )
+            row = (await sess.execute(scalar_stmt)).one()
+            cj_count = int(row.completed_jobs or 0)
+            pending_ref_count = int(row.pending_referrals or 0)
+        except Exception:
+            cj_count = None
+            pending_ref_count = 0
+
+        ref_stats = None
+        try:
+            earned_rows = (
+                await sess.execute(
+                    select(ReferralReward.seconds).where(ReferralReward.referrer_id == user_id)
+                )
+            ).scalars().all()
+            rewarded_count = len(earned_rows)
+            earned_seconds = sum(int(sec or 0) for sec in earned_rows)
+            ref_stats = {
+                "rewarded_referrals": rewarded_count,
+                "max_referrals": MAX_REFERRALS_REWARDED,
+                "unlimited": True,
+                "pending_referrals": pending_ref_count,
+                "earned_seconds": earned_seconds,
+                "earned_minutes": earned_seconds / 60.0,
+                "reward_seconds_per_friend": REFERRAL_REWARD_SECONDS,
+                "remaining_slots": None,
+                "remaining_seconds": None,
+                "remaining_minutes": None,
+            }
+        except Exception:
+            ref_stats = None
+        return cfg_map, cj_count, ref_stats
+
+    parallel_factory = _resolve_parallel_read_factory(db, extra_sessions=2)
+    if parallel_factory is not None:
+        async def _run_jobs_parallel():
+            async with parallel_factory() as s2:
+                return await _group_jobs_and_tts(s2)
+
+        async def _run_settings_parallel():
+            async with parallel_factory() as s3:
+                return await _group_settings_counts_and_referrals(s3)
+
+        (
+            (wallet_snap, thumb_usage),
+            (active_recap_job_id, active_voice_job_id, active_tts_job_id, tts_ok, tts_consumed_raw),
+            (dyn_map, completed_jobs, referral_stats),
+        ) = await asyncio.gather(
+            _group_wallet_and_thumb(db),
+            _run_jobs_parallel(),
+            _run_settings_parallel(),
+        )
+    else:
+        wallet_snap, thumb_usage = await _group_wallet_and_thumb(db)
+        (
+            active_recap_job_id,
+            active_voice_job_id,
+            active_tts_job_id,
+            tts_ok,
+            tts_consumed_raw,
+        ) = await _group_jobs_and_tts(db)
+        dyn_map, completed_jobs, referral_stats = await _group_settings_counts_and_referrals(db)
+
+    # Batch BZ: today's TTS picture — computed through the exact same helpers
+    # the TTS submit path enforces with.
     tts_daily_limit_seconds = None
     tts_today_consumed_seconds = None
     tts_today_remaining_seconds = None
-    if not is_admin:
+    if not is_admin and tts_ok:
         try:
-            from app.services.tts_service import (
-                tts_cap_consumed_seconds,
-                tts_daily_limit_minutes,
-            )
+            from app.services.tts_service import tts_daily_limit_minutes
 
             _tts_limit_min = tts_daily_limit_minutes(user, is_admin=False)
-            _tts_consumed = await tts_cap_consumed_seconds(db, user.id)
             tts_daily_limit_seconds = int(_tts_limit_min) * 60
-            tts_today_consumed_seconds = round(float(_tts_consumed), 1)
+            tts_today_consumed_seconds = round(float(tts_consumed_raw), 1)
             if _tts_limit_min > 0:
                 tts_today_remaining_seconds = round(
                     tts_seconds_left
-                    + max(0.0, _tts_limit_min * 60 - float(_tts_consumed)),
+                    + max(0.0, _tts_limit_min * 60 - float(tts_consumed_raw)),
                     1,
                 )
             else:
-                # Cap 0 = unlimited daily allowance on top of referral.
                 tts_today_remaining_seconds = None
         except Exception:
             tts_daily_limit_seconds = None
             tts_today_consumed_seconds = None
             tts_today_remaining_seconds = None
-    is_vip = (user.account_category == AccountCategory.PURCHASED.value) or is_admin
 
-    char_limit = (
-        settings.character_limit_purchased
-        if is_vip
-        else settings.character_limit_free
-    )
+    tutorial_link = dyn_map["tutorial_video_link"]
+    tutorial_enabled = dyn_map["tutorial_video_enabled"]
+    tut_voice_title = dyn_map["tutorial_voice_title"]
+    tut_voice_link = dyn_map["tutorial_voice_link"] or tutorial_link
+    tut_voice_enabled = dyn_map["tutorial_voice_enabled"]
+    tut_recap_title = dyn_map["tutorial_recap_title"]
+    tut_recap_link = dyn_map["tutorial_recap_link"] or tutorial_link
+    tut_recap_enabled = dyn_map["tutorial_recap_enabled"]
+    recap_demo_asset = dyn_map["recap_demo_asset"]
+    tut_extra_links = {key: dyn_map[key] for key in TUTORIAL_EXTRA_LINKS}
 
-    tutorial_link = await get_dynamic_setting(
-        db,
-        "tutorial_video_link",
-        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28"),
-    )
-    tutorial_enabled = await get_dynamic_setting(
-        db,
-        "tutorial_video_enabled",
-        default="true",
-    )
-    tut_voice_title = await get_dynamic_setting(
-        db,
-        "tutorial_voice_title",
-        default=getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
-    )
-    tut_voice_link = await get_dynamic_setting(
-        db,
-        "tutorial_voice_link",
-        default=tutorial_link,
-    )
-    tut_voice_enabled = await get_dynamic_setting(
-        db,
-        "tutorial_voice_enabled",
-        default="true",
-    )
-    tut_recap_title = await get_dynamic_setting(
-        db,
-        "tutorial_recap_title",
-        default=getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
-    )
-    tut_recap_link = await get_dynamic_setting(
-        db,
-        "tutorial_recap_link",
-        default=tutorial_link,
-    )
-    tut_recap_enabled = await get_dynamic_setting(
-        db,
-        "tutorial_recap_enabled",
-        default="true",
-    )
-    # Batch L: the recap demo sample reference (Telegram file_id or
-    # URL) — empty means the recap tab's demo slot stays hidden.
-    recap_demo_asset = await get_dynamic_setting(
-        db,
-        "recap_demo_asset",
-        default=getattr(settings, "recap_demo_asset", ""),
-    )
-    tut_extra_links = {
-        key: await get_dynamic_setting(
-            db,
-            key,
-            default=getattr(settings, key, default),
-        )
-        for key, default in TUTORIAL_EXTRA_LINKS.items()
-    }
-
-    # Completed-job count: the Home welcome strip's first-run gate
-    # (Free plan + zero completed jobs) reads this from the profile.
-    completed_jobs = None
-    try:
-        from sqlalchemy import func as _func
-
-        _cj = await db.execute(
-            select(_func.count(Job.id)).where(
-                Job.user_id == user.id,
-                Job.status == JobStatus.SUCCESS.value,
-            )
-        )
-        completed_jobs = int(_cj.scalar() or 0)
-    except Exception:
-        completed_jobs = None
-
-    # Check if user has an active or recently finished Recap/Voice/TTS job so Mini App can auto-resume
-    active_recap_job_id = None
-    active_voice_job_id = None
-    active_tts_job_id = None
-    try:
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
-        stmt_active = (
-            select(Job)
-            .where(
-                Job.user_id == user.id,
-                or_(
-                    Job.status == JobStatus.WAITING_CHOICE.value,
-                    (
-                        (Job.created_at >= recent_cutoff)
-                        & Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value])
-                    ),
-                ),
-            )
-            .order_by(Job.created_at.desc())
-            .limit(8)
-        )
-        res_act = await db.execute(stmt_active)
-        for aj in res_act.scalars().all():
-            is_rc = (aj.job_type == JobType.RECAP.value or aj.id.startswith("rc_") or aj.engine == "recap")
-            is_tts_job = (aj.job_type == JobType.TTS.value)
-            if is_rc and not active_recap_job_id:
-                active_recap_job_id = aj.id
-            elif is_tts_job and not active_tts_job_id:
-                active_tts_job_id = aj.id
-            elif not is_rc and not is_tts_job and not active_voice_job_id:
-                active_voice_job_id = aj.id
-    except Exception:
-        pass
-
-    # Round-6 P2: Refer & Support exposure. The referral programme is
-    # complete in the bot (ledger.py: attribution, 120s TTS-only rewards capped
-    # at 20, get_referral_stats) but the Mini App never exposed it —
-    # users could only find a tutorial post. Ride the fields on /me so
-    # the Home card renders with zero extra fetches. A referral failure
-    # must never break the profile read.
-    referral_code = ""
-    referral_stats = None
-    try:
-        referral_code = await _ensure_referral_code(db, user)
-        from app.services.ledger import get_referral_stats
-        referral_stats = await get_referral_stats(db, user.id)
-    except Exception:
-        referral_code = referral_code or ""
-        referral_stats = None
-
-    from app.services.billing import get_wallet_snapshot
-
-    wallet_snap = await get_wallet_snapshot(db, user.id)
-    try:
-        await db.commit()
-    except Exception:
-        pass
     is_vip = (wallet_snap["account_category"] == "PURCHASED") or is_admin
     seconds_left = int(wallet_snap["available_voice_seconds"])
 
@@ -3877,9 +3972,7 @@ async def get_user_profile(
         # the user's own upload — see /api/user/logo endpoints.
         "can_use_logo": bool(is_vip),
         "can_use_ai_thumbnail": bool(is_vip),
-        "ai_thumbnail_cap_reached": bool(
-            (await _safe_get_monthly_thumbnail_usage(db)).get("cap_reached")
-        ),
+        "ai_thumbnail_cap_reached": bool(thumb_usage.get("cap_reached")),
         "has_custom_logo": _find_user_logo(user.id) is not None,
         "active_recap_job_id": active_recap_job_id,
         "active_voice_job_id": active_voice_job_id,
@@ -3972,67 +4065,34 @@ async def verify_membership_endpoint(
 @api_router.get("/config")
 async def get_public_app_config(db: AsyncSession = Depends(get_db_session)):
     """Retrieve public platform config (tutorial link, channel/group invites, maintenance)."""
-    from app.services.dynamic_settings import get_dynamic_setting
-    tutorial_link = await get_dynamic_setting(
-        db,
-        "tutorial_video_link",
-        default=getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28"),
-    )
-    tutorial_enabled = await get_dynamic_setting(
-        db,
-        "tutorial_video_enabled",
-        default="true",
-    )
-    tut_voice_title = await get_dynamic_setting(
-        db,
-        "tutorial_voice_title",
-        default=getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
-    )
-    tut_voice_link = await get_dynamic_setting(
-        db,
-        "tutorial_voice_link",
-        default=tutorial_link,
-    )
-    tut_voice_enabled = await get_dynamic_setting(
-        db,
-        "tutorial_voice_enabled",
-        default="true",
-    )
-    tut_recap_title = await get_dynamic_setting(
-        db,
-        "tutorial_recap_title",
-        default=getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
-    )
-    tut_recap_link = await get_dynamic_setting(
-        db,
-        "tutorial_recap_link",
-        default=tutorial_link,
-    )
-    tut_recap_enabled = await get_dynamic_setting(
-        db,
-        "tutorial_recap_enabled",
-        default="true",
-    )
-    # Batch L: recap demo sample reference (see /api/user/me).
-    recap_demo_asset = await get_dynamic_setting(
-        db,
-        "recap_demo_asset",
-        default=getattr(settings, "recap_demo_asset", ""),
-    )
-    maintenance_raw = await get_dynamic_setting(
-        db,
-        "maintenance_mode",
-        default=str(getattr(settings, "maintenance_mode", False)).lower(),
-    )
-    # Batch AR: the entry gate shows the admin's maintenance_note
-    # verbatim (it is public-facing copy by design — the Group AI
-    # already quotes it to members, Batch Z), so the unauthenticated
-    # config payload carries it next to the flag itself.
-    maintenance_note_raw = await get_dynamic_setting(
-        db,
-        "maintenance_note",
-        default=str(getattr(settings, "maintenance_note", "") or ""),
-    )
+    from app.services.dynamic_settings import get_dynamic_settings_batch
+
+    _default_tut_link = getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28")
+    _cfg_defaults: dict[str, str] = {
+        "tutorial_video_link": _default_tut_link,
+        "tutorial_video_enabled": "true",
+        "tutorial_voice_title": getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
+        "tutorial_voice_link": _default_tut_link,
+        "tutorial_voice_enabled": "true",
+        "tutorial_recap_title": getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
+        "tutorial_recap_link": _default_tut_link,
+        "tutorial_recap_enabled": "true",
+        "recap_demo_asset": getattr(settings, "recap_demo_asset", ""),
+        "maintenance_mode": str(getattr(settings, "maintenance_mode", False)).lower(),
+        "maintenance_note": str(getattr(settings, "maintenance_note", "") or ""),
+    }
+    dyn_map = await get_dynamic_settings_batch(db, _cfg_defaults.keys(), defaults=_cfg_defaults)
+    tutorial_link = dyn_map["tutorial_video_link"]
+    tutorial_enabled = dyn_map["tutorial_video_enabled"]
+    tut_voice_title = dyn_map["tutorial_voice_title"]
+    tut_voice_link = dyn_map["tutorial_voice_link"] or tutorial_link
+    tut_voice_enabled = dyn_map["tutorial_voice_enabled"]
+    tut_recap_title = dyn_map["tutorial_recap_title"]
+    tut_recap_link = dyn_map["tutorial_recap_link"] or tutorial_link
+    tut_recap_enabled = dyn_map["tutorial_recap_enabled"]
+    recap_demo_asset = dyn_map["recap_demo_asset"]
+    maintenance_raw = dyn_map["maintenance_mode"]
+    maintenance_note_raw = dyn_map["maintenance_note"]
     return {
         "tutorial_video_link": tutorial_link,
         "tutorial_video_enabled": str(tutorial_enabled).lower() != "false",
@@ -13075,7 +13135,8 @@ async def get_vip_plans(user: User = Depends(get_current_user), db: AsyncSession
     is_my = (lang == "my")
 
     db_plans = await get_active_pricing_plans(db)
-    await db.commit()  # persist any newly seeded rows cleanly
+    if db.new or db.dirty or db.deleted:
+        await db.commit()  # persist any newly seeded rows cleanly
 
     plans_out = [_format_plan_presentation(row, is_my) for row in db_plans]
     cat_codes: dict[str, list[str]] = {"voice": [], "recap": [], "combo": [], "topup": []}

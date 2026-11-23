@@ -532,9 +532,17 @@ def is_hf_insufficient_credit_error(exc: BaseException) -> bool:
     return any(marker in msg for marker in credit_markers)
 
 
+_ENSURED_THUMBNAIL_TABLE_BINDS: set[int] = set()
+
+
 async def ensure_thumbnail_pool_table(session: AsyncSession) -> None:
-    """Ensure `recap_thumbnail_pool_usage` table exists (safe idempotent check)."""
+    """Ensure `recap_thumbnail_pool_usage` table exists (at most once per DB engine)."""
     try:
+        bind = session.get_bind()
+        sync_engine = getattr(bind, "engine", bind)
+        bind_id = id(sync_engine) if sync_engine is not None else None
+        if bind_id is not None and bind_id in _ENSURED_THUMBNAIL_TABLE_BINDS:
+            return
         conn = await session.connection()
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(
@@ -543,6 +551,8 @@ async def ensure_thumbnail_pool_table(session: AsyncSession) -> None:
                 checkfirst=True,
             )
         )
+        if bind_id is not None:
+            _ENSURED_THUMBNAIL_TABLE_BINDS.add(bind_id)
     except Exception as exc:
         logger.debug("ensure_thumbnail_pool_table skipped/failed: %s", exc)
 
