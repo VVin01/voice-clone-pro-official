@@ -230,17 +230,19 @@ def test_grade_applies_without_mirror():
 # ── S6/N2: language parity ─────────────────────────────────────────
 
 def test_language_parity_with_backend():
-    picker = set(re.findall(r'data-lang="([a-z]+)"', INDEX_HTML))
-    assert picker == set(api_mod.RECAP_SOURCE_LANGUAGE_CODES)
-    assert set(api_mod.USER_PREF_ENUMS["recapSourceLanguage"]) == picker
+    # Round 13 retired the Step 3 source language DOM picker (payload sends source_language: "auto");
+    # backend RECAP_SOURCE_LANGUAGE_CODES and USER_PREF_ENUMS remain in exact parity with APP_JS enum.
+    backend_codes = set(api_mod.RECAP_SOURCE_LANGUAGE_CODES)
+    assert set(api_mod.USER_PREF_ENUMS["recapSourceLanguage"]) == backend_codes
+    assert 'source_language: "auto"' in APP_JS
     enum_line = next(l for l in APP_JS.splitlines()
                      if "recapSourceLanguage: [" in l)
-    for code in picker:
+    for code in backend_codes:
         assert f'"{code}"' in enum_line
 
 
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_r64():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "?v=20261104_r62" not in INDEX_HTML

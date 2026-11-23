@@ -404,29 +404,26 @@ def test_eta_i18n_keys_exist_in_both_locales():
 
 # ── Item 6: fact-sheet steering clause ──────────────────────────────
 
-def test_fact_sheet_pairs_no_daily_cap_with_monthly_allowance():
+def test_fact_sheet_pairs_daily_allowance_with_steering_clause():
+    # Limits round + Part H: Free Voice Clone is 180s/day (non-accumulating) with explicit anti-unlimited steering.
     sheet = gai.build_fact_sheet()
     assert int(settings.voice_daily_limit_minutes_free) == 0
-    # Both truths in ONE statement, monthly rendered live (180 s).
-    assert "တစ်နေ့ သီးခြား အကန့်အသတ် မရှိ" in sheet
-    assert "လစဉ် အခမဲ့ 180 စက္ကန့် (3 မိနစ်) ကသာ အမှန် ကန့်သတ်ထားသည်" in sheet
-    # The steering sentence instructs the AI to name the monthly cap.
+    assert "နေ့စဉ် အခမဲ့ 180 စက္ကန့်" in sheet
     assert "သတိပြုရန် (Free Voice Clone)" in sheet
-    assert "အမြဲ တွဲ၍ ပြောပါ" in sheet
+    assert "'အကန့်အသတ် မရှိ' ဟု မပြောပါနှင့်" in sheet
 
 
-def test_fact_sheet_steering_gone_when_admin_sets_cap(monkeypatch):
-    monkeypatch.setattr(settings, "voice_daily_limit_minutes_free", 9)
+def test_fact_sheet_tts_caps_track_settings(monkeypatch):
+    # Part G/H retired voice_daily_limit_minutes_free; TTS daily caps remain live-bound to settings.
+    monkeypatch.setattr(settings, "tts_daily_limit_minutes_free", 22)
     sheet = gai.build_fact_sheet()
-    assert "Free တစ်နေ့ 9 မိနစ်" in sheet
-    assert "သတိပြုရန် (Free Voice Clone)" not in sheet
-    assert "အမှန် ကန့်သတ်ထားသည်" not in sheet
+    assert "Free တစ်နေ့ 22 မိနစ်" in sheet
 
 
 # ── Release pin: cache token (split-literal, sweep-proof) ──────────
 
-def test_cache_token_is_r158():
-    token = "20261118_r" + "164"
+def test_cache_token_is_followup1():
+    token = "20261123_" + "followup1"
     stale = "20261104_r" + "122"
-    assert INDEX_HTML.count(token) == 4
+    assert INDEX_HTML.count(token) == 5
     assert stale not in INDEX_HTML

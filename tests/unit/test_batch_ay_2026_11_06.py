@@ -39,10 +39,10 @@ INDEX_HTML = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 HOME = INDEX_HTML[INDEX_HTML.index('id="tab-home"'):INDEX_HTML.index('id="tab-voice"')]
 
+# Round 13 simplified Home: samples/refer/support cards moved out; Hero + Start + Tools + Help/Tutorials remain.
 HOME_IDS = ["tab-home", "home-welcome-strip", "welcome-strip-text",
-            "home-samples-card", "sample-audio-voice", "sample-audio-recap",
-            "home-tutorials-card", "home-refer-card", "referral-link-text",
-            "referral-stats-line", "home-start-card", "home-tools-card"]
+            "home-start-card", "home-tools-card", "home-help-entry-card",
+            "home-tutorials-card", "home-tut-more"]
 
 TUT_KEYS = ["bot", "voice", "recap", "plans", "customvoice", "downloader",
             "scriptedit", "recapadvanced", "refer", "support"]
@@ -63,11 +63,9 @@ def test_ay_home_ids_survive_exactly_once():
 
 def test_ay_home_card_order():
     seq = ["home-welcome-strip", "home-start-card", "home-tools-card",
-           "home-samples-card", "home-tutorials-card", "home-refer-card"]
+           "home-help-entry-card", "home-tutorials-card"]
     pos = [HOME.index(f'id="{i}"') for i in seq]
-    assert pos == sorted(pos), "AY-1 order"
-    # Support card (and its row) comes after the Refer card.
-    assert HOME.index("home-support-card") > HOME.index('id="home-refer-card"')
+    assert pos == sorted(pos), "Home card order"
 
 
 # ── Start + Tools tiles ──────────────────────────────────────────
@@ -109,48 +107,16 @@ def test_ay_tiles_share_one_language_css():
     assert "body.lang-my .home-tile-hint { line-height: 1.8; }" in STYLE_CSS
 
 
-# ── Samples mini-player ──────────────────────────────────────────
+# ── Samples card retired in Round 13 (moved to Voice Studio & Welcome Try) ──
 
-def test_ay_samples_branded_player_same_audio_elements():
-    card = _card("home-samples-card")
-    for slug, url in (("voice", "/api/voices/sample/komin"),
-                      ("recap", "/api/voices/sample/mahnin")):
-        m = re.search(r'<audio id="sample-audio-%s"[^>]*>' % slug, card)
-        assert m, slug
-        assert "controls" not in m.group(0), "native controls must be gone"
-        assert f'data-sample-url="{url}"' in m.group(0)
-        assert f'id="sample-btn-{slug}"' in card
-        assert f'data-sample-toggle="sample-audio-{slug}"' in card
-        assert f'id="sample-progress-{slug}"' in card
-    assert 'class="sample-play-btn"' in card
-
-
-def test_ay_sample_button_wiring_in_app_js():
-    body = APP_JS.split("function setupSamplePlayers()", 1)[1].split(
-        "\nfunction getAuthHeaders", 1)[0]
-    # Pre-existing behaviour stands: blob-src loading + one-at-a-time.
-    assert 'fetchAuthImageUrl(url)' in body
-    assert "b.pause()" in body and "a.pause()" in body
-    # AY wiring: buttons toggle the same elements; state from events.
-    assert "wireSampleButton(a, \"sample-btn-voice\", \"sample-progress-voice\")" in body
-    assert "wireSampleButton(b, \"sample-btn-recap\", \"sample-progress-recap\")" in body
-    assert 't(playing ? "sample_pause" : "sample_play")' in body
-    assert '"timeupdate"' in body
-
-
-def test_ay_sample_css_hides_native_player():
-    assert "#home-samples-card .sample-audio { display: none; }" in STYLE_CSS
-    btn = STYLE_CSS.split(".sample-play-btn {", 1)[1].split("}", 1)[0]
-    assert "width: 44px; height: 44px" in btn  # AZ-8 touch size
-    assert "border-radius: 50%" in btn
+def test_ay_samples_card_retired_welcome_try_exists():
+    assert 'id="home-samples-card"' not in HOME
+    assert 'id="welcome-try-sample-btn"' in HOME
 
 
 # ── Tutorials expandable ─────────────────────────────────────────
 
 def test_ay_tutorials_all_links_survive_in_accordion():
-    # Owner addendum (2026-11-06 01:18): before AND after the count
-    # is 11 — the index chip + all ten guide rows — now ALL inside
-    # the collapsible body; none lives in the header any more.
     card = _card("home-tutorials-card")
     assert card.count("openTutorialVideo(") == 11  # index chip + 10 rows
     more_at = card.index('id="home-tut-more"')
@@ -160,46 +126,17 @@ def test_ay_tutorials_all_links_survive_in_accordion():
 
 
 def test_ay_tutorials_accordion_header_toggle():
-    card = _card("home-tutorials-card")
-    head = card.split('id="home-tut-more"', 1)[0]
-    # ONE header row: title + count pill + chevron, and it IS the toggle.
-    assert 'class="home-tut-head" id="home-tut-expand"' in head
-    assert 'data-i18n="tutorials_card_title"' in head
-    assert 'data-i18n="home_tut_count"' in head
-    assert 'class="home-tut-expand-chevron"' in head
-    assert 'onclick="toggleHomeTutorials()"' in head
-    assert 'aria-expanded="false"' in head
-    # Body starts collapsed.
-    assert 'class="home-tut-more hidden" id="home-tut-more"' in card
-    body = APP_JS.split("function toggleHomeTutorials()", 1)[1].split("}", 1)[0]
-    assert 'getElementById("home-tut-more")' in body
-    assert 'setAttribute("aria-expanded"' in body
-    head_css = STYLE_CSS.split(".home-tut-head {", 1)[1].split("}", 1)[0]
-    assert "min-height: 44px" in head_css  # AZ-8 touch height
+    # Round 13 moved the Home Help/Tutorials toggle onto #btn-home-help-hub.
+    assert 'id="btn-home-help-hub"' in HOME
+    assert 'id="home-tutorials-card"' in HOME
+    assert 'id="home-tut-more"' in HOME
 
 
-# ── Refer untouched + Support in its own card ────────────────────
-
-def test_ay_refer_card_bindings_and_copy_untouched():
-    card = _card("home-refer-card")
-    assert 'id="referral-link-text"' in card
-    assert 'id="referral-stats-line"' in card
-    assert 'onclick="copyReferralLink()"' in card
-    assert 'onclick="shareReferralLink()"' in card
-    # Batch AW reworded the reward copy (2 minutes of TTS audio,
-    # TTS-tab only) and retitled the card — the AY-era +30s copy is
-    # gone; the bindings above stay byte-identical.
-    assert "TTS အသံ ၂ မိနစ်" in card
-    assert "အသံအချိန် +30 စက္ကန့်" not in card
-    assert "openSupportContact()" not in card
-
-
-def test_ay_support_row_in_own_slim_card():
-    support = HOME[HOME.index("home-support-card"):]
-    assert 'onclick="openSupportContact()"' in support
-    assert 'data-i18n="support_contact_title"' in support
-    assert 'data-i18n="support_contact_desc"' in support
-    assert ".home-support-card { padding-top: 6px; padding-bottom: 6px; }" in STYLE_CSS
+def test_ay_refer_and_support_moved_out_of_home():
+    # Round 13 moved Refer & Support into Profile / Bot /start Refer.
+    assert 'id="home-refer-card"' not in HOME
+    assert "openSupportContact()" in INDEX_HTML
+    assert 'data-i18n="support_contact_title"' in INDEX_HTML
 
 
 # ── i18n + token + strip ─────────────────────────────────────────
@@ -207,10 +144,6 @@ def test_ay_support_row_in_own_slim_card():
 def test_ay_new_strings_both_locales():
     assert 'home_tut_count: "၁၀ ခု"' in I18N_JS
     assert 'home_tut_count: "10 guides"' in I18N_JS
-    assert 'sample_play: "နမူနာ ဖွင့်မည်"' in I18N_JS
-    assert 'sample_play: "Play sample"' in I18N_JS
-    assert 'sample_pause: "နမူနာ ရပ်မည်"' in I18N_JS
-    assert 'sample_pause: "Pause sample"' in I18N_JS
 
 
 def test_ay_welcome_strip_restyled_scoped():
@@ -223,5 +156,5 @@ def test_ay_welcome_strip_restyled_scoped():
 
 
 def test_ay_cache_token_r79():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "20261104_r70" not in INDEX_HTML

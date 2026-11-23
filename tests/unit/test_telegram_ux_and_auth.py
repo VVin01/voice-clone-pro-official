@@ -6,45 +6,34 @@ from aiogram.types import CallbackQuery, Message, User as TgUser
 
 from app.config import settings
 from app.handlers.admin import is_authorized_admin
-from app.handlers.clone import CloneFSM, handle_voice_clone_start
-from app.handlers.menu import handle_help_command, render_main_menu
-from app.handlers.start import handle_language_command, handle_start, handle_set_language, handle_gate_verify
+from app.handlers.menu import render_main_menu
+from app.handlers.start import handle_start, handle_set_language, handle_gate_verify
 from app.services.gate import verify_user_membership
 from app.services.ledger import get_minute_balance, get_or_create_user
 from app.ui.keyboards import main_menu_kb
 
 
 @pytest.mark.asyncio
-async def test_four_item_user_menu_and_admin_button():
-    # Bot-chat cleanup (2026-11-03): the main menu is exactly 4 core
-    # buttons for a verified user — hero WebApp (callback_data None),
-    # Buy, Refer & Earn, Language / Help. The Recap/Downloader WebApp
-    # deep-links and the Tutorials URL button were retired (Mini App
-    # nav covers them); the membership button only appears while
-    # unverified (membership_pending=True — pinned in
-    # test_bot_cleanup_2026_11_03.py).
+async def test_three_item_user_menu_contract():
+    # Round 13 Part K: main_menu_kb has exactly 3 buttons (Mini App, Refer, Language)
+    # for both regular users and admins.
     kb_user_my = main_menu_kb(is_admin=False, lang="my")
     user_buttons = [btn.callback_data for row in kb_user_my.inline_keyboard for btn in row]
-    assert user_buttons == [None, "menu:buy_minutes", "menu:refer_earn", "menu:help_settings"]
+    assert user_buttons == [None, "menu:refer_earn", "menu:change_lang"]
     assert "admin:broadcast_prompt" not in user_buttons
-    assert len(user_buttons) == 4
+    assert len(user_buttons) == 3
     flat_my = [btn for row in kb_user_my.inline_keyboard for btn in row]
-    assert flat_my[0].web_app is not None  # Hero Mini App WebApp button
+    assert flat_my[0].web_app is not None
 
     kb_user_en = main_menu_kb(is_admin=False, lang="en")
     flat_en = [btn for row in kb_user_en.inline_keyboard for btn in row]
-    assert "Open Mini App" in flat_en[0].text  # R40 deck H2 renamed menu_launch_text
-    assert "Buy Minutes" in flat_en[1].text
-    assert "Refer & Earn" in flat_en[2].text
-    assert "Language" in flat_en[3].text
+    assert "Open Mini App" in flat_en[0].text
+    assert "Refer Friends" in flat_en[1].text
+    assert "Change Language" in flat_en[2].text
 
-    # Admin keyboard: the same 4 core items + admin entry + broadcast.
     kb_admin = main_menu_kb(is_admin=True, lang="en")
     admin_buttons = [btn.callback_data for row in kb_admin.inline_keyboard for btn in row]
-    assert admin_buttons == [None, "menu:buy_minutes", "menu:refer_earn", "menu:help_settings", "admin:dashboard", "admin:broadcast"]
-    assert len(admin_buttons) == 6
-    flat_admin = [btn for row in kb_admin.inline_keyboard for btn in row]
-    assert "Broadcast" in flat_admin[5].text
+    assert admin_buttons == [None, "menu:refer_earn", "menu:change_lang"]
 
 
 @pytest.mark.asyncio
@@ -100,87 +89,10 @@ async def test_membership_gate_and_welcome_bonus_awarding(db_session):
 async def test_render_main_menu_display(db_session):
     user, _ = await get_or_create_user(db_session, telegram_id=88001, language_code="en")
     text, kb = await render_main_menu(user.id, lang="en", session=db_session)
-    # Current menu text is an account/balance card (no "Main Menu" heading).
-    assert "Account:" in text
-    assert "FREE" in text
-    assert "Voice Balance" in text
-    assert "Recap Balance" in text
+    # Round 13 Part K: render_main_menu shows the compact Welcome + 3-button keyboard.
+    assert "Welcome to Voice Clone Pro" in text
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    # Fresh user: gate flags are False, so the membership status-card
-    # button is present (bot-chat cleanup, 2026-11-03).
-    assert callbacks == [None, "menu:buy_minutes", "menu:refer_earn", "menu:help_settings", "menu:membership"]
-
-
-@pytest.mark.asyncio
-async def test_voice_clone_button_routes_to_voice_studio(db_session):
-    user, _ = await get_or_create_user(db_session, telegram_id=88002)
-    user.language_code = "en"
-    bal = await get_minute_balance(db_session, user.id)
-    bal.welcome_seconds = 300
-    await db_session.flush()
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=88002, is_bot=False, first_name="VoiceUser")
-    cb.data = "menu:voice_clone"
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    state = AsyncMock()
-
-    @asynccontextmanager
-    async def mock_session():
-        yield db_session
-
-    with patch("app.handlers.clone.AsyncSessionLocal", side_effect=mock_session):
-        await handle_voice_clone_start(cb, state)
-
-    state.set_state.assert_called_once_with(CloneFSM.waiting_for_text)
-    cb.message.edit_text.assert_called_once()
-    assert "Enter the text" in cb.message.edit_text.call_args[0][0]
-    cb.answer.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_language_command_handler(db_session):
-    user, _ = await get_or_create_user(db_session, telegram_id=88003)
-    user.language_code = "en"
-    await db_session.flush()
-
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=88003, is_bot=False, first_name="LangUser")
-    msg.answer = AsyncMock()
-
-    await handle_language_command(msg, session=db_session)
-
-    msg.answer.assert_called_once()
-    call_args = msg.answer.call_args
-    assert "Please choose your preferred language" in call_args[0][0]
-    reply_markup = call_args[1]["reply_markup"]
-    callbacks = [btn.callback_data for row in reply_markup.inline_keyboard for btn in row]
-    assert "set_lang:my" in callbacks
-    assert "set_lang:en" in callbacks
-
-
-@pytest.mark.asyncio
-async def test_help_command_handler(db_session):
-    user, _ = await get_or_create_user(db_session, telegram_id=88004)
-    user.language_code = "en"
-    await db_session.flush()
-
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=88004, is_bot=False, first_name="HelpUser")
-    msg.answer = AsyncMock()
-
-    await handle_help_command(msg, session=db_session)
-
-    msg.answer.assert_called_once()
-    call_args = msg.answer.call_args
-    assert "Guide & Settings" in call_args[0][0] or "Help & Settings" in call_args[0][0]
-    reply_markup = call_args[1]["reply_markup"]
-    callbacks = [btn.callback_data for row in reply_markup.inline_keyboard for btn in row]
-    assert "menu:home" in callbacks
-    assert "user_lang:my" in callbacks
-    assert "user_lang:en" in callbacks
+    assert callbacks == [None, "menu:refer_earn", "menu:change_lang"]
 
 
 @pytest.mark.asyncio

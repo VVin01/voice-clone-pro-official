@@ -272,7 +272,7 @@ def test_prefill_does_not_reset_and_marks_its_source():
 def test_marker_state_snapshot_and_payload():
     assert "recapBlurBoxTouched: false," in APP_JS
     assert '"recapBlurBoxTouched"' in APP_JS  # snapshot bool list
-    payload = APP_JS.split("const payload = {", 1)[1].split("};", 1)[0]
+    payload = APP_JS.split("function buildRecapConfig(url)", 1)[1].split("return {", 1)[1].split("};", 1)[0]
     # Batch DD: the explicit marker now also yields when a
     # blur-box LIST is present (the list supersedes the single box).
     assert "blur_box_explicit: !!state.recapBlurBoxTouched && !(Array.isArray(state.recapBlurBoxes)" in payload
@@ -469,5 +469,5 @@ def test_legacy_fallback_hint_construction_unchanged():
 # ── 9. Cache version ───────────────────────────────────────────────
 
 def test_cache_version_r64():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261104_r53" not in INDEX_HTML

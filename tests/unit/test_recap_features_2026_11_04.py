@@ -181,7 +181,17 @@ def _no_network(monkeypatch):
     background runner from starting."""
     monkeypatch.setattr(downloader_mod, "extract_first_url", lambda u: u)
     monkeypatch.setattr(downloader_mod, "unshorten_url", lambda u: u)
-    monkeypatch.setattr(url_safety_mod, "validate_public_url", lambda u: None)
+    monkeypatch.setattr(url_safety_mod, "validate_public_url", lambda u: u)
+    monkeypatch.setattr(
+        downloader_mod.MediaDownloader,
+        "get_info",
+        lambda self, url: {
+            "title": "Batch L Movie",
+            "duration": 60,
+            "platform": "Web",
+            "formats": [{"format_id": "18", "ext": "mp4"}],
+        },
+    )
 
     async def _noop_runner(*args, **kwargs):
         return None
@@ -822,7 +832,7 @@ def test_batch_l_frontend_wiring_pins():
     ):
         assert f'id="{element_id}"' in INDEX_HTML, element_id
     # Static assets moved to the batch's cache version.
-    assert "20261118_r164" in INDEX_HTML
+    assert "20261123_followup1" in INDEX_HTML
     assert "20261103_r43" not in INDEX_HTML
 
     # Poller renders the server's job-aware position/ETA.

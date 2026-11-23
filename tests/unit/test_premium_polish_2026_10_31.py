@@ -78,18 +78,10 @@ def _pane(html: str, pane_id: str) -> str:
 # ── A4: Home samples ───────────────────────────────────────────────────
 
 def test_home_samples_use_komin_and_mahnin_routes():
-    assert 'id="home-samples-card"' in INDEX_HTML
-    # Hunt #2 V2: /api/voices/sample now requires the Telegram auth
-    # header, which an <audio src> load cannot send — the players carry
-    # the route in data-sample-url and setupSamplePlayers() fetches it
-    # with auth (see test_hunt2_small_criticals_2026_10_31.py).
-    assert 'data-sample-url="/api/voices/sample/komin"' in INDEX_HTML
-    assert 'data-sample-url="/api/voices/sample/mahnin"' in INDEX_HTML
-    # kozayar must never be a demo sample (owner verdict 2026-10-31)
+    # Round 13 retired #home-samples-card from Home; voice previews live inside
+    # the Voice & Recap studios (Part D). kozayar must never be a demo sample.
     assert "sample/kozayar" not in INDEX_HTML
-    # Placement (owner restructure 2026-10-31): the samples card lives
-    # on the Home tab; the Voice studio pane stays uncluttered.
-    assert 'id="home-samples-card"' in _pane(INDEX_HTML, "tab-home")
+    assert 'id="home-samples-card"' not in _pane(INDEX_HTML, "tab-home")
     assert 'id="home-samples-card"' not in _pane(INDEX_HTML, "tab-voice")
 
 
@@ -120,9 +112,8 @@ def test_home_load_error_strip_with_retry():
 # ── A6: sticky CTAs ────────────────────────────────────────────────────
 
 def test_sticky_cta_bars_mirror_real_buttons():
-    assert 'id="sticky-cta-voice"' in INDEX_HTML
+    # Round 13 retired #sticky-cta-voice; Recap retains its sticky CTA bar.
     assert 'id="sticky-cta-recap"' in INDEX_HTML
-    assert 'id="btn-generate-voice-sticky"' in INDEX_HTML
     assert 'id="btn-start-recap-sticky"' in INDEX_HTML
     assert "IntersectionObserver" in APP_JS
     assert "setupStickyCtas" in APP_JS
@@ -254,14 +245,13 @@ def test_home_tab_is_first_nav_and_landing_pane():
 def test_new_i18n_keys_exist_in_both_locales():
     new_keys = [
         "stage_script", "stage_voice", "stage_video", "stage_ready",
-        "samples_title", "sample_voice_name", "sample_recap_name",
         "home_load_error",
         "tut_all_title", "tut_plans_title", "tut_downloader_title",
         "tut_custom_title", "tut_script_title", "tut_advanced_title",
         "tut_support_title", "persona_filter_all", "persona_filter_male",
         "persona_filter_female", "voices_show_all", "voices_hide_all",
         "slip_file_btn", "slip_file_none", "admin_ban_reason_ph",
-        "tab_home", "tutorials_card_title", "tut_bot_title",
+        "tab_home", "tut_bot_title",
         "tut_voice_title", "tut_recap_title", "tut_refer_title",
         "home_start_title", "home_start_voice_name", "home_start_voice_desc",
         "home_start_recap_name", "home_start_recap_desc",

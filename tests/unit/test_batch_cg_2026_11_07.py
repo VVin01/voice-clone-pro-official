@@ -231,11 +231,18 @@ def test_cg_free_global_budget_spent_also_blocks_pool(engines, monkeypatch, tmp_
 
 
 @pytestmark_ffmpeg
-def test_cg_purchased_no_key_pool_not_taste_governed(engines, monkeypatch, tmp_path):
-    job = _job()
-    job._cg_route_ctx = _ctx(tier="PURCHASED", taste_used=99999.0, budget_used=99999)
-    _synth(job, monkeypatch, tmp_path)
-    assert job.tts_route == "pool"
+def test_cg_purchased_no_key_pool_governed_by_paid_taste(engines, monkeypatch, tmp_path):
+    # Limits round (2026-11-23): PURCHASED users without own key are also taste-governed (10 min/day);
+    # once taste is exhausted they route to edge_taste; within taste they route to pool.
+    job_ok = _job()
+    job_ok._cg_route_ctx = _ctx(tier="PURCHASED", taste_used=0.0, taste_limit=600.0, budget_used=0)
+    _synth(job_ok, monkeypatch, tmp_path)
+    assert job_ok.tts_route == "pool"
+
+    job_spent = _job()
+    job_spent._cg_route_ctx = _ctx(tier="PURCHASED", taste_used=99999.0, taste_limit=600.0, budget_used=99999)
+    _synth(job_spent, monkeypatch, tmp_path)
+    assert job_spent.tts_route == "edge_taste"
 
 
 @pytestmark_ffmpeg
@@ -407,18 +414,19 @@ async def _db():
 
 
 @pytest.mark.asyncio
-async def test_cg_debit_counts_only_free_and_accumulates(_db):
+async def test_cg_debit_tracks_free_and_purchased_accumulating(_db):
+    # Limits round (2026-11-23): both FREE and PURCHASED pool usage are debited per user.
     maker = _db
     async with maker() as session:
         await gks.debit_pool_usage(session, 777, tier="FREE", seconds=30.0, requests=2)
         await gks.debit_pool_usage(session, 777, tier="FREE", seconds=15.0, requests=1)
-        # PURCHASED pool use is never debited.
         await gks.debit_pool_usage(session, 888, tier="PURCHASED", seconds=99.0, requests=9)
         await session.commit()
         assert await gks.taste_used_seconds(session, 777) == pytest.approx(45.0)
+        assert await gks.taste_used_seconds(session, 888) == pytest.approx(99.0)
         assert await gks.free_budget_used_requests(session) == 3
         rows = (await session.execute(select(GeminiPoolUsage))).scalars().all()
-        assert len(rows) == 1 and rows[0].user_id == 777
+        assert len(rows) == 2 and {r.user_id for r in rows} == {777, 888}
 
 
 @pytest.mark.asyncio
@@ -762,5 +770,5 @@ def test_cg_route_marker_format():
 
 def test_cg_cache_token_is_r104():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261118_r164") == 4
+    assert html.count("20261123_followup1") == 5
     assert ("20261104_r" + "105") not in html

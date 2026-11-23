@@ -62,10 +62,8 @@ MESSAGES_EN = json.loads((ROOT / "locales/en/messages.json").read_text(encoding=
 OWNER_TG = 880201
 
 UI_KEYS_K = [
-    "recap_script_review_hint",
     "recap_cost_charged_line",
     "recap_refunded_line",
-    "btn_start_recap_credits",
 ]
 SERVER_KEYS_K = [
     "recap_retention_note",
@@ -450,7 +448,6 @@ def test_script_review_single_toggle_only():
     assert INDEX_HTML.count('id="recap-script-review-toggle"') == 1
     assert "recap-script-review-toggle-main" not in INDEX_HTML
     assert "recap-script-review-toggle-main" not in APP_JS
-    assert 'data-i18n="recap_script_review_hint"' in INDEX_HTML
     # The payload reads the one toggle…
     assert 'getElementById("recap-script-review-toggle")' in APP_JS
     # …and no mirror-sync remains.
@@ -471,7 +468,7 @@ def test_result_card_shows_expiry_and_receipt_lines():
     box = INDEX_HTML.index('id="recap-result-box"')
     expiry = INDEX_HTML.index('data-i18n="history_expiry_note"', box)
     cost = INDEX_HTML.index('id="recap-cost-line"', box)
-    card_end = INDEX_HTML.index("<!-- 🌟 AUTO-SLIDING", box)
+    card_end = INDEX_HTML.index('id="studio-alert-carousel"', box)
     assert box < cost < card_end
     assert box < expiry < card_end
     assert 'tf("recap_cost_charged_line"' in APP_JS
@@ -553,5 +550,5 @@ def test_batch_k_key_sets_stay_symmetric():
 # ── static version lockstep ──────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261103_r42" not in INDEX_HTML

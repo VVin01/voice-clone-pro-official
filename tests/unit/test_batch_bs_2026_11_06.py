@@ -88,7 +88,8 @@ async def _all_rows(db_session):
 
 
 def test_bs_seed_list_is_the_full_catalogue():
-    assert len(DEFAULT_PRICING_PLANS) == 22
+    # Pricing v3 (2026-11-23): 10 official plans.
+    assert len(DEFAULT_PRICING_PLANS) == 10
     assert [p["code"] for p in DEFAULT_PRICING_PLANS] == ALL_CODES
     for seed, entry in zip(DEFAULT_PRICING_PLANS, PLAN_CATALOGUE):
         assert seed["minutes"] == entry["minutes"]
@@ -111,10 +112,10 @@ async def test_bs_seed_creates_all_eight_rows_on_empty_db(db_session):
 
 @pytest.mark.asyncio
 async def test_bs_seed_fills_exactly_the_five_missing_rows(db_session):
-    # Partial pre-seeded shape: only the 3 topup voice rows exist.
+    # Partial pre-seeded shape: only the 3 voice rows exist.
     seeded_codes = []
     for entry in PLAN_CATALOGUE:
-        if entry["code"].startswith("topup_voice_"):
+        if entry["category"] == "voice":
             seeded_codes.append(entry["code"])
             db_session.add(PricingPlan(
                 code=entry["code"], category=entry["category"],
@@ -127,7 +128,7 @@ async def test_bs_seed_fills_exactly_the_five_missing_rows(db_session):
 
     plans = await get_active_pricing_plans(db_session)
     rows = await _all_rows(db_session)
-    assert len(rows) == 22
+    assert len(rows) == 10
     assert [p.code for p in plans] == ALL_CODES
     filled = {r.code for r in rows} - set(seeded_codes)
     assert filled == set(ALL_CODES) - set(seeded_codes)
@@ -140,49 +141,49 @@ async def test_bs_seed_fills_exactly_the_five_missing_rows(db_session):
 async def test_bs_reseed_idempotent_and_admin_edit_survives(db_session):
     await get_active_pricing_plans(db_session)
     ok, _plan, _msg = await update_pricing_plan_price(
-        db_session, "recap_starter", 12000, admin_id=ADMIN_ID
+        db_session, "recap_30", 15000, admin_id=ADMIN_ID
     )
     assert ok is True
     await get_active_pricing_plans(db_session)
     await get_active_pricing_plans(db_session)
     rows = await _all_rows(db_session)
-    assert len(rows) == 22
+    assert len(rows) == 10
     by_code = {r.code: r for r in rows}
-    assert by_code["recap_starter"].price_mmk == 12000  # edit is sacred
-    assert by_code["voice_mini"].price_mmk == 3000      # others untouched
+    assert by_code["recap_30"].price_mmk == 15000  # edit is sacred
+    assert by_code["voice_200"].price_mmk == 19800  # others untouched
 
 
 @pytest.mark.asyncio
 async def test_bs_admin_pricing_lists_eight_and_edits_new_code(db_session):
     admin = _user(ADMIN_ID)
     res = await api_mod.get_admin_pricing(admin, db_session)
-    assert res["count"] == 22
+    assert res["count"] == 10
     assert [p["code"] for p in res["plans"]] == ALL_CODES
-    recap = next(p for p in res["plans"] if p["code"] == "recap_starter")
-    assert recap["price_mmk"] == 10000
+    recap = next(p for p in res["plans"] if p["code"] == "recap_30")
+    assert recap["price_mmk"] == 13500
     assert recap["category"] == "recap"
     assert recap["recap_credits"] == 30
 
     out = await api_mod.update_admin_pricing(
-        "recap_starter",
+        "recap_30",
         api_mod.AdminPricingUpdateRequest(price_mmk=22000),
         admin, db_session,
     )
     assert out["success"] is True and out["price_mmk"] == 22000
     res2 = await api_mod.get_admin_pricing(admin, db_session)
-    recap2 = next(p for p in res2["plans"] if p["code"] == "recap_starter")
+    recap2 = next(p for p in res2["plans"] if p["code"] == "recap_30")
     assert recap2["price_mmk"] == 22000
 
 
 @pytest.mark.asyncio
 async def test_bs_submit_overlay_price_for_recap_starter_unchanged(db_session):
     user, _ = await get_or_create_user(db_session, telegram_id=700331)
-    # No PricingPlan row exists yet: the catalogue resolves 10,000 MMK.
+    # No PricingPlan row exists yet: the catalogue resolves recap_30 @ 13,500 MMK.
     before = await create_payment_request(
         session=db_session, user_id=user.id,
-        package_code="recap_starter", receipt_file_id="slip-before",
+        package_code="recap_30", receipt_file_id="slip-before",
     )
-    assert before.amount_mmk == 10000
+    assert before.amount_mmk == 13500
     assert before.minutes == 0
 
     # Seeding creates the row; the DB-wins overlay must now resolve
@@ -190,9 +191,9 @@ async def test_bs_submit_overlay_price_for_recap_starter_unchanged(db_session):
     await get_active_pricing_plans(db_session)
     after = await create_payment_request(
         session=db_session, user_id=user.id,
-        package_code="recap_starter", receipt_file_id="slip-after",
+        package_code="recap_30", receipt_file_id="slip-after",
     )
-    assert after.amount_mmk == before.amount_mmk == 10000
+    assert after.amount_mmk == before.amount_mmk == 13500
     assert after.minutes == before.minutes == 0
 
 
@@ -232,7 +233,7 @@ async def test_bs_buy_menu_renders_each_plan_once(db_session, monkeypatch):
         for row in kb.inline_keyboard for btn in row
         if btn.callback_data and btn.callback_data.startswith("buy_pkg:")
     ]
-    assert len(buy_cbs) == 22
+    assert len(buy_cbs) == 10
     assert sorted(c.split(":", 1)[1] for c in buy_cbs) == sorted(ALL_CODES)
     # Prices rendered are the resolved (catalogue == seeded DB) ones.
     texts = [
@@ -349,10 +350,7 @@ def test_bs_groq_ui_and_i18n_wiring():
 
 
 def test_bs_broadcast_token_generation_matches_bot_path():
-    # The bot path's nonce expression (the mirrored source).
-    assert "token = uuid.uuid4().hex[:12]" in ADMIN_HANDLER_PY
-    # The webapp campaign insert uses the same expression now, and
-    # the 36-char str(uuid4()) form is gone from it.
+    # Bot-chat broadcast FSM was retired in Round 13 Part K; webapp campaign insert uses 12-hex token.
     assert "confirmation_token=uuid.uuid4().hex[:12]," in API_PY
     assert "confirmation_token=str(uuid.uuid4())," not in API_PY
     token = uuid.uuid4().hex[:12]
@@ -403,5 +401,5 @@ async def test_bs_webapp_broadcast_persists_fitting_token(db_session, monkeypatc
 
 
 def test_bs_cache_token_is_r90():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "20261104_r89" not in INDEX_HTML

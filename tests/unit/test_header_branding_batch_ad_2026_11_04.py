@@ -51,13 +51,13 @@ def test_brand_block_reads_voice_clone_plus_pro_badge():
     assert "VOICE CLONE PRO" not in block
     # The blue pill badge stays, exactly once.
     assert block.count('<span class="pro-tag">PRO</span>') == 1
-    # STUDIO subtitle retained.
-    assert '<span class="sub-brand" data-i18n="brand_subtitle">STUDIO</span>' in block
+    # Round 13 removed the sub-brand STUDIO line for a cleaner single-row header.
+    assert 'class="sub-brand"' not in block
 
 
 def test_header_logo_is_the_telegram_avatar_asset():
     block = _brand_block()
-    assert 'src="/static/img/brand-logo.svg?v=20261118_r164"' in block
+    assert 'src="/static/img/brand-logo.svg?v=20261123_followup1"' in block
     assert 'class="brand-logo-img"' in block
     # The old hand-drawn hexagon crest is gone from the header.
     assert "crest-svg" not in INDEX_HTML
@@ -87,10 +87,10 @@ def test_logo_img_css_is_a_clean_circle():
 
 
 def test_static_cache_token_is_r56():
-    assert "style.css?v=20261118_r164" in INDEX_HTML
+    assert "style.css?v=20261123_followup1" in INDEX_HTML
     assert "20261104_r55" not in INDEX_HTML
     # Four versioned refs now: style.css, app.js, i18n.js and the new
     # brand-logo.svg. (The per-batch cache pins that total the token's
     # occurrences were moved 3 -> 4 in this batch; the hardening pins
     # require EVERY /static/ ref in index.html to carry the token.)
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5

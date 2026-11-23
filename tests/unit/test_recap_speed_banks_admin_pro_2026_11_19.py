@@ -317,7 +317,7 @@ def test_frontend_admin_pro_and_bundle_budget():
     admin_pro = (ROOT / "app/webapp/static/js/admin_pro.js").read_text(encoding="utf-8")
     assert 'id="extra-payment-accounts"' in html
     assert '<option value="TTS">' in html
-    assert html.count("?v=20261118_r164") == 4
+    assert html.count("?v=20261123_followup1") == 5
     assert "/static/js/admin_pro.js" in app_js
     for marker in ("admp-banks-card", "admp-orders-bar", "admp-expiring-card", "admp-bc-aud", "admp-audit-bar", "admp-runtime-card"):
         assert marker in admin_pro
@@ -338,7 +338,7 @@ def test_group_ai_senior_human_admin_training_and_sheet_sync():
     # Up-to-date features synced into Knowledge Sheet
     assert "Edge Neural အသံ ၈ မျိုး" in sheet
     assert "Timeline PNG" in sheet and "ASS Fast Burn" in sheet and "CapCut Karaoke" in sheet
-    assert "Logo (Size & Opacity" in sheet and "4:5" in sheet
+    assert "Logo (Size & Opacity" in sheet and "9:16" in sheet and "16:9" in sheet and "1:1" in sheet
     assert "Bank / Wallet / QR" in sheet
     assert "+7 ရက် Grace" in sheet
     # Senior Human-Admin EQ & consultative rules in SYSTEM_INSTRUCTIONS & Private AI

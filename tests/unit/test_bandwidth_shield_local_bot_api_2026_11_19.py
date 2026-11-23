@@ -120,7 +120,7 @@ async def test_static_cache_policy_immutable_versioned_and_preserves_unversioned
     async def _async_resp():
         return SimpleNamespace(headers={})
 
-    h_ver = await _call("/static/js/app.js", "v=20261118_r164")
+    h_ver = await _call("/static/js/app.js", "v=20261123_followup1")
     assert h_ver["Cache-Control"] == "public, max-age=31536000, immutable"
 
     h_font = await _call("/static/fonts/Padauk-Regular.ttf")
@@ -263,7 +263,7 @@ async def test_telegram_file_id_cache_reuses_id_and_falls_back_on_error(tmp_path
 
 def test_frontend_egress_optimizations_and_bundle_budget():
     app_js = (REPO_ROOT / "app" / "webapp" / "static" / "js" / "app.js").read_text(encoding="utf-8")
-    assert "const ensureSampleSrc = async" in app_js
+    # Part D unified sample preview playback through _authSampleCache + runSharedVoicePreview.
     assert "_authSampleCache" in app_js
     assert "if (/[?&]t=/.test(url))" in app_js
     assert 'audio.addEventListener("pointerdown", load, { once: true })' in app_js
@@ -432,24 +432,26 @@ async def test_bot_buy_menu_is_two_columns_mmk_and_invoice_shows_validity(db_ses
 
     await handle_buy_minutes_menu(cb, state)
     kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
-    # 22 plans paired 2-per-row (11 rows) + 1 Back row = 12 rows total
-    assert len(kb.inline_keyboard) == 12
+    # Pricing v3 (2026-11-23): 10 plans paired 2-per-row (5 rows) + 1 Back row = 6 rows total
+    assert len(kb.inline_keyboard) == 6
     plan_texts = [
         btn.text
         for row in kb.inline_keyboard
         for btn in row
         if (btn.callback_data or "").startswith("buy_pkg:")
     ]
-    assert len(plan_texts) == 22
+    assert len(plan_texts) == 10
     assert all(" Ks" not in txt and "MMK" in txt and len(txt) <= 28 for txt in plan_texts)
 
-    cb.data = "buy_pkg:voice_mini"
+    cb.data = "buy_pkg:pkg_starter"
     cb.message.edit_text.reset_mock()
     await handle_package_selected(cb, state)
     inv_text = cb.message.edit_text.call_args.args[0]
-    assert "Mini" in inv_text
-    assert "(voice_mini)" not in inv_text
-    assert "30 days from approval" in inv_text
+    assert "Starter" in inv_text
+    assert "(pkg_starter)" not in inv_text
+    assert "100 min" in inv_text
+    assert "15 credits" in inv_text
+    assert "14,900 MMK" in inv_text
 
     en_msgs = json.loads((REPO_ROOT / "locales" / "en" / "messages.json").read_text(encoding="utf-8"))
     assert en_msgs["referral_title"] == "🎁 <b>Refer Friends & Earn</b>"
@@ -486,13 +488,13 @@ async def test_serve_index_auto_cache_busts_immutable_assets():
     from app.webapp.server import serve_index, _get_static_asset_cache_tag
 
     disk_html = (REPO_ROOT / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
-    assert disk_html.count("?v=20261118_r164") == 4
+    assert disk_html.count("?v=20261123_followup1") == 5
 
     tag = _get_static_asset_cache_tag()
-    assert tag.startswith("20261120_") and len(tag) == 19
+    assert tag.startswith("20261123_") and len(tag) == 19
 
     resp = await serve_index()
     body = resp.body.decode("utf-8")
-    assert body.count(f"?v={tag}") == 4
-    assert "?v=20261118_r164" not in body
+    assert body.count(f"?v={tag}") == 5
+    assert "?v=20261123_followup1" not in body
     assert resp.headers.get("cache-control") == "no-cache, no-store, must-revalidate, max-age=0"

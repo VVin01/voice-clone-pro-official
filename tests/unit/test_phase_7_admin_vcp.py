@@ -192,12 +192,10 @@ def test_six_gap_settings_and_tts_chain_controls_in_html_and_js():
     admin_html = INDEX_HTML.split('<section id="tab-admin" class="tab-pane hidden">', 1)[1].split("</section>", 1)[0]
 
     for el_id in (
-        "adm-set-voice-daily-free",
-        "adm-set-voice-daily-paid",
+        # Part G retired adm-set-voice-daily-free, adm-set-voice-daily-paid, adm-set-tutorial-video-enabled
         "adm-set-tts-daily-free",
         "adm-set-tts-daily-paid",
         "adm-set-voxcpm-timeout",
-        "adm-set-tutorial-video-enabled",
         "adm-tts-chain-card",
         "adm-tts-primary",
         "adm-tts-primary-custom",
@@ -218,12 +216,9 @@ def test_six_gap_settings_and_tts_chain_controls_in_html_and_js():
     tts_save_body = APP_JS.split("async function saveGeminiTtsModelSettings", 1)[1].split("\n}\n", 1)[0]
 
     for key in (
-        "voice_daily_limit_minutes_free",
-        "voice_daily_limit_minutes_paid",
         "tts_daily_limit_minutes_free",
         "tts_daily_limit_minutes_paid",
         "voxcpm_timeout",
-        "tutorial_video_enabled",
         "gemini_tts_primary_model",
         "gemini_tts_fallback_1",
         "gemini_tts_lite_model",
@@ -232,12 +227,9 @@ def test_six_gap_settings_and_tts_chain_controls_in_html_and_js():
         assert f"s.{key}" in load_body, key
 
     for key in (
-        "voice_daily_limit_minutes_free:",
-        "voice_daily_limit_minutes_paid:",
         "tts_daily_limit_minutes_free:",
         "tts_daily_limit_minutes_paid:",
         "voxcpm_timeout:",
-        "tutorial_video_enabled:",
     ):
         assert key in save_body, key
 
@@ -335,4 +327,4 @@ def test_admin_design_pass_i18n_parity_and_user_detail_completeness():
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
 
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5

@@ -133,8 +133,14 @@ async def test_f5_admin_adjust_recap_floor_and_add(db_session):
 # ── F6: voice submit pre-check ────────────────────────────────────────
 
 async def _purchased_user(db_session, uid):
+    from app.services.ledger import get_minute_balance
+
     user, _ = await get_or_create_user(db_session, telegram_id=uid)
     user.account_category = AccountCategory.PURCHASED.value
+    # Limits round (2026-11-23): PURCHASED users no longer receive daily free allowance;
+    # seed 180s purchased balance to exercise the exact 180s pre-flight estimate boundary.
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 180
     await db_session.commit()
     return user
 

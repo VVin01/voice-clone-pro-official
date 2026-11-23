@@ -15,7 +15,7 @@ PHASE3_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 3") :]
 
 
 def test_v2_phase3_cache_token_current():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -79,7 +79,6 @@ def test_v2_phase3_must_fix_3_master_preset_apply_and_restore_wiring():
         "ddFitPreviewFrame();",
         "refreshRecapStep2Summary();",
         "refreshRecapStep4Thumb();",
-        "refreshRecapStep4Facts();",
     ):
         assert call in restore_block, f"restoreRecapSettings missing {call}"
 
@@ -133,6 +132,16 @@ _RETIRED_VIP_STATIC_IDS = {
     "recap-split-minutes-wrap", "recap-split-note", "recap-split-toggle",
     "recap-sub-font-custom-row", "recap-voice-billing-badge",
     "sub-font-custom-status",
+    # Post-combined follow-up (2026-11-23 Parts C, E, G)
+    "recap-unverified-warning",
+    "adm-ai-thumbnail-card", "adm-set-thumb-cap", "adm-set-thumb-model",
+    "adm-set-thumb-prompt", "adm-thumb-status-badge", "adm-thumb-usage-box",
+    "adm-thumb-usage-stats", "adm-thumb-usage-title", "btn-recap-ai-thumbnail",
+    "btn-recap-dl-thumbnail", "btn-save-ai-thumbnail-settings", "recap-ai-thumbnail-box",
+    "recap-thumb-headline-input", "recap-thumb-preview-img", "recap-thumb-status-note",
+    "adm-set-daily-job-limit", "adm-set-group-ai", "adm-set-tiered-pricing",
+    "adm-set-tutorial-video-enabled", "adm-set-voice-daily-free",
+    "adm-set-voice-daily-paid", "adm-tut-recap-title",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "applyRecapMasterPreset('fb_story')",
@@ -164,6 +173,11 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "openPaymentDrawer('voice_studio_pro', 75000, '🎙️ Voice Pro')",
     "switchPlanCategory('combined')",
     "toggleTtsByokAdvanced()",
+    # Post-combined follow-up (2026-11-23 Parts D, E, G)
+    "previewSelectedGeminiVoice()",
+    "generateRecapAiThumbnail()",
+    "saveAiThumbnailSettings()",
+    "filterAdminPricing('topup')",
 }
 
 

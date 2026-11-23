@@ -225,11 +225,12 @@ def test_send_telegram_too_large_413(dl_env, monkeypatch):
 
 
 def test_extract_fallback_does_not_claim_subtitles():
+    # Part C (2026-11-23): shallow unverified fallback was replaced by strict HTTP 422 rejection.
     src = (REPO_ROOT / "app" / "webapp" / "api.py").read_text(encoding="utf-8")
     extract_fn = src.split("async def extract_media_info")[1].split("/recap/upload_video")[0]
     assert '"has_subtitles": True' not in extract_fn
-    fallback = extract_fn.split("Graceful fallback response")[1][:800]
-    assert '"has_subtitles": False' in fallback
+    assert "status_code=422" in extract_fn
+    assert "_validate_extracted_video_info" in extract_fn
 
 
 # ── Mini App contracts ────────────────────────────────────────────────

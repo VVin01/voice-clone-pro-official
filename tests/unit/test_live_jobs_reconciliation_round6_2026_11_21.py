@@ -35,6 +35,27 @@ I18N_JS = (ROOT / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
 STYLE_CSS = (ROOT / "app/webapp/static/css/style.css").read_text(encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _mock_recap_url_verify(monkeypatch):
+    """Hermetic URL verification stub for Part C strict URL backstop."""
+    from app.services import downloader as dl_mod
+    from app.services import url_safety as us_mod
+
+    monkeypatch.setattr(us_mod, "validate_public_url", lambda url: url)
+    monkeypatch.setattr(dl_mod, "unshorten_url", lambda url: url)
+    monkeypatch.setattr(
+        dl_mod.MediaDownloader,
+        "get_info",
+        lambda self, url: {
+            "title": "Unplannable Test Movie",
+            "duration": 120,
+            "duration_string": "02:00",
+            "extractor": "generic",
+            "formats": [{"format_id": "mp4", "vcodec": "h264", "acodec": "aac"}],
+        },
+    )
+
+
 def _recap_req(**over) -> api_mod.RecapConfigRequest:
     base = dict(
         url="https://example.com/unplannable-movie",

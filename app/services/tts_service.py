@@ -652,6 +652,78 @@ def _synthesize_tts_audio_sync(job: Job) -> tuple[Path, float]:
     return out_path, float(duration or 0.0)
 
 
+def _format_tts_delivery_duration(seconds: Optional[float | int]) -> str:
+    try:
+        total = int(round(float(seconds or 0)))
+    except (TypeError, ValueError):
+        total = 0
+    if total <= 0:
+        return "—"
+    hours, rem = divmod(total, 3600)
+    mins, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
+
+
+def _format_tts_retention_hours(hours: int, lang: str) -> str:
+    raw = str(int(hours))
+    if (lang or "my").strip().lower().startswith("my"):
+        return raw.translate(str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉"))
+    return raw
+
+
+def build_tts_completion_caption(
+    lang: str,
+    *,
+    engine_name: str,
+    voice_name: str,
+    duration_seconds: Optional[float | int],
+    job_id: str,
+    retention_hours: int = 24,
+    fell_back: bool = False,
+    taste_blocked: bool = False,
+    key_broken: bool = False,
+) -> str:
+    """Build the compact TTS completion caption (Part F)."""
+    import html as _html
+    from app.services.i18n import t as _tts_t
+
+    caption = _tts_t(
+        "tts_delivery_caption",
+        lang,
+        engine=_html.escape(str(engine_name or "")),
+        voice=_html.escape(str(voice_name or "")),
+        duration=_format_tts_delivery_duration(duration_seconds),
+        job_id=job_id,
+        retention_hours=_format_tts_retention_hours(retention_hours, lang),
+    )
+    if fell_back:
+        caption += "\n" + _tts_t("tts_fallback_note", lang)
+        if taste_blocked:
+            caption += "\n" + _tts_t("tts_taste_key_hint", lang)
+    if key_broken:
+        caption += "\n" + _tts_t("tts_own_key_broken_note", lang)
+    return caption
+
+
+def build_tts_completion_keyboard(lang: str, *, app_url: str):
+    """Build a 1-button-per-full-width-row keyboard for TTS completion."""
+    if not app_url:
+        return None
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+    from app.services.i18n import t as _tts_t
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=_tts_t("clone_btn_miniapp_listen", lang),
+                web_app=WebAppInfo(url=f"{app_url}?tab=tab-tts"),
+            )
+        ]
+    ])
+
+
 async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
     """Best-effort bot-chat delivery of the finished TTS audio (the
     same send-to-Telegram pattern voice jobs use). A delivery failure
@@ -675,11 +747,6 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
             return
 
         filename = branded_download_filename("TTS", "wav", job_id=job.id)
-        # Batch BX: the caption now names the engine + friendly voice
-        # (it said nothing before, and History leaked the raw ids).
-        # Language comes from the owner's stored preference, loaded
-        # through the same fresh-session pattern the clone delivery
-        # sites use; any failure falls back to "my" silently.
         lang = "my"
         try:
             from app.db.session import AsyncSessionLocal
@@ -690,7 +757,6 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
                 lang = _owner.language_code or "my"
         except Exception:
             pass
-        from app.services.i18n import t as _tts_t
         from app.services.voice_display import (
             tts_engine_display_name,
             tts_voice_display_name,
@@ -698,33 +764,29 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
 
         caption_engine = tts_engine_display_name(getattr(job, "engine", None))
         caption_voice = tts_voice_display_name(getattr(job, "engine", None), getattr(job, "preset_voice", None))
-        # Batch CE: a fallback job's caption names the engine + voice
-        # ACTUALLY used (Edge + the twin voice) instead, and gains the
-        # explicit fallback note line — the row keeps the picked
-        # values, so History still shows the picked name (BK split).
         fell_back = bool(getattr(job, "tts_fallback_used", False))
         if fell_back:
             caption_engine = tts_engine_display_name("edge")
             caption_voice = tts_voice_display_name(
                 "edge", getattr(job, "edge_voice", None) or EDGE_TTS_VOICES["thiha"]
             )
-        caption = _tts_t(
-            "tts_delivery_caption",
+        ret_days = max(1, int(getattr(settings, "media_retention_days", 1) or 1))
+        dur_sec = getattr(job, "duration_seconds", None) or getattr(job, "seconds_consumed", None)
+        caption = build_tts_completion_caption(
             lang,
-            engine=caption_engine,
-            voice=caption_voice,
+            engine_name=caption_engine,
+            voice_name=caption_voice,
+            duration_seconds=dur_sec,
+            job_id=str(job.id),
+            retention_hours=ret_days * 24,
+            fell_back=fell_back,
+            taste_blocked=(getattr(job, "tts_route", None) == "edge_taste"),
+            key_broken=bool(getattr(job, "gemini_key_broken", False)),
         )
-        if fell_back:
-            caption += "\n" + _tts_t("tts_fallback_note", lang)
-            # Batch CG: when the switch happened because the FREE
-            # Gemini taste ran out, name the own-key way back to
-            # Gemini (the same option the Item 3b prompt offers).
-            if getattr(job, "tts_route", None) == "edge_taste":
-                caption += "\n" + _tts_t("tts_taste_key_hint", lang)
-        # Batch CG: a saved key Google rejected mid-job — the job
-        # still delivered (pool/Edge served it); the user is told.
-        if getattr(job, "gemini_key_broken", False):
-            caption += "\n" + _tts_t("tts_own_key_broken_note", lang)
+        kb = build_tts_completion_keyboard(lang, app_url=str(getattr(settings, "mini_app_url", "") or ""))
+        send_kwargs: dict[str, Any] = {"caption": caption, "parse_mode": "HTML"}
+        if kb is not None:
+            send_kwargs["reply_markup"] = kb
         bot = create_telegram_bot(token=settings.bot_token)
         try:
             await send_cached_telegram_media(
@@ -733,8 +795,7 @@ async def _deliver_tts_to_chat(job: Job, out_path: Path) -> None:
                 chat_id=job.chat_id or job.user_id,
                 file_path=out_path,
                 filename=filename,
-                caption=caption,
-                parse_mode="HTML",
+                **send_kwargs,
             )
         finally:
             await bot.session.close()

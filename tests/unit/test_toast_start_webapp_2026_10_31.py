@@ -156,15 +156,16 @@ def test_failed_job_toasts_route_through_mapper():
 
 
 def test_submit_and_io_catches_route_through_mapper():
+    # Part C routes Recap URL check errors to the persistent inline #recap-url-error-card;
+    # all studio/IO error toasts still route through showErrorToast / mapErrorToToast.
     for call in (
         "showErrorToast(err, 'voice')",
-        "showErrorToast(err, 'recap')",
         "showErrorToast(err, 'download')",
         "showErrorToast(err, 'send')",
-        "showErrorToast(err, 'generic')",
         "showErrorToast(e, 'generic')",
     ):
         assert call in APP_JS, call
+    assert "mapErrorToToast(errMsg, 'recap')" in APP_JS
     # Upload failures now surface in the persistent inline error box (with
     # retry) instead of a toast, but the shown message still routes through
     # the same mapper with the 'upload' context — never raw server text
@@ -175,7 +176,8 @@ def test_submit_and_io_catches_route_through_mapper():
 
 
 def test_long_guidance_toasts_get_6000ms():
-    assert 'showStudioToast(t("toast_douyin_blocked"), \'warning\', 6000)' in APP_JS
+    # Part C replaced the transient Douyin toast in btnAnalyze with persistent #recap-url-error-card.
+    assert "showRecapUrlError();" in APP_JS
     # Batch K: same 6000 ms recap failure toast, via the failToast var.
     assert "showStudioToast(failToast, 'error', 6000)" in APP_JS
     over = re.search(r'tf\("toast_recap_over_limit".*?\'warning\', 6000\)', APP_JS, re.S)

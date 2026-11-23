@@ -23,7 +23,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import settings
-from app.handlers.clone import voice_queue_failure_message
 from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import Job, VoiceModel
 from app.services.ledger import credit_purchased_minutes, get_or_create_user
@@ -323,7 +322,7 @@ async def test_daily_minutes_yesterday_does_not_count(db_session, tmp_path):
 
 
 def test_daily_minutes_error_surfaces_name_the_tier_limit():
-    """Mini App detail + bot message name the CALLER's tier limit; status 429."""
+    """Mini App detail names the CALLER's tier limit; status 429 (bot clone handler retired in Round 13 Part K)."""
     assert _voice_job_error_status("DAILY_MINUTE_LIMIT_EXCEEDED") == 429
 
     free_user = SimpleNamespace(account_category=AccountCategory.FREE.value)
@@ -332,10 +331,3 @@ def test_daily_minutes_error_surfaces_name_the_tier_limit():
     assert "(30 မိနစ်)" in _voice_job_error_detail("DAILY_MINUTE_LIMIT_EXCEEDED", paid_user)
     # No user context: the FREE tier is quoted.
     assert "(5 မိနစ်)" in _voice_job_error_detail("DAILY_MINUTE_LIMIT_EXCEEDED")
-
-    assert "5 မိနစ်" in voice_queue_failure_message(
-        "DAILY_MINUTE_LIMIT_EXCEEDED", "my", account_category=AccountCategory.FREE.value)
-    assert "30 မိနစ်" in voice_queue_failure_message(
-        "DAILY_MINUTE_LIMIT_EXCEEDED", "my", account_category=AccountCategory.PURCHASED.value)
-    assert "5 minutes" in voice_queue_failure_message(
-        "DAILY_MINUTE_LIMIT_EXCEEDED", "en", account_category=AccountCategory.FREE.value)

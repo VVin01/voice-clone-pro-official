@@ -2429,13 +2429,30 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
 #tab-recap .spec-lbl, #tab-recap .style-lbl {
     font-size: 13px; font-weight: 600; color: var(--text-2);
 }
-/* ── Step 3: engine + Gemini select (B1/B4 — full width, nothing clips) */
+/* ── Step 3: engine + Gemini/Edge/Persona selects (unified full-width preview buttons) */
 .recap-engine-row { display: flex; width: 100%; margin-top: var(--s3); }
-.recap-gemini-wrap { display: flex; flex-direction: column; gap: var(--s2); }
-.recap-gemini-select { width: 100%; min-width: 0; }
+.recap-gemini-wrap,
+.recap-edge-wrap,
+.recap-persona-wrap { display: flex; flex-direction: column; gap: var(--s2); width: 100%; }
+.recap-gemini-select,
+.recap-edge-select,
+.recap-persona-select { width: 100%; min-width: 0; }
 .recap-auto-hint { font-size: 12px; line-height: 1.7; color: var(--text-3); }
-.recap-gemini-wrap .preview-recap-voice-btn { align-self: flex-start; }
-.preview-recap-voice-btn { border-radius: 999px; min-height: 44px; }
+.preview-recap-voice-btn,
+.recap-gemini-wrap .preview-recap-voice-btn,
+.recap-edge-wrap .preview-recap-voice-btn,
+.recap-persona-wrap .preview-recap-voice-btn {
+    width: 100%;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: 999px;
+    min-height: 44px;
+    padding: 10px 14px;
+    box-sizing: border-box;
+}
 #story-style-picker-quick .style-select-pill,
 #recap-crop-presets-toolbar .pill-btn,
 #recap-logo-pos-picker .pill-btn,
@@ -2567,7 +2584,28 @@ body.lang-my .home-tut-desc { line-height: 1.8; }
     opacity: 0.85; text-align: left; margin-top: var(--s3);
 }
 .recap-cost-hint { font-size: 12px; opacity: 0.9; }
-.recap-unverified-warning { font-size: 12.5px; line-height: 1.55; color: #d97706; font-weight: 600; }
+.recap-url-error-card {
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.10);
+    color: var(--text-primary);
+    box-sizing: border-box;
+    max-width: 100%;
+    word-break: break-word;
+}
+.recap-url-error-title {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #ef4444;
+    margin-bottom: 4px;
+    line-height: 1.4;
+}
+.recap-url-error-body {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
 /* Batch CI — persistent duration-cap notice (Step 1 source area + */
 .recap-overlimit-notice { padding: var(--s2) var(--s3); border-radius: var(--r-md); background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); font-size: 12.5px; line-height: 1.55; font-weight: 600; color: var(--red); }
 .studio-slider::-webkit-slider-thumb { border-color: #ffffff; }
@@ -9337,47 +9375,6 @@ html[data-theme="dark"].lite #admin-pricing-list .adm-price-row.adm-price-card {
 .slider-ticks span:nth-child(3) { left: 56.25%; }
 .slider-ticks span:nth-child(4) { left: 75%; }
 .adm-stage-table .adm-num { text-align: right; white-space: nowrap; }
-.recap-ai-thumb-panel {
-    padding: 12px 14px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, rgba(254, 243, 199, 0.55) 0%, rgba(255, 251, 235, 0.85) 100%);
-    border: 1px solid rgba(217, 119, 6, 0.30);
-    color: var(--vcp-text-primary);
-}
-html[data-theme="dark"] .recap-ai-thumb-panel {
-    background: rgba(245, 158, 11, 0.08);
-    border-color: rgba(245, 196, 81, 0.28);
-}
-.recap-thumb-preview {
-    display: block;
-    width: 100%;
-    max-width: 240px;
-    aspect-ratio: 9 / 16;
-    object-fit: cover;
-    border-radius: 12px;
-    margin: 8px auto 0;
-    border: 1px solid rgba(217, 119, 6, 0.38);
-}
-.recap-hist-thumb-box {
-    padding: 10px 12px;
-    border-radius: 12px;
-    background: rgba(248, 250, 255, 0.85);
-    border: 1px solid rgba(217, 119, 6, 0.26);
-    color: var(--vcp-text-primary);
-}
-html[data-theme="dark"] .recap-hist-thumb-box {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 215, 0, 0.22);
-}
-.recap-hist-thumb-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-.recap-hist-thumb-row .studio-input {
-    flex: 1 1 auto;
-    min-width: 0;
-}
 /* ═══════════════════════════════════════════════════════════════════════════
    UNIFIED DESIGN SYSTEM V3 — UTILITY PARITY, DARK SEMANTICS, ACCESSIBILITY
    & RESPONSIVE TABLET (>=768px) / DESKTOP (>=1024px) LAYOUTS

@@ -40,16 +40,10 @@ def test_phase3_non_destructive_character_excess_banners_and_actions():
     assert "function trimTtsTextToLimit(" in APP_JS
 
 
-def test_phase3_custom_clone_five_guided_steps_and_file_requirements():
-    assert 'id="custom-clone-stepper"' in INDEX_HTML
-    for step in ("1", "2", "3", "4", "5"):
-        assert f'data-clone-step="{step}"' in INDEX_HTML
-    assert 'id="custom-clone-req-box"' in INDEX_HTML
-    for req_key in ("clone_req_duration", "clone_req_format", "clone_req_clean"):
-        assert f'data-i18n="{req_key}"' in INDEX_HTML
+def test_phase3_custom_clone_file_requirements_and_save_flow():
+    # Round 13 retired #custom-clone-stepper & #custom-clone-req-box; check status & save-from-result stay live.
     assert 'id="custom-clone-check-status"' in INDEX_HTML
     assert 'id="btn-save-custom-voice-from-result"' in INDEX_HTML
-    assert "function setCustomCloneStep(" in APP_JS
     assert "function saveCurrentRefAsCustomVoice(" in APP_JS
 
 
@@ -70,11 +64,6 @@ def test_phase3_generate_buttons_show_estimated_minutes():
 
 def test_phase3_i18n_keys_present_in_both_locales():
     keys = [
-        "clone_step_1_upload",
-        "clone_step_2_check",
-        "clone_step_3_create",
-        "clone_step_4_listen",
-        "clone_step_5_save",
         "clone_req_duration",
         "clone_req_format",
         "clone_req_clean",

@@ -361,25 +361,6 @@ class Settings(BaseSettings):
     # Versioned AI Prompt Registry profile ("v2" upgraded default, "v1" instant rollback)
     ai_prompt_profile: str = Field(default="v2", alias="AI_PROMPT_PROFILE")
 
-    # Recap AI Thumbnail Generator (HF PRO monthly compute credit pool, paid/admin only)
-    recap_thumbnail_monthly_cap_usd: float = Field(
-        default=1.80,
-        alias="RECAP_THUMBNAIL_MONTHLY_CAP_USD",
-    )
-    recap_thumbnail_model: str = Field(
-        default="black-forest-labs/FLUX.1-schnell",
-        alias="RECAP_THUMBNAIL_MODEL",
-    )
-    recap_thumbnail_prompt_template: str = Field(
-        default=(
-            "Cinematic vertical 9:16 movie poster artwork inspired by {title}, "
-            "dramatic lighting, rich atmospheric colors, ultra detailed, high contrast, "
-            "expressive composition, strictly no text, no letters, no words, no numbers, "
-            "no watermark, no typography, clean text-free illustration"
-        ),
-        alias="RECAP_THUMBNAIL_PROMPT_TEMPLATE",
-    )
-
     # Payment accounts
     payment_kpay_number: str = ""
     payment_kpay_name: str = ""

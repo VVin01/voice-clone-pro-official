@@ -81,8 +81,7 @@ def test_step1_notice_element_inside_step1_card():
 def test_step4_notice_element_under_the_cta():
     i_btn = INDEX_HTML.index('id="btn-start-recap"')
     i_note = INDEX_HTML.index('id="recap-overlimit-notice-step4"')
-    i_unverified = INDEX_HTML.index('id="recap-unverified-warning"')
-    assert i_btn < i_note < i_unverified
+    assert i_btn < i_note
     tag = INDEX_HTML[i_note - 30:i_note + 140]
     assert "recap-overlimit-notice" in tag and 'role="alert"' in tag
 
@@ -150,9 +149,13 @@ def test_prefill_and_extract_failure_repaint_the_gate():
     prefill = _slice("state.recapSourceDuration = cfg.duration_seconds || null;",
                      "const srcUrl = (cfg.url")
     assert "updateRecapDurationGate();" in prefill
-    failure = _slice("state.lastRecapInfo = { metadata_verified: false",
-                     "const msg = err.message")
-    assert "updateRecapDurationGate();" in failure
+    # Part C: extract failure calls resetRecapUrlVerification({ clearInfo: true, ... }),
+    # which calls clearRecapInfoCard() -> updateRecapSplitCostHint() -> updateRecapDurationGate().
+    failure = _slice("resetRecapUrlVerification({ clearInfo: true, hideError: false });",
+                     "console.warn(\"Recap URL verification failed:\"")
+    assert "showRecapUrlError();" in failure
+    clear = _slice("function clearRecapInfoCard()", "window.clearRecapInfoCard")
+    assert "updateRecapSplitCostHint();" in clear
 
 
 def test_language_repaint_renders_the_gate():
@@ -359,4 +362,4 @@ console.log(JSON.stringify({ during,
 # ── Cache token ───────────────────────────────────────────────────
 
 def test_cache_version_r106():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5

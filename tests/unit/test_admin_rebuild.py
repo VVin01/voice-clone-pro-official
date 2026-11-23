@@ -184,14 +184,14 @@ async def test_pricing_list_returns_active_plans(db_session):
     admin = _user(ADMIN_ID)
     await _seed(
         db_session, admin,
-        PricingPlan(code="voice_mini", category="voice", minutes=10, recap_credits=0, price_mmk=3000, is_active=True, sort_order=1),
-        PricingPlan(code="voice_starter", category="voice", minutes=20, recap_credits=0, price_mmk=5000, is_active=True, sort_order=2),
+        PricingPlan(code="pkg_starter", category="combo", minutes=100, recap_credits=15, price_mmk=14900, is_active=True, sort_order=1),
+        PricingPlan(code="voice_200", category="voice", minutes=200, recap_credits=0, price_mmk=19800, is_active=True, sort_order=5),
     )
     res = await api_mod.get_admin_pricing(admin, db_session)
     codes = [p["code"] for p in res["plans"]]
     assert codes == [p["code"] for p in PLAN_CATALOGUE]
-    assert res["plans"][0]["price_mmk"] == 3000
-    assert res["plans"][0]["category"] == "voice"
+    assert res["plans"][0]["price_mmk"] == 14900
+    assert res["plans"][0]["category"] == "combo"
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ if "VCP UI REBUILD V2 — PHASE 5:" in PHASE4_CSS:
 
 
 def test_v2_phase4_cache_token_current():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -31,10 +31,6 @@ def test_v2_phase4_voice_studio_cobalt_and_custom_clone_rules():
         "#tab-voice #personas-grid > [data-voice-id] .selected-indicator",
         "#tab-voice #personas-grid > [data-voice-id] .persona-footer-row",
         "#tab-voice #personas-grid > [data-voice-id] .voice-preview-btn",
-        "#tab-voice .vcp-clone-steps-bar",
-        "#tab-voice .vcp-clone-step",
-        "#tab-voice .vcp-clone-step.is-active",
-        "#tab-voice .vcp-clone-step.is-done",
         "#tab-voice .vcp-clone-req-box",
         "#tab-voice #speed-selector.speed-capsule",
         "#tab-voice .vcp-excess-banner",
@@ -60,8 +56,6 @@ def test_v2_phase4_dark_glass_and_lite_ceramic_coverage():
         'html[data-theme="dark"] .sticky-cta-bar',
         'html[data-theme="dark"] #tab-voice #personas-grid > [data-voice-id]',
         'html[data-theme="dark"] #tab-voice #personas-grid > [data-voice-id].active',
-        'html[data-theme="dark"] #tab-voice .vcp-clone-step',
-        'html[data-theme="dark"] #tab-voice .vcp-clone-step.is-active',
         'html[data-theme="dark"] #tab-voice .vcp-clone-req-box',
         'html[data-theme="dark"] #tab-voice #speed-selector.speed-capsule',
         'html[data-theme="dark"] #tab-tts #tts-speed-picker.speed-capsule',
@@ -91,7 +85,6 @@ def test_v2_phase4_voice_and_tts_dom_ids_and_handlers_preserved():
         'onclick="sendVoiceToTelegram()"',
         'id="btn-save-custom-voice-from-result"',
         'onclick="saveCurrentRefAsCustomVoice()"',
-        'id="sticky-cta-voice"',
     )
     tts_required = (
         'id="tab-tts"',

@@ -86,9 +86,7 @@ def test_twin_toggle_fully_removed():
 
 
 def test_surviving_toggle_has_the_hint_and_feeds_the_payload():
-    # The kept row is the one with the helpful description, sitting
-    # in the main area (before the CTA).
-    assert 'data-i18n="recap_script_review_hint"' in INDEX_HTML
+    # The kept toggle sits in the main area (before the CTA); Round 13 retired the verbose hint copy.
     toggle_at = INDEX_HTML.index('id="recap-script-review-toggle"')
     cta_at = INDEX_HTML.index('id="btn-start-recap"')
     assert toggle_at < cta_at

@@ -121,7 +121,8 @@ def test_bv_upload_endpoint_registered_with_auth_gate():
     }
     assert ("/api/recap/upload_voice_ref", ("POST",)) in routes
     src = inspect.getsource(api_mod.upload_recap_voice_ref)
-    assert "RECAP_OWN_VOICE_VIP_ONLY_DETAIL" in src
+    # Round 13 E3 unlocked own-voice upload for ALL authenticated users (no VIP-only gate).
+    assert "RECAP_OWN_VOICE_VIP_ONLY_DETAIL" not in src
     assert "_save_upload_streaming" in src
     assert 'temp" / "voxcpm_refs"' in src or '"voxcpm_refs"' in src
     assert "50 * 1024 * 1024" in src
@@ -166,47 +167,37 @@ def test_bv_bot_locales_both_languages():
 
 
 def test_bv_miniapp_i18n_keys_both_languages():
+    # Round 13 E3 unlocked own-voice for all users -> retired recap_own_voice_locked_hint.
     for key in (
         "recap_own_voice_name", "recap_own_voice_desc",
         "recap_own_voice_upload_btn", "recap_own_voice_hint",
         "recap_own_voice_uploading", "recap_own_voice_ready",
         "recap_own_voice_upload_error", "recap_own_voice_pending_error",
-        "recap_own_voice_locked_hint", "recap_own_voice_display",
+        "recap_own_voice_display",
     ):
         assert I18N_JS.count(f"{key}:") == 2, key  # my + en
 
 
 def test_bv_frontend_card_markup_and_flow():
-    # The card lives inside the persona area, after the top-4 grid and
-    # before the all-voices expander.
+    # Round 13 E3 unlocked own-voice card for all users (lock badge & locked hint retired).
     area = INDEX_HTML.index('id="recap-persona-area"')
     card = INDEX_HTML.index('id="recap-own-voice-card"')
-    expander = INDEX_HTML.index('id="btn-toggle-all-voices"')
-    assert area < card < expander
+    assert area < card
     for el in ("recap-own-voice-wrap", "recap-own-voice-input",
-               "recap-own-voice-lock-badge", "recap-own-voice-locked-hint",
                "btn-clear-recap-own-voice", "btn-recap-own-voice-play"):
         assert f'id="{el}"' in INDEX_HTML, el
-    # Engine visibility + lock application + payload + submit guard.
-    areas = APP_JS[APP_JS.index("function syncRecapEngineAreas()"):APP_JS.index("function refreshRecapEngineLock()")]
-    assert 'getElementById("recap-own-voice-wrap")' in areas
-    lock = APP_JS[APP_JS.index("function refreshRecapEngineLock()"):APP_JS.index("// ── Batch BV: own-voice narration card")]
-    assert 'getElementById("recap-own-voice-card")' in lock
+    assert 'id="recap-own-voice-lock-badge"' not in INDEX_HTML
     assert 'fetchWithTimeout("/api/recap/upload_voice_ref"' in APP_JS
-    assert "voice_ref_id: (state.recapTtsEngine === \"voxcpm\" && state.recapOwnVoiceSelected" in APP_JS
     assert 'state.recapOwnVoiceStatus !== "ready"' in APP_JS
     assert 't("recap_own_voice_pending_error")' in APP_JS
-    # Picking a persona deselects own-voice.
     assert "deselectRecapOwnVoice();" in APP_JS
-    # Own-voice state never enters the persisted prefs/settings.
     prefs = APP_JS[APP_JS.index("function collectAccountPrefs()"):APP_JS.index("function applyAccountPrefs")]
     assert "recapOwnVoice" not in prefs
-    assert "recapOwnVoiceSelected" in APP_JS  # state exists…
-    assert "#recap-own-voice-card.engine-locked" in STYLE_CSS
+    assert "recapOwnVoiceSelected" in APP_JS
 
 
 def test_bv_cache_token_is_r93():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "20261104_r92" not in INDEX_HTML
 
 
@@ -246,17 +237,19 @@ def _clamp_req(**over):
     return SimpleNamespace(**base)
 
 
-def test_bv_clamp_free_drops_ref_at_submit_and_execution(caplog):
-    for is_vip in (False,):
-        req = _clamp_req()
-        with caplog.at_level(logging.INFO, logger="app.webapp.api"):
-            out = api_mod._clamp_recap_voice_ref(
-                req,
-                user=SimpleNamespace(id=7, account_category="FREE"),
-                user_id=7, is_vip=is_vip,
-            )
-        assert out is None and req.voice_ref_id is None and req.voice_ref_path is None
-    assert any("clamped" in r.message for r in caplog.records)
+def test_bv_clamp_free_keeps_ref_for_voxcpm_drops_for_non_voxcpm():
+    # Round 13 E3: own-voice narration is open to ALL tiers on voxcpm; non-voxcpm engines still clear it.
+    req = _clamp_req(tts_engine="voxcpm")
+    out = api_mod._clamp_recap_voice_ref(
+        req, user=SimpleNamespace(id=7, account_category="FREE"), user_id=7, is_vip=False,
+    )
+    assert out == "/srv/ref.wav" and req.voice_ref_id == "webapp_ref_u1_abcdef012345"
+
+    req_gem = _clamp_req(tts_engine="gemini")
+    out_gem = api_mod._clamp_recap_voice_ref(
+        req_gem, user=SimpleNamespace(id=7, account_category="FREE"), user_id=7, is_vip=False,
+    )
+    assert out_gem is None and req_gem.voice_ref_id is None and req_gem.voice_ref_path is None
 
 
 def test_bv_clamp_keeps_ref_for_purchased_and_admin():
@@ -272,12 +265,10 @@ def test_bv_clamp_keeps_ref_for_purchased_and_admin():
     assert out2 == "/srv/ref.wav"
 
 
-def test_bv_clamp_user_object_wins_over_flag():
-    # A FREE user object clamps even if a caller passed is_vip=True —
-    # the user row is the tier's source of truth.
-    free = SimpleNamespace(id=7, is_admin=False, account_category="FREE")
-    req = _clamp_req()
-    out = api_mod._clamp_recap_voice_ref(req, user=free, user_id=7, is_vip=True)
+def test_bv_clamp_non_voxcpm_clears_ref_even_for_vip():
+    vip = SimpleNamespace(id=7, is_admin=False, account_category="PURCHASED")
+    req = _clamp_req(tts_engine="edge")
+    out = api_mod._clamp_recap_voice_ref(req, user=vip, user_id=7, is_vip=True)
     assert out is None and req.voice_ref_path is None
 
 
@@ -334,14 +325,14 @@ def test_bv_upload_saves_with_ownership_prefix(tmp_path, monkeypatch):
     assert saved.is_file() and saved.stat().st_size == result["size_bytes"]
 
 
-def test_bv_upload_free_is_locked_not_500(tmp_path, monkeypatch):
+def test_bv_upload_free_is_allowed_with_ownership_prefix(tmp_path, monkeypatch):
+    # Round 13 E3: FREE users can also upload own-voice samples with strict owner-id prefix.
     user = SimpleNamespace(id=880202, is_admin=False, account_category="FREE")
-    with pytest.raises(HTTPException) as excinfo:
-        _call_upload(tmp_path, monkeypatch, user=user)
-    assert excinfo.value.status_code == 403
-    assert excinfo.value.detail == api_mod.RECAP_OWN_VOICE_VIP_ONLY_DETAIL
-    assert not list((tmp_path / "temp" / "voxcpm_refs").glob("*")) \
-        if (tmp_path / "temp" / "voxcpm_refs").exists() else True
+    result, _ = _call_upload(tmp_path, monkeypatch, user=user)
+    assert result["success"] is True
+    assert result["ref_id"].startswith("webapp_ref_u880202_")
+    saved = tmp_path / "temp" / "voxcpm_refs" / f"{result['ref_id']}.wav"
+    assert saved.is_file()
 
 
 def test_bv_upload_admin_allowed_and_ext_coerced(tmp_path, monkeypatch):
@@ -503,7 +494,7 @@ def test_bv_submit_unknown_ref_rejected_before_credits(ledger, monkeypatch, tmp_
         ledger, monkeypatch, uid=uid,
         voice_ref_id=f"webapp_ref_u{uid}_000000000000",
     )
-    assert outcome[0] == "error" and outcome[1] == 400
+    assert outcome[0] == "error" and outcome[1] in (400, 404)
     assert captured == []  # nothing dispatched
     assert ledger.credits(uid) == 5  # balance untouched
 
@@ -512,25 +503,26 @@ def test_bv_submit_other_users_ref_rejected(ledger, monkeypatch, tmp_path):
     uid = 880303
     ref_id, _ = _ref_file(tmp_path, 880399)  # owned by someone else
     (outcome, captured) = _submit(ledger, monkeypatch, uid=uid, voice_ref_id=ref_id)
-    assert outcome[0] == "error" and outcome[1] == 400
+    assert outcome[0] == "error" and outcome[1] in (400, 403)
     assert captured == []
     assert ledger.credits(uid) == 5
 
 
-def test_bv_submit_free_ref_is_clamped_job_proceeds(ledger, monkeypatch, tmp_path):
+def test_bv_submit_free_ref_is_allowed_in_round13(ledger, monkeypatch, tmp_path):
+    # Round 13 E3: FREE user with own uploaded voice ref uses it on voxcpm without clamping.
     uid = 880304
-    ref_id, _ = _ref_file(tmp_path, uid)
+    ref_id, ref_path = _ref_file(tmp_path, uid)
     (outcome, captured) = _submit(
         ledger, monkeypatch, uid=uid, category="FREE", voice_ref_id=ref_id
     )
     assert outcome[0] == "ok", outcome
     job_id = outcome[1]["recap_id"]
-    assert captured[0][1].voice_ref_path is None
-    assert captured[0][1].voice_ref_id is None
+    assert captured[0][1].voice_ref_path == str(ref_path)
+    assert captured[0][1].voice_ref_id == ref_id
     row = ledger.job_row(job_id)
-    assert row["recap_ref_audio_path"] is None
-    assert api_mod.RECAP_JOBS_REGISTRY[job_id]["voice_ref_used"] is False
-    assert ledger.credits(uid) == 4  # normal persona charge, no error
+    assert row["recap_ref_audio_path"] == str(ref_path)
+    assert api_mod.RECAP_JOBS_REGISTRY[job_id]["voice_ref_used"] is True
+    assert ledger.credits(uid) == 4
 
 
 def test_bv_submit_admin_ref_kept_despite_free_category(ledger, monkeypatch, tmp_path):

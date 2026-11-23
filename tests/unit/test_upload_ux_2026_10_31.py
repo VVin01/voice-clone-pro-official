@@ -218,7 +218,6 @@ def test_new_pick_clears_stale_source_and_cta_is_guarded():
     seg2 = APP_JS[start:start + 1600]
     assert "if (state.recapUploadPending)" in seg2
     assert 't("toast_recap_not_uploaded")' in seg2
-    # A successful URL analyze confirms a (URL) source and clears the
-    # file-upload pending flag, so link recaps are never blocked.
-    ana = APP_JS.index("state.uploadedVideoPath = null;\n                state.recapUploadPending = false;")
+    # A URL analyze clears the file-upload path & pending flag, so link recaps are never blocked.
+    ana = APP_JS.index("state.uploadedVideoPath = null;\n            state.recapUploadPending = false;")
     assert ana > 0

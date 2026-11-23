@@ -16,9 +16,10 @@ from app.models.schema import (
 )
 from app.services.ledger import (
     consume_seconds,
-    get_current_monthly_period,
+    get_current_daily_period,
     get_minute_balance,
     get_or_create_user,
+    grant_daily_free_allowance,
     grant_monthly_free_allowance,
     credit_purchased_minutes,
 )
@@ -27,40 +28,32 @@ from app.services.queue import create_voice_clone_job
 
 
 @pytest.mark.asyncio
-async def test_monthly_free_allowance_idempotency(db_session):
-    """Monthly free allowance (180s) is granted once per calendar month YYYY-MM UTC."""
+async def test_daily_free_allowance_idempotency(db_session):
+    """Limits round (2026-11-23): daily free allowance (180s) replaces monthly (which is a no-op)."""
     user, _ = await get_or_create_user(db_session, telegram_id=555001)
-    period = get_current_monthly_period()
+    # Legacy monthly grant is intentionally a no-op.
+    granted_m, _ = await grant_monthly_free_allowance(db_session, user.id)
+    assert granted_m is False
 
-    # Initial grant for current period
-    granted1, bal = await grant_monthly_free_allowance(db_session, user.id, period=period)
+    today = get_current_daily_period()
+
+    # Initial grant for today
+    granted1, bal = await grant_daily_free_allowance(db_session, user.id, day=today)
     assert granted1 is True
-    assert bal.monthly_free_seconds == 180
-    assert bal.last_monthly_grant_period == period
+    assert bal.daily_free_seconds == 180
+    assert bal.last_daily_grant_date == today
 
-    # Subsequent call for same period returns (False, bal) without duplicate grant
-    granted, bal_again = await grant_monthly_free_allowance(db_session, user.id, period=period)
+    # Subsequent call for same day returns (False, bal) without duplicate grant
+    granted, bal_again = await grant_daily_free_allowance(db_session, user.id, day=today)
     assert granted is False
-    assert bal_again.monthly_free_seconds == 180
+    assert bal_again.daily_free_seconds == 180
 
-    # Verify only 1 grant row exists
-    grants = (
-        await db_session.execute(
-            select(MonthlyFreeAllowanceGrant).where(
-                MonthlyFreeAllowanceGrant.user_id == user.id,
-                MonthlyFreeAllowanceGrant.period == period,
-            )
-        )
-    ).scalars().all()
-    assert len(grants) == 1
-    assert grants[0].seconds == 180
-
-    # Verify next month gets a new grant
-    next_month = "2099-01"
-    granted_next, bal_next = await grant_monthly_free_allowance(db_session, user.id, period=next_month)
+    # Next day resets (non-accumulating) to 180s
+    next_day = "2099-01-01"
+    granted_next, bal_next = await grant_daily_free_allowance(db_session, user.id, day=next_day)
     assert granted_next is True
-    assert bal_next.monthly_free_seconds == 180
-    assert bal_next.last_monthly_grant_period == next_month
+    assert bal_next.daily_free_seconds == 180
+    assert bal_next.last_daily_grant_date == next_day
 
 
 @pytest.mark.asyncio
@@ -208,33 +201,34 @@ async def test_model_tier_permissions(db_session, tmp_path):
 
 @pytest.mark.asyncio
 async def test_deduction_order_and_automatic_reversion(db_session):
-    """Deduction order consumes monthly_free_seconds first, then purchased_seconds. Reverts to FREE when purchased hits 0."""
+    """Deduction order consumes daily_free_seconds first, then purchased_seconds. Retains PURCHASED entitlement at 0."""
     user, _ = await get_or_create_user(db_session, telegram_id=555006)
-    await grant_monthly_free_allowance(db_session, user.id)
-    # Grant purchased minutes (1 minute = 60s)
+    today = get_current_daily_period()
+    # Grant daily free while still FREE, then promote via purchase (Limits round: PURCHASED stops future daily grants).
+    await grant_daily_free_allowance(db_session, user.id, day=today)
     await credit_purchased_minutes(db_session, user_id=user.id, minutes=1)
     assert user.account_category == AccountCategory.PURCHASED.value
 
     bal = await get_minute_balance(db_session, user.id)
-    assert bal.monthly_free_seconds == 180
+    assert bal.effective_daily_free_seconds == 180
     assert bal.purchased_seconds == 60
     assert bal.total_usable_seconds == 240
 
-    # Deduct 100s -> must deduct entirely from monthly_free_seconds (180 - 100 = 80s left)
+    # Deduct 100s -> must deduct entirely from daily_free_seconds (180 - 100 = 80s left)
     bal1 = await consume_seconds(db_session, user_id=user.id, seconds_to_consume=100, job_id="job_ded_1")
-    assert bal1.monthly_free_seconds == 80
+    assert bal1.daily_free_seconds == 80
     assert bal1.purchased_seconds == 60
     assert user.account_category == AccountCategory.PURCHASED.value
 
-    # Deduct 100s -> consumes remaining 80s monthly_free, and 20s from purchased_seconds (60 - 20 = 40s left)
+    # Deduct 100s -> consumes remaining 80s daily_free, and 20s from purchased_seconds (60 - 20 = 40s left)
     bal2 = await consume_seconds(db_session, user_id=user.id, seconds_to_consume=100, job_id="job_ded_2")
-    assert bal2.monthly_free_seconds == 0
+    assert bal2.daily_free_seconds == 0
     assert bal2.purchased_seconds == 40
     assert user.account_category == AccountCategory.PURCHASED.value
 
     # Deduct remaining 40s -> purchased_seconds reaches 0 -> user retains PURCHASED entitlement state
     bal3 = await consume_seconds(db_session, user_id=user.id, seconds_to_consume=40, job_id="job_ded_3")
-    assert bal3.monthly_free_seconds == 0
+    assert bal3.daily_free_seconds == 0
     assert bal3.purchased_seconds == 0
     assert user.account_category == AccountCategory.PURCHASED.value
 
@@ -243,12 +237,8 @@ async def test_deduction_order_and_automatic_reversion(db_session):
 async def test_purchased_entitlement_preservation_and_insufficient_balance_guidance(db_session, tmp_path):
     """Verify that a user who purchased minutes retains PURCHASED entitlement at 0 balance.
 
-    1. User purchases minutes -> Promoted to PURCHASED category.
-    2. All purchased minutes are consumed -> Account category remains PURCHASED.
-    3. User retains 2,000 character limit and access to Purchased models.
-    4. When granted a new monthly Free allowance (180s), user can generate up to 2,000 chars with Purchased models.
-    5. When total usable balance reaches 0, job creation returns INSUFFICIENT_BALANCE.
-    6. Historical purchase and deduction records in MinuteLedgerEvent remain intact.
+    Limits round (2026-11-23): PURCHASED users do not receive daily free allowances;
+    at 0 balance job creation returns INSUFFICIENT_BALANCE until re-credited.
     """
     user, _ = await get_or_create_user(db_session, telegram_id=555009)
     await credit_purchased_minutes(db_session, user_id=user.id, minutes=5, payment_id="PAY-ENTITLEMENT-1")
@@ -283,17 +273,9 @@ async def test_purchased_entitlement_preservation_and_insufficient_balance_guida
     avail_names = [m.name for m in avail]
     assert "PurchasedOnlyModel" in avail_names
 
-    # If user creates job, create_voice_clone_job grants monthly free allowance if not already granted.
-    # To test strictly zero balance, grant and consume current monthly allowance first:
-    await grant_monthly_free_allowance(db_session, user.id)
-    bal_after_grant = await get_minute_balance(db_session, user.id)
-    if bal_after_grant.total_usable_seconds > 0:
-        await consume_seconds(
-            db_session,
-            user_id=user.id,
-            seconds_to_consume=bal_after_grant.total_usable_seconds,
-            job_id="job_spend_allowance",
-        )
+    # PURCHASED user does not receive daily free allowance; 0 balance returns INSUFFICIENT_BALANCE
+    granted_daily, _ = await grant_daily_free_allowance(db_session, user.id)
+    assert granted_daily is False
     bal_zero = await get_minute_balance(db_session, user.id)
     assert bal_zero.total_usable_seconds == 0
 
@@ -307,15 +289,13 @@ async def test_purchased_entitlement_preservation_and_insufficient_balance_guida
     assert job_failed is None
     assert res == "INSUFFICIENT_BALANCE"
 
-    # Now grant next month's allowance: user can use 2,000 characters with PurchasedOnlyModel
-    await grant_monthly_free_allowance(db_session, user.id, period="2099-12")
+    # Re-credit purchased minutes -> user can submit long text (> Free limit) with PurchasedOnlyModel
+    await credit_purchased_minutes(db_session, user_id=user.id, minutes=5, payment_id="PAY-ENTITLEMENT-2")
     bal_new = await get_minute_balance(db_session, user.id)
-    assert bal_new.monthly_free_seconds == 180
-    assert bal_new.purchased_seconds == 0
-    assert bal_new.total_usable_seconds == 180
+    assert bal_new.purchased_seconds == 300
+    assert bal_new.total_usable_seconds == 300
 
-    # User can submit long text (e.g. 1,500 chars > Free 500 limit) using Purchased model
-    long_text = "A" * 1500
+    long_text = "A" * 3500
     job_ok, res_ok = await create_voice_clone_job(
         session=db_session,
         user_id=user.id,
@@ -333,6 +313,7 @@ async def test_purchased_entitlement_preservation_and_insufficient_balance_guida
         )
     ).scalars().all()
     purchase_credits = [e for e in events if e.source == LedgerSource.PURCHASE.value and e.direction == LedgerDirection.CREDIT.value]
-    assert len(purchase_credits) == 1
+    assert len(purchase_credits) == 2
     assert purchase_credits[0].seconds == 300
     assert purchase_credits[0].reference_id == "PAY-ENTITLEMENT-1"
+    assert purchase_credits[1].reference_id == "PAY-ENTITLEMENT-2"

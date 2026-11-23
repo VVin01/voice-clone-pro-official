@@ -281,15 +281,25 @@ def test_2c_tts_hardening_rotation_and_free_quota():
     primaries = tuple(m for m in gtts.TTS_MODELS if "lite" not in m.lower())
     assert gtts._primary_quota_fraction_used(primaries, kh, keys) >= 0.70
 
-    # FREE-only quota gate: PURCHASED and admins always bypass FREE taste/budget locks.
-    vip_ctx = gemini_key_service.GeminiRouteContext(
+    # Limits round (2026-11-23): PURCHASED without own key is also taste-governed (10m/day);
+    # admins and own-key holders still bypass taste/budget locks.
+    vip_spent = gemini_key_service.GeminiRouteContext(
         user_id=1, tier="PURCHASED", is_admin=False,
-        taste_used_seconds=99999.0, taste_limit_seconds=60.0,
+        taste_used_seconds=99999.0, taste_limit_seconds=600.0,
         budget_used_requests=999, budget_limit_requests=10,
     )
-    assert vip_ctx.pool_allowed is True
-    assert vip_ctx.taste_blocked is False
-    assert vip_ctx.taste_remaining_seconds is None
+    assert vip_spent.pool_allowed is False
+    assert vip_spent.taste_blocked is True
+    assert vip_spent.taste_remaining_seconds == 0.0
+
+    admin_ctx = gemini_key_service.GeminiRouteContext(
+        user_id=1, tier="PURCHASED", is_admin=True,
+        taste_used_seconds=99999.0, taste_limit_seconds=600.0,
+        budget_used_requests=999, budget_limit_requests=10,
+    )
+    assert admin_ctx.pool_allowed is True
+    assert admin_ctx.taste_blocked is False
+    assert admin_ctx.taste_remaining_seconds is None
 
     free_blocked = gemini_key_service.GeminiRouteContext(
         user_id=2, tier="FREE", is_admin=False,
@@ -320,7 +330,7 @@ def test_2d_and_2e_png_and_stage_telemetry_and_2h_capsule():
     assert ".recap-steps-capsule" in STYLE_CSS
     assert "flex: 1 1 0;" in STYLE_CSS
     assert "flex: 2.8 1 auto;" in STYLE_CSS
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "r148" not in INDEX_HTML
 
 

@@ -860,18 +860,15 @@ def test_blocked_link_info_recognises_host_refusal_copy():
 
 
 def test_analyze_honesty_wiring_present():
-    # Warning element by the CTA + painter/clearer helpers + call sites.
-    assert 'id="recap-unverified-warning"' in INDEX_HTML
-    assert "function paintRecapUnverifiedWarning(" in APP_JS
+    # Part C (2026-11-23): advisory unverified warning was replaced by the strict Step 1 gate error card.
+    assert 'id="recap-unverified-warning"' not in INDEX_HTML
+    assert 'id="recap-url-error-card"' in INDEX_HTML
+    assert "function showRecapUrlError(" in APP_JS
+    assert "function resetRecapUrlVerification(" in APP_JS
     assert "function clearRecapInfoCard(" in APP_JS
-    assert "clearRecapInfoCard();" in APP_JS  # Analyze start clears the stale card
-    assert APP_JS.count("paintRecapUnverifiedWarning();") >= 4
-    assert I18N_JS.count("recap_unverified_warning") == 2  # my + en
-    # The warning is advisory: the painter never touches the CTA.
-    start = APP_JS.index("function paintRecapUnverifiedWarning(")
-    end = APP_JS.index("window.paintRecapUnverifiedWarning", start)
-    assert "btn-start-recap" not in APP_JS[start:end]
-    assert "disabled" not in APP_JS[start:end]
+    assert "clearRecapInfoCard();" in APP_JS
+    assert I18N_JS.count("recap_url_verify_err_title:") == 2
+    assert I18N_JS.count("recap_url_verify_err_body:") == 2
 
 
 # ── 8. yt-dlp pin ───────────────────────────────────────────────────

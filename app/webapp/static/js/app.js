@@ -460,6 +460,256 @@ const state = {
 };
 state.recapTtsEngine = "voxcpm";
 
+// ── Part A: Cold-Open Splash Controller (tap + locale audio + strict READY gate) ──
+const __vcpSplashState = {
+    mountedAt: Date.now(),
+    minOnScreenMs: 400,
+    fadeMs: 300,
+    postTapSafetyMs: 10000,
+    clipFailFadeDelayMs: 350,
+    clipStallSafetyMs: 15000,
+    profileApplied: false,
+    initialTabRendered: false,
+    bootReady: false,
+    tapped: false,
+    clipDone: false,
+    safetyFired: false,
+    hiding: false,
+    hidden: false,
+    preloadedLocale: null,
+    preloadedAudio: null,
+    activeAudio: null,
+    safetyTimer: null,
+    failTimer: null,
+    clipTimeoutTimer: null,
+    minDelayTimer: null,
+    fadeTimer: null,
+    wired: false,
+};
+
+function resolveVcpSplashLocale() {
+    try {
+        if (typeof currentLang !== "undefined" && (currentLang === "en" || currentLang === "my")) {
+            return currentLang;
+        }
+        if (typeof localStorage !== "undefined") {
+            return localStorage.getItem("studio_lang") === "en" ? "en" : "my";
+        }
+    } catch (e) {}
+    return "my";
+}
+
+function preloadVcpSplashGreeting(locale) {
+    const loc = locale === "en" ? "en" : "my";
+    try {
+        if (typeof document !== "undefined" && document.documentElement) {
+            document.documentElement.setAttribute("data-lang", loc);
+        }
+    } catch (e) {}
+    if (__vcpSplashState.tapped || __vcpSplashState.hidden) return;
+    if (__vcpSplashState.preloadedLocale === loc && __vcpSplashState.preloadedAudio) return;
+    __vcpSplashState.preloadedLocale = loc;
+    const src = `/static/audio/welcome_${loc}.mp3`;
+    try {
+        if (typeof Audio !== "undefined") {
+            const a = new Audio(src);
+            a.preload = "auto";
+            if (typeof a.load === "function") a.load();
+            __vcpSplashState.preloadedAudio = a;
+        }
+    } catch (e) {
+        __vcpSplashState.preloadedAudio = null;
+    }
+}
+
+function flushDeferredGateAndBanner() {
+    try {
+        if (typeof entryGate !== "undefined" && entryGate.locked) {
+            const overlay = document.getElementById("gate-lock");
+            if (overlay) overlay.classList.remove("hidden");
+            document.body?.classList.add("gate-locked");
+        }
+        if (state._pendingGateBannerData && typeof updateGateBanner === "function") {
+            const pending = state._pendingGateBannerData;
+            state._pendingGateBannerData = null;
+            updateGateBanner(pending);
+        }
+        if (state._pendingGateReminder && typeof showGateReminder === "function") {
+            state._pendingGateReminder = false;
+            showGateReminder();
+        }
+        if (state._pendingOpenViaTelegram && typeof showOpenViaTelegramModal === "function") {
+            state._pendingOpenViaTelegram = false;
+            showOpenViaTelegramModal();
+        }
+    } catch (e) {}
+}
+
+function isSplashBlockingOverlays() {
+    if (typeof document === "undefined") return false;
+    const el = document.getElementById("vcp-splash");
+    if (!el && !document.body?.hasAttribute("data-splash-active")) return false;
+    return !(__vcpSplashState.hidden && __vcpSplashState.bootReady);
+}
+
+function attemptVcpSplashHide() {
+    const s = __vcpSplashState;
+    if (s.hidden || s.hiding) return;
+    // Strict rule: untapped splash NEVER hides, even after READY.
+    if (!s.tapped || !s.clipDone) return;
+    if (!s.bootReady && !s.safetyFired) return;
+
+    const elapsed = Date.now() - s.mountedAt;
+    const waitMs = Math.max(0, s.minOnScreenMs - elapsed);
+    if (waitMs > 0) {
+        if (s.minDelayTimer) clearTimeout(s.minDelayTimer);
+        s.minDelayTimer = setTimeout(() => {
+            s.minDelayTimer = null;
+            attemptVcpSplashHide();
+        }, waitMs);
+        return;
+    }
+
+    s.hiding = true;
+    if (s.safetyTimer) { clearTimeout(s.safetyTimer); s.safetyTimer = null; }
+    if (s.clipTimeoutTimer) { clearTimeout(s.clipTimeoutTimer); s.clipTimeoutTimer = null; }
+    if (s.failTimer) { clearTimeout(s.failTimer); s.failTimer = null; }
+
+    const el = typeof document !== "undefined" ? document.getElementById("vcp-splash") : null;
+    if (el) el.classList.add("vcp-splash-hiding");
+
+    s.fadeTimer = setTimeout(() => {
+        s.fadeTimer = null;
+        s.hidden = true;
+        if (el && typeof el.remove === "function") el.remove();
+        else if (el && el.parentNode) el.parentNode.removeChild(el);
+        try { document.body?.removeAttribute("data-splash-active"); } catch (e) {}
+        flushDeferredGateAndBanner();
+    }, s.fadeMs);
+}
+
+function onVcpSplashClipFinished() {
+    const s = __vcpSplashState;
+    if (s.clipDone) return;
+    s.clipDone = true;
+    if (s.clipTimeoutTimer) { clearTimeout(s.clipTimeoutTimer); s.clipTimeoutTimer = null; }
+    if (s.failTimer) { clearTimeout(s.failTimer); s.failTimer = null; }
+    if (s.bootReady) {
+        attemptVcpSplashHide();
+    } else if (!s.safetyTimer) {
+        // Post-tap safety valve ONLY: if READY still has not landed 10s after the greeting ends, fade anyway.
+        s.safetyTimer = setTimeout(() => {
+            s.safetyTimer = null;
+            s.safetyFired = true;
+            attemptVcpSplashHide();
+        }, s.postTapSafetyMs);
+    }
+}
+
+function handleVcpSplashTap() {
+    const s = __vcpSplashState;
+    if (s.tapped || s.hidden || s.hiding) return;
+    s.tapped = true;
+    const el = typeof document !== "undefined" ? document.getElementById("vcp-splash") : null;
+    if (el) el.classList.add("vcp-splash-starting");
+
+    const loc = resolveVcpSplashLocale();
+    const src = `/static/audio/welcome_${loc}.mp3`;
+    let audio = (s.preloadedAudio && s.preloadedLocale === loc) ? s.preloadedAudio : null;
+    if (!audio && typeof Audio !== "undefined") {
+        try { audio = new Audio(src); } catch (e) { audio = null; }
+    }
+    s.activeAudio = audio;
+
+    if (!audio || typeof audio.play !== "function") {
+        s.failTimer = setTimeout(onVcpSplashClipFinished, s.clipFailFadeDelayMs);
+        return;
+    }
+
+    const triggerFailFade = () => {
+        if (!s.clipDone && !s.failTimer) {
+            if (s.clipTimeoutTimer) { clearTimeout(s.clipTimeoutTimer); s.clipTimeoutTimer = null; }
+            s.failTimer = setTimeout(onVcpSplashClipFinished, s.clipFailFadeDelayMs);
+        }
+    };
+
+    audio.onended = () => onVcpSplashClipFinished();
+    audio.onerror = () => triggerFailFade();
+    s.clipTimeoutTimer = setTimeout(onVcpSplashClipFinished, s.clipStallSafetyMs);
+
+    try {
+        const playRes = audio.play();
+        if (playRes && typeof playRes.catch === "function") {
+            playRes.catch(() => triggerFailFade());
+        }
+    } catch (err) {
+        triggerFailFade();
+    }
+}
+
+function syncVcpSplashReady() {
+    const s = __vcpSplashState;
+    if (s.profileApplied && s.initialTabRendered) {
+        s.bootReady = true;
+        if (s.tapped && s.clipDone) {
+            attemptVcpSplashHide();
+        }
+    }
+}
+
+function initVcpSplash() {
+    const s = __vcpSplashState;
+    const el = typeof document !== "undefined" ? document.getElementById("vcp-splash") : null;
+    if (!el) {
+        s.hidden = true;
+        return;
+    }
+    if (!s.wired) {
+        s.wired = true;
+        el.addEventListener("click", handleVcpSplashTap);
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleVcpSplashTap();
+            }
+        });
+    }
+    preloadVcpSplashGreeting(resolveVcpSplashLocale());
+}
+
+window.__vcpSplash = {
+    state: __vcpSplashState,
+    init: initVcpSplash,
+    tap: handleVcpSplashTap,
+    onLocaleChanged: preloadVcpSplashGreeting,
+    notifyProfileApplied() {
+        __vcpSplashState.profileApplied = true;
+        syncVcpSplashReady();
+    },
+    notifyInitialTabRendered() {
+        __vcpSplashState.initialTabRendered = true;
+        syncVcpSplashReady();
+    },
+    markBootReady() {
+        __vcpSplashState.profileApplied = true;
+        __vcpSplashState.initialTabRendered = true;
+        syncVcpSplashReady();
+    },
+    isReady() {
+        return __vcpSplashState.bootReady;
+    },
+    isHidden() {
+        return __vcpSplashState.hidden;
+    },
+    isReadyAndHidden() {
+        return __vcpSplashState.bootReady && __vcpSplashState.hidden;
+    },
+    isBlockingOverlays: isSplashBlockingOverlays,
+};
+if (typeof document !== "undefined" && document.getElementById("vcp-splash")) {
+    initVcpSplash();
+}
+
 // ── Telegram WebApp Initialization & Native Integrations (Phase 1) ─────────
 function initLitePerformanceMode() {
     try {
@@ -2404,6 +2654,10 @@ function setupAccountPrefs() {
 // -- 401 "Open via Telegram" modal (security audit round 2) --
 let openViaTelegramShown = false;
 function showOpenViaTelegramModal() {
+    if (typeof isSplashBlockingOverlays === "function" && isSplashBlockingOverlays()) {
+        state._pendingOpenViaTelegram = true;
+        return;
+    }
     if (openViaTelegramShown) return;
     openViaTelegramShown = true;
     const modal = document.getElementById("open-via-telegram-modal");
@@ -2466,6 +2720,10 @@ window.isAuthFailure = isAuthFailure;
 // -- 403 membership gate: turn a dead-end API error into the join reminder --
 let gateNoticeAt = 0;
 async function showGateReminder() {
+    if (typeof isSplashBlockingOverlays === "function" && isSplashBlockingOverlays()) {
+        state._pendingGateReminder = true;
+        return;
+    }
     const now = Date.now();
     if (now - gateNoticeAt < 1500) return; // one nudge per burst of calls
     gateNoticeAt = now;
@@ -2515,16 +2773,19 @@ window.showGateReminder = showGateReminder;
     };
 })();
 
-// Auth media fetch with in-memory cache for voice samples
+// Auth media fetch with in-memory cache for voice samples (Persona + Edge)
 const _authSampleCache = new Map();
+function isCacheableVoiceSampleUrl(url) {
+    return url.startsWith("/api/voices/sample/") || url.startsWith("/api/voices/edge-sample/");
+}
 async function fetchAuthImageUrl(url) {
     if (!url || !url.startsWith("/api/")) return url;
-    if (url.startsWith("/api/voices/sample/") && _authSampleCache.has(url)) return _authSampleCache.get(url);
+    if (isCacheableVoiceSampleUrl(url) && _authSampleCache.has(url)) return _authSampleCache.get(url);
     try {
         const res = await fetch(url, { headers: getAuthHeaders(false) });
         if (isAuthFailure(res) || !res.ok) return null;
         const objUrl = URL.createObjectURL(await res.blob());
-        if (url.startsWith("/api/voices/sample/")) _authSampleCache.set(url, objUrl);
+        if (isCacheableVoiceSampleUrl(url)) _authSampleCache.set(url, objUrl);
         return objUrl;
     } catch (e) { return null; }
 }
@@ -3217,7 +3478,7 @@ function syncTabAdminLifecycle(tabId) {
         if (!window._adminProRequested && state.user && state.user.is_admin) {
             window._adminProRequested = true;
             const s = document.createElement("script");
-            const _av = (document.querySelector('script[src*="/static/js/app.js"]')?.src.match(/[?&]v=([^&]+)/) || [])[1] || "20261120_p1";
+            const _av = (document.querySelector('script[src*="/static/js/app.js"]')?.src.match(/[?&]v=([^&]+)/) || [])[1] || "20261123_followup1";
             s.src = "/static/js/admin_pro.js?v=" + _av;
             s.defer = true;
             document.head.appendChild(s);
@@ -3243,6 +3504,7 @@ function syncTabAdminLifecycle(tabId) {
 
 function pauseInactiveTabMedia(activeTabId) {
     try {
+        if (typeof stopCurrentVoicePreview === "function") stopCurrentVoicePreview();
         document.querySelectorAll(".tab-pane").forEach(pane => {
             if (pane.id !== activeTabId && typeof pane.querySelectorAll === "function") {
                 pane.querySelectorAll("audio, video").forEach(mediaEl => {
@@ -3415,7 +3677,14 @@ async function loadUserProfile() {
             // gate/ban interceptor; every OTHER failure — sub-500
             // included — must not silently leave the placeholder
             // balances on screen with no error and no retry (hunt #7).
-            if (res.status !== 403) setHomeLoadErrorVisible(true);
+            if (res.status === 403) {
+                const errData = await res.clone().json().catch(() => null);
+                if (errData && String(errData.detail || "").includes("MAINTENANCE_MODE") && typeof enterMaintenanceLock === "function") {
+                    await enterMaintenanceLock();
+                }
+            } else {
+                setHomeLoadErrorVisible(true);
+            }
             return;
         }
         const data = await res.json();
@@ -3501,9 +3770,6 @@ async function loadUserProfile() {
 
         updateGateBanner(data);
         refreshWelcomeStrip();
-        state.canUseAiThumbnail = !!(data.can_use_ai_thumbnail || data.is_vip || data.is_admin);
-        state.aiThumbnailCapReached = !!data.ai_thumbnail_cap_reached;
-        syncRecapAiThumbnailUI();
         const freeTermsNote = document.getElementById("recap-free-terms-note");
         if (freeTermsNote) {
             // Up-front free terms under the Recap source input
@@ -3550,6 +3816,9 @@ async function loadUserProfile() {
         setHomeLoadErrorVisible(true);
     } finally {
         if (document.body) { document.body.removeAttribute("data-profile-loading"); document.body.classList.remove("profile-loading"); }
+        if (window.__vcpSplash && typeof window.__vcpSplash.notifyProfileApplied === "function") {
+            window.__vcpSplash.notifyProfileApplied();
+        }
     }
 }
 
@@ -3715,85 +3984,155 @@ async function loadLegacyModels() {
     return;
 }
 
-// ── Voice Preview Audio Player Controller ──────────────────────────────────
+// ── Voice Preview Audio Player Controller (Part D: shared gesture-primed Audio) ──
+const VCP_SILENT_WAV_DATA_URI =
+    "data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
+let sharedPreviewAudio = null;
 let currentVoiceAudio = null;
 let currentPreviewButton = null;
 let previewFetchSeq = 0;
 
+function getSharedPreviewAudio() {
+    if (!sharedPreviewAudio) {
+        sharedPreviewAudio = new Audio();
+        sharedPreviewAudio.preload = "auto";
+        sharedPreviewAudio.playsInline = true;
+    }
+    return sharedPreviewAudio;
+}
+
+function primeSharedPreviewAudio() {
+    const audio = getSharedPreviewAudio();
+    try {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+        audio.muted = true;
+        audio.src = VCP_SILENT_WAV_DATA_URI;
+        const p = audio.play();
+        if (p && typeof p.then === "function") {
+            p.then(() => {
+                if (audio.src === VCP_SILENT_WAV_DATA_URI) {
+                    try { audio.pause(); } catch (_) {}
+                }
+            }).catch(() => {});
+        }
+    } catch (e) {
+        console.warn("Shared preview audio prime warning:", e);
+    }
+    return audio;
+}
+window.getSharedPreviewAudio = getSharedPreviewAudio;
+window.primeSharedPreviewAudio = primeSharedPreviewAudio;
+
+function setPreviewButtonState(buttonEl, mode) {
+    if (!buttonEl) return;
+    buttonEl.classList.toggle("playing", mode === "playing");
+    buttonEl.classList.toggle("loading", mode === "loading");
+    const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
+    const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
+    if (mode === "loading") {
+        if (icon) icon.innerText = "⏳";
+        if (label) label.innerText = t("preview_loading");
+    } else if (mode === "playing") {
+        if (icon) icon.innerText = "⏸️";
+        if (label) label.innerText = t("preview_playing");
+    } else {
+        if (icon) icon.innerText = buttonEl.classList.contains("mini") ? "▶️" : "🔊";
+        if (label) {
+            const k = label.getAttribute("data-i18n");
+            label.innerText = k === "btn_preview_short"
+                ? t("btn_preview_short")
+                : (buttonEl.classList.contains("mini") ? t("preview_voice") : t("btn_preview_voice"));
+        }
+    }
+}
+
 function stopCurrentVoicePreview() {
     previewFetchSeq++; // cancel any in-flight sample fetch
     if (currentVoiceAudio) {
-        currentVoiceAudio.pause();
-        currentVoiceAudio.currentTime = 0;
+        currentVoiceAudio.onended = null;
+        currentVoiceAudio.onerror = null;
+        try { currentVoiceAudio.pause(); } catch (_) {}
+        try { currentVoiceAudio.currentTime = 0; } catch (_) {}
         currentVoiceAudio = null;
     }
     if (currentPreviewButton) {
-        currentPreviewButton.classList.remove("playing");
-        const icon = currentPreviewButton.querySelector(".preview-btn-icon, .preview-icon");
-        if (icon) icon.innerText = currentPreviewButton.classList.contains("preview-recap-voice-btn") ? "🔊" : "▶️";
-        const label = currentPreviewButton.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
-        if (label) {
-            const k = label.getAttribute("data-i18n");
-            label.innerText = k === "btn_preview_short" ? t("btn_preview_short") : (currentPreviewButton.classList.contains("mini") ? t("preview_voice") : t("btn_preview_voice"));
-        }
+        setPreviewButtonState(currentPreviewButton, "idle");
         currentPreviewButton = null;
     }
 }
 
-async function playVoicePreview(voiceId, buttonEl) {
-    haptic("light");
-    if (!voiceId) return;
-
-    if (currentVoiceAudio && currentPreviewButton === buttonEl) {
-        stopCurrentVoicePreview();
-        return;
-    }
-
-    stopCurrentVoicePreview();
-
-    // /api/voices/sample requires the Telegram auth header (privacy
+async function runSharedVoicePreview(audioUrl, buttonEl, labelTag) {
     const seq = ++previewFetchSeq;
-    const audioUrl = `/api/voices/sample/${encodeURIComponent(voiceId)}`;
-    // Loading state NOW (upload-ux pass): the authenticated blob fetch
+    // Synchronously prime the shared Audio element INSIDE the user gesture
+    // before any await, so mobile Telegram WebViews / strict autoplay keep
+    // playback unlocked even when the authenticated fetch takes 2+ seconds.
+    const audio = primeSharedPreviewAudio();
     currentPreviewButton = buttonEl;
-    if (buttonEl) {
-        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
-        if (icon) icon.innerText = "⏳";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
-        if (label) label.innerText = t("preview_loading");
+    setPreviewButtonState(buttonEl, "loading");
+    try {
+        const authUrl = await fetchAuthImageUrl(audioUrl);
+        if (seq !== previewFetchSeq) return;
+        if (!authUrl) {
+            stopCurrentVoicePreview();
+            showStudioToast(t("preview_load_failed"), "error");
+            return;
+        }
+        audio.onended = () => {
+            if (seq !== previewFetchSeq) return;
+            stopCurrentVoicePreview();
+        };
+        audio.onerror = () => {
+            if (seq !== previewFetchSeq) return;
+            console.warn("Audio playback failed for", labelTag);
+            stopCurrentVoicePreview();
+            showStudioToast(t("preview_load_failed"), "error");
+        };
+        audio.muted = false;
+        audio.src = authUrl;
+        try { audio.currentTime = 0; } catch (_) {}
+        audio.load();
+        currentVoiceAudio = audio;
+        currentPreviewButton = buttonEl;
+        setPreviewButtonState(buttonEl, "playing");
+
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+            playPromise.catch(e => {
+                if (seq !== previewFetchSeq) return;
+                console.warn(`${labelTag} preview playback error:`, e);
+                stopCurrentVoicePreview();
+                showStudioToast(t("preview_load_failed"), "error");
+            });
+        }
+    } catch (e) {
+        if (seq !== previewFetchSeq) return;
+        console.warn(`${labelTag} preview handler error:`, e);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
     }
-    const authUrl = await fetchAuthImageUrl(audioUrl);
-    if (seq !== previewFetchSeq) return;
-    if (!authUrl) {
+}
+
+async function playVoicePreview(voiceId, buttonEl) {
+    try {
+        haptic("light");
+        if (!voiceId) {
+            showStudioToast(t("preview_load_failed"), "error");
+            return;
+        }
+        if (currentPreviewButton && currentPreviewButton === buttonEl) {
+            stopCurrentVoicePreview();
+            return;
+        }
         stopCurrentVoicePreview();
-        showStudioToast(t("preview_load_failed"), 'error');
-        return;
+        const audioUrl = `/api/voices/sample/${encodeURIComponent(voiceId)}`;
+        await runSharedVoicePreview(audioUrl, buttonEl, `persona:${voiceId}`);
+    } catch (e) {
+        console.warn("Voice preview outer error:", e);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
     }
-    const audio = new Audio(authUrl);
-    currentVoiceAudio = audio;
-    currentPreviewButton = buttonEl;
-
-    if (buttonEl) {
-        buttonEl.classList.add("playing");
-        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
-        if (icon) icon.innerText = "⏸️";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
-        if (label) label.innerText = t("preview_playing");
-    }
-
-    audio.play().catch(e => {
-        console.warn("Voice preview playback error:", e);
-        stopCurrentVoicePreview();
-    });
-
-    audio.onended = () => {
-        stopCurrentVoicePreview();
-    };
-
-    audio.onerror = () => {
-        console.warn("Audio playback failed for voice:", voiceId);
-        stopCurrentVoicePreview();
-    };
 }
 
 // ── Gemini TTS Voice Previews ──────────────────────────────────────
@@ -3812,79 +4151,64 @@ function resolveGeminiPreviewVoice() {
 }
 
 async function playGeminiVoicePreview(voiceName, buttonEl) {
-    haptic("light");
-    if (!voiceName) return;
-
-    if (currentVoiceAudio && currentPreviewButton === buttonEl) {
+    try {
+        haptic("light");
+        if (!voiceName) {
+            showStudioToast(t("preview_load_failed"), "error");
+            return;
+        }
+        if (currentPreviewButton && currentPreviewButton === buttonEl) {
+            stopCurrentVoicePreview();
+            return;
+        }
         stopCurrentVoicePreview();
-        return;
+        const audioUrl = `${GEMINI_VOICE_PREVIEW_DIR}/preview_${voiceName.toLowerCase()}.mp3`;
+        await runSharedVoicePreview(audioUrl, buttonEl, `gemini:${voiceName}`);
+    } catch (e) {
+        console.warn("Gemini voice preview outer error:", e);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
     }
-
-    stopCurrentVoicePreview();
-
-    const seq = ++previewFetchSeq;
-    const audioUrl = `${GEMINI_VOICE_PREVIEW_DIR}/preview_${voiceName.toLowerCase()}.mp3`;
-    // Loading state NOW, same as playVoicePreview: show the tap on
-    currentPreviewButton = buttonEl;
-    if (buttonEl) {
-        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
-        if (icon) icon.innerText = "⏳";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
-        if (label) label.innerText = t("preview_loading");
-    }
-    const authUrl = await fetchAuthImageUrl(audioUrl);
-    if (seq !== previewFetchSeq) return;
-    if (!authUrl) {
-        stopCurrentVoicePreview();
-        showStudioToast(t("preview_load_failed"), 'error');
-        return;
-    }
-    const audio = new Audio(authUrl);
-    currentVoiceAudio = audio;
-    currentPreviewButton = buttonEl;
-
-    if (buttonEl) {
-        buttonEl.classList.add("playing");
-        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
-        if (icon) icon.innerText = "⏸️";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
-        if (label) label.innerText = t("preview_playing");
-    }
-
-    audio.play().catch(e => {
-        console.warn("Gemini voice preview playback error:", e);
-        stopCurrentVoicePreview();
-    });
-
-    audio.onended = () => {
-        stopCurrentVoicePreview();
-    };
-
-    audio.onerror = () => {
-        console.warn("Audio playback failed for Gemini voice:", voiceName);
-        stopCurrentVoicePreview();
-    };
 }
 
-function previewSelectedGeminiVoice() {
-    const btn = document.getElementById("btn-preview-gemini-voice");
-    playGeminiVoicePreview(resolveGeminiPreviewVoice(), btn);
+function previewSelectedGeminiVoice(e) {
+    try {
+        if (e) e.stopPropagation();
+        const btn = document.getElementById("btn-preview-gemini-voice") || (e && e.currentTarget) || null;
+        playGeminiVoicePreview(resolveGeminiPreviewVoice(), btn);
+    } catch (err) {
+        console.warn("previewSelectedGeminiVoice error:", err);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
+    }
 }
 
 window.previewSelectedVoiceTabPersona = function(e) {
-    if (e) e.stopPropagation();
-    const sel = document.getElementById("voice-persona-select");
-    const id = (sel && sel.value) || state.selectedPersona || "komin";
-    const btn = document.getElementById("btn-voice-persona-preview") || (e && e.currentTarget) || null;
-    playVoicePreview(id, btn);
+    try {
+        if (e) e.stopPropagation();
+        const sel = document.getElementById("voice-persona-select");
+        const id = (sel && sel.value) || state.selectedPersona || "komin";
+        const btn = document.getElementById("btn-voice-persona-preview") || (e && e.currentTarget) || null;
+        playVoicePreview(id, btn);
+    } catch (err) {
+        console.warn("previewSelectedVoiceTabPersona error:", err);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
+    }
 };
 
 window.previewSelectedRecapPersona = function(e) {
-    if (e) e.stopPropagation();
-    const sel = document.getElementById("recap-persona-select");
-    const id = (sel && sel.value) || state.recapVoice || "komin";
-    const btn = document.getElementById("btn-recap-persona-preview") || (e && e.currentTarget) || null;
-    playVoicePreview(id, btn);
+    try {
+        if (e) e.stopPropagation();
+        const sel = document.getElementById("recap-persona-select");
+        const id = (sel && sel.value) || state.recapVoice || "komin";
+        const btn = document.getElementById("btn-recap-persona-preview") || (e && e.currentTarget) || null;
+        playVoicePreview(id, btn);
+    } catch (err) {
+        console.warn("previewSelectedRecapPersona error:", err);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
+    }
 };
 
 // Single source of truth for all 8 Microsoft Edge TTS voices (shared by TTS tab + Recap Step 3)
@@ -3928,97 +4252,95 @@ function populateEdgeVoiceSelects() {
 window.populateEdgeVoiceSelects = populateEdgeVoiceSelects;
 
 async function playEdgeVoicePreview(voiceKey, buttonEl) {
-    haptic("light");
-    const key = normalizeEdgeVoiceKey(voiceKey);
-    if (currentVoiceAudio && currentPreviewButton === buttonEl) {
+    try {
+        haptic("light");
+        const key = normalizeEdgeVoiceKey(voiceKey);
+        if (currentPreviewButton && currentPreviewButton === buttonEl) {
+            stopCurrentVoicePreview();
+            return;
+        }
         stopCurrentVoicePreview();
-        return;
-    }
-    stopCurrentVoicePreview();
-    const seq = ++previewFetchSeq;
-    const audioUrl = `/api/voices/edge-sample/${encodeURIComponent(key)}`;
-    currentPreviewButton = buttonEl;
-    if (buttonEl) {
-        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
-        if (icon) icon.innerText = "⏳";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
-        if (label) label.innerText = t("preview_loading");
-    }
-    const authUrl = await fetchAuthImageUrl(audioUrl);
-    if (seq !== previewFetchSeq) return;
-    if (!authUrl) {
+        const audioUrl = `/api/voices/edge-sample/${encodeURIComponent(key)}`;
+        await runSharedVoicePreview(audioUrl, buttonEl, `edge:${key}`);
+    } catch (e) {
+        console.warn("Edge voice preview outer error:", e);
         stopCurrentVoicePreview();
         showStudioToast(t("preview_load_failed"), "error");
-        return;
     }
-    const audio = new Audio(authUrl);
-    currentVoiceAudio = audio;
-    currentPreviewButton = buttonEl;
-    if (buttonEl) {
-        buttonEl.classList.add("playing");
-        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
-        if (icon) icon.innerText = "⏸️";
-        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
-        if (label) label.innerText = t("preview_playing");
-    }
-    audio.play().catch(e => {
-        console.warn("Edge voice preview playback error:", e);
-        stopCurrentVoicePreview();
-    });
-    audio.onended = () => stopCurrentVoicePreview();
-    audio.onerror = () => stopCurrentVoicePreview();
 }
 window.playEdgeVoicePreview = playEdgeVoicePreview;
 
 window.previewSelectedRecapEdgeVoice = function(e) {
-    if (e) e.stopPropagation();
-    const sel = document.getElementById("recap-edge-voice-select");
-    const key = normalizeEdgeVoiceKey((sel && sel.value) || state.recapEdgeVoice || "thiha");
-    const btn = document.getElementById("btn-recap-edge-preview") || (e && e.currentTarget) || null;
-    playEdgeVoicePreview(key, btn);
+    try {
+        if (e) e.stopPropagation();
+        const sel = document.getElementById("recap-edge-voice-select");
+        const key = normalizeEdgeVoiceKey((sel && sel.value) || state.recapEdgeVoice || "thiha");
+        const btn = document.getElementById("btn-recap-edge-preview") || (e && e.currentTarget) || null;
+        playEdgeVoicePreview(key, btn);
+    } catch (err) {
+        console.warn("previewSelectedRecapEdgeVoice error:", err);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
+    }
 };
 
 window.previewSelectedTtsVoice = function(e) {
-    if (e) e.stopPropagation();
-    const eng = (typeof ttsState !== "undefined" && ttsState.engine) || "gemini";
-    if (eng === "edge") {
-        const eSel = document.getElementById("tts-edge-voice-select");
-        const eVal = normalizeEdgeVoiceKey((eSel && eSel.value) || "thiha");
-        const btn = document.getElementById("btn-tts-edge-preview") || (e && e.currentTarget) || null;
-        playEdgeVoicePreview(eVal, btn);
-        return;
+    try {
+        if (e) e.stopPropagation();
+        const eng = (typeof ttsState !== "undefined" && ttsState.engine) || "gemini";
+        if (eng === "edge") {
+            const eSel = document.getElementById("tts-edge-voice-select");
+            const eVal = normalizeEdgeVoiceKey((eSel && eSel.value) || "thiha");
+            const btn = document.getElementById("btn-tts-edge-preview") || (e && e.currentTarget) || null;
+            playEdgeVoicePreview(eVal, btn);
+            return;
+        }
+        const gSel = document.getElementById("tts-gemini-voice-select");
+        const gVal = (gSel && gSel.value) || "Charon";
+        const btn = document.getElementById("btn-tts-gemini-preview") || (e && e.currentTarget) || null;
+        playGeminiVoicePreview(gVal, btn);
+    } catch (err) {
+        console.warn("previewSelectedTtsVoice error:", err);
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
     }
-    const gSel = document.getElementById("tts-gemini-voice-select");
-    const gVal = (gSel && gSel.value) || "Charon";
-    const btn = document.getElementById("btn-tts-gemini-preview") || (e && e.currentTarget) || null;
-    playGeminiVoicePreview(gVal, btn);
 };
 
 window.previewSavedCustomVoice = function(e) {
-    if (e) e.stopPropagation();
-    const file = state.recapOwnVoiceFile || state.selectedReferenceFile;
-    if (!file) {
-        showStudioToast(t("preview_load_failed"), "info");
-        return;
-    }
-    haptic("light");
-    if (recapOwnVoiceAudio) {
+    try {
+        if (e) e.stopPropagation();
+        const file = state.recapOwnVoiceFile || state.selectedReferenceFile;
+        if (!file) {
+            showStudioToast(t("preview_load_failed"), "error");
+            return;
+        }
+        haptic("light");
+        if (recapOwnVoiceAudio) {
+            stopRecapOwnVoicePreview();
+            return;
+        }
+        stopCurrentVoicePreview();
+        recapOwnVoiceObjectUrl = URL.createObjectURL(file);
+        const audio = new Audio(recapOwnVoiceObjectUrl);
+        recapOwnVoiceAudio = audio;
+        const btn = document.getElementById("btn-saved-custom-voice-preview");
+        setPreviewButtonState(btn, "playing");
+        const resetBtn = (hadErr) => {
+            stopRecapOwnVoicePreview();
+            setPreviewButtonState(btn, "idle");
+            if (hadErr) showStudioToast(t("preview_load_failed"), "error");
+        };
+        audio.onended = () => resetBtn(false);
+        audio.onerror = () => resetBtn(true);
+        audio.play().catch(err => {
+            console.warn("Saved custom voice preview error:", err);
+            resetBtn(true);
+        });
+    } catch (err) {
+        console.warn("previewSavedCustomVoice error:", err);
         stopRecapOwnVoicePreview();
-        return;
+        showStudioToast(t("preview_load_failed"), "error");
     }
-    stopCurrentVoicePreview();
-    recapOwnVoiceObjectUrl = URL.createObjectURL(file);
-    const audio = new Audio(recapOwnVoiceObjectUrl);
-    recapOwnVoiceAudio = audio;
-    const btn = document.getElementById("btn-saved-custom-voice-preview");
-    if (btn) btn.innerText = "⏸️ " + t("preview_playing");
-    const resetBtn = () => {
-        stopRecapOwnVoicePreview();
-        if (btn) btn.innerText = t("btn_preview_short");
-    };
-    audio.onended = resetBtn;
-    audio.onerror = resetBtn;
-    audio.play().catch(resetBtn);
 };
 
 window.deleteSavedCustomVoice = function() {
@@ -4258,6 +4580,11 @@ window.dismissWelcomeStrip = dismissWelcomeStrip;
 function updateGateBanner(data) {
     const banner = document.getElementById("gate-banner");
     if (!banner || !data) return;
+    if (typeof isSplashBlockingOverlays === "function" && isSplashBlockingOverlays()) {
+        state._pendingGateBannerData = data;
+        banner.classList.add("hidden");
+        return;
+    }
     const title = document.getElementById("gate-banner-title");
     const desc = document.getElementById("gate-banner-desc");
     const status = document.getElementById("gate-banner-status");
@@ -4318,7 +4645,11 @@ const entryGate = { locked: true, checking: false, lastCheckAt: 0, mode: "member
 
 function lockEntryGate() {
     const overlay = document.getElementById("gate-lock");
-    if (overlay) overlay.classList.remove("hidden");
+    const blockedBySplash = typeof isSplashBlockingOverlays === "function" && isSplashBlockingOverlays();
+    if (overlay) {
+        if (blockedBySplash) overlay.classList.add("hidden");
+        else overlay.classList.remove("hidden");
+    }
     document.body.classList.add("gate-locked");
     entryGate.locked = true;
 }
@@ -5552,17 +5883,114 @@ function setRecapPreviewState(mode) {
 }
 window.setRecapPreviewState = setRecapPreviewState;
 
-// True when a source is present in any form: a typed URL, a picked or
+// Part C: strict URL syntax + verified metadata gate helpers.
+const RECAP_GENERIC_VIDEO_TITLES = new Set([
+    "", "media", "video", "video content", "web media", "web media content",
+    "online content", "youtube content", "tiktok content", "facebook content",
+    "douyin content", "instagram content", "twitter content", "x content",
+    "bilibili content", "vimeo content", "reddit content",
+    "untitled", "untitled video", "unknown", "none",
+]);
+
+function extractRecapHttpUrl(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    const m = s.match(/https?:\/\/[^\s]+/i);
+    return m ? m[0].replace(/[),.;!?]+$/, "") : "";
+}
+
+function isValidRecapHttpUrl(raw) {
+    const candidate = extractRecapHttpUrl(raw);
+    if (!candidate) return false;
+    try {
+        const parsed = new URL(candidate);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+        const host = (parsed.hostname || "").trim().toLowerCase();
+        if (!host || !host.includes(".") || host.startsWith(".") || host.endsWith(".")) return false;
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function isGenericRecapVideoTitle(title, platform) {
+    const norm = String(title || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!norm || RECAP_GENERIC_VIDEO_TITLES.has(norm)) return true;
+    const plat = String(platform || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (plat && (norm === plat || norm === `${plat} content` || norm === `${plat} video`)) return true;
+    return false;
+}
+
+function isVerifiedRecapInfoPayload(data) {
+    if (!data || typeof data !== "object") return false;
+    if (data.metadata_verified !== true) return false;
+    const title = String(data.title || "").trim();
+    if (!title || isGenericRecapVideoTitle(title, data.platform)) return false;
+    const dur = Number(data.duration_seconds);
+    if (!Number.isFinite(dur) || dur <= 0) return false;
+    return true;
+}
+
+function hideRecapUrlError() {
+    const card = document.getElementById("recap-url-error-card");
+    if (card) card.classList.add("hidden");
+}
+
+function showRecapUrlError() {
+    const infoBox = document.getElementById("recap-video-info-box");
+    if (infoBox) infoBox.classList.add("hidden");
+    const card = document.getElementById("recap-url-error-card");
+    const titleEl = document.getElementById("recap-url-error-title");
+    const bodyEl = document.getElementById("recap-url-error-body");
+    if (titleEl) titleEl.textContent = t("recap_url_verify_err_title");
+    if (bodyEl) bodyEl.textContent = t("recap_url_verify_err_body");
+    if (card) card.classList.remove("hidden");
+}
+
+function resetRecapUrlVerification(opts) {
+    const options = opts || {};
+    state.recapVerifiedSourceUrl = null;
+    state.recapThumbnailUrl = null;
+    state.recapSourceWidth = null;
+    state.recapSourceHeight = null;
+    state.recapStepsSourceFlowDone = false;
+    if (state.recapFrameUrl) {
+        try { URL.revokeObjectURL(state.recapFrameUrl); } catch (e) {}
+        state.recapFrameUrl = null;
+    }
+    if (state.recapCompositeUrl) {
+        try { URL.revokeObjectURL(state.recapCompositeUrl); } catch (e) {}
+        state.recapCompositeUrl = null;
+    }
+    recapCompositeHash = "";
+    if (options.clearInfo !== false && typeof clearRecapInfoCard === "function") {
+        clearRecapInfoCard();
+    }
+    if (options.hideError) {
+        hideRecapUrlError();
+    }
+    if (!state.uploadedVideoPath) {
+        [1, 2, 3].forEach(s => markRecapStepDone(s, false));
+        if (recapCurrentStep > 1) showRecapStep(1);
+    }
+    setRecapPreviewState((state.uploadedVideoPath && !state.recapUploadPending) ? "ready" : "empty");
+    if (typeof updateCanvasMockupVisuals === "function") updateCanvasMockupVisuals();
+    if (typeof updateRecapDurationGate === "function") updateRecapDurationGate();
+}
+
+window.isValidRecapHttpUrl = isValidRecapHttpUrl;
+window.isVerifiedRecapInfoPayload = isVerifiedRecapInfoPayload;
+window.showRecapUrlError = showRecapUrlError;
+window.hideRecapUrlError = hideRecapUrlError;
+window.resetRecapUrlVerification = resetRecapUrlVerification;
+
+// Strict Part C source check: true ONLY when a direct upload succeeded OR
+// a URL passed full server metadata verification (never on raw typed text).
 function recapHasSource() {
-    const cv = document.getElementById("canvas-video-player");
-    const urlInput = document.getElementById("recap-url-input");
-    const fileInput = document.getElementById("recap-video-file-input");
+    if (state.uploadedVideoPath && !state.recapUploadPending) return true;
     return Boolean(
-        state.recapThumbnailUrl ||
-        state.uploadedVideoPath ||
-        (urlInput && urlInput.value.trim()) ||
-        (fileInput && fileInput.files && fileInput.files.length > 0) ||
-        (cv && cv.src && !cv.classList.contains("hidden"))
+        state.recapVerifiedSourceUrl &&
+        isVerifiedRecapInfoPayload(state.lastRecapInfo)
     );
 }
 window.recapHasSource = recapHasSource;
@@ -5680,7 +6108,14 @@ function markRecapStepDone(n, done) {
 }
 
 function syncRecapStepsWithSource(ready) {
-    if (!ready || !document.getElementById("recap-step-1")) return;
+    if (!document.getElementById("recap-step-1")) return;
+    if (!ready || !recapHasSource()) {
+        [1, 2, 3].forEach(s => {
+            if (RECAP_STEP_DONE[s]) markRecapStepDone(s, false);
+        });
+        state.recapStepsSourceFlowDone = false;
+        return;
+    }
     if (!RECAP_STEP_DONE[1]) markRecapStepDone(1, true);
     if (!state.recapStepsSourceFlowDone) {
         state.recapStepsSourceFlowDone = true;
@@ -6198,17 +6633,12 @@ function setupRecapVisualEditor() {
         };
     }
 
-    // The info card must never claim a server-side Ready the server
+    // Paint verified metadata tags on the Recap info card.
     function paintRecapInfoMeta(data, isOverLimit, maxAllowed) {
         const durSpan = document.getElementById("recap-info-dur");
         const subSpan = document.getElementById("recap-info-sub");
         if (durSpan) {
-            if (data.metadata_verified === false) {
-                // Graceful-fallback metadata: no invented duration,
-                // no green "Ready" claim (journey-audit honesty rule).
-                durSpan.className = "mini-tag";
-                durSpan.innerHTML = `⏱️ — <span style="color:#d97706; font-weight:700; margin-left:4px;">(${t("recap_unverified_note")})</span>`;
-            } else if (isOverLimit) {
+            if (isOverLimit) {
                 durSpan.className = "mini-tag text-danger";
                 const maxM = Math.floor(maxAllowed / 60);
                 const msg = state.user?.is_vip ? tf("recap_over_max_vip", { max: maxM }) : t("recap_over_max_free");
@@ -6220,17 +6650,6 @@ function setupRecapVisualEditor() {
         }
         if (subSpan) subSpan.innerText = data.has_subtitles ? t("recap_sub_ready") : t("recap_sub_ai");
     }
-
-    // R39 (Analyze honesty, mirroring the R38 Downloader fix): when
-    function paintRecapUnverifiedWarning() {
-        const el = document.getElementById("recap-unverified-warning");
-        if (!el) return;
-        const data = state.lastRecapInfo;
-        const show = !!data && data.metadata_verified === false && !state.uploadedVideoPath;
-        el.classList.toggle("hidden", !show);
-        if (show) el.innerText = t("recap_unverified_warning");
-    }
-    window.paintRecapUnverifiedWarning = paintRecapUnverifiedWarning;
 
     // R39: clear the analyze info card + cached payload at Analyze
     function clearRecapInfoCard() {
@@ -6252,12 +6671,18 @@ function setupRecapVisualEditor() {
         // rejection — the gate repaint below hides its Step-4 note.
         recapSubmitRejectText = "";
         updateRecapSplitCostHint();
-        paintRecapUnverifiedWarning();
     }
     window.clearRecapInfoCard = clearRecapInfoCard;
 
     // Repaint the cached analyze result after a language change.
     function refreshRecapInfoMetaLanguage() {
+        const errCard = document.getElementById("recap-url-error-card");
+        if (errCard && !errCard.classList.contains("hidden")) {
+            const titleEl = document.getElementById("recap-url-error-title");
+            const bodyEl = document.getElementById("recap-url-error-body");
+            if (titleEl) titleEl.textContent = t("recap_url_verify_err_title");
+            if (bodyEl) bodyEl.textContent = t("recap_url_verify_err_body");
+        }
         const data = state.lastRecapInfo;
         if (!data) return;
         const box = document.getElementById("recap-video-info-box");
@@ -6266,7 +6691,6 @@ function setupRecapVisualEditor() {
         let isOverLimit = !!(data.duration_seconds && data.duration_seconds > maxAllowed);
         if (isOverLimit && (state.user?.is_admin || state.user?.is_vip)) isOverLimit = false;
         paintRecapInfoMeta(data, isOverLimit, maxAllowed);
-        paintRecapUnverifiedWarning();
         // Batch CI: the gate notices are painted imperatively (not
         // via data-i18n), so a language switch re-renders them too.
         updateRecapDurationGate();
@@ -6476,9 +6900,7 @@ function setupRecapVisualEditor() {
         if (state.recapCompositeUrl) { URL.revokeObjectURL(state.recapCompositeUrl); state.recapCompositeUrl = null; }
         recapCompositeHash = "";
         state.recapUploadPending = false;
-        // R39: an uploaded file's duration is server-measured — the
-        // unverified-link warning by the CTA never applies to it.
-        paintRecapUnverifiedWarning();
+        hideRecapUrlError();
         state.recapVideoTitle = data.title || file.name;
         state.recapSourceDuration = data.duration_seconds;
         // Batch DF: remember a no-audio verdict for THIS file — the
@@ -9027,42 +9449,61 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // 14. Analyze / Video Info Check Button
+    // 14. Analyze / Video Info Check Button (Part C strict URL gate)
     const btnAnalyze = document.getElementById("btn-fetch-recap-info");
     const recapInfoBox = document.getElementById("recap-video-info-box");
+    let recapUrlTimer = null;
     if (btnAnalyze) {
         btnAnalyze.addEventListener("click", async () => {
+            if (recapUrlTimer) { clearTimeout(recapUrlTimer); recapUrlTimer = null; }
             const urlInput = document.getElementById("recap-url-input");
-            let url = urlInput ? urlInput.value.trim() : "";
-            if (!url) {
+            const rawInput = urlInput ? urlInput.value.trim() : "";
+            if (!rawInput) {
+                resetRecapUrlVerification({ clearInfo: true, hideError: false });
+                showRecapUrlError();
                 showStudioToast(t("toast_empty_url"), 'warning');
                 return;
             }
+            // Client-side strict URL gate: reject plain text / malformed URLs
+            // immediately on Step 1 with ZERO server call.
+            if (!isValidRecapHttpUrl(rawInput)) {
+                resetRecapUrlVerification({ clearInfo: true, hideError: false });
+                showRecapUrlError();
+                return;
+            }
             // Auto extract clean URL from Douyin/TikTok share text
-            const urlMatch = url.match(/https?:\/\/[^\s]+/i);
-            if (urlMatch) {
-                url = urlMatch[0];
-                if (urlInput) urlInput.value = url;
+            const url = extractRecapHttpUrl(rawInput);
+            if (urlInput && urlInput.value.trim() !== url) {
+                urlInput.value = url;
             }
             haptic("medium");
             btnAnalyze.disabled = true;
             const originalText = btnAnalyze.innerText;
             btnAnalyze.innerText = "⏳...";
+            hideRecapUrlError();
+            state.uploadedVideoPath = null;
+            state.recapUploadPending = false;
+            state.recapVerifiedSourceUrl = null;
+            state.recapThumbnailUrl = null;
+            state.recapStepsSourceFlowDone = false;
+            [1, 2, 3].forEach(s => markRecapStepDone(s, false));
             setRecapPreviewState("loading");
-            // R39: the previous source's card must not stand in for
-            // this one while the new Analyze runs.
             clearRecapInfoCard();
 
             try {
                 // Phase 4: a Downloader "Use in Recap" hand-off carries
                 // the SAME /api/downloader/extract payload the Downloader
-                // already verified for this exact URL — reuse it instead
-                // of re-probing (no re-upload, no second extract). Every
-                // paint / gate / composite step below runs unchanged.
+                // already verified for this exact URL — reuse it only if
+                // it passes the strict verified payload rule.
                 let data = null;
                 const handoff = state.recapExtractHandoff;
                 state.recapExtractHandoff = null;
-                if (handoff && handoff.data && (handoff.url === url || handoff.data.url === url)) {
+                if (
+                    handoff &&
+                    handoff.data &&
+                    (handoff.url === url || handoff.data.url === url) &&
+                    isVerifiedRecapInfoPayload(handoff.data)
+                ) {
                     data = handoff.data;
                 } else {
                     const res = await fetchWithTimeout("/api/downloader/extract", {
@@ -9070,32 +9511,44 @@ function setupRecapVisualEditor() {
                         headers: getAuthHeaders(),
                         body: JSON.stringify({ url: url }),
                     }, 60000);
-                    data = await res.json();
-                    if (!res.ok) throw new Error(data.detail || "Analysis failed");
+                    let parsed = null;
+                    try { parsed = await res.json(); } catch (_) { parsed = null; }
+                    if (!res.ok || !isVerifiedRecapInfoPayload(parsed)) {
+                        throw new Error((parsed && parsed.detail) || t("recap_url_verify_err_title"));
+                    }
+                    data = parsed;
                 }
 
+                // If the user edited the URL while the check was in flight,
+                // discard the stale result so Steps 2/3 never unlock for an
+                // edited/unverified link.
+                const currentInputUrl = urlInput ? extractRecapHttpUrl(urlInput.value.trim()) : url;
+                if (currentInputUrl && currentInputUrl !== url && currentInputUrl !== data.url) {
+                    return;
+                }
+
+                hideRecapUrlError();
                 if (recapInfoBox) recapInfoBox.classList.remove("hidden");
                 const thumbImg = document.getElementById("recap-info-thumb");
                 const titleSpan = document.getElementById("recap-info-title");
-                const durSpan = document.getElementById("recap-info-dur");
                 const platformSpan = document.getElementById("recap-info-platform");
-                const subSpan = document.getElementById("recap-info-sub");
 
                 setCardThumb(thumbImg, data.thumbnail || null);
-                if (titleSpan) titleSpan.innerText = data.title || "Video";
-                state.recapVideoTitle = data.title || "Movie Recap Video";
+                if (titleSpan) titleSpan.innerText = data.title;
+                state.recapVideoTitle = data.title;
 
-                state.recapSourceDuration = data.duration_seconds || 0;
+                state.recapSourceDuration = Number(data.duration_seconds) || 0;
                 state.lastRecapInfo = data;
+                state.recapVerifiedSourceUrl = data.url || url;
                 updateRecapSplitCostHint();
                 const maxAllowed = recapNormalMaxSeconds();
-                let isOverLimit = (data.duration_seconds && data.duration_seconds > maxAllowed);
+                let isOverLimit = (state.recapSourceDuration > maxAllowed);
                 if (isOverLimit && state.user?.is_admin) {
                     isOverLimit = false; // admins are exempt from the cap
                 }
                 const btnStartRecap = document.getElementById("btn-start-recap");
                 paintRecapInfoMeta(data, isOverLimit, maxAllowed);
-                paintRecapUnverifiedWarning();
+                updateRecapDurationGate();
                 if (isOverLimit) {
                     if (btnStartRecap) {
                         btnStartRecap.disabled = true;
@@ -9115,7 +9568,7 @@ function setupRecapVisualEditor() {
                     state.recapSourceWidth = data.width;
                     state.recapSourceHeight = data.height;
                 }
-                // Reflect thumbnail on live preview canvas & state
+                // Reflect thumbnail on live preview canvas & state ONLY after verification
                 if (data.thumbnail) {
                     const safeThumb = sanitizeCssMediaUrl(data.thumbnail);
                     state.recapThumbnailUrl = safeThumb;
@@ -9131,145 +9584,80 @@ function setupRecapVisualEditor() {
                     updateCanvasMockupVisuals();
                 }
 
-                state.uploadedVideoPath = null;
-                state.recapUploadPending = false;
-                // Batch AA: a successful Check for a NEW url is a
-                // new source — reset the blur box / subtitle Y to
-                // the tight defaults (re-checking the SAME url keeps
-                // the user's box).
                 const _aaSourceKey = "url:" + (data.url || url);
                 if (state.recapLoadedSourceKey !== _aaSourceKey) {
                     state.recapLoadedSourceKey = _aaSourceKey;
                     resetBlurBoxForNewSource();
                 }
-                // R40 item 9: remember the VERIFIED source URL so the
-                // canvas can pull real frames from /recap/preview-frame
-                // at the seek position. Unverified payloads get none —
-                // the server could not read the source either.
-                if (data.metadata_verified && data.url) {
-                    state.recapVerifiedSourceUrl = data.url;
-                    if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
-                    if (window.scheduleRecapFrameRefresh) window.scheduleRecapFrameRefresh(Math.min(5, data.duration_seconds || 5));
-                    // Batch AK: composite for the newly verified source.
-                    if (window.scheduleRecapCompositeRefresh) window.scheduleRecapCompositeRefresh();
-                } else {
-                    state.recapVerifiedSourceUrl = null;
-                }
-                state.recapSeekSec = Math.min(5, data.duration_seconds || 5);
+                if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
+                if (window.scheduleRecapFrameRefresh) window.scheduleRecapFrameRefresh(Math.min(5, state.recapSourceDuration || 5));
+                if (window.scheduleRecapCompositeRefresh) window.scheduleRecapCompositeRefresh();
+                state.recapSeekSec = Math.min(5, state.recapSourceDuration || 5);
                 if (typeof updateSeekChipsAvailability === "function") {
-                    updateSeekChipsAvailability(data.duration_seconds || 0);
+                    updateSeekChipsAvailability(state.recapSourceDuration || 0);
                 }
                 setRecapPreviewState("ready");
             } catch (err) {
-                setRecapPreviewState(recapHasSource() ? "ready" : "empty");
-                // The extract returned nothing at all (timeout / network):
-                // a source URL is present but its metadata is unverified.
-                // Show the info card in the same honest unverified state
-                // a fallback payload gets, instead of leaving it hidden
-                // behind its static placeholders (RS-4).
-                if (url) {
-                    if (recapInfoBox) recapInfoBox.classList.remove("hidden");
-                    const tSpan = document.getElementById("recap-info-title");
-                    if (tSpan) tSpan.innerText = "Video";
-                    const pSpan = document.getElementById("recap-info-platform");
-                    if (pSpan) {
-                        pSpan.innerText = /tiktok\.com/i.test(url) ? "TikTok"
-                            : /youtu/i.test(url) ? "YouTube"
-                            : /facebook\.com|fb\.watch/i.test(url) ? "Facebook" : "Video";
-                    }
-                    state.recapVideoTitle = "Movie Recap Video";
-                    state.recapSourceDuration = 0;
-                    state.lastRecapInfo = { metadata_verified: false, duration_seconds: 0, has_subtitles: false, estimated_duration: "00:00" };
-                    paintRecapInfoMeta(state.lastRecapInfo, false, recapNormalMaxSeconds());
-                    paintRecapUnverifiedWarning();
-                    // Batch CI: duration is back to UNKNOWN here —
-                    // repaint the gate so no stale notice survives.
-                    updateRecapDurationGate();
-                    state.recapSeekSec = 5;
-                    if (typeof updateSeekChipsAvailability === "function") {
-                        updateSeekChipsAvailability(0);
-                    }
+                // Part C strict gate: stay on Step 1, keep Steps 2/3 locked,
+                // never fabricate a shallow card, never unlock or skip.
+                resetRecapUrlVerification({ clearInfo: true, hideError: false });
+                showRecapUrlError();
+                state.recapSeekSec = 5;
+                if (typeof updateSeekChipsAvailability === "function") {
+                    updateSeekChipsAvailability(0);
                 }
-                const msg = err.message || "";
-                if (msg.includes("Douyin") || msg.includes("Fresh cookies")) {
-                    showStudioToast(t("toast_douyin_blocked"), 'warning', 6000);
-                    const btnFileTab = document.getElementById("btn-source-mode-file");
-                    if (btnFileTab) btnFileTab.click();
-                } else if (blockedLinkInfo(msg).blocked) {
-                    // Blocked source (TikTok / VidMate / a 403 wall):
-                    // the mapper's specific copy names the source and
-                    // the fix, and the user lands on the upload tab —
-                    // the path that always works. Same treatment the
-                    // Douyin branch above already had; previously every
-                    // other blocked source fell into the bare generic.
-                    showErrorToast(err, 'recap');
-                    const btnFileTab = document.getElementById("btn-source-mode-file");
-                    if (btnFileTab) btnFileTab.click();
-                } else if (isNetworkLevelError(err) && recapHasSource()) {
-                    // Q2 (QA cycle 2026-11-02): the extract request
-                    // died at the network level (connection closed /
-                    // timeout — no response at all) while a preview
-                    // frame is already on the canvas (the paste-time
-                    // source thumbnail). The info card painted just
-                    // above already shows the honest "metadata
-                    // unverified" state; a generic error toast on top
-                    // reads as "the frame you can see failed", which
-                    // is false. Failures with no preview on the canvas
-                    // still toast in the branch below.
-                    console.warn('Analyze: extract unreachable, preview-only state kept:', err);
-                } else {
-                    showErrorToast(err, 'generic');
-                }
+                console.warn("Recap URL verification failed:", err);
             } finally {
                 btnAnalyze.disabled = false;
                 btnAnalyze.innerText = originalText;
-                // Batch AK: the settled source re-composites.
-                scheduleRecapCompositeRefresh();
+                if (recapHasSource()) {
+                    scheduleRecapCompositeRefresh();
+                }
             }
         });
     }
 
-    // Auto-detect on input / paste with live YouTube thumbnail & debounce
-    let recapUrlTimer = null;
+    // URL input edit resets verified state immediately and re-locks Steps 2/3
     const urlInput = document.getElementById("recap-url-input");
     if (urlInput) {
         urlInput.addEventListener("input", () => {
-            const val = urlInput.value.trim();
-            // R40 item 5: a typed URL is a present source — reveal the
-            // Style/Subtitle/Blur controls immediately, without waiting
-            // for Analyze to succeed (recompute visibility only; the
-            // preview mode itself is untouched).
-            if (val && state.recapPreviewState !== "ready") {
-                setRecapPreviewState(state.recapPreviewState || "empty");
-            }
-            if (!val) {
-                state.recapThumbnailUrl = null;
-                state.recapVerifiedSourceUrl = null;
-                if (state.recapFrameUrl) { URL.revokeObjectURL(state.recapFrameUrl); state.recapFrameUrl = null; }
-                if (state.recapCompositeUrl) { URL.revokeObjectURL(state.recapCompositeUrl); state.recapCompositeUrl = null; }
-                recapCompositeHash = "";
-                updateCanvasMockupVisuals();
-                if (recapInfoBox) recapInfoBox.classList.add("hidden");
-                const warnEl = document.getElementById("recap-unverified-warning");
-                if (warnEl) warnEl.classList.add("hidden");
-                setRecapPreviewState(recapHasSource() ? "ready" : "empty");
-                return;
-            }
-
-            // Real-time instant YouTube thumbnail extraction
-            const ytMatch = val.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
-            if (ytMatch && ytMatch[1]) {
-                state.recapThumbnailUrl = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
-                updateCanvasMockupVisuals();
-            }
-
-            // Auto-fetch video info after 700ms pause
             clearTimeout(recapUrlTimer);
-            recapUrlTimer = setTimeout(() => {
-                if (val && btnAnalyze && !btnAnalyze.disabled) {
-                    btnAnalyze.click();
+            const val = urlInput.value.trim();
+            // Editing URL text ALWAYS clears verified state and re-locks Steps 2/3
+            // until a new check passes (Part C requirement 4).
+            if (!state.uploadedVideoPath) {
+                resetRecapUrlVerification({ clearInfo: true, hideError: true });
+            } else {
+                hideRecapUrlError();
+            }
+            if (!val) return;
+
+            if (isValidRecapHttpUrl(val)) {
+                recapUrlTimer = setTimeout(() => {
+                    if (urlInput.value.trim() === val && btnAnalyze && !btnAnalyze.disabled) {
+                        btnAnalyze.click();
+                    }
+                }, 700);
+            } else {
+                // Reject obvious non-URL text client-side after pause with ZERO
+                // network call (skip while user is still typing an http/https prefix).
+                const typingHttpPrefix = /^https?:?\/?\/?$/i.test(val) || "https://".startsWith(val.toLowerCase()) || "http://".startsWith(val.toLowerCase());
+                if (!typingHttpPrefix) {
+                    recapUrlTimer = setTimeout(() => {
+                        const cur = urlInput.value.trim();
+                        if (cur && !isValidRecapHttpUrl(cur)) {
+                            resetRecapUrlVerification({ clearInfo: true, hideError: false });
+                            showRecapUrlError();
+                        }
+                    }, 500);
                 }
-            }, 700);
+            }
+        });
+        urlInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && btnAnalyze && !btnAnalyze.disabled) {
+                e.preventDefault();
+                btnAnalyze.click();
+            }
         });
     }
 
@@ -9697,24 +10085,28 @@ function setupRecapVisualEditor() {
         const srcUrl = (cfg.url || "").trim();
         if (/^https?:\/\//i.test(srcUrl)) {
             state.uploadedVideoPath = null;
+            state.recapLoadedSourceKey = "url:" + srcUrl;
             const urlInput = document.getElementById("recap-url-input");
             if (urlInput) urlInput.value = srcUrl;
             const btnUrlMode = document.getElementById("btn-source-mode-url");
             if (btnUrlMode) btnUrlMode.click();
+            resetRecapUrlVerification({ clearInfo: true, hideError: true });
+            const btnCheck = document.getElementById("btn-fetch-recap-info");
+            if (btnCheck && !btnCheck.disabled) btnCheck.click();
         } else if (srcUrl && item && item.source_available) {
             state.uploadedVideoPath = srcUrl;
+            state.recapUploadPending = false;
+            state.recapLoadedSourceKey = "file:" + srcUrl;
             const btnFileMode = document.getElementById("btn-source-mode-file");
             if (btnFileMode) btnFileMode.click();
+            hideRecapUrlError();
+            setRecapPreviewState("ready");
         } else {
             // Upload source is gone: settings are filled, the user
             // picks a source again (the toast explains prefill).
             state.uploadedVideoPath = null;
+            resetRecapUrlVerification({ clearInfo: true, hideError: true });
         }
-        // Batch AA: the prefilled source IS the loaded source — a
-        // later Analyze of THIS url must not reset the prefilled
-        // box; only a different source does.
-        if (/^https?:\/\//i.test(srcUrl)) state.recapLoadedSourceKey = "url:" + srcUrl;
-        else if (srcUrl) state.recapLoadedSourceKey = "file:" + srcUrl;
         const ctaBtn = document.getElementById("btn-start-recap");
         if (ctaBtn) ctaBtn.scrollIntoView({ behavior: "smooth", block: "center" });
     };
@@ -9864,13 +10256,23 @@ async function handleStartRecap() {
     }
     const urlInput = document.getElementById("recap-url-input");
     let url = state.uploadedVideoPath || (urlInput ? urlInput.value.trim() : "");
-    if (!state.uploadedVideoPath && url) {
-        const urlMatch = url.match(/https?:\/\/[^\s]+/i);
-        if (urlMatch) url = urlMatch[0];
-    }
-    if (!url) {
-        showStudioToast(t("toast_empty_url"), 'warning');
-        return;
+    if (!state.uploadedVideoPath) {
+        if (!url) {
+            showStudioToast(t("toast_empty_url"), 'warning');
+            return;
+        }
+        const extractedUrl = extractRecapHttpUrl(url);
+        if (
+            !isValidRecapHttpUrl(url) ||
+            !state.recapVerifiedSourceUrl ||
+            !isVerifiedRecapInfoPayload(state.lastRecapInfo)
+        ) {
+            showRecapUrlError();
+            showStudioToast(t("recap_url_verify_err_title"), 'warning');
+            showRecapStep(1);
+            return;
+        }
+        url = state.recapVerifiedSourceUrl || extractedUrl;
     }
 
     haptic("heavy");
@@ -10320,7 +10722,6 @@ function startRecapJobPolling(jobId) {
                     btnScript.setAttribute("data-dl-url", data.download_urls.script);
                     btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, jobId));
                 }
-                syncRecapAiThumbnailUI(data, jobId);
 
                 // Split parts (optional Video Splitter deliverables)
                 const partsWrap = document.getElementById("recap-parts-wrap");
@@ -11007,16 +11408,7 @@ function setupDownloader() {
                 if (dlPlatform) dlPlatform.innerText = data.platform || "";
                 if (dlUploader) dlUploader.innerText = data.uploader || t("dl_fallback_uploader");
                 if (dlDuration) {
-                    if (data.metadata_verified === false) {
-                        // Same honesty treatment as the Recap card
-                        // (round-4 F-B): the extract fallback invents
-                        // the duration ("03:30") and the title/uploader
-                        // are placeholders — never render the fabricated
-                        // duration as plain fact.
-                        dlDuration.innerHTML = `⏱️ — <span style="color:#d97706; font-weight:700;">(${t("recap_unverified_note")})</span>`;
-                    } else {
-                        dlDuration.innerText = data.estimated_duration || "";
-                    }
+                    dlDuration.innerText = data.estimated_duration || "";
                 }
                 setCardThumb(dlThumb, data.thumbnail || null);
 
@@ -14737,20 +15129,14 @@ async function loadAdminSettings() {
         const elTutLink = document.getElementById("adm-set-tutorial-link");
         const elMaint = document.getElementById("adm-set-maintenance");
         const elMaintNote = document.getElementById("adm-set-maintenance-note");
-        const elGroupAi = document.getElementById("adm-set-group-ai");
         const elCharLimitFree = document.getElementById("adm-set-char-limit-free");
         const elCharLimitPurchased = document.getElementById("adm-set-char-limit-purchased");
         const elFreeAllowance = document.getElementById("adm-set-free-allowance");
-        const elDailyJobLimit = document.getElementById("adm-set-daily-job-limit");
         const elRecapFreeMax = document.getElementById("adm-set-recap-free-max");
         const elRecapMax = document.getElementById("adm-set-recap-max");
-        const elVoiceDailyFree = document.getElementById("adm-set-voice-daily-free");
-        const elVoiceDailyPaid = document.getElementById("adm-set-voice-daily-paid");
         const elTtsDailyFree = document.getElementById("adm-set-tts-daily-free");
         const elTtsDailyPaid = document.getElementById("adm-set-tts-daily-paid");
         const elVoxcpmTimeout = document.getElementById("adm-set-voxcpm-timeout");
-        const elTutVideoEn = document.getElementById("adm-set-tutorial-video-enabled");
-        const elTieredPricing = document.getElementById("adm-set-tiered-pricing");
         const elReqChannelId = document.getElementById("adm-set-required-channel-id");
         const elReqGroupId = document.getElementById("adm-set-required-group-id");
         const elChannelInvite = document.getElementById("adm-set-channel-invite-link");
@@ -14761,7 +15147,6 @@ async function loadAdminSettings() {
         const elTutVoiceLink = document.getElementById("adm-tut-voice-link");
 
         const elTutRecapEn = document.getElementById("adm-tut-recap-enabled");
-        const elTutRecapTitle = document.getElementById("adm-tut-recap-title");
         const elTutRecapLink = document.getElementById("adm-tut-recap-link");
         const elRecapDemoAsset = document.getElementById("adm-recap-demo-asset");
 
@@ -14772,18 +15157,8 @@ async function loadAdminSettings() {
         _admPaintValue(elTutLink, s.tutorial_video_link || "");
         _admPaintChecked(elMaint, !!s.maintenance_mode);
         _admPaintValue(elMaintNote, s.maintenance_note || "");
-        _admPaintChecked(elGroupAi, !!s.group_ai_admin_enabled);
         const elGroupMaster = document.getElementById("adm-group-ai-master-toggle");
         _admPaintChecked(elGroupMaster, !!s.group_ai_admin_enabled);
-        if (elGroupAi && elGroupMaster && !elGroupMaster._synced) {
-            elGroupMaster._synced = true;
-            elGroupMaster.addEventListener("change", () => {
-                elGroupAi.checked = elGroupMaster.checked;
-            });
-            elGroupAi.addEventListener("change", () => {
-                elGroupMaster.checked = elGroupAi.checked;
-            });
-        }
         const elModToggle = document.getElementById("adm-group-ai-moderation-toggle");
         _admPaintChecked(elModToggle, s.group_ai_moderation_enabled === undefined || s.group_ai_moderation_enabled === null ? true : !!s.group_ai_moderation_enabled);
         const elModThreshold = document.getElementById("adm-group-ai-mod-threshold");
@@ -14817,9 +15192,7 @@ async function loadAdminSettings() {
         if (s.private_ai_daily_budget != null) _admPaintValue(elPrivateAiDaily, s.private_ai_daily_budget);
         if (s.character_limit_free != null) _admPaintValue(elCharLimitFree, s.character_limit_free);
         if (s.character_limit_purchased != null) _admPaintValue(elCharLimitPurchased, s.character_limit_purchased);
-        const _freeDailyVal = s.free_daily_allowance_seconds != null ? s.free_daily_allowance_seconds : s.free_monthly_allowance_seconds;
-        if (_freeDailyVal != null) _admPaintValue(elFreeAllowance, _freeDailyVal);
-        if (s.free_daily_job_limit != null) _admPaintValue(elDailyJobLimit, s.free_daily_job_limit);
+        if (s.free_daily_allowance_seconds != null) _admPaintValue(elFreeAllowance, s.free_daily_allowance_seconds);
         // Gemini pool taste (Free + Paid) + global FREE budget fields.
         const elFreeGeminiTaste = document.getElementById("adm-set-free-gemini-taste");
         const elPaidGeminiTaste = document.getElementById("adm-set-paid-gemini-taste");
@@ -14829,15 +15202,9 @@ async function loadAdminSettings() {
         if (s.free_gemini_daily_budget_requests != null) _admPaintValue(elFreeGeminiBudget, s.free_gemini_daily_budget_requests);
         if (s.recap_free_max_duration_seconds != null) _admPaintValue(elRecapFreeMax, s.recap_free_max_duration_seconds);
         if (s.recap_max_duration_seconds != null) _admPaintValue(elRecapMax, s.recap_max_duration_seconds);
-        if (s.voice_daily_limit_minutes_free != null) _admPaintValue(elVoiceDailyFree, s.voice_daily_limit_minutes_free);
-        if (s.voice_daily_limit_minutes_paid != null) _admPaintValue(elVoiceDailyPaid, s.voice_daily_limit_minutes_paid);
         if (s.tts_daily_limit_minutes_free != null) _admPaintValue(elTtsDailyFree, s.tts_daily_limit_minutes_free);
         if (s.tts_daily_limit_minutes_paid != null) _admPaintValue(elTtsDailyPaid, s.tts_daily_limit_minutes_paid);
         if (s.voxcpm_timeout != null) _admPaintValue(elVoxcpmTimeout, s.voxcpm_timeout);
-        _admPaintChecked(elTutVideoEn, String(s.tutorial_video_enabled).toLowerCase() !== "false" && s.tutorial_video_enabled !== false);
-        // Batch BE: the tiered-pricing arming switch (AO shipped the
-        // setting + API dark; this toggle is the arming lever).
-        _admPaintChecked(elTieredPricing, !!s.tiered_recap_pricing_enabled);
         _admPaintValue(elReqChannelId, s.required_channel_id || "");
         _admPaintValue(elReqGroupId, s.required_group_id || "");
         _admPaintValue(elChannelInvite, s.channel_invite_link || "");
@@ -14848,7 +15215,6 @@ async function loadAdminSettings() {
         _admPaintValue(elTutVoiceLink, s.tutorial_voice_link || s.tutorial_video_link || "");
 
         _admPaintChecked(elTutRecapEn, String(s.tutorial_recap_enabled).toLowerCase() !== "false" && s.tutorial_recap_enabled !== false);
-        _admPaintValue(elTutRecapTitle, tutorialDisplayTitle(s.tutorial_recap_title, "tutorial_default_recap_title"));
         _admPaintValue(elTutRecapLink, s.tutorial_recap_link || s.tutorial_video_link || "");
         _admPaintValue(elRecapDemoAsset, s.recap_demo_asset || "");
 
@@ -14887,41 +15253,6 @@ async function loadAdminSettings() {
         if (elWmOpacityVal && elWmOpacity) elWmOpacityVal.textContent = `${elWmOpacity.value || 20}%`;
         const elWmSizeVal = document.getElementById("adm-wm-size-val");
         if (elWmSizeVal && elWmSize) elWmSizeVal.textContent = `${elWmSize.value || 16}%`;
-
-        const elThumbCap = document.getElementById("adm-set-thumb-cap");
-        const elThumbModel = document.getElementById("adm-set-thumb-model");
-        const elThumbPrompt = document.getElementById("adm-set-thumb-prompt");
-        if (s.recap_thumbnail_monthly_cap_usd != null) {
-            _admPaintValue(elThumbCap, Number(s.recap_thumbnail_monthly_cap_usd).toFixed(2));
-        }
-        if (s.recap_thumbnail_model != null) {
-            _admPaintValue(elThumbModel, s.recap_thumbnail_model);
-        }
-        if (s.recap_thumbnail_prompt_template != null) {
-            _admPaintValue(elThumbPrompt, s.recap_thumbnail_prompt_template);
-        }
-        const elThumbUsageTitle = document.getElementById("adm-thumb-usage-title");
-        const elThumbUsageStats = document.getElementById("adm-thumb-usage-stats");
-        const elThumbStatusBadge = document.getElementById("adm-thumb-status-badge");
-        if (elThumbUsageTitle) {
-            elThumbUsageTitle.textContent = tf("adm_thumb_usage_title", {
-                period: s.recap_thumbnail_month_period || "—",
-            });
-        }
-        if (elThumbUsageStats) {
-            const cnt = Number(s.recap_thumbnail_month_count || 0);
-            const sp = Number(s.recap_thumbnail_month_spend_usd || 0).toFixed(3);
-            const cp = Number(s.recap_thumbnail_monthly_cap_usd ?? 1.8).toFixed(2);
-            elThumbUsageStats.textContent = tf("adm_thumb_usage_stats", {
-                count: cnt,
-                spend: sp,
-                cap: cp,
-            });
-        }
-        if (elThumbStatusBadge) {
-            const capped = !!s.recap_thumbnail_cap_reached;
-            elThumbStatusBadge.textContent = capped ? t("adm_thumb_status_capped") : t("adm_thumb_status_ok");
-        }
 
         updateTutorialUI(s);
         await loadAdminGroupAiConsole();
@@ -15025,7 +15356,7 @@ async function saveAdminSettings() {
     const tutLink = document.getElementById("adm-set-tutorial-link")?.value?.trim();
     const maint = !!document.getElementById("adm-set-maintenance")?.checked;
     const maintNote = document.getElementById("adm-set-maintenance-note")?.value?.trim() || "";
-    const groupAi = !!(document.getElementById("adm-group-ai-master-toggle")?.checked || document.getElementById("adm-set-group-ai")?.checked);
+    const groupAi = !!document.getElementById("adm-group-ai-master-toggle")?.checked;
     const groupAiCooldownRaw = document.getElementById("adm-set-group-ai-cooldown")?.value?.trim();
     const groupAiCooldown = groupAiCooldownRaw === "" || groupAiCooldownRaw == null ? null : parseInt(groupAiCooldownRaw, 10);
     const groupAiHourlyRaw = document.getElementById("adm-set-group-ai-hourly")?.value?.trim();
@@ -15058,8 +15389,6 @@ async function saveAdminSettings() {
     const charLimitPurchased = charLimitPurchasedRaw === "" || charLimitPurchasedRaw == null ? null : parseInt(charLimitPurchasedRaw, 10);
     const freeAllowanceRaw = document.getElementById("adm-set-free-allowance")?.value?.trim();
     const freeAllowance = freeAllowanceRaw === "" || freeAllowanceRaw == null ? null : parseInt(freeAllowanceRaw, 10);
-    const dailyJobLimitRaw = document.getElementById("adm-set-daily-job-limit")?.value?.trim();
-    const dailyJobLimit = dailyJobLimitRaw === "" || dailyJobLimitRaw == null ? null : parseInt(dailyJobLimitRaw, 10);
     const freeGeminiTasteRaw = document.getElementById("adm-set-free-gemini-taste")?.value?.trim();
     const freeGeminiTaste = freeGeminiTasteRaw === "" || freeGeminiTasteRaw == null ? null : parseInt(freeGeminiTasteRaw, 10);
     const paidGeminiTasteRaw = document.getElementById("adm-set-paid-gemini-taste")?.value?.trim();
@@ -15070,19 +15399,12 @@ async function saveAdminSettings() {
     const recapFreeMax = recapFreeMaxRaw === "" || recapFreeMaxRaw == null ? null : parseInt(recapFreeMaxRaw, 10);
     const recapMaxRaw = document.getElementById("adm-set-recap-max")?.value?.trim();
     const recapMax = recapMaxRaw === "" || recapMaxRaw == null ? null : parseInt(recapMaxRaw, 10);
-    const voiceDailyFreeRaw = document.getElementById("adm-set-voice-daily-free")?.value?.trim();
-    const voiceDailyFree = voiceDailyFreeRaw === "" || voiceDailyFreeRaw == null ? null : parseInt(voiceDailyFreeRaw, 10);
-    const voiceDailyPaidRaw = document.getElementById("adm-set-voice-daily-paid")?.value?.trim();
-    const voiceDailyPaid = voiceDailyPaidRaw === "" || voiceDailyPaidRaw == null ? null : parseInt(voiceDailyPaidRaw, 10);
     const ttsDailyFreeRaw = document.getElementById("adm-set-tts-daily-free")?.value?.trim();
     const ttsDailyFree = ttsDailyFreeRaw === "" || ttsDailyFreeRaw == null ? null : parseInt(ttsDailyFreeRaw, 10);
     const ttsDailyPaidRaw = document.getElementById("adm-set-tts-daily-paid")?.value?.trim();
     const ttsDailyPaid = ttsDailyPaidRaw === "" || ttsDailyPaidRaw == null ? null : parseInt(ttsDailyPaidRaw, 10);
     const voxcpmTimeoutRaw = document.getElementById("adm-set-voxcpm-timeout")?.value?.trim();
     const voxcpmTimeout = voxcpmTimeoutRaw === "" || voxcpmTimeoutRaw == null ? null : parseInt(voxcpmTimeoutRaw, 10);
-    const tutVideoEnEl = document.getElementById("adm-set-tutorial-video-enabled");
-    const tutVideoEn = tutVideoEnEl ? !!tutVideoEnEl.checked : true;
-    const tieredPricing = !!document.getElementById("adm-set-tiered-pricing")?.checked;
     const reqChannelId = document.getElementById("adm-set-required-channel-id")?.value?.trim();
     const reqGroupId = document.getElementById("adm-set-required-group-id")?.value?.trim();
     const channelInvite = document.getElementById("adm-set-channel-invite-link")?.value?.trim();
@@ -15093,7 +15415,6 @@ async function saveAdminSettings() {
     const tutVoiceLink = document.getElementById("adm-tut-voice-link")?.value?.trim() || "";
 
     const tutRecapEn = !!document.getElementById("adm-tut-recap-enabled")?.checked;
-    const tutRecapTitle = document.getElementById("adm-tut-recap-title")?.value?.trim() || t("tutorial_default_recap_title");
     const tutRecapLink = document.getElementById("adm-tut-recap-link")?.value?.trim() || "";
     const recapDemoAsset = document.getElementById("adm-recap-demo-asset")?.value?.trim() || "";
 
@@ -15101,10 +15422,6 @@ async function saveAdminSettings() {
     for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
         tutExtraLinks[settingKey] = document.getElementById(elId)?.value?.trim() || "";
     }
-    const thumbCapRaw = document.getElementById("adm-set-thumb-cap")?.value?.trim();
-    const thumbCap = thumbCapRaw === "" || thumbCapRaw == null ? null : parseFloat(thumbCapRaw);
-    const thumbModel = document.getElementById("adm-set-thumb-model")?.value?.trim();
-    const thumbPrompt = document.getElementById("adm-set-thumb-prompt")?.value?.trim();
 
     const payload = {
         payment_kpay_number: kpayNum,
@@ -15116,7 +15433,6 @@ async function saveAdminSettings() {
         tutorial_voice_title: tutVoiceTitle,
         tutorial_voice_link: tutVoiceLink,
         tutorial_recap_enabled: tutRecapEn,
-        tutorial_recap_title: tutRecapTitle,
         tutorial_recap_link: tutRecapLink,
         // Batch L demo slot asset (file_id or URL; "" hides the slot).
         recap_demo_asset: recapDemoAsset,
@@ -15140,28 +15456,20 @@ async function saveAdminSettings() {
         ...(Number.isFinite(privateAiDaily) ? { private_ai_daily_budget: privateAiDaily } : {}),
         ...(Number.isFinite(charLimitFree) ? { character_limit_free: charLimitFree } : {}),
         ...(Number.isFinite(charLimitPurchased) ? { character_limit_purchased: charLimitPurchased } : {}),
-        ...(Number.isFinite(freeAllowance) ? { free_daily_allowance_seconds: freeAllowance, free_monthly_allowance_seconds: freeAllowance } : {}),
-        ...(Number.isFinite(dailyJobLimit) ? { free_daily_job_limit: dailyJobLimit } : {}),
+        ...(Number.isFinite(freeAllowance) ? { free_daily_allowance_seconds: freeAllowance } : {}),
         ...(Number.isFinite(freeGeminiTaste) ? { free_gemini_taste_minutes: freeGeminiTaste } : {}),
         ...(Number.isFinite(paidGeminiTaste) ? { paid_gemini_taste_minutes: paidGeminiTaste } : {}),
         ...(Number.isFinite(freeGeminiBudget) ? { free_gemini_daily_budget_requests: freeGeminiBudget } : {}),
         ...(Number.isFinite(recapFreeMax) ? { recap_free_max_duration_seconds: recapFreeMax } : {}),
         ...(Number.isFinite(recapMax) ? { recap_max_duration_seconds: recapMax } : {}),
-        ...(Number.isFinite(voiceDailyFree) ? { voice_daily_limit_minutes_free: voiceDailyFree } : {}),
-        ...(Number.isFinite(voiceDailyPaid) ? { voice_daily_limit_minutes_paid: voiceDailyPaid } : {}),
         ...(Number.isFinite(ttsDailyFree) ? { tts_daily_limit_minutes_free: ttsDailyFree } : {}),
         ...(Number.isFinite(ttsDailyPaid) ? { tts_daily_limit_minutes_paid: ttsDailyPaid } : {}),
         ...(Number.isFinite(voxcpmTimeout) ? { voxcpm_timeout: voxcpmTimeout } : {}),
-        tutorial_video_enabled: tutVideoEn,
-        tiered_recap_pricing_enabled: tieredPricing,
         ...(reqChannelId ? { required_channel_id: reqChannelId } : {}),
         ...(reqGroupId ? { required_group_id: reqGroupId } : {}),
         ...(channelInvite ? { channel_invite_link: channelInvite } : {}),
         ...(groupInvite ? { group_invite_link: groupInvite } : {}),
         ..._collectWatermarkPayload(),
-        ...(Number.isFinite(thumbCap) ? { recap_thumbnail_monthly_cap_usd: thumbCap } : {}),
-        ...(thumbModel ? { recap_thumbnail_model: thumbModel } : {}),
-        ...(thumbPrompt ? { recap_thumbnail_prompt_template: thumbPrompt } : {}),
     };
     updateTutorialUI(payload);
 
@@ -15280,39 +15588,6 @@ async function saveWatermarkSettings() {
     }
 }
 window.saveWatermarkSettings = saveWatermarkSettings;
-
-async function saveAiThumbnailSettings() {
-    haptic("medium");
-    const capRaw = document.getElementById("adm-set-thumb-cap")?.value?.trim();
-    const capVal = capRaw === "" || capRaw == null ? 1.80 : parseFloat(capRaw);
-    const modelVal = document.getElementById("adm-set-thumb-model")?.value?.trim() || "black-forest-labs/FLUX.1-schnell";
-    const promptVal = document.getElementById("adm-set-thumb-prompt")?.value?.trim() || "";
-
-    const payload = {
-        ...(Number.isFinite(capVal) ? { recap_thumbnail_monthly_cap_usd: capVal } : {}),
-        recap_thumbnail_model: modelVal,
-        ...(promptVal ? { recap_thumbnail_prompt_template: promptVal } : {}),
-    };
-
-    try {
-        const res = await fetch("/api/admin/settings", {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Failed");
-        ["adm-set-thumb-cap", "adm-set-thumb-model", "adm-set-thumb-prompt"].forEach(id => adminSettingsDirty.delete(id));
-        showStudioToast(t("adm_thumb_saved_toast"), "success");
-        loadAdminSettings();
-    } catch (e) {
-        showStudioToast(adminErrorText("admin_settings_save_err", e.message), "error");
-    }
-}
-window.saveAiThumbnailSettings = saveAiThumbnailSettings;
 
 function formatIsoTime(isoStr) {
     if (!isoStr) return "";
@@ -15693,22 +15968,6 @@ function hubHistoryDetailHtml(j) {
         if (j.deliverables?.audio) actions += ` <a href="#" data-dl-url="${j.deliverables.audio}" data-dl-name="${brandedDlName("RecapAudio", "mp3", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_audio"))}</a>`;
         if (j.deliverables?.srt) actions += ` <a href="#" data-dl-url="${j.deliverables.srt}" data-dl-name="${brandedDlName("Subtitles", "srt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_srt"))}</a>`;
         if (j.deliverables?.script) actions += ` <a href="#" data-dl-url="${j.deliverables.script}" data-dl-name="${brandedDlName("Script", "txt", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_txt"))}</a>`;
-        if (j.deliverables?.thumbnail) actions += ` <a href="#" data-dl-url="${j.deliverables.thumbnail}" data-dl-name="${brandedDlName("Thumbnail", "jpg", j.input_snippet, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_thumbnail"))}</a>`;
-        const canThumb = !!(state.canUseAiThumbnail || state.user?.is_vip || state.user?.is_admin);
-        const capFull = !!state.aiThumbnailCapReached;
-        const prefillHeadline = escapeHtml(j.input_snippet || "");
-        const thumbNote = !canThumb
-            ? escapeHtml(t("recap_thumb_vip_locked_note"))
-            : (capFull ? escapeHtml(t("recap_thumb_cap_reached")) : escapeHtml(t("recap_thumb_free_perk_note")));
-        inner += `
-        <div class="history-item-body recap-hist-thumb-box mt-2">
-            <label class="text-xs" for="hist-thumb-headline-${j.id}">${escapeHtml(t("recap_thumb_headline_lbl"))}</label>
-            <div class="recap-hist-thumb-row mt-1">
-                <input type="text" id="hist-thumb-headline-${j.id}" class="studio-input vcp-input" maxlength="120" value="${prefillHeadline}" placeholder="${escapeHtml(t("recap_thumb_headline_ph"))}" ${(!canThumb || capFull) ? "disabled" : ""}>
-                <button type="button" id="btn-hist-thumb-${j.id}" class="history-dl-link" onclick="generateRecapAiThumbnail('${j.id}', 'hist-thumb-headline-${j.id}')" ${capFull ? "disabled" : ""}>${escapeHtml(t("btn_recap_ai_thumbnail"))}</button>
-            </div>
-            <div class="text-xs text-muted mt-1">${thumbNote}</div>
-        </div>`;
     } else if (j.download_url) {
         actions = `<a href="#" data-dl-url="${j.download_url}" data-dl-name="${brandedDlName("Voice", "wav", null, j.id)}" class="history-dl-link">${escapeHtml(t("hist_dl_voice"))}</a>`;
         if (j.telegram_sendable !== false) {
@@ -15986,7 +16245,6 @@ async function openRecapInPlayer(recapJobId) {
                 btnScript.setAttribute("data-dl-url", data.download_urls.script);
                 btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, recapJobId));
             }
-            syncRecapAiThumbnailUI(data, recapJobId);
             if (btnTg) {
                 btnTg.disabled = false;
                 btnTg.classList.remove("sent");
@@ -16002,165 +16260,6 @@ async function openRecapInPlayer(recapJobId) {
     }
 }
 window.openRecapInPlayer = openRecapInPlayer;
-
-function syncRecapAiThumbnailUI(statusData, jobId) {
-    const inputEl = document.getElementById("recap-thumb-headline-input");
-    const btnGen = document.getElementById("btn-recap-ai-thumbnail");
-    const btnDl = document.getElementById("btn-recap-dl-thumbnail");
-    const noteEl = document.getElementById("recap-thumb-status-note");
-    const previewImg = document.getElementById("recap-thumb-preview-img");
-
-    const canUse = !!(state.canUseAiThumbnail || state.user?.is_vip || state.user?.is_admin || state.user?.account_category === "PURCHASED");
-    const capReached = !!state.aiThumbnailCapReached;
-
-    if (inputEl && statusData) {
-        const defaultTitle = statusData.title || document.getElementById("recap-video-title")?.value?.trim() || "";
-        if (!inputEl.dataset.userEdited || inputEl.dataset.forJobId !== String(jobId || "")) {
-            inputEl.value = defaultTitle;
-            inputEl.dataset.forJobId = String(jobId || "");
-            delete inputEl.dataset.userEdited;
-        }
-        if (!inputEl.dataset.boundEditListener) {
-            inputEl.addEventListener("input", () => {
-                inputEl.dataset.userEdited = "1";
-            });
-            inputEl.dataset.boundEditListener = "1";
-        }
-    }
-    if (inputEl) {
-        inputEl.disabled = !canUse || capReached;
-    }
-    if (btnGen) {
-        btnGen.disabled = capReached;
-        btnGen.innerHTML = `<span data-i18n="btn_recap_ai_thumbnail">${escapeHtml(t("btn_recap_ai_thumbnail"))}</span>`;
-    }
-    if (noteEl) {
-        if (!canUse) {
-            noteEl.textContent = t("recap_thumb_vip_locked_note");
-        } else if (capReached) {
-            noteEl.textContent = t("recap_thumb_cap_reached");
-        } else {
-            noteEl.textContent = t("recap_thumb_free_perk_note");
-        }
-    }
-    if (statusData) {
-        const thumbDlUrl = statusData.download_urls?.thumbnail;
-        const thumbStreamUrl = statusData.download_urls?.thumbnail_stream_url || thumbDlUrl;
-        if (btnDl) {
-            if (thumbDlUrl) {
-                btnDl.setAttribute("data-dl-url", thumbDlUrl);
-                btnDl.setAttribute("data-dl-name", brandedDlName("Thumbnail", "jpg", statusData.title || null, jobId || state.recapJobId));
-                btnDl.classList.remove("hidden");
-            } else {
-                btnDl.classList.add("hidden");
-            }
-        }
-        if (previewImg) {
-            if (thumbStreamUrl) {
-                previewImg.src = thumbStreamUrl;
-                previewImg.classList.remove("hidden");
-            } else {
-                previewImg.removeAttribute("src");
-                previewImg.classList.add("hidden");
-            }
-        }
-    }
-}
-window.syncRecapAiThumbnailUI = syncRecapAiThumbnailUI;
-
-async function generateRecapAiThumbnail(jobIdArg, headlineInputId) {
-    haptic("medium");
-    const canUse = !!(state.canUseAiThumbnail || state.user?.is_vip || state.user?.is_admin || state.user?.account_category === "PURCHASED");
-    if (!canUse) {
-        showStudioToast(t("recap_thumb_vip_locked_note"), "info", 5000);
-        const noteEl = document.getElementById("recap-thumb-status-note");
-        if (noteEl) noteEl.textContent = t("recap_thumb_vip_locked_note");
-        return;
-    }
-    if (state.aiThumbnailCapReached) {
-        showStudioToast(t("recap_thumb_cap_reached"), "warning", 5000);
-        syncRecapAiThumbnailUI();
-        return;
-    }
-
-    const targetJobId = jobIdArg || state.recapJobId;
-    if (!targetJobId) return;
-
-    const inputEl = document.getElementById(headlineInputId || "recap-thumb-headline-input");
-    const headlineText = inputEl ? String(inputEl.value ?? "") : "";
-    const btnEl = jobIdArg
-        ? document.getElementById(`btn-hist-thumb-${jobIdArg}`)
-        : document.getElementById("btn-recap-ai-thumbnail");
-
-    if (btnEl) {
-        btnEl.disabled = true;
-        btnEl.textContent = t("btn_recap_ai_thumbnail_generating");
-    }
-
-    try {
-        const res = await fetch(`/api/recap/${targetJobId}/thumbnail`, {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ headline_text: headlineText }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.status === 403) {
-            showStudioToast(t("recap_thumb_vip_locked_note"), "info", 5000);
-            return;
-        }
-        if (res.status === 429) {
-            state.aiThumbnailCapReached = true;
-            syncRecapAiThumbnailUI();
-            if (typeof renderHistoryHub === "function" && Array.isArray(hubHistoryCache)) {
-                renderHistoryHub();
-            }
-            showStudioToast(t("recap_thumb_cap_reached"), "warning", 6000);
-            return;
-        }
-        if (!res.ok) {
-            throw new Error(data.detail || t("recap_thumb_failed"));
-        }
-
-        if (data.pool_usage && data.pool_usage.cap_reached) {
-            state.aiThumbnailCapReached = true;
-        }
-        if (inputEl && !headlineText && data.headline_text) {
-            inputEl.value = data.headline_text;
-        }
-        if (!jobIdArg || targetJobId === state.recapJobId) {
-            syncRecapAiThumbnailUI(
-                {
-                    title: data.headline_text || headlineText,
-                    download_urls: {
-                        thumbnail: data.thumbnail_url,
-                        thumbnail_stream_url: data.thumbnail_stream_url || data.thumbnail_url,
-                    },
-                },
-                targetJobId
-            );
-        }
-        if (Array.isArray(hubHistoryCache)) {
-            const item = hubHistoryCache.find(h => h.id === targetJobId);
-            if (item) {
-                item.deliverables = item.deliverables || {};
-                item.deliverables.thumbnail = data.thumbnail_url;
-                renderHistoryHub();
-            }
-        }
-        showStudioToast(t("recap_thumb_ready_toast"), "success", 5000);
-    } catch (err) {
-        showStudioToast(t("recap_thumb_failed"), "error", 5000);
-    } finally {
-        if (btnEl && !state.aiThumbnailCapReached) {
-            btnEl.disabled = false;
-            btnEl.textContent = t("btn_recap_ai_thumbnail");
-        }
-    }
-}
-window.generateRecapAiThumbnail = generateRecapAiThumbnail;
 
 // ── Deep Link Handling (Telegram WebApp & URL Query) ──────────────────────
 async function checkStartupDeepLinks() {
@@ -16279,7 +16378,6 @@ async function checkStartupDeepLinks() {
                         btnScript.setAttribute("data-dl-url", data.download_urls.script);
                         btnScript.setAttribute("data-dl-name", brandedDlName("Script", "txt", null, recapJobId));
                     }
-                    syncRecapAiThumbnailUI(data, recapJobId);
                     if (btnTg) {
                         btnTg.disabled = false;
                         btnTg.classList.remove("sent");
@@ -16795,6 +16893,10 @@ document.addEventListener("DOMContentLoaded", () => {
     loadLegacyModels();
     loadUserHistory();
     checkStartupDeepLinks();
+    if (window.__vcpSplash) {
+        if (typeof window.__vcpSplash.init === "function") window.__vcpSplash.init();
+        if (typeof window.__vcpSplash.notifyInitialTabRendered === "function") window.__vcpSplash.notifyInitialTabRendered();
+    }
     // Batch AC: global live-jobs transport + account-bound prefs.
     LiveJobs.start();
     setupAccountPrefs();

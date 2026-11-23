@@ -53,18 +53,17 @@ def test_sheet_forbids_monthly_plan_framing():
 
 
 def test_sheet_separates_free_reset_from_purchased_balance():
+    # Limits round + Pricing v3 + Part H: Free resets daily (non-accumulating) and is separate from purchased packages.
     sheet = gai.build_fact_sheet()
     assert "မရောပါနှင့်" in sheet
-    assert "ဝယ်ထားတဲ့ ၃၀ ရက် Package များနှင့် သီးခြားစီ ဖြစ်ပါတယ်" in sheet
-    # ...while still stating the FREE allowance itself resets monthly
-    # and does not roll over.
-    assert "နောက်လ ဆက်မသွားပါ" in sheet
+    assert "ဝယ်ထားတဲ့ Package များနှင့် သီးခြားစီ ဖြစ်ပါတယ်" in sheet
+    assert "နောက်နေ့ မပေါင်းပါ" in sheet
 
 
 def test_sheet_has_one_free_trio_summary_line():
     sheet = gai.build_fact_sheet()
     assert "အခမဲ့ အကျဉ်းချုပ်" in sheet
-    assert "လ စတိုင်း ပြန်ပြည့်" in sheet
+    assert "နေ့စဉ် 3 မိနစ်" in sheet
     assert "ပထမဆုံး တစ်ကြိမ်သာ ၃ ခု" in sheet
     assert "နေ့တိုင်း ပြန်ပြည့်" in sheet
 

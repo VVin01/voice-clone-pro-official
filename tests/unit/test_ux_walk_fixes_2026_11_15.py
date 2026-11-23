@@ -283,11 +283,14 @@ def test_item1_preview_composite_forwards_style_and_size_to_png_renderer(tmp_pat
 
 
 def test_item2_step4_summary_voice_by_engine_and_size_and_speed_via_node():
+    # Round 13 retired #recap-step4-facts / refreshRecapStep4Facts and simplified
+    # refreshRecapStep4Choices to clean localized voice names per engine.
     fns = "\n".join(
         [
             _locked_defaults_js(),
+            _extract_fn(APP_JS, "_cleanStep4VoiceName"),
+            "function normalizeEdgeVoiceKey(v) { return String(v || 'thiha').trim().toLowerCase() || 'thiha'; }",
             _extract_fn(APP_JS, "refreshRecapStep4Choices"),
-            _extract_fn(APP_JS, "refreshRecapStep4Facts"),
         ]
     )
     script = f"""
@@ -300,24 +303,18 @@ const mkEl = (id, init={{}}) => (els[id] = Object.assign({{
   classList: {{ _s:new Set(), contains(c){{return this._s.has(c)}}, toggle(c,f){{if(f===undefined)f=!this._s.has(c); f?this._s.add(c):this._s.delete(c);}}, add(c){{this._s.add(c)}}, remove(c){{this._s.delete(c)}} }},
 }}, init));
 ['recap-step4-choices','recap-info-title','recap-video-info-box','recap-step4-choice-voice',
- 'recap-step4-choice-ratio','recap-step4-choice-title','recap-fact-aspect','recap-fact-ratio',
- 'recap-fact-fill','recap-fact-zoom','recap-fact-subs','recap-fact-title','recap-fact-blur',
- 'recap-fact-quality','recap-fact-speed','recap-fact-mirror'].forEach(id => mkEl(id));
+ 'recap-step4-choice-ratio','recap-step4-choice-title'].forEach(id => mkEl(id));
 els['recap-info-title'].textContent = 'Demo Movie';
 
-const personaNameEl = {{
-  textContent: 'ကိုမင်း (Ko Min) 🔥',
-  closest: () => ({{ getAttribute: () => 'komin' }}),
-}};
-
 function runForLang(lang) {{
+  const personaOptText = lang === 'my' ? 'ကိုမင်း (Ko Min) 🔥' : 'Ko Min (Male)';
+  els['recap-persona-select'] = {{ value: 'komin', selectedOptions: [{{ textContent: personaOptText }}] }};
+  els['recap-edge-voice-select'] = {{ value: 'thiha' }};
   const ctx = {{
     document: {{
       getElementById: (id) => els[id] || null,
       querySelector: (sel) => {{
-        if (sel.includes('.v-name')) return personaNameEl;
-        if (sel === '#recap-preview-ratio-group .ratio-card.active') return {{ getAttribute: () => '9:16', textContent: '9:16' }};
-        if (sel === '#recap-quality-picker .pill-btn.active') return {{ textContent: 'High' }};
+        if (sel === '#recap-preview-ratio-group .ratio-btn.active') return {{ getAttribute: () => '9:16', textContent: '9:16' }};
         return null;
       }},
     }},
@@ -326,17 +323,10 @@ function runForLang(lang) {{
     state: {{
       recapTtsEngine: 'gemini',
       recapGeminiVoice: 'Algenib',
+      recapEdgeVoice: 'thiha',
+      recapVoice: 'komin',
       recapOwnVoiceSelected: false,
-      curatedVoices: [{{ slug: 'komin', gender: 'male' }}],
-      recapBurnSubs: true,
-      recapSubStyle: 'glass',
-      recapFontSize: 19,
-      recapSpeed: '+20%',
-      recapMirror: true,
       recapRatio: '9:16',
-      recapRatioFill: 'blur',
-      recapProtection: 'standard',
-      recapBlurSubs: true,
     }},
     resolveGeminiPreviewVoice: () => ctx.state.recapGeminiVoice,
   }};
@@ -346,7 +336,6 @@ function runForLang(lang) {{
   vm.runInNewContext({json.dumps(fns)}, ctx);
 
   ctx.refreshRecapStep4Choices();
-  ctx.refreshRecapStep4Facts();
   const gemVoice = els['recap-step4-choice-voice'].textContent;
 
   ctx.state.recapTtsEngine = 'edge';
@@ -361,26 +350,25 @@ function runForLang(lang) {{
   ctx.refreshRecapStep4Choices();
   const cloneVoice = els['recap-step4-choice-voice'].textContent;
 
-  return {{ gemVoice, edgeVoice, personaVoice, cloneVoice }};
+  return {{ gemVoice, edgeVoice, personaVoice, cloneVoice, ratio: els['recap-step4-choice-ratio'].textContent }};
 }}
 console.log(JSON.stringify({{ my: runForLang('my'), en: runForLang('en') }}));
 """
     res = _run_node(script)
-    assert 'id="recap-fact-canvas"' in INDEX_HTML
-    assert 'id="recap-fact-duration"' in INDEX_HTML
+    assert 'id="recap-step4-choices"' in INDEX_HTML
     assert 'id="recap-fact-speed"' not in INDEX_HTML
     assert 'id="recap-fact-mirror"' not in INDEX_HTML
+    assert 'id="recap-fact-canvas"' not in INDEX_HTML
 
-    assert "Gemini" in res["my"]["gemVoice"] and "ကိုအာကာ" in res["my"]["gemVoice"]
-    assert "ကိုမင်း" not in res["my"]["gemVoice"]
-    assert "Gemini" in res["en"]["gemVoice"] and "Ko Arkar" in res["en"]["gemVoice"]
-    assert "Ko Min" not in res["en"]["gemVoice"]
-
-    assert "ကိုမင်း" in res["my"]["edgeVoice"] and "Edge" in res["my"]["edgeVoice"]
-    assert "Ko Min" in res["en"]["edgeVoice"] and "Edge" in res["en"]["edgeVoice"]
-    assert "ကိုမင်း" in res["my"]["personaVoice"] and "Gemini" not in res["my"]["personaVoice"]
+    assert "ကိုအာကာ" in res["my"]["gemVoice"] and "ကိုမင်း" not in res["my"]["gemVoice"]
+    assert "Ko Arkar" in res["en"]["gemVoice"] and "Ko Min" not in res["en"]["gemVoice"]
+    assert "သီဟ" in res["my"]["edgeVoice"]
+    assert "Thiha" in res["en"]["edgeVoice"]
+    assert "ကိုမင်း" in res["my"]["personaVoice"]
+    assert "Ko Min" in res["en"]["personaVoice"]
     assert "ကိုယ်ပိုင်အသံ" in res["my"]["cloneVoice"]
-    assert "Your Own Voice" in res["en"]["cloneVoice"]
+    assert "My Voice" in res["en"]["cloneVoice"]
+    assert res["en"]["ratio"] == "9:16"
 
 
 # ── Item 3: Admin job viewer download & stream links ────────────────────────
@@ -480,14 +468,14 @@ async def test_item3_admin_access_control_preserved(db_session):
 
 
 def test_item4_mirror_visibility_step2_and_step4_via_node():
-    # Round 10 B6/B7: Step 2 summary bar & transform expander removed; mirror is locked true in Pro defaults.
+    # Round 10 B6/B7 & Round 13: Step 2 summary bar, transform expander & Step 4 facts bar removed;
+    # mirror stays locked true in Pro defaults and refreshRecapStep2Summary still reports ratio · blur.
     assert 'id="recap-step2-summary"' not in INDEX_HTML
     assert 'id="recap-preview-transform-group"' not in INDEX_HTML
     fns = "\n".join(
         [
             _locked_defaults_js(),
             _extract_fn(APP_JS, "refreshRecapStep2Summary"),
-            _extract_fn(APP_JS, "refreshRecapStep4Facts"),
         ]
     )
     script = f"""
@@ -500,8 +488,7 @@ const mkGroup = (id) => {{
   const valEl = {{ innerText: '', classList: mkClassList() }};
   els[id] = {{ id, querySelector: (s) => s === '.dd-acc-val' ? valEl : null, _val: valEl, classList: mkClassList() }};
 }};
-['recap-preview-ratio-group','recap-subtitle-group','recap-blur-group','recap-logo-group'].forEach(mkGroup);
-['recap-fact-canvas', 'recap-fact-duration'].forEach(id => (els[id] = {{ id, innerText: '', textContent: '', classList: mkClassList() }}));
+['recap-preview-ratio-group','recap-story-style-acc','recap-pace-acc'].forEach(mkGroup);
 
 const ctx = {{
   document: {{ getElementById: (id) => els[id] || null, querySelector: () => null }},
@@ -511,20 +498,18 @@ const ctx = {{
 }};
 vm.runInNewContext(i18nSrc + '; globalThis.__tr = translations;', ctx);
 ctx.t = (k) => (ctx.__tr.en && ctx.__tr.en[k]) || k;
-ctx.formatRecapQuoteDuration = (d) => '0:15';
 vm.runInNewContext({json.dumps(fns)}, ctx);
 
 ctx.refreshRecapStep2Summary();
-ctx.refreshRecapStep4Facts();
 const on = {{
   ratioAcc: els['recap-preview-ratio-group']._val.innerText || els['recap-preview-ratio-group']._val.textContent,
-  canvasFact: els['recap-fact-canvas'].textContent,
+  paceAcc: els['recap-pace-acc']._val.innerText || els['recap-pace-acc']._val.textContent,
 }};
 console.log(JSON.stringify({{ on }}));
 """
     res = _run_node(script)
     assert res["on"]["ratioAcc"] == "9:16 · blur"
-    assert res["on"]["canvasFact"] == "1080×1920 · 9:16"
+    assert res["on"]["paceAcc"] == "+12%"
 
 
 # ── Item 6: Round 10 B4 removed fill picker & fill disabled note ────────────

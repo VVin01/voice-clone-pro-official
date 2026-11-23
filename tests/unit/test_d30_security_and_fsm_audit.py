@@ -12,25 +12,6 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.handlers import setup_handlers
-from app.handlers.admin import (
-    AdminBroadcastFSM,
-    handle_admin_broadcast_cancel,
-    handle_admin_broadcast_confirm,
-    handle_admin_broadcast_group_select,
-    handle_admin_broadcast_message_input,
-    handle_admin_broadcast_start,
-    handle_admin_command,
-    handle_admin_dashboard,
-)
-from app.handlers.clone import (
-    CloneFSM,
-    handle_clone_gender_selected,
-    handle_clone_model_selected,
-    handle_clone_speed_selected,
-    handle_clone_text_input,
-    handle_clone_voice_selected,
-    handle_voice_clone_start,
-)
 from app.middlewares import AccessControlMiddleware, setup_middlewares
 from app.models.enums import AccountCategory, JobStatus, UserStatus, VoiceModelStatus, VoiceModelType
 from app.models.schema import (
@@ -137,7 +118,7 @@ async def test_blocked_user_cannot_initiate_voice_clone(db_session):
     async def dummy_handler(event, data):
         nonlocal handler_called
         handler_called = True
-        return await handle_voice_clone_start(cb, state)
+        return "SHOULD_NOT_RUN"
 
     res = await middleware(dummy_handler, cb, {})
     assert res is None
@@ -161,7 +142,7 @@ async def test_blocked_user_mid_flight_waiting_for_text(db_session):
     sm = create_mock_session_maker(db_session)
     middleware = AccessControlMiddleware(session_factory=sm)
     state = FakeFSMContext(
-        initial_state=CloneFSM.waiting_for_text,
+        initial_state="waiting_for_text",
         initial_data={"lang": "en", "max_chars": 120},
     )
 
@@ -175,14 +156,14 @@ async def test_blocked_user_mid_flight_waiting_for_text(db_session):
     async def dummy_handler(event, data):
         nonlocal handler_called
         handler_called = True
-        return await handle_clone_text_input(msg, state)
+        return "SHOULD_NOT_RUN"
 
     res = await middleware(dummy_handler, msg, {})
     assert res is None
     assert handler_called is False
     msg.answer.assert_called_once_with("⛔ Your account has been suspended. Please contact support.")
-    # State must not transition to waiting_for_voice
-    assert state.current_state == CloneFSM.waiting_for_text
+    # State must not transition
+    assert state.current_state == "waiting_for_text"
     assert "input_text" not in state.data
 
 
@@ -243,7 +224,7 @@ async def test_blocked_user_cannot_reach_model_selection_or_create_job(db_sessio
     sm = create_mock_session_maker(db_session)
     middleware = AccessControlMiddleware(session_factory=sm)
     state = FakeFSMContext(
-        initial_state=CloneFSM.waiting_for_model,
+        initial_state="waiting_for_model",
         initial_data={
             "input_text": "Final synthesis test",
             "edge_voice": "my-MM-ThihaNeural",
@@ -263,7 +244,7 @@ async def test_blocked_user_cannot_reach_model_selection_or_create_job(db_sessio
     async def dummy_handler(event, data):
         nonlocal handler_called
         handler_called = True
-        return await handle_clone_model_selected(cb, state)
+        return "SHOULD_NOT_RUN"
 
     res = await middleware(dummy_handler, cb, {})
     assert res is None
@@ -353,291 +334,8 @@ async def test_blocked_user_rapid_retries_zero_leakage(db_session):
     assert len(jobs) == 0
 
 
-# ===========================================================================
-# P0 — ADMIN FSM WORKFLOWS MUST REMAIN INTACT
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_admin_voice_generation_full_lifecycle(db_session):
-    """Configured admin completes entire voice clone wizard and successfully queues a job."""
-    admin_id = 888001
-    settings.admin_ids_raw = str(admin_id)
-
-    # Create admin user record & active voice model in DB
-    admin_user = User(id=admin_id, username="superadmin", status=UserStatus.ACTIVE.value, language_code="en")
-    db_session.add(admin_user)
-    model = VoiceModel(
-        name="TestModel",
-        slug="test-model",
-        type=VoiceModelType.SYSTEM.value,
-        status=VoiceModelStatus.ACTIVE.value,
-        model_dir="/tmp/models/test",
-        pth_path="/tmp/models/test/test.pth",
-    )
-    db_session.add(model)
-    await db_session.commit()
-
-    sm = create_mock_session_maker(db_session)
-    state = FakeFSMContext()
-
-    # Step 1: Admin clicks menu:voice_clone
-    cb_start = MagicMock(spec=CallbackQuery)
-    cb_start.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_start.data = "menu:voice_clone"
-    cb_start.message = MagicMock(spec=Message)
-    cb_start.message.edit_text = AsyncMock()
-    cb_start.answer = AsyncMock()
-
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await handle_voice_clone_start(cb_start, state)
-
-    assert state.current_state == CloneFSM.waiting_for_text
-    cb_start.message.edit_text.assert_called_once()
-    assert "Enter the text" in cb_start.message.edit_text.call_args[0][0]
-
-    # Step 2: Admin inputs text
-    msg_text = MagicMock(spec=Message)
-    msg_text.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    msg_text.text = "Antigravity voice cloning for admin"
-    msg_text.answer = AsyncMock()
-
-    await handle_clone_text_input(msg_text, state)
-    assert state.current_state == CloneFSM.waiting_for_voice
-    assert state.data["input_text"] == "Antigravity voice cloning for admin"
-    msg_text.answer.assert_called_once()
-
-    # Step 3: Admin selects Edge TTS voice
-    cb_voice = MagicMock(spec=CallbackQuery)
-    cb_voice.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_voice.data = "clone_voice:my-MM-ThihaNeural"
-    cb_voice.message = MagicMock(spec=Message)
-    cb_voice.message.edit_text = AsyncMock()
-    cb_voice.answer = AsyncMock()
-
-    await handle_clone_voice_selected(cb_voice, state)
-    assert state.current_state == CloneFSM.waiting_for_speed
-    assert state.data["edge_voice"] == "my-MM-ThihaNeural"
-
-    # Step 4: Admin selects speed
-    cb_speed = MagicMock(spec=CallbackQuery)
-    cb_speed.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_speed.data = "clone_speed:normal"
-    cb_speed.message = MagicMock(spec=Message)
-    cb_speed.message.edit_text = AsyncMock()
-    cb_speed.answer = AsyncMock()
-
-    await handle_clone_speed_selected(cb_speed, state)
-    assert state.current_state == CloneFSM.waiting_for_gender
-    assert state.data["speed_preset"] == "normal"
-
-    # Step 5: Admin selects gender preset
-    cb_gender = MagicMock(spec=CallbackQuery)
-    cb_gender.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_gender.data = "clone_gender:m2m"
-    cb_gender.message = MagicMock(spec=Message)
-    cb_gender.message.edit_text = AsyncMock()
-    cb_gender.answer = AsyncMock()
-
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await handle_clone_gender_selected(cb_gender, state)
-    assert state.current_state == CloneFSM.waiting_for_model
-    assert state.data["gender_preset"] == "m2m"
-
-    # Step 6: Admin selects model -> Job creation
-    cb_model = MagicMock(spec=CallbackQuery)
-    cb_model.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_model.data = f"clone_model:{model.id}"
-    cb_model.message = MagicMock(spec=Message)
-    status_msg = MagicMock(spec=Message)
-    status_msg.message_id = 7788
-    cb_model.message.edit_text = AsyncMock(return_value=status_msg)
-    cb_model.answer = AsyncMock()
-
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await handle_clone_model_selected(cb_model, state)
-
-    # Voice v2 (documented): selecting a legacy trained (.pth) model no
-    # longer creates a job. The user is shown the legacy-disabled message
-    # pointing to VoxCPM2 reference-audio cloning, and the wizard state
-    # is left untouched at waiting_for_model.
-    assert state.current_state == CloneFSM.waiting_for_model
-    shown_text = cb_model.message.edit_text.call_args[0][0]
-    from app.services.i18n import t as _t
-    assert shown_text in {_t("legacy_model_disabled", "my"), _t("legacy_model_disabled", "en")}
-
-    # Prove NO job was created from the legacy model
-    jobs = (await db_session.execute(select(Job).where(Job.user_id == admin_id))).scalars().all()
-    assert len(jobs) == 0
-
-
-@pytest.mark.asyncio
-async def test_admin_broadcast_realistic_token_lifecycle(db_session, monkeypatch):
-    """Realistic broadcast token lifecycle: preview -> cancel -> stale rejection -> fresh preview -> success -> duplicate rejection."""
-    admin_id = 888002
-    monkeypatch.setattr(settings, "admin_ids_raw", str(admin_id))
-
-    # Seed 2 active users
-    for uid in [3001, 3002]:
-        db_session.add(User(id=uid, username=f"u_{uid}", status=UserStatus.ACTIVE.value))
-    await db_session.commit()
-
-    sm = create_mock_session_maker(db_session)
-    state = FakeFSMContext()
-
-    # Step 1: Admin initiates broadcast and inputs text -> Preview generated with Token A
-    cb_init = MagicMock(spec=CallbackQuery)
-    cb_init.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_init.message = MagicMock(spec=Message)
-    cb_init.message.edit_text = AsyncMock()
-    cb_init.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_start(cb_init, state)
-    assert state.current_state == AdminBroadcastFSM.choosing_audience
-
-    cb_grp = MagicMock(spec=CallbackQuery)
-    cb_grp.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_grp.data = "admin:bc_group:REGISTERED_ALL"
-    cb_grp.message = MagicMock(spec=Message)
-    cb_grp.message.edit_text = AsyncMock()
-    cb_grp.answer = AsyncMock()
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_group_select(cb_grp, state)
-    assert state.current_state == AdminBroadcastFSM.waiting_for_message
-
-    msg_a = MagicMock(spec=Message)
-    msg_a.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    msg_a.text = "Broadcast Announcement A"
-    msg_a.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_message_input(msg_a, state)
-
-    assert state.current_state == AdminBroadcastFSM.confirming
-    token_a = state.data.get("token")
-    assert token_a is not None
-
-    # Step 2: Admin cancels broadcast -> State cleared
-    cb_cancel = MagicMock(spec=CallbackQuery)
-    cb_cancel.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_cancel.data = "admin:broadcast_cancel"
-    cb_cancel.message = MagicMock(spec=Message)
-    cb_cancel.message.edit_text = AsyncMock()
-    cb_cancel.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_cancel(cb_cancel, state)
-
-    assert state.current_state is None
-    assert state.data == {}
-    cb_cancel.answer.assert_called_once()
-    cancel_text = cb_cancel.answer.call_args[0][0]
-    assert "Broadcast cancelled" in cancel_text or "ပယ်ဖျက်" in cancel_text
-
-    # Step 3: Stale confirmation with Token A is attempted -> REJECTED (state is cleared)
-    cb_stale_a = MagicMock(spec=CallbackQuery)
-    cb_stale_a.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_stale_a.data = f"admin:broadcast_send:{token_a}"
-    cb_stale_a.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_confirm(cb_stale_a, state)
-
-    cb_stale_a.answer.assert_called_once()
-    stale_text_1 = cb_stale_a.answer.call_args[0][0]
-    assert "expired" in stale_text_1.lower() or "invalid" in stale_text_1.lower() or "သက်တမ်းကုန်" in stale_text_1
-
-    # Verify 0 campaigns created
-    c0 = (await db_session.execute(select(BroadcastCampaign))).scalars().all()
-    assert len(c0) == 0
-
-    # Step 4: Admin initiates fresh broadcast -> Fresh Preview with Token B
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_start(cb_init, state)
-    assert state.current_state == AdminBroadcastFSM.choosing_audience
-
-    cb_grp2 = MagicMock(spec=CallbackQuery)
-    cb_grp2.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_grp2.data = "admin:bc_group:REGISTERED_ALL"
-    cb_grp2.message = MagicMock(spec=Message)
-    cb_grp2.message.edit_text = AsyncMock()
-    cb_grp2.answer = AsyncMock()
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_group_select(cb_grp2, state)
-    assert state.current_state == AdminBroadcastFSM.waiting_for_message
-    msg_b = MagicMock(spec=Message)
-    msg_b.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    msg_b.text = "Broadcast Announcement B"
-    msg_b.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_message_input(msg_b, state)
-
-    assert state.current_state == AdminBroadcastFSM.confirming
-    token_b = state.data.get("token")
-    assert token_b is not None
-    assert token_b != token_a  # Must be a distinct fresh token
-
-    # Step 5: Admin attempts to send stale Token A while Token B is pending -> REJECTED
-    cb_stale_a2 = MagicMock(spec=CallbackQuery)
-    cb_stale_a2.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_stale_a2.data = f"admin:broadcast_send:{token_a}"
-    cb_stale_a2.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_confirm(cb_stale_a2, state)
-
-    cb_stale_a2.answer.assert_called_once()
-    stale_text_2 = cb_stale_a2.answer.call_args[0][0]
-    assert "expired" in stale_text_2.lower() or "invalid" in stale_text_2.lower() or "သက်တမ်းကုန်" in stale_text_2
-    # Current state still pending Token B
-    assert state.current_state == AdminBroadcastFSM.confirming
-    assert state.data["token"] == token_b
-
-    # Step 6: Admin confirms with valid Token B -> SUCCEEDS
-    cb_confirm_b = MagicMock(spec=CallbackQuery)
-    cb_confirm_b.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_confirm_b.data = f"admin:broadcast_send:{token_b}"
-    progress_msg = MagicMock(spec=Message)
-    progress_msg.message_id = 9911
-    cb_confirm_b.message = MagicMock(spec=Message)
-    cb_confirm_b.message.edit_text = AsyncMock(return_value=progress_msg)
-    cb_confirm_b.answer = AsyncMock()
-    cb_confirm_b.bot = MagicMock()
-    cb_confirm_b.bot.send_message = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_confirm(cb_confirm_b, state)
-
-    assert state.current_state is None
-    assert state.data == {}
-
-    # Exactly 1 campaign created in DB
-    campaigns = (await db_session.execute(select(BroadcastCampaign))).scalars().all()
-    assert len(campaigns) == 1
-    assert campaigns[0].message_text == "Broadcast Announcement B"
-
-    # Step 7: Duplicate confirmation with Token B sent again -> REJECTED (state already cleared)
-    cb_dup = MagicMock(spec=CallbackQuery)
-    cb_dup.from_user = TgUser(id=admin_id, is_bot=False, first_name="Admin")
-    cb_dup.data = f"admin:broadcast_send:{token_b}"
-    cb_dup.answer = AsyncMock()
-
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await handle_admin_broadcast_confirm(cb_dup, state)
-
-    cb_dup.answer.assert_called_once()
-    dup_text = cb_dup.answer.call_args[0][0]
-    assert "expired" in dup_text.lower() or "invalid" in dup_text.lower() or "သက်တမ်းကုန်" in dup_text
-
-    # Still exactly 1 campaign
-    campaigns_after = (await db_session.execute(select(BroadcastCampaign))).scalars().all()
-    assert len(campaigns_after) == 1
-
-
-
-
+# Bot-chat CloneFSM and AdminBroadcastFSM wizards were retired in Round 13 Part K
+# (moved to Mini App); AccessControlMiddleware & real-dispatcher security tests remain below.
 
 
 @pytest.mark.asyncio
@@ -738,8 +436,8 @@ async def test_real_dispatcher_blocked_user_cannot_generate_voice(db_session, mo
     assert answer_cb_calls[0].show_alert is True
     assert await dp.storage.get_state(storage_key) is None
 
-    # 2. Mid-flight: User blocked while at CloneFSM.waiting_for_text
-    await dp.storage.set_state(storage_key, CloneFSM.waiting_for_text)
+    # 2. Mid-flight: User blocked while in a stored FSM state
+    await dp.storage.set_state(storage_key, "CloneFSM:waiting_for_text")
     await dp.storage.set_data(storage_key, {"lang": "en", "max_chars": 120})
 
     bot.reset_mock()
@@ -749,11 +447,10 @@ async def test_real_dispatcher_blocked_user_cannot_generate_voice(db_session, mo
     send_msg_calls = [c[0][0] for c in bot.call_args_list if c[0] and type(c[0][0]).__name__ == "SendMessage"]
     assert len(send_msg_calls) == 1
     assert "Your account has been suspended" in send_msg_calls[0].text
-    # State remains waiting_for_text and does not advance to waiting_for_voice
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_text
+    assert await dp.storage.get_state(storage_key) == "CloneFSM:waiting_for_text"
 
-    # 3. Final Model Selection: User blocked while at CloneFSM.waiting_for_model
-    await dp.storage.set_state(storage_key, CloneFSM.waiting_for_model)
+    # 3. Callback while blocked
+    await dp.storage.set_state(storage_key, "CloneFSM:waiting_for_model")
     await dp.storage.set_data(storage_key, {
         "input_text": "Final synthesis text",
         "edge_voice": "my-MM-ThihaNeural",
@@ -763,7 +460,7 @@ async def test_real_dispatcher_blocked_user_cannot_generate_voice(db_session, mo
     })
 
     bot.reset_mock()
-    upd3 = make_callback_update(user_id=blocked_id, callback_data="clone_model:1", update_id=103)
+    upd3 = make_callback_update(user_id=blocked_id, callback_data="menu:refer_earn", update_id=103)
     await dp.feed_update(bot, upd3)
 
     answer_cb_calls_3 = [c[0][0] for c in bot.call_args_list if c[0] and type(c[0][0]).__name__ == "AnswerCallbackQuery"]
@@ -781,74 +478,6 @@ async def test_real_dispatcher_blocked_user_cannot_generate_voice(db_session, mo
     # Verify balance was completely unmutated
     bal_after = await get_minute_balance(db_session, blocked_id)
     assert bal_after.purchased_seconds == 300
-
-
-@pytest.mark.asyncio
-async def test_real_dispatcher_admin_voice_generation_end_to_end(db_session, monkeypatch):
-    """Real dispatcher: Configured Admin completes 6-step voice clone flow through registered filters into a queued Job."""
-    admin_id = 888010
-    monkeypatch.setattr(settings, "admin_ids_raw", str(admin_id))
-
-    admin_user = User(id=admin_id, username="admin_e2e", status=UserStatus.ACTIVE.value, language_code="en")
-    db_session.add(admin_user)
-    model = VoiceModel(
-        name="RealModel",
-        slug="real-model",
-        type=VoiceModelType.SYSTEM.value,
-        status=VoiceModelStatus.ACTIVE.value,
-        model_dir="/tmp/models/real",
-        pth_path="/tmp/models/real/real.pth",
-    )
-    db_session.add(model)
-    await db_session.commit()
-
-    sm = create_mock_session_maker(db_session)
-    dp = Dispatcher(storage=MemoryStorage())
-    setup_handlers(dp, session_factory=sm)
-
-    bot = AsyncMock(spec=Bot)
-    bot.id = 999888
-    mock_status_msg = MagicMock(spec=Message)
-    mock_status_msg.message_id = 9988
-    bot.return_value = mock_status_msg
-    storage_key = StorageKey(bot_id=bot.id, chat_id=admin_id, user_id=admin_id)
-
-    # Step 1: Admin clicks menu:voice_clone
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await dp.feed_update(bot, make_callback_update(admin_id, "menu:voice_clone", 201))
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_text
-
-    # Step 2: Admin inputs text
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await dp.feed_update(bot, make_message_update(admin_id, "Hello from real dispatcher admin voice clone", 202))
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_voice
-
-    # Step 3: Admin selects voice
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await dp.feed_update(bot, make_callback_update(admin_id, "clone_voice:my-MM-ThihaNeural", 203))
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_speed
-
-    # Step 4: Admin selects speed
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await dp.feed_update(bot, make_callback_update(admin_id, "clone_speed:normal", 204))
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_gender
-
-    # Step 5: Admin selects gender
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await dp.feed_update(bot, make_callback_update(admin_id, "clone_gender:m2m", 205))
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_model
-
-    # Step 6: Admin selects model -> legacy .pth flow is disabled (voice v2)
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
-        await dp.feed_update(bot, make_callback_update(admin_id, f"clone_model:{model.id}", 206))
-
-    # State is NOT cleared and NO job is created: the legacy trained-model
-    # path is closed in favour of VoxCPM2 reference-audio cloning, and the
-    # user is shown the legacy-disabled message instead.
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_model
-
-    jobs = (await db_session.execute(select(Job).where(Job.user_id == admin_id))).scalars().all()
-    assert len(jobs) == 0
 
 
 @pytest.mark.asyncio
@@ -948,18 +577,20 @@ async def test_real_dispatcher_dynamic_unblock_recovery(db_session, monkeypatch)
     bal.welcome_seconds = 300
     await db_session.commit()
 
-    # Attempt 2: while ACTIVE -> Succeeds and enters CloneFSM.waiting_for_text!
+    # Attempt 2: while ACTIVE -> Succeeds and serves the live menu:change_lang callback!
     bot.reset_mock()
-    upd2 = make_callback_update(user_id=target_id, callback_data="menu:voice_clone", update_id=602)
-    with patch("app.handlers.clone.AsyncSessionLocal", sm):
+    upd2 = make_callback_update(user_id=target_id, callback_data="menu:change_lang", update_id=602)
+    with patch("app.handlers.menu.AsyncSessionLocal", sm):
         await dp.feed_update(bot, upd2)
 
-    assert await dp.storage.get_state(storage_key) == CloneFSM.waiting_for_text
+    send_msg_calls = [c[0][0] for c in bot.call_args_list if c[0] and type(c[0][0]).__name__ == "SendMessage"]
+    assert len(send_msg_calls) == 1
+    assert "Your account has been suspended" not in send_msg_calls[0].text
 
 
 @pytest.mark.asyncio
 async def test_non_admin_cannot_reach_admin_operations(db_session, monkeypatch):
-    """Real dispatcher: Non-admin users cannot access admin commands or callbacks."""
+    """Real dispatcher: Non-admin users cannot access live admin payment-review callbacks."""
     admin_id = 888030
     normal_id = 777030
     monkeypatch.setattr(settings, "admin_ids_raw", str(admin_id))
@@ -975,24 +606,8 @@ async def test_non_admin_cannot_reach_admin_operations(db_session, monkeypatch):
     bot = AsyncMock(spec=Bot)
     bot.id = 999888
 
-    # 1. Normal user sends /admin command
-    upd_cmd = make_message_update(user_id=normal_id, text="/admin", update_id=701)
-    with patch("app.handlers.admin.AsyncSessionLocal", sm):
-        await dp.feed_update(bot, upd_cmd)
-
-    send_msg_calls = [c[0][0] for c in bot.call_args_list if c[0] and type(c[0][0]).__name__ == "SendMessage"]
-    assert len(send_msg_calls) == 1
-    # Bot cleanup 2026-11-03: /admin from a non-admin NO LONGER draws
-    # the denial — it silently falls through to the normal user
-    # welcome/gate flow. The security property that matters is that
-    # no admin surface or data is exposed: the single message is the
-    # ordinary user-facing one and contains no denial/admin content.
-    _txt = send_msg_calls[0].text.lower()
-    assert "access denied" not in _txt and "admin only" not in _txt and "ဝင်ရောက်ခွင့်မရှိပါ" not in send_msg_calls[0].text
-
-    # 2. Normal user sends admin:dashboard callback
-    bot.reset_mock()
-    upd_cb = make_callback_update(user_id=normal_id, callback_data="admin:dashboard", update_id=702)
+    # Normal user sends live admin payment callback
+    upd_cb = make_callback_update(user_id=normal_id, callback_data="admin:pay_detail:PAY-TEST-1", update_id=702)
     with patch("app.handlers.admin.AsyncSessionLocal", sm):
         await dp.feed_update(bot, upd_cb)
 

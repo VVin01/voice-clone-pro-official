@@ -94,16 +94,15 @@ def test_engine_picker_is_a_one_row_capsule():
     assert 'data-i18n="recap_engine_label"' in field
 
 
-def test_story_picker_is_the_wrapped_capsule():
+def test_story_picker_is_the_2x2_grid():
+    # Round 13 Part G converted #story-style-picker-quick to a 4-option 2x2 grid (dramatic retired).
     seg = _picker("story-style-picker-quick", "gemini-voice-select-quick")
-    assert "style-pills-grid seg-capsule" in INDEX_HTML
-    assert '<span class="seg-capsule-pill" aria-hidden="true"></span>' in seg
-    assert seg.count("capsule-seg") == 5
-    for story in ("viral", "dramatic", "funny", "pov", "standard"):
+    assert "style-pills-grid style-grid-2x2" in INDEX_HTML
+    assert seg.count("style-select-pill") == 4
+    for story in ("viral", "funny", "standard", "pov"):
         assert f'data-story="{story}"' in seg
-    # Full labels untouched (the wrapped geometry exists precisely
-    # so no copy is shortened).
-    for key in ("style_viral", "style_dramatic", "style_funny", "style_pov", "style_standard"):
+    assert 'data-story="dramatic"' not in seg
+    for key in ("style_viral", "style_funny", "style_standard", "style_pov"):
         assert f'data-i18n="{key}"' in seg
 
 
@@ -129,9 +128,8 @@ def test_seg_capsule_movers_and_call_sites():
     assert "function moveSegPills()" in APP_JS
     assert 'capsule.querySelector(".seg-capsule-pill")' in APP_JS
     assert 'capsule.querySelector(".capsule-seg.active")' in APP_JS
-    # Global lifecycle re-measures + picker-level hooks.
+    # Global lifecycle re-measures; story picker is now a 2x2 grid so no moveSegPill call needed for it.
     assert APP_JS.count("moveSegPills()") >= 8
-    assert APP_JS.count('moveSegPill(document.getElementById("story-style-picker-quick"))') == 1
 
 
 # ── BD-1b: PIL/Padauk geometry proof (the BB-2 method) ───────────────
@@ -169,18 +167,11 @@ def test_capsule_width_budgets():
         assert _width(font, _label(key, 0)) <= active3, key
     for glyph in ("🎙️", "✨", "🎧"):
         assert _width(font, glyph) <= inactive3, glyph
-    # Story: the wrapped geometry is mathematically required whenever
-    # ANY Burmese full label exceeds the one-row 5-segment active
-    # budget (shortening copy was the only alternative). After the
-    # premium renames (2026-11-16) the shorter Instant Hook / Drama
-    # Prime / Light Comedy labels fit one row; First-Person POV measures
-    # exactly 92px on Linux (Padauk-Bold + libraqm vs >92.5px budget,
-    # passing only on Windows font metrics), but Cinematic Storyteller
-    # still exceeds it — so wrapping stays.
+    # Round 13 Part G shortened the 4 story labels so every Burmese label fits comfortably in the 2x2 grid.
     strip5 = 360 - 32 - 32 - 12 - 4 * 4            # 268
     active5 = strip5 * 2.4 / (2.4 + 4) - 6 - 2     # 92.5 inner
-    for key in ("style_standard",):
-        assert _width(font, _label(key, 0)) > active5, key
+    for key in ("style_viral", "style_funny", "style_standard", "style_pov"):
+        assert _width(font, _label(key, 0)) <= active5, key
 
 
 # ── BD-2: switches + fields ──────────────────────────────────────────
@@ -300,5 +291,5 @@ def test_bg_persona_work_intact_and_not_restyled():
 
 
 def test_token_r80():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "20261104_r79" not in INDEX_HTML

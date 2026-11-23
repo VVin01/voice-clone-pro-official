@@ -78,6 +78,7 @@ def _compose_notify(lang: str, engine, gemini_voice, slug: str) -> str:
         lang,
         clean_title="Me at the zoo",
         voice_name=recap_voice_display_name(engine, gemini_voice, slug),
+        duration="01:00",
         job_id="rc_test",
     )
     params = recap_voice_name_note_params(engine, gemini_voice, slug)
@@ -94,8 +95,8 @@ def _compose_notify(lang: str, engine, gemini_voice, slug: str) -> str:
 
 def test_completion_message_gemini_carries_heard_name_and_note():
     text = _compose_notify("my", "gemini", "Charon", "komin")
-    # The voice line names the heard Gemini voice…
-    assert "🎙️ <b>အသံ:</b> ကိုသီဟ" in text
+    # Part F compact format: voice line names the heard Gemini voice…
+    assert "🎙️ အသံ: ကိုသီဟ" in text
     # …and the note explains the difference with BOTH names.
     assert "📝" in text
     assert "ရွေးထားတဲ့ 'ကိုမင်း' အသံအစား" in text
@@ -104,7 +105,7 @@ def test_completion_message_gemini_carries_heard_name_and_note():
 
 def test_completion_message_voxcpm_persona_no_note():
     text = _compose_notify("my", "voxcpm", None, "komin")
-    assert "🎙️ <b>အသံ:</b> ကိုမင်း" in text
+    assert "🎙️ အသံ: ကိုမင်း" in text
     assert "📝" not in text
 
 
@@ -126,15 +127,14 @@ def test_note_key_exists_in_both_locales_with_all_placeholders():
 # ── Wiring: the fallback note never stacks with the name note ───────
 
 def test_notify_wiring_fallback_note_excludes_name_note():
-    span = API_SRC.split('"recap_notify_text"', 1)[1].split(
-        '"recap_retention_note"', 1
-    )[0]
-    fallback_if = span.index('if entry.get("fallback_used"):')
+    # Part F centralized completion text into build_recap_completion_message().
+    start = API_SRC.index("def build_recap_completion_message(")
+    end = API_SRC.index("\n\ndef ", start + 1)
+    span = API_SRC[start:end]
+    fallback_if = span.index("if fallback_count > 0:")
     fallback_note = span.index('"recap_fallback_note"')
-    else_branch = span.index("else:", fallback_note)
+    elif_branch = span.index("elif voice_name_note:", fallback_note)
     name_note = span.index('"recap_voice_name_note"')
-    # The fallback note is appended inside the fallback branch; the
-    # name note is appended only in the else branch, after it.
-    assert fallback_if < fallback_note < else_branch < name_note
-    # The else branch decides via the note-params helper.
-    assert "recap_voice_name_note_params(" in span[else_branch:]
+    assert fallback_if < fallback_note < elif_branch < name_note
+    # Call site computes voice_name_note via recap_voice_name_note_params.
+    assert "recap_voice_name_note_params(" in API_SRC

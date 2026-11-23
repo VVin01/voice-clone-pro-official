@@ -252,16 +252,18 @@ async def test_ap_endpoint_passes_video_only(monkeypatch, tmp_path):
 
 
 def test_ap_completion_keyboard_has_all_four_buttons():
-    start = API_PY.index(
-        'clean_title = _clean_recap_display_title(entry.get("title"), req.url)'
+    # Part F (2026-11-23): Recap completion keyboard is built by build_recap_completion_keyboard
+    # with 1 button per full-width row: Video -> Recap Audio -> SRT -> Script -> Mini App.
+    kb = api_mod.build_recap_completion_keyboard(
+        "my", job_id="rc_demo", app_url="https://example.com/app",
+        has_video=True, has_audio=True, has_srt=True, has_script=True,
     )
-    body = API_PY[start:API_PY.index("notify_text = t(", start)]
-    callbacks = re.findall(r'callback_data=f"([^"]+)"', body)
+    callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data]
     assert callbacks == [
-        "send_recap_{job_id}",
-        "send_recap_srt_{job_id}",
-        "send_recap_audio_{job_id}",
-        "send_recap_script_{job_id}",
+        "send_recap_rc_demo",
+        "send_recap_audio_rc_demo",
+        "send_recap_srt_rc_demo",
+        "send_recap_script_rc_demo",
     ]
     # The three extra labels are real i18n keys in both locales.
     for key in (

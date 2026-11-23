@@ -48,7 +48,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_dp_cache_token_is_r140():
     html = (REPO / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261118_r164") == 4
+    assert html.count("20261123_followup1") == 5
     assert "r137" not in html
 
 
@@ -1004,6 +1004,10 @@ async def test_dp_clone_paid_edge_all_resume_skips_primary(db_session):
 
     user = await _mk_user(db_session, 64003, category="PURCHASED")
     await _mk_cloud_model(db_session)
+    # Limits round (2026-11-23): PURCHASED users don't auto-receive daily free, so seed purchased seconds.
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 600
+    await db_session.commit()
     job, status = await create_voice_clone_job(
         session=db_session, user_id=user.id,
         text="စမ်းသပ် စာသား တစ်ခု", chat_id=user.id,

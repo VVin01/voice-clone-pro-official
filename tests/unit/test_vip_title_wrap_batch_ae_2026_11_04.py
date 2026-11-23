@@ -65,14 +65,13 @@ def test_ae_rules_scoped_to_vip_only():
 
 
 def test_vip_title_text_and_badge_unchanged():
-    header = _vip_pane_header()
-    assert '<h2 data-i18n="vip_title">💎 Creator VIP Plans &amp; ပိုက်ဆံအိတ်</h2>' in header
-    assert header.count('<span class="badge-studio gold">PREMIUM</span>') == 1
-    # Both locales keep the exact title strings.
-    assert 'vip_title: "💎 Creator VIP Plans & ပိုက်ဆံအိတ်"' in I18N_JS
-    assert 'vip_title: "💎 Creator VIP Plans & Wallet"' in I18N_JS
+    # Round 13 removed the duplicate pane header inside #tab-vip (plans start directly at #vip-sub-plans)
+    # and trimmed vip_title to "💎 Creator VIP Plans" in both locales.
+    assert '<section id="tab-vip"' in INDEX_HTML
+    assert 'id="vip-sub-plans"' in INDEX_HTML
+    assert I18N_JS.count('vip_title: "💎 Creator VIP Plans"') == 2
 
 
 def test_cache_token_r57():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261104_r55" not in INDEX_HTML

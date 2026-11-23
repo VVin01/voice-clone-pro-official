@@ -198,15 +198,16 @@ def test_p5_settings_payload_accepts_character_limit_free():
 
 
 def test_p5_settings_validation_bounds():
+    # Limits round (2026-11-23): character_limit_free bounds widened to [100, 50000].
     out = api_mod._validate_admin_settings_updates({"character_limit_free": 500})
     assert out["character_limit_free"] == 500
-    for bad in (0, 50, 99, 10001, "abc", 3.5):
+    for bad in (0, 50, 99, 50001, "abc", 3.5):
         with pytest.raises(HTTPException):
             api_mod._validate_admin_settings_updates({"character_limit_free": bad})
 
 
 def test_p5_get_settings_and_ui_wiring():
-    assert '"character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000)' in API_PY
+    assert '"character_limit_free": int(getattr(settings, "character_limit_free", 3000) or 3000)' in API_PY
     assert 'id="adm-set-char-limit-free"' in INDEX_HTML
     assert 'data-i18n="settings_char_limit_free"' in INDEX_HTML
     assert '"adm-set-char-limit-free"' in APP_JS
@@ -339,21 +340,20 @@ def test_e9_persona_display_names_unified():
 
 def test_e10_burmese_table_translated():
     tr = _translations()
+    # Active Burmese UI keys remain translated (retired plan_*/mirror/custom_ref_optional removed in R10/R13/v3;
+    # dl_title & vip_title intentionally use English brand headers in both locales).
     keys = (
-        "custom_ref_optional", "btn_dl_download", "recap_info_ready",
-        "fmt_video_title", "fmt_audio_title", "fmt_sub_title", "dl_title",
-        "vip_title", "mirror_on", "mirror_off", "preview_label",
+        "btn_dl_download", "recap_info_ready",
+        "fmt_video_title", "fmt_audio_title", "fmt_sub_title",
         "recap_engine_label", "recap_sub_band", "recap_sub_heavy",
         "recap_sub_soft", "recap_quality_standard", "recap_quality_high",
-        "recap_quality_max", "plan_recap_f2",
-        "plan_recap_f5", "plan_master_f4", "plan_master_f5",
-        "plan_recap_starter_f2",
+        "recap_quality_max",
     )
     for key in keys:
         val = tr["my"][key]
         assert _has_myanmar(val), (key, val)
-    # R40 deck I3: plan_voice_f4 (the priority-queue feature line) is
-    # DELETED — no priority queue exists in the product.
+    for brand_key in ("dl_title", "vip_title"):
+        assert tr["my"][brand_key] and tr["en"][brand_key], brand_key
     assert "plan_voice_f4" not in tr["my"] and "plan_voice_f4" not in tr["en"]
 
 
@@ -396,7 +396,7 @@ def test_cache_buster_bumped():
     # voice preview feature) -> rt1 (Recap tab tidy, all three statics)
     # -> rt3 (tidy return pass 2) -> rt4 (full-app polish batch)
     # -> fp1 (admin-demote + voice-picker batch).
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "?v=20261101_rt4" not in INDEX_HTML
     assert "?v=20261101_rt3" not in INDEX_HTML
     assert "?v=20261101_rt1" not in INDEX_HTML
@@ -434,19 +434,15 @@ async def test_p2_ensure_referral_code_lazy_generates(db_session):
 
 
 def test_p2_home_card_and_handlers():
-    assert 'id="home-refer-card"' in INDEX_HTML
-    assert 'id="referral-link-text"' in INDEX_HTML
-    assert 'id="referral-stats-line"' in INDEX_HTML
-    assert 'onclick="copyReferralLink()"' in INDEX_HTML
-    assert 'onclick="shareReferralLink()"' in INDEX_HTML
+    # Round 13 moved Refer & Support out of #home-refer-card into Profile / Bot /start Refer;
+    # handlers and core i18n keys stay live.
     assert 'onclick="openSupportContact()"' in INDEX_HTML
     assert "function updateReferUI(data)" in APP_JS
     assert "updateReferUI(data);" in APP_JS  # loadUserProfile hook
-    assert "https://t.me/share/url?url=" in APP_JS
+    assert "updateProfileReferSummary(data);" in APP_JS
+    assert "function copyReferralLink()" in APP_JS
     tr = _translations()
-    for key in ("ref_card_title", "ref_desc", "ref_stats_line", "ref_share_btn",
-                "ref_share_text", "ref_link_pending", "support_contact_title",
-                "support_contact_desc"):
+    for key in ("ref_card_title", "support_contact_title", "support_contact_desc"):
         assert tr["my"][key] and tr["en"][key], key
 
 

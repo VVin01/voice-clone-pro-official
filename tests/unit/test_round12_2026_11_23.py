@@ -197,17 +197,18 @@ def test_part_b1_title_only_headers_and_zero_emojis_in_fine_body():
     emoji_re = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]")
     assert emoji_re.findall(fine) == []
 
-    # setupRecapAccordion must omit .dd-acc-val inside #recap-fine-body
+    # setupRecapAccordion must omit .dd-acc-val inside #recap-fine-body (via hideVal = inFine || ...)
     acc_fn = _extract_block(APP_JS, "function setupRecapAccordion()", "// (3) Blur-box LIST editor")
-    assert "if (!inFine)" in acc_fn
+    assert "const hideVal = inFine ||" in acc_fn
+    assert "if (!hideVal)" in acc_fn
     assert "valSpan" in acc_fn
 
     # refreshRecapStep2Summary must not write summaries for subtitle / blur / logo panels
     sum_fn = _extract_block(APP_JS, "function refreshRecapStep2Summary()", "window.refreshRecapStep2Summary")
     for gid in ("recap-subtitle-group", "recap-blur-group", "recap-logo-group"):
         assert gid not in sum_fn
-    # Non-fine consumers remain intact
-    for gid in ("recap-preview-ratio-group", "recap-story-style-acc", "recap-pace-acc", "recap-lang-acc", "recap-review-acc"):
+    # Non-fine consumers remain intact (recap-lang-acc & recap-review-acc retired in Round 13)
+    for gid in ("recap-preview-ratio-group", "recap-story-style-acc", "recap-pace-acc"):
         assert gid in sum_fn
 
     # Logo header retains VIP badge attribute without emojis
@@ -400,13 +401,10 @@ def test_part_c_step3_header_deleted_engine_select_details_and_own_voice():
     assert opts == ["voxcpm", "gemini", "edge"]
     assert 'value="none"' not in step3
 
-    # C3: Billing badge deleted; hint wrapped inside collapsed <details>
+    # C3: Billing badge deleted; Round 13 also retired the collapsible #recap-engine-billing-details hint.
     assert 'id="recap-voice-billing-badge"' not in INDEX_HTML
     assert 'class="vcp-persona-head-row"' not in INDEX_HTML
-    m_det = re.search(r'<details[^>]*id="recap-engine-billing-details"[^>]*>(.*?)</details>', step3, re.S)
-    assert m_det is not None
-    assert " open" not in m_det.group(0).split(">", 1)[0]
-    assert 'id="recap-engine-billing-hint"' in m_det.group(1)
+    assert 'id="recap-engine-billing-details"' not in INDEX_HTML
 
     # C4: Own-voice card single-line header (recap_own_voice_desc removed, body preserved)
     assert "recap_own_voice_desc" not in INDEX_HTML
@@ -415,7 +413,7 @@ def test_part_c_step3_header_deleted_engine_select_details_and_own_voice():
 
 
 # ---------------------------------------------------------------------------
-# Part D: Step 4 (review, facts, choices, button text, admin quality lock, split deleted)
+# Part D: Step 4 (review, choices, button text, admin quality lock, split deleted)
 # ---------------------------------------------------------------------------
 
 
@@ -427,10 +425,7 @@ def test_part_d_step4_review_facts_choices_button_and_split_deleted():
     assert 'recap_step4_title: "Review"' in I18N_JS
     assert '<span class="recap-steps-nav-name" data-i18n="recap_step4_title">စစ်ဆေးရန်</span>' in INDEX_HTML
 
-    # D2: Facts bar holds only format + duration (no chip pile)
-    facts = _extract_block(step4, 'id="recap-step4-facts"', '<div class="recap-step4-choices"')
-    assert 'id="recap-fact-canvas"' in facts
-    assert 'id="recap-fact-duration"' in facts
+    # D2: Round 13 retired #recap-step4-facts bar altogether (3-row choices card carries summary).
     for deleted_fact in ("recap-fact-subs", "recap-fact-blur", "recap-fact-quality", "recap-fact-speed", "recap-fact-mirror", "recap-fact-title"):
         assert deleted_fact not in INDEX_HTML
         assert deleted_fact not in APP_JS
@@ -442,8 +437,9 @@ def test_part_d_step4_review_facts_choices_button_and_split_deleted():
     for cid in ("recap-step4-choice-title", "recap-step4-choice-voice", "recap-step4-choice-ratio"):
         assert f'id="{cid}"' in choices
 
-    # D4: btn_start_recap drops credit suffix in both MY & EN while quote card stays intact
-    assert 'btn_start_recap: "⚡ 1-Click Recap ဖန်တီးမည်"' in I18N_JS
+    # D4: btn_start_recap drops credit suffix in both MY & EN while quote card stays intact (shortened in Round 13)
+    assert 'btn_start_recap: "ဖန်တီးမည်"' in I18N_JS
+    assert 'btn_start_recap: "Create"' in I18N_JS
     en_btn = re.findall(r'btn_start_recap:\s*"([^"]+)"', I18N_JS)
     assert len(en_btn) == 2
     assert "(1 Credit)" not in en_btn[0] and "(1 Credit)" not in en_btn[1]
@@ -564,6 +560,27 @@ def test_round12_config_build_parity_vs_base_759f98c():
             "function recapCompositePayload() {",
             "function scheduleRecapCompositeRefresh()",
         )
+        if "function buildRecapConfig(url)" in js_src:
+            builder_fn = _extract_block(
+                js_src,
+                "function buildRecapConfig(url)",
+                "async function handleStartRecap()",
+            )
+            edge_norm = "function normalizeEdgeVoiceKey(v) { return String(v || 'thiha').trim().toLowerCase() || 'thiha'; }"
+            return f"""
+{locked_and_extras}
+{quality_fn}
+{edge_norm}
+function recapCompositeSourceUrl() {{ return state.recapVerifiedSourceUrl || null; }}
+{composite_fns}
+{builder_fn}
+function buildSubmitPayload(url) {{
+    const p = buildRecapConfig(url);
+    delete p.edge_voice;
+    p.source_language = state.recapSourceLanguage || "auto";
+    return p;
+}}
+"""
         start_recap = js_src.index("async function handleStartRecap()")
         payload_start = js_src.index("const sliderBlurY = document.getElementById", start_recap)
         payload_end = js_src.index('const res = await fetch("/api/recap/generate"', payload_start)

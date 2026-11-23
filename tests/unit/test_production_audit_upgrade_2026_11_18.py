@@ -240,7 +240,7 @@ def test_frontend_p2_and_assets_p3_contracts():
     assert "212.28.177.252" not in index_html
     assert '<span class="acc-num" id="kpay-num">—</span>' in index_html
     assert '<span class="acc-num" id="wave-num">—</span>' in index_html
-    assert index_html.count("?v=20261118_r164") == 4
+    assert index_html.count("?v=20261123_followup1") == 5
 
     my_part = i18n_js.split("    my: {", 1)[1].split("    en: {", 1)[0]
     en_part = i18n_js.split("    en: {", 1)[1]

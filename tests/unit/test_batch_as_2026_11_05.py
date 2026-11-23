@@ -369,9 +369,7 @@ def test_ratio_card_css_is_a_stacked_card_not_a_pill():
 # ── AS-6: CTA clearance + chip wrap ─────────────────────────────────
 
 def test_voice_tab_clears_the_fixed_cta_band():
-    as_block = STYLE_CSS.split("Batch AS (2026-11-05)")[1]
-    assert "#tab-voice { padding-bottom: 72px; }" in as_block
-    # The recap tab's pre-existing extra clearance stays in force.
+    # Round 13 retired #sticky-cta-voice (and its #tab-voice padding-bottom); #tab-recap keeps 120px clearance.
     assert "#tab-recap { padding-bottom: 120px; }" in STYLE_CSS
 
 
@@ -385,6 +383,6 @@ def test_persona_filter_chips_wrap_without_clipping():
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_static_token_is_r67():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     for text in (INDEX_HTML, APP_JS, I18N_JS, STYLE_CSS):
         assert "20261104_r66" not in text

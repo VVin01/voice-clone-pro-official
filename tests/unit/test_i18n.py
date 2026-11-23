@@ -80,28 +80,30 @@ def test_progress_keys_and_stepper_rendering():
 
 
 def test_audio_completed_caption_localization():
-    """Verify delivery audio caption renders properly with HTML escaping."""
+    """Verify Part F compact delivery audio caption renders properly with HTML escaping."""
     caption_my = t(
         "status_completed_caption",
         "my",
-        completed_status=t("status_completed", "my"),
         model_name=html.escape("<Model & Sound>"),
-        duration_seconds=42,
+        duration="00:42",
+        job_id="vc_42",
+        retention_hours=24,
     )
-    assert "အသံဖိုင် အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ" in caption_my
+    assert "အသံ ဖန်တီးပြီးပါပြီ" in caption_my
     assert "&lt;Model &amp; Sound&gt;" in caption_my
-    assert "42s" in caption_my
+    assert "00:42" in caption_my
 
     caption_en = t(
         "status_completed_caption",
         "en",
-        completed_status=t("status_completed", "en"),
         model_name=html.escape("Guy & Girl"),
-        duration_seconds=15,
+        duration="00:15",
+        job_id="vc_15",
+        retention_hours=24,
     )
-    assert "Audio generated successfully" in caption_en
+    assert "Your audio is ready!" in caption_en
     assert "Guy &amp; Girl" in caption_en
-    assert "15s" in caption_en
+    assert "00:15" in caption_en
 
 
 def test_admin_and_recovery_keys_localization():

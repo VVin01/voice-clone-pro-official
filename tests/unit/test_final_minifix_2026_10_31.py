@@ -50,10 +50,6 @@ import app.handlers.payment as payment_mod
 import app.services.downloader as downloader_mod
 from app.config import settings
 from app.db.base import Base
-from app.handlers.admin import (
-    handle_admin_tutorial_recap_url_input,
-    handle_admin_tutorial_voice_url_input,
-)
 from app.handlers.payment import handle_receipt_after_restart
 from app.models.enums import JobStatus, JobType
 from app.models.schema import Job, PaymentIntent, PaymentRequest, User
@@ -133,57 +129,8 @@ def test_telegram_link_helper_rejects_junk(bad):
     assert is_valid_telegram_link(bad) is False
 
 
-def _patch_admin_sessions(monkeypatch, db_session):
-    @asynccontextmanager
-    async def mock_session_ctx():
-        yield db_session
-
-    monkeypatch.setattr(admin_mod, "AsyncSessionLocal", lambda: mock_session_ctx())
-
-
-def _fake_url_message(text, uid=424242):
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=uid, is_bot=False, first_name="Admin")
-    msg.text = text
-    msg.answer = AsyncMock()
-    return msg
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("handler", [
-    handle_admin_tutorial_voice_url_input,
-    handle_admin_tutorial_recap_url_input,
-])
-async def test_bot_tutorial_receivers_reject_junk_url(db_session, monkeypatch, handler):
-    monkeypatch.setattr(settings, "admin_ids_raw", "424242")
-    _patch_admin_sessions(monkeypatch, db_session)
-    state = SimpleNamespace(clear=AsyncMock())
-    msg = _fake_url_message("https://t.me/Voice Clone/29 and other junk")
-    await handler(msg, state)
-    assert msg.answer.await_count == 1
-    assert "Invalid URL format" in msg.answer.await_args.args[0]
-    state.clear.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("handler,attr", [
-    (handle_admin_tutorial_voice_url_input, "tutorial_voice_link"),
-    (handle_admin_tutorial_recap_url_input, "tutorial_recap_link"),
-])
-async def test_bot_tutorial_receivers_accept_real_tme_link(db_session, monkeypatch, handler, attr):
-    monkeypatch.setattr(settings, "admin_ids_raw", "424242")
-    # set_dynamic_setting also applies the value to the in-memory
-    # settings object; pin the attribute so teardown restores it.
-    monkeypatch.setattr(settings, attr, getattr(settings, attr))
-    _patch_admin_sessions(monkeypatch, db_session)
-    state = SimpleNamespace(clear=AsyncMock())
-    url = "https://t.me/VoiceClonePro/29"
-    msg = _fake_url_message(url)
-    await handler(msg, state)
-    state.clear.assert_awaited()
-    assert msg.answer.await_count == 1
-    assert "Updated" in msg.answer.await_args.args[0]
-    assert getattr(settings, attr) == url
+# Bot-chat tutorial URL receiver handlers were retired in Round 13 Part K;
+# Mini App Admin Settings uses the shared is_valid_telegram_link validator tested above.
 
 
 # ── 2. Post-semaphore CANCELLED re-check ─────────────────────────────

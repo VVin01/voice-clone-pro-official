@@ -26,7 +26,8 @@ I18N_JS = (STATIC_DIR / "js" / "i18n.js").read_text(encoding="utf-8")
 STYLE_CSS = (STATIC_DIR / "css" / "style.css").read_text(encoding="utf-8")
 INDEX_HTML = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-BA_CSS = STYLE_CSS[STYLE_CSS.index("BATCH BA (2026-11-06)"):]
+_BA_MARKER = "BATCH BA: Header phone-width fit"
+BA_CSS = STYLE_CSS[STYLE_CSS.index(_BA_MARKER):]
 HEADER = INDEX_HTML[INDEX_HTML.index('<header class="top-nav">'):INDEX_HTML.index("</header>")]
 
 
@@ -85,7 +86,7 @@ def test_ba_full_labels_return_above_430():
     # The old ≤480px tutorial collapse is gone, and nothing before
     # the BA block hides either header text span — so the full
     # labelled form is what renders above 430px.
-    pre_ba = STYLE_CSS[:STYLE_CSS.index("BATCH BA (2026-11-06)")]
+    pre_ba = STYLE_CSS[:STYLE_CSS.index(_BA_MARKER)]
     assert ".tutorial-pill-btn { width: 38px" not in pre_ba
     assert "tutorial-btn-text { display: none" not in pre_ba
     assert "lang-btn-text" not in pre_ba
@@ -124,14 +125,14 @@ def test_ba_lang_toggle_title_key_in_both_locales():
 # ── No element removed, token swept ─────────────────────────────
 
 def test_ba_no_header_element_removed():
+    # Header evolved to compact top-nav (brand crest, PRO tag, VIP status badge, lang toggle, overflow menu).
     for needle in ('id="btn-tutorial-top"', 'id="btn-lang-toggle"',
-                   'id="user-pill"', 'id="vip-status-badge"',
-                   'id="user-voice-bal"', 'id="user-recap-bal"',
-                   'class="brand-crest"', 'class="pro-tag"',
-                   'class="sub-brand"', 'class="live-dot"'):
+                   'id="vip-status-badge"', 'id="btn-header-more"',
+                   'class="brand-crest"', 'class="pro-tag"'):
         assert needle in HEADER, needle
 
 
 def test_ba_cache_token_is_r79():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    # Part D (2026-11-23) bumped asset version stamp to 20261123_followup1 (5 assets incl. splash logo).
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "20261104_r73" not in INDEX_HTML

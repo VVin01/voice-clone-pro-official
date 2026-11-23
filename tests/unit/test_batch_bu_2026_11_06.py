@@ -289,8 +289,10 @@ def test_bu_worker_reads_flag_persists_and_notes_delivery():
     assert 'getattr(engine_inst, "last_reference_trimmed", False)' in WORKER_PY
     assert "job.reference_trimmed = True" in WORKER_PY
     assert 'trim_note = t("worker_ref_trim_note", lang) if reference_trimmed else ""' in WORKER_PY
-    # The note rides ALL THREE delivery texts the fallback note rides.
-    assert WORKER_PY.count("+ fallback_note + trim_note") == 3
+    # Part F unified completion + direct-audio captions into helper builders that both append
+    # worker_ref_trim_note, plus the too-large path appends + fallback_note + trim_note (3 paths total).
+    assert WORKER_PY.count('text += t("worker_ref_trim_note", lang)') == 2
+    assert WORKER_PY.count("+ fallback_note + trim_note") == 1
 
 
 # ── BU-6: API serializers carry the flag ─────────────────────────
@@ -332,5 +334,5 @@ def test_bu_miniapp_surfaces_render_the_trim_note():
 
 
 def test_bu_cache_token_is_r92():
-    assert "20261118_r164" in INDEX_HTML
+    assert "20261123_followup1" in INDEX_HTML
     assert "20261104_r91" not in INDEX_HTML

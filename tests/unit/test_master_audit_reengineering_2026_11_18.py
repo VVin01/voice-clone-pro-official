@@ -14,7 +14,6 @@ from sqlalchemy import text
 from app.config import settings
 from app.models.schema import User
 from app.services import gemini_key_service as gks
-from app.services import recap_thumbnail as thumb_mod
 from app.services import voice_chunking
 from app.services.recap_engine import core as recap_core
 from app.services.recap_engine import png_subtitles as png_subs
@@ -194,16 +193,6 @@ def test_video_splitter_enforces_max_part_seconds():
         assert (p["end"] - p["start"]) <= 600.0 + 0.01
 
 
-def test_thumbnail_burmese_grapheme_and_padauk_fallback():
-    res = thumb_mod.validate_brain_response(
-        {"headline_my": "သစ္စာတရား အမှန်\nအချစ်ကံ", "image_prompt_en": "Dramatic cinema scene"},
-        "Test Movie",
-    )
-    assert res is not None and res["headline_my"]
-    f = thumb_mod._get_noto_serif_black_font(48, line_text="2026 PRO")
-    assert f is not None
-
-
 def test_encrypted_text_and_byok_fernet_roundtrip():
     secret = "AIzaSyTestKeySecret1234567890"
     enc = gks.encrypt_byok_secret(secret)
@@ -306,9 +295,10 @@ def test_frontend_batch3_ia_subtitles_and_budget():
     js = _read_static("js/app.js")
     i18n = _read_static("js/i18n.js")
 
-    assert html.count("?v=20261118_r164") == 4
+    # Part D (2026-11-23) bumped cache stamp to ?v=20261123_followup1 (5 assets incl. splash logo).
+    assert html.count("?v=20261123_followup1") == 5
     assert 'id="btn-top-history"' in html
-    assert html.count('class="vcp-subview-back-btn"') == 2
+    assert html.count('class="vcp-subview-back-btn"') == 3
     assert 'id="vip-wallet-tts-val"' in html
     assert '09790760003' not in html
     for dom_id in (

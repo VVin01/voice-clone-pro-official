@@ -163,12 +163,13 @@ async def test_fb_extract_payload_flags_metadata_verified(monkeypatch):
     def boom(self, url):
         raise RuntimeError("ERROR: [youtube] abc123: Sign in to confirm")
 
+    # Part C (2026-11-23): extraction failure raises HTTP 422 instead of returning an unverified fallback.
+    from fastapi import HTTPException
+
     monkeypatch.setattr(dl_mod.MediaDownloader, "get_info", boom)
-    res = await api_mod.extract_media_info(req, user, user)
-    assert res["metadata_verified"] is False
-    # The fallback payload is exactly what the client must not show
-    # as fact: placeholder title/uploader + invented duration.
-    assert res["estimated_duration"] == "03:30"
+    with pytest.raises(HTTPException) as ei:
+        await api_mod.extract_media_info(req, user, user)
+    assert ei.value.status_code == 422
 
 
 def test_fb_downloader_card_applies_unverified_treatment():
@@ -177,7 +178,7 @@ def test_fb_downloader_card_applies_unverified_treatment():
     dl = APP_JS[start:end]
     assert "data.metadata_verified === false" in dl
     assert "dl-result-duration" in dl
-    assert "recap_unverified_note" in dl
+    assert "dlShowExtractError();" in dl
 
 
 # ── F-C: stage mapping, honest monotonic percent, localized line ────

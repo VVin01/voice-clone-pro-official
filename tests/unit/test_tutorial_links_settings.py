@@ -184,9 +184,9 @@ def test_admin_settings_ui_has_all_tutorial_fields():
         assert f'id="{el_id}"' in INDEX_HTML, el_id
         # load + save flows both reference the field map entries
         assert f'"{el_id}", "{key}"' in APP_JS, (el_id, key)
-    # the original three fields keep their exact ids (existing behaviour)
+    # the surviving tutorial fields keep their exact ids (Part G retired dead adm-tut-recap-title)
     for el_id in ("adm-set-tutorial-link", "adm-tut-voice-link", "adm-tut-recap-link",
-                  "adm-tut-voice-title", "adm-tut-recap-title",
+                  "adm-tut-voice-title",
                   "adm-tut-voice-enabled", "adm-tut-recap-enabled"):
         assert f'id="{el_id}"' in INDEX_HTML, el_id
     # the new fields ride the existing settings save (same button/flow)

@@ -138,19 +138,10 @@ async def test_me_tts_today_admin_gets_nulls(db_session, monkeypatch):
 # ===========================================================================
 
 def test_header_tts_chip_markup():
-    assert 'id="user-tts-bal"' in INDEX_HTML
-    # The chip is a button wired to the REAL tab-switch path, so the
-    # TTS entry hooks (quota refresh) fire on tap.
+    # Round 13 simplified header bar (retired inline #user-voice-bal / #user-recap-bal / #user-tts-bal chips);
+    # TTS navigation & today's spendable balance live in the Home hero trio (#home-free-card) and nav tab.
     assert "onclick=\"switchTab('tab-tts')\"" in INDEX_HTML
-    assert 'data-i18n-title="bal_chip_tts_title"' in INDEX_HTML
-    # Neutral placeholder before the profile paints — never a 0 flash.
-    assert "🎧 —" in INDEX_HTML
-    # Order: voice, recap, then TTS.
-    assert (
-        INDEX_HTML.index('id="user-voice-bal"')
-        < INDEX_HTML.index('id="user-recap-bal"')
-        < INDEX_HTML.index('id="user-tts-bal"')
-    )
+    assert 'id="home-free-tts-value"' in INDEX_HTML
 
 
 def test_header_tts_chip_paint_and_refresh():
@@ -223,16 +214,14 @@ async def test_menu_tts_line_shows_todays_spendable(db_session):
     user, _ = await get_or_create_user(db_session, telegram_id=880001005)
     await db_session.commit()
     text, _kb = await render_main_menu(user.id, session=db_session)
-    # Fresh FREE user: referral 0 + today's 900 s quota = 15.0 min.
-    assert "ဒီနေ့ သုံးနိုင်သည်" in text
-    assert "15.0 မိနစ်" in text
-    assert "(900 စက္ကန့်)" in text
+    # Round 13 Part K rebuilt /start to a concise 3-line summary (Account, Voice, Recap).
+    assert "Voice လက်ကျန်" in text
+    assert "3.0 မိနစ်" in text
+    assert "Recap လက်ကျန်" in text
 
 
 @pytest.mark.asyncio
 async def test_menu_tts_line_combines_referral_and_quota(db_session):
-    from app.handlers.menu import render_main_menu
-
     user, _ = await get_or_create_user(db_session, telegram_id=880001006)
     bal = await get_minute_balance(db_session, user.id)
     bal.referral_seconds = 120
@@ -243,10 +232,11 @@ async def test_menu_tts_line_combines_referral_and_quota(db_session):
         seconds_estimated=300, input_text="နမူနာ",
     ))
     await db_session.commit()
-    text, _kb = await render_main_menu(user.id, session=db_session)
+    profile = await _profile(db_session, user)
     # 120 referral + (900 − 300) quota = 720 s spendable today.
-    assert "12.0 မိနစ်" in text
-    assert "(720 စက္ကန့်)" in text
+    assert profile["tts_today_consumed_seconds"] == pytest.approx(300.0)
+    assert profile["tts_referral_seconds"] == 120
+    assert profile["tts_today_remaining_seconds"] == pytest.approx(720.0)
 
 
 @pytest.mark.asyncio
@@ -257,8 +247,8 @@ async def test_menu_tts_line_english(db_session):
     user.language_code = "en"
     await db_session.commit()
     text, _kb = await render_main_menu(user.id, session=db_session)
-    assert "spendable today" in text
-    assert "15.0 min" in text
+    assert "Voice Balance: 3.0 min" in text
+    assert "Recap Balance: 3 Credits" in text
 
 
 @pytest.mark.asyncio
@@ -287,34 +277,29 @@ def test_menu_tts_today_line_locales_complete():
 
 
 # ===========================================================================
-# Item 5 — fact sheet daily caps + conditional job line
+# Item 5 — fact sheet daily caps (Part H / Limits round)
 # ===========================================================================
 
 def test_fact_sheet_states_daily_minute_caps():
     sheet = gai.build_fact_sheet()
-    assert "Voice Clone တစ်နေ့ ကန့်သတ်ချက်" in sheet
-    assert "TTS (TTS Tab) တစ်နေ့ ကန့်သတ်ချက်" in sheet
-    # Defaults after BZ: FREE voice uncapped, paid voice 30, TTS 15/60.
-    assert "အကန့်အသတ် မရှိ" in sheet
-    assert "တစ်နေ့ 30 မိနစ်" in sheet
-    assert "တစ်နေ့ 15 မိနစ်" in sheet
-    assert "တစ်နေ့ 60 မိနစ်" in sheet
+    assert "TTS" in sheet
+    # Limits round + Part H: TTS daily limits 15m Free / 60m VIP; voice daily cap retired.
+    assert "15 မိနစ်" in sheet
+    assert "60 မိနစ်" in sheet
 
 
 def test_fact_sheet_caps_follow_settings(monkeypatch):
-    monkeypatch.setattr(settings, "voice_daily_limit_minutes_free", 7)
+    monkeypatch.setattr(settings, "tts_daily_limit_minutes_free", 20)
     monkeypatch.setattr(settings, "tts_daily_limit_minutes_paid", 45)
     sheet = gai.build_fact_sheet()
-    assert "တစ်နေ့ 7 မိနစ်" in sheet
-    assert "တစ်နေ့ 45 မိနစ်" in sheet
+    assert "20 မိနစ်" in sheet
+    assert "45 မိနစ်" in sheet
 
 
-def test_fact_sheet_job_line_only_when_enabled(monkeypatch):
-    # Default (0): the line is gone entirely — no "0 jobs" statement.
+def test_fact_sheet_job_line_retired(monkeypatch):
+    # Part G/H: free_daily_job_limit is retired from dynamic_settings & fact sheet (no "0 jobs" line).
     assert int(settings.free_daily_job_limit) == 0
     assert "တစ်နေ့ Job" not in gai.build_fact_sheet()
-    monkeypatch.setattr(settings, "free_daily_job_limit", 5)
-    assert "တစ်နေ့ Job 5 ခု" in gai.build_fact_sheet()
 
 
 # ===========================================================================
@@ -322,9 +307,10 @@ def test_fact_sheet_job_line_only_when_enabled(monkeypatch):
 # ===========================================================================
 
 def test_free_defaults_retired_paid_untouched():
+    # Part G / Limits round: voice daily limits (free & paid) and free_daily_job_limit default to 0 (uncapped).
     assert settings.voice_daily_limit_minutes_free == 0
     assert settings.free_daily_job_limit == 0
-    assert settings.voice_daily_limit_minutes_paid == 30
+    assert settings.voice_daily_limit_minutes_paid == 0
     assert settings.tts_daily_limit_minutes_free == 15
     assert settings.tts_daily_limit_minutes_paid == 60
     # The mechanisms stay: queue.py still enforces a re-enabled cap.
@@ -361,42 +347,14 @@ async def test_free_user_past_five_jobs_at_default(db_session):
     assert job6 is not None and msg6 == "QUEUED"
 
 
-@pytest.mark.asyncio
-async def test_guide_free_voice_clause_at_defaults(db_session):
-    from app.handlers.menu import render_help_settings_content
-
-    user, _ = await get_or_create_user(db_session, telegram_id=880001010)
-    user.language_code = "my"
-    await db_session.commit()
-    text, _kb = await render_help_settings_content(db_session, user.id)
-    # No daily cap at the default: the guide says so, and never
-    # renders a "0 minutes per day" figure.
-    assert "တစ်နေ့ သီးခြား ကန့်သတ်ချက် မရှိ" in text
-    assert "Voice Clone <b>0 မိနစ်</b>" not in text
-    assert "{voice_daily_free_clause}" not in text
-
-
-@pytest.mark.asyncio
-async def test_guide_free_voice_clause_when_admin_sets_cap(db_session, monkeypatch):
-    from app.handlers.menu import render_help_settings_content
-
-    user, _ = await get_or_create_user(db_session, telegram_id=880001011)
-    user.language_code = "en"
-    await db_session.commit()
-    monkeypatch.setattr(settings, "voice_daily_limit_minutes_free", 9)
-    text, _kb = await render_help_settings_content(db_session, user.id)
-    assert "up to <b>9 minutes</b> of Voice Clone per day" in text
-
-
 def test_guide_templates_have_no_stale_free_daily_voice_number():
+    # Round 13 Part K retired render_help_settings_content; guide locale entries have no stale {voice_daily_free}.
     for lang in ("my", "en"):
         data = json.loads(
             (ROOT / f"locales/{lang}/messages.json").read_text(encoding="utf-8")
         )
         guide = data["help_settings_guide"]
         assert "{voice_daily_free}" not in guide
-        assert "{voice_daily_free_clause}" in guide
-        # Clause keys exist in both locales.
         assert "{minutes}" in data["guide_voice_daily_free_capped"]
         assert data["guide_voice_daily_free_uncapped"]
 
@@ -420,7 +378,7 @@ def test_tts_prefill_logic_retired_in_round8():
 # ===========================================================================
 
 def test_cache_token_is_r97():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     # Split literal: the previous token must be absent, written so a
     # future token sweep cannot rewrite this negative assertion.
     assert ("20261104_r" + "96") not in INDEX_HTML

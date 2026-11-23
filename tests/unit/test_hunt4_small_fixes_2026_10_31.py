@@ -259,8 +259,8 @@ def test_to_thread_source_pins():
     # downloader extract: get_info + unshorten wrapped
     assert "info = await asyncio.to_thread(downloader.get_info, canonical_url)" in API_PY
     assert "canonical_url = await asyncio.to_thread(unshorten_url, url)" in API_PY
-    # recap submit pre-check: get_info + unshorten wrapped
-    assert "info = await asyncio.to_thread(MediaDownloader().get_info, can_url)" in API_PY
+    # recap submit pre-check / Part C URL verify: get_info + unshorten wrapped off event loop
+    assert "await asyncio.to_thread(_VerifyDownloader().get_info, _canon)" in API_PY
     # the old direct (loop-blocking) statements are gone
     assert "info = downloader.get_info(canonical_url)" not in API_PY
     assert "info = MediaDownloader().get_info(can_url)" not in API_PY
@@ -309,7 +309,7 @@ async def test_recap_precheck_get_info_runs_off_event_loop(db_session, monkeypat
 
     def fake_get_info(self, url):
         seen["get_info_ident"] = threading.get_ident()
-        return {"duration": 90}
+        return {"title": "Test Movie", "duration": 90, "platform": "YouTube"}
 
     dispatched = []
 

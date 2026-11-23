@@ -215,7 +215,9 @@ def test_aw_executor_edge_branch_uses_persona_edge_base():
     assert 'req.tts_engine == "edge"' in src
     block = src[src.index('req.tts_engine == "edge"'):]
     assert 'tts_engine = "edge_tts"' in block
-    assert 'p_info.get("edge_voice")' in block
+    assert "_resolve_recap_edge_voice" in block
+    resolver_src = inspect.getsource(api_mod._resolve_recap_edge_voice)
+    assert 'p_info.get("edge_voice")' in resolver_src
 
 
 def test_aw_edge_display_name_is_honest():
@@ -515,11 +517,14 @@ async def test_aw_worker_claim_never_takes_tts_jobs(db_session):
 @pytest.mark.asyncio
 async def test_aw_clone_with_only_referral_balance_is_insufficient(db_session, tmp_path):
     user, _ = await get_or_create_user(db_session, telegram_id=558213)
-    await grant_monthly_free_allowance(db_session, user.id)  # marks this month granted
+    # Mark today's daily free allowance already granted and spent so only legacy TTS referral_seconds exists.
+    await ledger_mod.grant_daily_free_allowance(db_session, user.id)
     bal = await get_minute_balance(db_session, user.id)
+    bal.daily_free_seconds = 0
     bal.monthly_free_seconds = 0
     bal.welcome_seconds = 0
     bal.purchased_seconds = 0
+    bal.referral_voice_seconds = 0
     bal.referral_seconds = 600
     await db_session.flush()
     assert bal.clone_spendable_seconds == 0
@@ -640,10 +645,11 @@ def test_aw_executor_settles_and_refunds_via_ledger_helpers():
 
 # ── AW-11: reward constant + surfaces ─────────────────────────────────
 
-def test_aw_referral_reward_is_120_seconds():
-    assert REFERRAL_REWARD_SECONDS == 120
-    assert ledger_mod.MAX_REFERRAL_SECONDS == 2400
-    assert ledger_mod.MAX_REFERRALS_REWARDED == 20
+def test_aw_referral_reward_is_60_seconds_uncapped():
+    # Limits round (2026-11-23): 60s Voice Clone per referral, unlimited (no friend cap).
+    assert REFERRAL_REWARD_SECONDS == 60
+    assert ledger_mod.MAX_REFERRAL_SECONDS is None
+    assert ledger_mod.MAX_REFERRALS_REWARDED is None
 
 
 def test_aw_user_me_exposes_clone_spendable_and_tts_balance():
@@ -652,14 +658,13 @@ def test_aw_user_me_exposes_clone_spendable_and_tts_balance():
     assert '"tts_balance_seconds"' in src
 
 
-def test_aw_bot_locales_referral_copy_is_tts():
+def test_aw_bot_locales_referral_copy_is_voice_clone():
+    # Limits round + Round 13 Part K: referral pays 1 min Voice Clone per friend, uncapped.
     my = json.loads((ROOT / "locales/my/messages.json").read_text(encoding="utf-8"))
     en = json.loads((ROOT / "locales/en/messages.json").read_text(encoding="utf-8"))
-    assert "TTS အသံ ၂ မိနစ်" in my["referral_desc"]
-    assert "2 minutes of TTS audio" in en["referral_desc"]
-    # Every format placeholder the handlers pass is preserved.
-    for key in ("referral_seconds", "max_referrals", "referral_link", "rewarded",
-                "earned_min", "earned_sec", "remaining_slots", "remaining_min"):
+    assert "Voice Clone ၁ မိနစ်" in my["referral_desc"]
+    assert "1 minute (+{referral_seconds}s) of Voice Clone" in en["referral_desc"]
+    for key in ("referral_seconds", "referral_link", "rewarded", "earned_min", "earned_sec"):
         assert "{" + key in my["referral_desc"]
         assert "{" + key in en["referral_desc"]
     assert "{tts_min" in my["menu_tts_balance_line"]
@@ -724,8 +729,8 @@ def test_aw_recap_step3_edge_pill_and_engine_lock():
     assert "function refreshRecapEngineLock()" in APP_JS
     assert "function canUseRecapCloneEngine()" in APP_JS
     block = APP_JS[APP_JS.index("function refreshRecapEngineLock()"):APP_JS.index("window.refreshRecapEngineLock")]
-    # Round 12 (Part C2): engine picker is a <select>, option disabled when locked.
-    assert "recap-own-voice-card" in block
+    # Round 13 E3: Voice Clone (both Persona & Own Voice) is unlocked for ALL users.
+    assert "syncRecapEngineAreas()" in block
     handler = APP_JS[APP_JS.index('const engineSel = document.getElementById("recap-engine-picker")'):APP_JS.index("refreshRecapEngineLock();", APP_JS.index('const engineSel = document.getElementById("recap-engine-picker")'))]
     assert "if (opt && opt.disabled)" in handler
 
@@ -743,18 +748,15 @@ def test_aw_i18n_keys_exist_in_both_languages():
         # Line-anchored count: one definition per language dict (the
         # bare substring also matches inside longer keys).
         assert I18N_JS.count(f"\n        {key}:") == 2, key
-    # Refer card retitle + reword (AW-11 note): support half dropped.
+    # Refer card title preserved in both locales (Limits round switched reward copy to Voice Clone 1 min).
     assert 'ref_card_title: "🎁 မိတ်ဆက်ဆု"' in I18N_JS
     assert 'ref_card_title: "🎁 Refer & Earn"' in I18N_JS
-    assert "TTS အသံ ၂ မိနစ်" in I18N_JS
-    assert "2 minutes of TTS audio" in I18N_JS
 
 
 def test_aw_refer_card_html_matches_new_copy():
-    card = HTML[HTML.index('id="home-refer-card"'):HTML.index('id="referral-stats-line"')]
-    assert 'data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု<' in card
-    assert "TTS အသံ ၂ မိနစ်" in card
-    assert "+30 စက္ကန့်" not in card
+    # Round 13 moved the referral surface into Profile / Bot /start Refer; Home no longer embeds #home-refer-card.
+    assert 'id="home-refer-card"' not in HTML
+    assert "+30 စက္ကန့်" not in HTML
 
 
 # ── Text helpers ──────────────────────────────────────────────────────

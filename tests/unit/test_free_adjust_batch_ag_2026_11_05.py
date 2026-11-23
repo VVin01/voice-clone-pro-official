@@ -538,7 +538,7 @@ def test_frontend_state_snapshot_restore_prefill_payload():
     prefill = prefill.split("// Initial canvas mockup sync", 1)[0]
     assert "recapBlurX: cfg.blur_x, recapBlurW: cfg.blur_w," in prefill
     assert "recapSubX: cfg.sub_x, recapSubW: cfg.sub_w," in prefill
-    payload = APP_JS.split("const payload = {", 1)[1].split("};", 1)[0]
+    payload = APP_JS.split("function buildRecapConfig(url)", 1)[1].split("return {", 1)[1].split("};", 1)[0]
     assert "blur_x: sliderBlurX ? parseInt(sliderBlurX.value) : 4," in payload
     assert "blur_w: sliderBlurW ? parseInt(sliderBlurW.value) : 92," in payload
     assert "sub_x: sliderSubX ? parseInt(sliderSubX.value) : 50," in payload
@@ -568,7 +568,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────

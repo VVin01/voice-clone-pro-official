@@ -128,6 +128,7 @@ def test_phase4_downloader_to_recap_step1_handoff():
 
 
 def test_phase4_i18n_keys_complete_in_my_and_en():
+    # Round 10 B7 retired master/my presets i18n keys; Round 13 retired home_recent_action_open_history.
     required_keys = [
         "btn_reset_layout_short",
         "recap_cat_preset",
@@ -135,29 +136,6 @@ def test_phase4_i18n_keys_complete_in_my_and_en():
         "recap_cat_subtitle",
         "recap_cat_blur",
         "recap_cat_protection",
-        "recap_master_presets_title",
-        "preset_tiktok_name",
-        "preset_tiktok_desc",
-        "preset_fb_story_name",
-        "preset_fb_story_desc",
-        "preset_yt_16_9_name",
-        "preset_yt_16_9_desc",
-        "preset_strict_safe_name",
-        "preset_strict_safe_desc",
-        "recap_master_preset_applied_toast",
-        "recap_my_presets_title",
-        "recap_my_preset_ph",
-        "btn_save_my_preset",
-        "recap_my_preset_empty",
-        "recap_my_preset_vip_only",
-        "recap_my_preset_max_toast",
-        "recap_my_preset_too_large",
-        "recap_my_preset_default_name",
-        "recap_my_preset_apply",
-        "recap_my_preset_delete",
-        "recap_my_preset_saved_toast",
-        "recap_my_preset_applied_toast",
-        "recap_my_preset_deleted_toast",
         "recap_sub_l2_title",
         "recap_blur_l2_title",
         "btn_logo_vip_upsell",
@@ -174,7 +152,6 @@ def test_phase4_i18n_keys_complete_in_my_and_en():
         "status_badge_queued",
         "status_badge_failed",
         "status_badge_other",
-        "home_recent_action_open_history",
         "unit_min_short",
         "unit_credit_short",
     ]
@@ -184,11 +161,10 @@ def test_phase4_i18n_keys_complete_in_my_and_en():
 
 
 def test_phase1_to_4_retroactive_i18n_and_bug_fixes():
-    # Live preview specimen span is under i18n (12-card grid retired in Round 11)
+    # Live preview specimen span is under i18n (12-card grid retired in Round 11; presets retired in Round 10)
     sample_spans = re.findall(r'<span class="vcp-sub-sample[^"]*"[^>]*>', INDEX_HTML)
     assert len(sample_spans) == 1
     assert all('data-i18n="recap_sub_sample_specimen"' in span for span in sample_spans)
-    assert INDEX_HTML.count('id="recap-my-presets-vip-badge" data-i18n="badge_vip"') == 1
     assert INDEX_HTML.count('id="recap-logo-vip-badge" data-i18n="badge_vip"') == 1
 
     # No duplicate translation keys in my or en blocks
@@ -203,10 +179,6 @@ def test_phase1_to_4_retroactive_i18n_and_bug_fixes():
     assert "/api/user/custom-voice" not in APP_JS
     assert "/api/recap/upload_voice_ref" in APP_JS
 
-    # Master preset strict_safe uses valid 1.06x pill & parameterized toast
-    assert "recapZoom: 1.06" in APP_JS
-    assert 'tf("recap_master_preset_applied_toast", { name: presetLabel })' in APP_JS
-
     # setLanguage handles data-i18n-aria & refreshes dynamic Phase 1-4 UI
     assert "[data-i18n-aria]" in I18N_JS
     assert "refreshPhase1to4LanguageSurfaces" in I18N_JS
@@ -215,8 +187,9 @@ def test_phase1_to_4_retroactive_i18n_and_bug_fixes():
     # Sticky preview not broken by body overflow-x: hidden alone
     assert "overflow-x: clip;" in STYLE_CSS
 
-    # Home Recent Projects actions switch tab before opening sub-views
-    assert "function openRecentProjectAction(" in APP_JS
+    # Round 13 retired #home-recent-projects-card / openRecentProjectAction in favor of History tab + Help entry card
+    assert "function openRecentProjectAction(" not in APP_JS
+    assert 'id="home-help-entry-card"' in INDEX_HTML
 
     # BackButton/ESC closer handles real adm-user-detail & slip-modal IDs
     assert '"adm-user-detail"' in APP_JS

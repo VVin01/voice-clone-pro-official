@@ -101,7 +101,7 @@ def _card_span(card_id: str) -> str:
 
 def test_cn_cache_token_is_r110():
     # Superseded by Batch CO (r111); CN's own bump landed as r110.
-    assert HTML.count("20261118_r164") == 4
+    assert HTML.count("20261123_followup1") == 5
     assert "20261104_r109" not in HTML
 
 
@@ -139,9 +139,10 @@ def test_cn2_cost_hint_is_one_short_line_with_an_expandable_rest():
         "💡 မိတ်ဆက်ဆု အချိန်ကို အရင် သုံးပါတယ်",
         "💡 Referral time is spent first",
     ]
+    # Limits round (2026-11-23): per-gen chars 3,000 / 15,000; Gemini pool taste Free 2m / VIP 10m.
     assert _i18n_values("tts_cost_hint_more") == [
-        "တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။",
-        "Daily free TTS: 15 min (VIP 60 min) · Up to 1,000 characters per generation (VIP 5,000). Gemini free taste: 2 min/day (unlimited with your own key).",
+        "တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 3,000 (VIP 15,000) အထိ ရပါတယ်။ Gemini Pool စမ်းသုံးခွင့် — Free 2 မိနစ်/နေ့ · VIP 10 မိနစ်/နေ့ (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။",
+        "Daily free TTS: 15 min (VIP 60 min) · Up to 3,000 characters per generation (VIP 15,000). Gemini pool taste: Free 2 min/day · VIP 10 min/day (unlimited with your own key).",
     ]
     # The old wall of text is gone from BOTH surfaces.
     assert OLD_MY_COST_HINT not in I18N_JS and OLD_MY_COST_HINT not in HTML

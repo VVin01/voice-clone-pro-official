@@ -565,7 +565,7 @@ async def test_vip_plans_db_price_wins_and_catalogue_fills(tmp_path, monkeypatch
     _engine, maker = await _open_store(tmp_path, monkeypatch)
     async with maker() as session:
         session.add(PricingPlan(
-            code="voice_starter", category="voice", minutes=25, recap_credits=0,
+            code="voice_200", category="voice", minutes=250, recap_credits=0,
             price_mmk=99999, is_active=True, sort_order=2,
         ))
         await session.commit()
@@ -574,14 +574,14 @@ async def test_vip_plans_db_price_wins_and_catalogue_fills(tmp_path, monkeypatch
     plans = {p["id"]: p for p in result["plans"]}
     assert set(plans) == {p["code"] for p in PLAN_CATALOGUE}
     # DB row wins over the catalogue for the seeded plan.
-    assert plans["voice_starter"]["price"] == "99,999"
-    assert plans["voice_starter"]["minutes"] == 25
-    # Official catalogue defaults resolve accurately for the remaining rows.
-    assert plans["voice_mini"]["price"] == "3,000"
-    assert plans["recap_starter"]["price"] == "10,000"
-    assert plans["recap_starter"]["recap_credits"] == 30
-    assert plans["combo_business"]["price"] == "108,000"
-    assert plans["voice_business"]["minutes"] == 220
+    assert plans["voice_200"]["price"] == "99,999"
+    assert plans["voice_200"]["minutes"] == 250
+    # Pricing v3 (2026-11-23) catalogue defaults resolve accurately for the remaining rows.
+    assert plans["pkg_starter"]["price"] == "14,900"
+    assert plans["recap_30"]["price"] == "13,500"
+    assert plans["recap_30"]["recap_credits"] == 30
+    assert plans["pkg_business"]["price"] == "114,900"
+    assert plans["voice_1000"]["minutes"] == 1200
 
 
 # ── (6) broadcast report cosmetics ──────────────────────────────────
@@ -612,9 +612,8 @@ def test_broadcast_blocked_label_names_flag_not_status():
 def test_fallback_persistent_notes_wired():
     assert 'id="voice-fallback-note"' in INDEX_HTML
     assert 'id="recap-fallback-note"' in INDEX_HTML
-    # Voice helper defined once, rendered from BOTH success surfaces
-    # (live poller + deep-link reopen): 1 definition + 2 call sites.
-    assert APP_JS.count("renderVoiceFallbackNote(data)") == 3
+    # Voice helper defined once + called from live poller (2 occurrences).
+    assert APP_JS.count("renderVoiceFallbackNote(data)") == 2
     assert "function renderVoiceFallbackNote(data)" in APP_JS
     # Recap note is set on the result card, with the full-fallback
     # variant driven by the payload's segment totals.

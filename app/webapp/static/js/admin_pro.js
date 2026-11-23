@@ -1096,7 +1096,7 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
                     <input type="text" id="admp-np-name" class="studio-input text-xs" placeholder="Name (e.g. New Year Combo)">
                 </div>
                 <div class="admp-grid-2 mt-2">
-                    <select id="admp-np-cat" class="studio-input text-xs"><option value="combo">Combo</option><option value="voice">Voice Clone</option><option value="recap">Recap Credits</option><option value="topup">Top-Up</option></select>
+                    <select id="admp-np-cat" class="studio-input text-xs"><option value="combo">Combo</option><option value="voice">Voice Clone</option><option value="recap">Recap Credits</option></select>
                     <input type="number" id="admp-np-price" class="studio-input text-xs" placeholder="Price MMK (e.g. 9900)">
                 </div>
                 <div class="admp-grid-2 mt-2">

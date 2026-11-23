@@ -31,18 +31,12 @@ STYLE_CSS = (ROOT / "app/webapp/static/css/style.css").read_text(encoding="utf-8
 
 
 def test_picker_expands_in_place_under_summary_row():
-    # Supersedes the original "text input before persona grid" DOM
-    # order pin: the grid now sits in the DOM directly beneath the
-    # summary row (owner's in-place requirement), still collapsed by
-    # default so it costs no visual height and the text input stays
-    # the first actionable element on screen.
+    # Round 13 replaced #personas-grid with compact #voice-persona-select inside #persona-picker-card.
     row = INDEX_HTML.index('id="voice-selected-row"')
     picker = INDEX_HTML.index('id="persona-picker-card"')
-    grid = INDEX_HTML.index('id="personas-grid"')
+    select = INDEX_HTML.index('id="voice-persona-select"')
     text_input = INDEX_HTML.index('id="voice-text-input"')
-    assert row < picker < grid < text_input
-    # The picker is nested inside the mode card: it appears before the
-    # card's custom-mode section and before the input card entirely.
+    assert row < picker < select < text_input
     assert picker < INDEX_HTML.index('id="ref-audio-section"')
 
 
@@ -53,12 +47,9 @@ def test_summary_chip_and_picker_card_present_collapsed_by_default():
     assert 'id="btn-change-voice"' in INDEX_HTML
     assert 'id="persona-picker-card"' in INDEX_HTML
     assert "persona-picker-card picker-collapsed" in INDEX_HTML
-    # The Change button is the picker's only toggle now (the standalone
-    # toggle row below the text input was removed in the move).
     assert 'id="btn-toggle-picker"' not in INDEX_HTML
     assert 'aria-controls="persona-picker-card"' in INDEX_HTML
-    # Exactly one grid instance — the move must not duplicate state.
-    assert INDEX_HTML.count('id="personas-grid"') == 1
+    assert INDEX_HTML.count('id="voice-persona-select"') == 1
     assert INDEX_HTML.count('id="persona-picker-card"') == 1
     assert INDEX_HTML.count('id="curated-personas-card"') == 1
 
@@ -71,12 +62,7 @@ def test_js_summary_picker_and_collapse_on_select():
     assert "function updateSelectedVoiceSummary()" in APP_JS
     assert "function setPersonaPickerOpen(open)" in APP_JS
     assert "function togglePersonaPicker()" in APP_JS
-    # Choosing a persona renders (which refreshes the summary) and collapses.
-    select_slice = APP_JS[APP_JS.index("state.selectedPersona = v.id;"):]
-    select_slice = select_slice[: select_slice.index("});")]
-    assert "renderCuratedVoices();" in select_slice
-    assert "setPersonaPickerOpen(false);" in select_slice
-    # renderCuratedVoices keeps the summary chip in sync.
+    assert 'getElementById("voice-persona-select")' in APP_JS
     assert "updateSelectedVoiceSummary();" in APP_JS
 
 
@@ -102,8 +88,7 @@ def test_existing_voice_hooks_preserved():
         'id="voice-text-input"',
         'id="char-count"',
         'id="btn-generate-voice"',
-        'id="personas-grid"',
-        'id="personas-count"',
+        'id="voice-persona-select"',
         'id="curated-personas-card"',
         'id="ref-audio-section"',
         'id="btn-submode-curated"',

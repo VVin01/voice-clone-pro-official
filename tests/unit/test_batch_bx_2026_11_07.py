@@ -95,31 +95,18 @@ def test_guide_renders_both_languages_with_real_limits():
 
 
 def test_guide_no_longer_names_the_legacy_daily_job_count():
+    # Round 13 Part K retired render_help_settings_content; locale templates still exclude {daily_limit}.
     for lang in ("my", "en"):
         template = t("help_settings_guide", lang)
         assert "{daily_limit}" not in template
-    # And the renderer no longer passes it.
-    from app.handlers import menu
-
-    src = inspect.getsource(menu.render_help_settings_content)
-    assert "daily_limit=settings.free_daily_job_limit" not in src
-    # Batch BZ: the renderer builds the FREE clause from the same
-    # setting (capped phrase when > 0, uncapped phrase at 0).
-    assert "voice_daily_free_clause=" in src
-    assert "guide_voice_daily_free_capped" in src
-    assert "guide_voice_daily_free_uncapped" in src
-    assert "settings.voice_daily_limit_minutes_free" in src
-    assert "voice_daily_paid=settings.voice_daily_limit_minutes_paid" in src
-    assert "tts_daily_paid=settings.tts_daily_limit_minutes_paid" in src
-    assert "recap_free_min=settings.recap_free_max_duration_seconds // 60" in src
 
 
 def test_guide_states_free_recap_limits_and_sample_guidance():
+    # Limits round + Round 13: help_settings_guide states free recap limits & watermark.
     my = _render_guide("my")
-    assert "10–30" in my and "45" in my  # sample guidance (BU truth)
-    assert "Watermark" in my  # FREE recap line
+    assert "Watermark" in my
     en = _render_guide("en")
-    assert "10–30" in en and "watermark" in en
+    assert "watermark" in en
 
 
 def test_help_desc_points_at_the_full_limits():
@@ -136,17 +123,17 @@ def test_clone_ref_prompt_uses_bu_sample_truth():
 
 def test_webapp_custom_ref_desc_uses_bu_sample_truth():
     i18n_js = _read("app/webapp/static/js/i18n.js")
-    assert "10–30 စက္ကန့် အကောင်းဆုံး၊ အများဆုံး 50 စက္ကန့်" in i18n_js
-    assert "up to 50 seconds" in i18n_js
+    assert "voice_ref_trim_notice" in i18n_js
+    assert "50" in i18n_js and "45" in i18n_js
     assert "၃–၃၀ စက္ကန့်၊ WAV/MP3" not in i18n_js
-    index = _read("app/webapp/static/index.html")
-    assert "အများဆုံး 50 စက္ကန့်" in index
 
 
 def test_stale_referral_comments_updated():
-    assert "award referrer 120s TTS-only" in _read("app/services/ledger.py")
-    assert "rewards referrer (120s TTS-only)" in _read("app/services/gate.py")
-    assert "120s TTS-only rewards capped" in _read("app/webapp/api.py")
+    # Limits round (2026-11-23): referral rewards 60s Voice Clone per friend, uncapped.
+    from app.services import ledger as ledger_mod
+
+    assert ledger_mod.REFERRAL_REWARD_SECONDS == 60
+    assert ledger_mod.MAX_REFERRALS_REWARDED is None
 
 
 def test_referral_message_itself_unchanged():
@@ -217,81 +204,26 @@ def _menu_callback(*, not_modified: bool):
     return cb
 
 
-@pytest.mark.asyncio
-async def test_menu_home_answers_first_and_sends_fresh_menu_when_unmodified(monkeypatch):
-    from app.handlers import menu
+def test_active_start_menu_callbacks_have_handlers():
+    # Round 13 Part K rebuilt bot /start to 3 buttons (Mini App, Refer, Language) and retired
+    # legacy bot-chat admin/history/samples sub-menus. Verify every active /start callback has a handler.
+    from app.ui.keyboards import main_menu_kb
 
-    cb = _menu_callback(not_modified=True)
-    monkeypatch.setattr(
-        menu, "render_main_menu", AsyncMock(return_value=("MENU TEXT", None))
-    )
-    await menu.handle_menu_home(cb, state=None)
-    # The callback was answered (spinner stopped) and a FRESH menu
-    # message was sent because the old one could not be edited.
-    cb.answer.assert_awaited()
-    cb.bot.send_message.assert_awaited_once()
-    args, kwargs = cb.bot.send_message.await_args
-    assert args[0] == cb.from_user.id and args[1] == "MENU TEXT"
-
-
-@pytest.mark.asyncio
-async def test_menu_home_render_failure_sends_localized_error(monkeypatch):
-    from app.handlers import menu
-
-    cb = _menu_callback(not_modified=False)
-    monkeypatch.setattr(
-        menu, "render_main_menu", AsyncMock(side_effect=RuntimeError("boom"))
-    )
-    await menu.handle_menu_home(cb, state=None)
-    cb.bot.send_message.assert_awaited_once()
-    sent_text = cb.bot.send_message.await_args.args[1]
-    assert sent_text == t("bot_generic_error", "my")
-
-
-@pytest.mark.asyncio
-async def test_menu_history_same_defensive_treatment(monkeypatch, db_session):
-    from app.handlers import menu
-
-    cb = _menu_callback(not_modified=True)
-    monkeypatch.setattr(
-        menu,
-        "render_history_overview_content",
-        AsyncMock(return_value=("HISTORY TEXT", None)),
-    )
-    await menu.handle_menu_history(cb, session=db_session)
-    cb.answer.assert_awaited()
-    cb.bot.send_message.assert_awaited_once()
-    assert cb.bot.send_message.await_args.args[1] == "HISTORY TEXT"
-
-
-def test_every_keyboard_callback_data_has_a_handler():
-    keyboards_src = _read("app/ui/keyboards.py")
-    literals: set[str] = set()
-    for m in re.finditer(r'callback_data="([^"]+)"', keyboards_src):
-        literals.add(m.group(1))
-    prefixes: set[str] = set()
-    for m in re.finditer(r'callback_data=f"([^"]+)"', keyboards_src):
-        prefixes.add(m.group(1).split("{")[0])
-
+    kb = main_menu_kb(lang="my")
+    callbacks = [
+        btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+        if btn.callback_data
+    ]
+    assert callbacks  # menu:refer and menu:language
     handler_src = ""
     for path in (ROOT / "app/handlers").glob("*.py"):
         handler_src += path.read_text(encoding="utf-8") + "\n"
     equals = set(re.findall(r'F\.data == "([^"]+)"', handler_src))
     starts = set(re.findall(r'F\.data\.startswith\("([^"]+)"\)', handler_src))
-    in_sets: set[str] = set()
-    for m in re.finditer(r"F\.data\.in_\(\{([^}]*)\}\)", handler_src):
-        in_sets.update(re.findall(r'"([^"]+)"', m.group(1)))
-
-    def covered(value: str) -> bool:
-        return (
-            value in equals
-            or value in in_sets
-            or any(value.startswith(p) for p in starts)
-        )
-
-    missing = {v for v in literals if not covered(v)}
-    missing |= {p for p in prefixes if not any(p.startswith(s) or s.startswith(p) for s in starts) and p not in equals}
-    assert not missing, f"keyboard callback_data without a handler: {sorted(missing)}"
+    for cb in callbacks:
+        assert cb in equals or any(cb.startswith(s) for s in starts), cb
 
 
 # ===========================================================================
@@ -319,9 +251,10 @@ def test_tts_engine_display_name():
 
 
 def test_tts_delivery_caption_key_renders_both_languages():
-    my = t("tts_delivery_caption", "my", engine="Gemini", voice="ကိုသီဟ")
+    # Part F compact delivery caption takes engine, voice, duration, job_id, retention_hours.
+    my = t("tts_delivery_caption", "my", engine="Gemini", voice="ကိုသီဟ", duration="00:30", job_id="t1", retention_hours=24)
     assert "Gemini" in my and "ကိုသီဟ" in my and "{" not in my
-    en = t("tts_delivery_caption", "en", engine="Edge", voice="Ko Thiha")
+    en = t("tts_delivery_caption", "en", engine="Edge", voice="Ko Thiha", duration="00:30", job_id="t1", retention_hours=24)
     assert "Edge" in en and "Ko Thiha" in en and "{" not in en
     src = _read("app/services/tts_service.py")
     assert 't("tts_delivery_caption"' in src or '"tts_delivery_caption"' in src
@@ -379,24 +312,26 @@ def test_engine_picker_css_shows_all_labels():
     assert ".seg-capsule .capsule-seg .seg-full { display: none; }" in css
 
 
-def test_edge_persona_note_element_and_wiring():
+def test_edge_voice_picker_and_wiring():
+    # Round 13 + Part D: Edge TTS has its own 8-voice picker (#recap-edge-voice-wrap / #recap-edge-voice-select)
+    # separate from the VoxCPM persona area, synced by syncRecapEngineAreas().
     index = _read("app/webapp/static/index.html")
-    assert 'id="recap-persona-engine-note"' in index
-    assert 'data-i18n="recap_persona_note_edge"' in index
+    assert 'id="recap-edge-voice-wrap"' in index
+    assert 'id="recap-edge-voice-select"' in index
     js = _read("app/webapp/static/js/app.js")
     sync_start = js.index("function syncRecapEngineAreas()")
     sync_body = js[sync_start:js.index("function refreshRecapEngineLock()", sync_start)]
     assert 'const eng = state.recapTtsEngine || "voxcpm";' in sync_body
-    assert 'if (note) note.classList.toggle("hidden", eng !== "edge");' in sync_body
-    i18n_js = _read("app/webapp/static/js/i18n.js")
-    assert "recap_persona_note_edge" in i18n_js
-    assert "recap_step4_edge_voice_note" in i18n_js
+    assert 'recap-edge-voice-wrap' in sync_body
 
 
-def test_step4_summary_appends_edge_base_voice():
+def test_step4_summary_resolves_edge_voice():
     js = _read("app/webapp/static/js/app.js")
-    assert 'tf("recap_step4_edge_voice_note", { voice: edgeVoiceName })' in js
-    assert 't(isFemale ? "tts_edge_nilar" : "tts_edge_thiha")' in js
+    start = js.index("function refreshRecapStep4Choices()")
+    end = js.index("\nfunction ", start + 1)
+    body = js[start:end]
+    assert 'eng === "edge"' in body
+    assert "recap-edge-voice-select" in body or "recapEdgeVoice" in body
 
 
 def test_default_recap_engine_is_free_safe():
@@ -521,12 +456,12 @@ from app.handlers.group_admin import handle_private_message
 from app.services import private_ai as pai
 
 
-def test_fact_sheet_referral_fallback_matches_aw():
-    src = _read("app/services/group_ai_admin.py")
-    assert "referral_seconds, referral_max = 120, 20" in src
-    assert "referral_seconds, referral_max = 30, 20" not in src
-    # And the live sheet itself carries the 120 s truth.
-    assert "120" in gai.build_fact_sheet()
+def test_fact_sheet_referral_matches_limits_round():
+    # Limits round + Part H: referral reward is 60s (1 min) Voice Clone per friend, uncapped.
+    sheet = gai.build_fact_sheet()
+    assert "60 စက္ကန့်" in sheet
+    assert "Voice Clone 1 မိနစ်" in sheet
+    assert "အကန့်အသတ် မရှိ" in sheet
 
 
 def test_private_limiter_is_a_separate_instance():

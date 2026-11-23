@@ -46,12 +46,10 @@ def _reset_groq_health():
 # 1. Private-only command handlers (filter level)
 # ---------------------------------------------------------------------------
 
+# Round 13 Part K retired /language, /help, /history, and /samples bot commands;
+# /start remains the sole registered user command and must remain strictly private-only.
 _COMMAND_HANDLERS = {
     "handle_start": "/start",
-    "handle_language_command": "/language",
-    "handle_help_command": "/help",
-    "handle_history_command": "/history",
-    "handle_samples_command": "/samples",
 }
 
 

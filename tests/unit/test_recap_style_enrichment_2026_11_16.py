@@ -250,14 +250,13 @@ def test_audit_checklist_wording_aligned(monkeypatch):
     assert "stiff bookish phrasing" not in narrator
 
 
-# ── Renamed labels (ids unchanged) ───────────────────────────────────
+# ── Round 13 Part G: 4 compact story style labels (dramatic retired) ──
 
 RENAMES = {
-    "style_viral": ("ချက်ချင်းစွဲဆောင်", "Instant Hook"),
-    "style_dramatic": ("ဒရာမာ ပရိုင်း", "Drama Prime"),
-    "style_funny": ("ပေါ့ပါးဟာသ", "Light Comedy"),
-    "style_pov": ("ကိုယ်တွေ့ ရှုထောင့်", "First-Person POV"),
-    "style_standard": ("ရုပ်ရှင်ဟန် ဇာတ်လမ်းပြော", "Cinematic Storyteller"),
+    "style_viral": ("စွဲဆောင်", "Viral"),
+    "style_funny": ("ဟာသ", "Comedy"),
+    "style_pov": ("ကိုယ်တွေ့", "Dubbing"),
+    "style_standard": ("ဇာတ်လမ်းပြော", "Recap"),
 }
 
 
@@ -271,12 +270,13 @@ def test_style_labels_renamed_in_my_and_en(key):
 
 
 def test_internal_style_ids_unchanged():
-    for story in ("viral", "dramatic", "funny", "pov", "standard"):
+    for story in ("viral", "funny", "pov", "standard"):
         assert f'data-story="{story}"' in INDEX_HTML
+    assert 'data-story="dramatic"' not in INDEX_HTML
     for old in ("Viral Hook", "Classic Narration", "Character POV", "Dramatic (Thriller)"):
         assert old not in I18N_JS and old not in INDEX_HTML
 
 
 def test_cache_token_bumped_to_r158():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "r157" not in INDEX_HTML

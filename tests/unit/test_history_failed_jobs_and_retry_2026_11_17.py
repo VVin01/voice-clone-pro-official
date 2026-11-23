@@ -270,8 +270,12 @@ async def test_history_serializer_failed_jobs_included_and_in_progress_excluded(
     assert s_row["status"] == "SUCCESS"
     assert s_row["download_url"] is not None
     assert s_row["deliverables"] is not None
+    # Part E (2026-11-23): AI thumbnail removed; video/audio/srt/script deliverables remain.
     assert "video" in s_row["deliverables"]
-    assert "thumbnail" in s_row["deliverables"]
+    assert "audio" in s_row["deliverables"]
+    assert "srt" in s_row["deliverables"]
+    assert "script" in s_row["deliverables"]
+    assert "thumbnail" not in s_row["deliverables"]
 
     # FAILED recap must be included with error_message and NO downloads
     assert "rc_fail_1" in rows

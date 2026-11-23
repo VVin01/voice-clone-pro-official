@@ -36,7 +36,7 @@ INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 
 def _carousel_block() -> str:
     start = INDEX_HTML.index('id="studio-alert-carousel"')
-    end = INDEX_HTML.index('id="carousel-dots"', start)
+    end = INDEX_HTML.index("</section>", start)
     return INDEX_HTML[start:end]
 
 
@@ -76,18 +76,12 @@ def test_carousel_no_longer_carries_queue_notice_slide():
     assert 'data-i18n="queue_notice_recap"' not in INDEX_HTML
 
 
-def test_carousel_keeps_two_slides_and_two_dots_aligned():
+def test_carousel_keeps_limit_slide_without_minute_claim():
+    # Round 13 simplified the carousel to a single tier-limit notice slide (no dots/prev/next).
     block = _carousel_block()
     slides = re.findall(r'class="carousel-slide[^"]*" data-slide="(\d+)"', block)
-    assert slides == ["0", "1"]
-    dots = re.findall(r'data-slide-idx="(\d+)"', INDEX_HTML)
-    assert dots == ["0", "1"]
-    # Exactly one active slide and one active dot, both first.
+    assert slides == ["0"]
     assert block.count('class="carousel-slide active"') == 1
-    assert INDEX_HTML.count('class="carousel-dot active"') == 1
-    # The surviving slides keep their keys (delivery assurance +
-    # tier-limit policy) — only the minute claim was retired.
-    assert 'data-i18n="telegram_bg_assurance"' in block
     assert 'data-i18n="recap_limit_notice"' in block
 
 
@@ -153,8 +147,8 @@ def test_recap_step_text_placeholder_matches_neutral_value():
 
 # ── Release pin: cache token (split-literal, sweep-proof) ────────
 
-def test_cache_token_is_r100():
-    token = "20261118_" + "r164"
+def test_cache_token_is_followup1():
+    token = "20261123_" + "followup1"
     stale = "20261104_r" + "99"
-    assert INDEX_HTML.count(token) == 4
+    assert INDEX_HTML.count(token) == 5
     assert stale not in INDEX_HTML

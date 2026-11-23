@@ -48,9 +48,10 @@ def test_ct_bot_recap_button_says_credits_not_videos():
 
 
 def test_ct_price_spans_carry_plan_codes():
-    # Official storefront renders all 22 DB-driven plans dynamically across 4 category grids.
-    for eid in ("vip-sub-plans", "vip-grid-voice", "vip-grid-recap", "vip-grid-combo", "vip-grid-topup"):
+    # Pricing v3 (2026-11-23) + Part G: 10 DB-driven plans across 3 category grids (Top-Up retired).
+    for eid in ("vip-sub-plans", "vip-grid-combo", "vip-grid-voice", "vip-grid-recap"):
         assert f'id="{eid}"' in INDEX
+    assert 'id="vip-grid-topup"' not in INDEX
     for fn in ("syncPlanPrices", "switchPlanCategory"):
         assert fn in APPJS
 

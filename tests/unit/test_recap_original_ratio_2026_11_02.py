@@ -123,6 +123,9 @@ async def test_extract_payload_carries_dimensions(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_extract_fallback_payload_shape_is_explicit(monkeypatch):
+    # Part C (2026-11-23): failed extract raises HTTP 422 instead of returning a shallow unverified payload.
+    from fastapi import HTTPException
+
     monkeypatch.setattr(dl_mod, "unshorten_url", lambda u: u)
     monkeypatch.setattr(url_safety_mod, "validate_public_url", lambda u: u)
 
@@ -134,13 +137,9 @@ async def test_extract_fallback_payload_shape_is_explicit(monkeypatch):
         raise RuntimeError("ERROR: [youtube] g2NWf7CVy3U: Sign in to confirm")
 
     monkeypatch.setattr(dl_mod.MediaDownloader, "get_info", boom)
-    res = await api_mod.extract_media_info(req, user, user)
-    assert res["metadata_verified"] is False
-    # Unknown dimensions / unverified duration are explicit keys, so the
-    # client never has to guess at missing fields.
-    assert res["width"] is None
-    assert res["height"] is None
-    assert res["duration_seconds"] == 0
+    with pytest.raises(HTTPException) as ei:
+        await api_mod.extract_media_info(req, user, user)
+    assert ei.value.status_code == 422
 
 
 # ── 3. Client: "Original" never asserts 16:9 without dimensions ──────
@@ -178,12 +177,12 @@ def test_seek_badge_never_paints_invented_total():
     assert "state.recapSeekSec" in APP_JS
 
 
-def test_analyze_catch_paints_unverified_info_card():
-    # When the extract returns nothing (timeout/network) the card must
-    # appear in the unverified state instead of staying hidden.
-    assert "state.lastRecapInfo = { metadata_verified: false, duration_seconds: 0" in APP_JS
-    assert "paintRecapInfoMeta(state.lastRecapInfo, false, recapNormalMaxSeconds())" in APP_JS
+def test_analyze_catch_resets_verification_and_shows_url_error():
+    # Part C (2026-11-23): extract failure resets verified state and shows #recap-url-error-card
+    # instead of painting a fabricated unverified info card.
+    assert "resetRecapUrlVerification({ clearInfo: true, hideError: false });" in APP_JS
+    assert "showRecapUrlError();" in APP_JS
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5

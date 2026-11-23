@@ -17,30 +17,31 @@ STYLE_CSS = (STATIC_DIR / "css" / "style.css").read_text(encoding="utf-8")
 HOME = INDEX_HTML[INDEX_HTML.index('id="tab-home"'):INDEX_HTML.index('id="tab-voice"')]
 
 
-def test_phase2_thin_status_strip_taps_to_vip():
+def test_phase2_thin_status_strip_taps_to_profile():
+    # Round 13 wired #home-status-strip to openProfileView() (Profile houses tier, key & refer).
     assert 'id="home-status-strip"' in HOME
     assert 'id="home-greeting-text"' in HOME
     assert 'id="home-tier-badge"' in HOME
     assert 'id="home-bal-summary"' in HOME
     strip_slice = HOME.split('id="home-status-strip"', 1)[1].split('id="home-welcome-strip"', 1)[0]
-    assert "onclick=\"switchTab('tab-vip')\"" in strip_slice
+    assert "openProfileView()" in strip_slice
     assert "function paintHomeStatusStrip(data)" in APP_JS
     assert "paintHomeStatusStrip(data);" in APP_JS
 
 
 def test_phase2_welcome_strip_plays_pregenerated_sample_without_api_generation():
+    # Round 13 decoupled welcome sample playback from retired #home-samples-card using _welcomeTryAudio.
     strip_slice = HOME.split('id="home-welcome-strip"', 1)[1].split('id="home-start-card"', 1)[0]
     assert 'id="welcome-try-sample-btn"' in strip_slice
     assert 'onclick="playWelcomeTrySample()"' in strip_slice
     body = APP_JS.split("function playWelcomeTrySample()", 1)[1].split("window.playWelcomeTrySample", 1)[0]
-    assert 'getElementById("sample-btn-voice")' in body
-    assert 'getElementById("sample-audio-voice")' in body
+    assert "_welcomeTryAudio" in body
     assert "/api/voices/synthesize" not in body
     assert "/api/tts/generate" not in body
 
 
 def test_phase2_quick_create_has_all_three_studios():
-    start_slice = HOME.split('id="home-start-card"', 1)[1].split('id="home-recent-projects-card"', 1)[0]
+    start_slice = HOME.split('id="home-start-card"', 1)[1].split('id="home-tools-card"', 1)[0]
     assert "onclick=\"switchTab('tab-voice')\"" in start_slice
     assert "onclick=\"switchTab('tab-recap')\"" in start_slice
     assert "onclick=\"switchTab('tab-tts')\"" in start_slice
@@ -53,22 +54,18 @@ def test_phase2_free_today_card_has_unit_and_reset_period_badges():
         assert f'data-i18n="{period_key}"' in free_slice, period_key
 
 
-def test_phase2_recent_projects_card_with_state_machine_and_24h_retention():
-    assert 'id="home-recent-projects-card"' in HOME
-    assert 'data-ui-state="loading"' in HOME
-    assert 'id="home-recent-see-all"' in HOME
-    assert 'id="home-recent-projects-list"' in HOME
-    assert "function renderHomeRecentProjects()" in APP_JS
+def test_phase2_retention_badge_helper_preserved():
+    # Round 13 retired #home-recent-projects-card from Home (History Hub owns recent jobs);
+    # 24h retention badge helper stays live for History Hub.
+    assert 'id="home-recent-projects-card"' not in HOME
     assert "function computeRetentionBadgeHtml(j)" in APP_JS
-    assert "all.slice(0, 5)" in APP_JS
 
 
-def test_phase2_single_help_entry_point_controls_samples_and_tutorials():
+def test_phase2_single_help_entry_point_controls_tutorials():
     assert 'id="home-help-entry-card"' in HOME
     assert 'id="btn-home-help-hub"' in HOME
     assert 'onclick="toggleVcpHelpHub()"' in HOME
     assert "function toggleVcpHelpHub(" in APP_JS
-    assert "#tab-home:not(.vcp-help-hub-open) #home-samples-card" in STYLE_CSS
     assert "#tab-home:not(.vcp-help-hub-open) #home-tutorials-card" in STYLE_CSS
 
 
@@ -83,15 +80,8 @@ def test_phase2_i18n_keys_present_in_both_locales():
         "home_free_tts_period",
         "home_free_voice_period",
         "home_free_recap_period",
-        "home_recent_title",
-        "home_recent_see_all",
-        "home_recent_empty",
         "home_recent_time_left_hours",
         "home_recent_action_dl",
-        "home_recent_action_watch",
-        "home_recent_action_continue",
-        "home_recent_action_review",
-        "home_recent_action_retry",
         "home_help_entry_title",
         "home_help_entry_desc",
     ]

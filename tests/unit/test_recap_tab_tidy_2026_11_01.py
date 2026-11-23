@@ -94,9 +94,8 @@ def test_advanced_sections_redistributed_into_steps():
     step4 = HTML.index('id="recap-step-4"')
     assert step2 < HTML.index('id="recap-logo-group"') < step3
     assert 'id="recap-preview-transform-group"' not in HTML
-    # AZ-11: the language control is the compact dropdown now (the
-    # pill group is retired); it still lives in Step 3.
-    assert step3 < HTML.index('id="recap-lang-more"') < step4
+    # Round 13 retired #recap-lang-more (source_language auto) and split toggle.
+    assert 'id="recap-lang-more"' not in HTML
     assert 'id="recap-split-toggle"' not in HTML
 
 
@@ -137,15 +136,12 @@ def test_all_voices_expanded_is_twelve_cards_no_select():
     assert 'getElementById("recap-persona-area")' in APP_JS
 
 
-def test_gemini_select_full_width_with_auto_hint():
+def test_gemini_select_full_width_with_auto_option():
     m = re.search(r'<select id="recap-gemini-voice-select"[^>]*>(.*?)</select>', HTML, re.S)
     assert m
-    # AZ-12: the Auto option carries its i18n key like its siblings.
+    # AZ-12: the Auto option carries its i18n key like its siblings (recap_gemini_auto_hint retired in Round 13).
     first = re.search(r'<option value="" data-i18n="recap_gemini_auto">([^<]*)</option>', m.group(1))
     assert first and first.group(1) == "Auto"
-    assert 'data-i18n="recap_gemini_auto_hint"' in HTML
-    # AZ-11: the Gemini select joins the shared glass-dropdown
-    # pattern (restyle only — same id, same classes plus the new one).
     tag = re.search(r'<select id="recap-gemini-voice-select"[^>]*>', HTML)
     assert tag and 'studio-select' in tag.group(0)
     assert tag and 'glass-dropdown' in tag.group(0)
@@ -178,9 +174,10 @@ def test_canvas_no_thumbnail_placeholder_wiring():
     assert ".canvas-no-thumb {" in CSS
 
 
-def test_checking_state_has_shimmer_and_unverified_hint():
+def test_checking_state_has_shimmer_and_part_c_strict_error_card():
+    # Part C replaced the unverified proceed hint with the strict Step 1 URL error card.
     assert 'class="preview-progress-shimmer"' in HTML
-    assert 'data-i18n="recap_preview_unverified_hint"' in HTML
+    assert 'id="recap-url-error-card"' in HTML
     assert "@keyframes previewShimmer" in CSS
 
 
@@ -229,8 +226,7 @@ def test_crop_sliders_nested_one_level_deeper():
 
 def test_new_i18n_keys_exist_in_both_languages():
     tr = _translations()
-    for key in ("recap_preview_unverified_hint", "recap_gemini_auto_hint",
-                "recap_canvas_no_thumb", "recap_specs_title",
+    for key in ("recap_canvas_no_thumb", "recap_specs_title",
                 "recap_sub_lines_label", "recap_sub_size_label",
                 "recap_adv_other_title"):
         assert tr["my"][key] and tr["en"][key], key
@@ -267,7 +263,7 @@ def test_cache_buster_bumped_for_tidy():
     # rt4 = full-app polish batch (2026-11-01) superseding rt3.
     # fp1 = admin-demote + voice-picker batch (2026-11-01 late)
     # superseding rt4 (index.html / app.js / style.css changed again).
-    assert HTML.count("?v=20261118_r164") == 4
+    assert HTML.count("?v=20261123_followup1") == 5
     assert "?v=20261101_rt4" not in HTML
     assert "?v=20261101_rt3" not in HTML
     assert "?v=20261101_rt2" not in HTML

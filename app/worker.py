@@ -84,6 +84,120 @@ def _implausible_audio_reason(text: str, duration_seconds: int, speed_preset) ->
     return None
 
 
+def _voice_retention_hours() -> int:
+    return max(1, int(getattr(settings, "media_retention_days", 1) or 1)) * 24
+
+
+def _format_voice_delivery_duration(seconds: float | int | None) -> str:
+    try:
+        total = int(round(float(seconds or 0)))
+    except (TypeError, ValueError):
+        total = 0
+    if total <= 0:
+        return "—"
+    hours, rem = divmod(total, 3600)
+    mins, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
+
+
+def _format_voice_retention_hours(hours: int, lang: str) -> str:
+    raw = str(int(hours))
+    if (lang or "my").strip().lower().startswith("my"):
+        return raw.translate(str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉"))
+    return raw
+
+
+def build_voice_completion_message(
+    lang: str,
+    *,
+    model_name: str,
+    duration_seconds: float | int | None,
+    job_id: str,
+    retention_hours: int = 24,
+    used_fallback: bool = False,
+    reference_trimmed: bool = False,
+) -> str:
+    """Build the compact Voice Clone completion notification text (Part F)."""
+    text = t(
+        "worker_notify_audio_text",
+        lang,
+        model_name=html.escape(str(model_name or "")),
+        duration=_format_voice_delivery_duration(duration_seconds),
+        job_id=job_id,
+        retention_hours=_format_voice_retention_hours(retention_hours, lang),
+    )
+    if used_fallback:
+        text += t("worker_fallback_note", lang)
+    if reference_trimmed:
+        text += t("worker_ref_trim_note", lang)
+    return text
+
+
+def build_voice_direct_caption(
+    lang: str,
+    *,
+    model_name: str,
+    duration_seconds: float | int | None,
+    job_id: str,
+    retention_hours: int = 24,
+    used_fallback: bool = False,
+    reference_trimmed: bool = False,
+) -> str:
+    """Build the compact direct-delivery Voice Clone audio caption (Part F)."""
+    text = t(
+        "status_completed_caption",
+        lang,
+        model_name=html.escape(str(model_name or "")),
+        duration=_format_voice_delivery_duration(duration_seconds),
+        job_id=job_id,
+        retention_hours=_format_voice_retention_hours(retention_hours, lang),
+    )
+    if used_fallback:
+        text += t("worker_fallback_note", lang)
+    if reference_trimmed:
+        text += t("worker_ref_trim_note", lang)
+    return text
+
+
+def build_voice_completion_keyboard(lang: str, *, job_id: str, app_url: str):
+    """Build the 1-button-per-full-width-row Voice Clone keyboard (Part F)."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=t("clone_btn_send_audio", lang),
+                callback_data=f"send_audio_{job_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=t("clone_btn_miniapp_listen", lang),
+                web_app=WebAppInfo(url=f"{app_url}?tab=tab-voice"),
+            )
+        ],
+    ])
+
+
+def build_voice_failure_message(
+    lang: str,
+    *,
+    job_id: str,
+    reason: str,
+    refunded: bool = True,
+) -> str:
+    """Build the compact Voice Clone failure message (Part F)."""
+    key = "worker_failure_notify_refunded_text" if refunded else "worker_failure_notify_text"
+    return t(
+        key,
+        lang,
+        job_id=job_id,
+        reason=html.escape(str(reason or "").strip()),
+    )
+
+
 _INSUFFICIENT_BALANCE_RE = re.compile(
     r"insufficient balance: requested (\d+)s, available (\d+)s", re.IGNORECASE
 )
@@ -1236,13 +1350,15 @@ async def process_single_job(
                                 job_id=job.id,
                             ),
                         )
-                        caption = t(
-                            "status_completed_caption",
+                        caption = build_voice_direct_caption(
                             lang,
-                            completed_status=t("status_completed", lang),
-                            model_name=html.escape(str(caption_model_name)),
+                            model_name=str(caption_model_name),
                             duration_seconds=duration_seconds,
-                        ) + fallback_note + trim_note
+                            job_id=job.id,
+                            retention_hours=_voice_retention_hours(),
+                            used_fallback=bool(used_fallback),
+                            reference_trimmed=bool(reference_trimmed),
+                        )
                         await bot.send_audio(
                             chat_id=target_chat_id,
                             audio=audio_file,
@@ -1254,29 +1370,19 @@ async def process_single_job(
                 except Exception as send_err:
                     logger.warning("Failed to deliver audio via Telegram for job %s: %s", job.id, send_err)
             else:
-                # Mini App Job: Send push notification alert with inline action buttons
+                # Mini App Job: Send push notification alert with 1-button-per-row keyboard
                 try:
-                    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
                     app_url = settings.mini_app_url
-                    kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text=t("clone_btn_miniapp_listen", lang),
-                                web_app=WebAppInfo(url=f"{app_url}?tab=tab-voice")
-                            ),
-                            InlineKeyboardButton(
-                                text=t("clone_btn_send_audio", lang),
-                                callback_data=f"send_audio_{job.id}"
-                            )
-                        ]
-                    ])
-                    notify_text = t(
-                        "worker_notify_audio_text",
+                    kb = build_voice_completion_keyboard(lang, job_id=job.id, app_url=app_url)
+                    notify_text = build_voice_completion_message(
                         lang,
-                        model_name=html.escape(str(caption_model_name)),
-                        duration=duration_seconds,
+                        model_name=str(caption_model_name),
+                        duration_seconds=duration_seconds,
                         job_id=job.id,
-                    ) + fallback_note + trim_note
+                        retention_hours=_voice_retention_hours(),
+                        used_fallback=bool(used_fallback),
+                        reference_trimmed=bool(reference_trimmed),
+                    )
                     await bot.send_message(
                         chat_id=target_chat_id,
                         text=notify_text,
@@ -1382,8 +1488,13 @@ async def process_single_job(
 
         await session.commit()
 
-        safe_exc = html.escape(user_error)
-        await safe_edit_status(bot, target_chat_id, target_msg_id, f"{t('status_failed', lang)}\n<i>({safe_exc})</i>")
+        fail_msg = build_voice_failure_message(
+            lang,
+            job_id=str(job.id),
+            reason=user_error,
+            refunded=not settings.is_admin(job.user_id),
+        )
+        await safe_edit_status(bot, target_chat_id, target_msg_id, fail_msg)
         return False
 
     finally:

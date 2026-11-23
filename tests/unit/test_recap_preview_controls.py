@@ -62,16 +62,9 @@ def test_toolbar_group_starts_hidden_but_other_settings_do_not():
     assert 'id="recap-preview-controls-group"' in html
     group_tag = html.split('id="recap-preview-controls-group"')[0].rsplit("<div", 1)[1]
     assert "hidden" in group_tag
-    # Non-preview settings stay reachable without a source: the language
-    # picker group must NOT be swept into the hidden set. (Recap tidy-up:
-    # the picker sat flattened in the Advanced "Other" section; Batch AV
-    # moved it into Step 3 — still a plain block, still not
-    # preview-gated, and its Step-3 body is the collapsible surface.)
-    # AZ-11: the language control is the compact dropdown (the
-    # pill group is retired) — still in the same plain block.
-    assert 'id="recap-lang-more"' in html
-    lang_block_tag = html.split('id="recap-lang-more"')[0].rsplit('<div class="recap-lang-block', 1)[1].split(">", 1)[0]
-    assert "hidden" not in lang_block_tag
+    # Round 13 retired the source language picker (#recap-lang-more); Step 3 story/engine pickers stay reachable.
+    assert 'id="recap-engine-picker"' in html
+    assert 'id="story-style-picker-quick"' in html
 
 
 def test_state_machine_toggles_all_preview_surfaces():
@@ -95,20 +88,19 @@ def test_loading_and_ready_wired_on_extract_and_upload():
     # Both source paths pass through LOADING and land on READY.
     assert js.count('setRecapPreviewState("loading");') >= 2
     assert js.count('setRecapPreviewState("ready");') >= 2
-    # Extract start -> loading happens after the button spinner is set.
-    assert 'btnAnalyze.innerText = "⏳...";\n            setRecapPreviewState("loading");' in js
-    # Upload success -> ready right at the "Video Ready" point. The
-    # upload-ux pass moved the label behind the i18n key
-    # upload_ready_label (my: "✅ ဗီဒီယို အဆင်သင့် ဖြစ်ပါပြီ!" /
-    # en: "✅ Video ready for Recap!"); the ready wiring adjacency
-    # at that point is unchanged.
+    # Extract start -> loading happens right after resetting stale verification state.
+    i_spin = js.index('btnAnalyze.innerText = "⏳...";')
+    i_load = js.index('setRecapPreviewState("loading");', i_spin)
+    assert i_load - i_spin < 450
+    # Upload success -> ready right at the "Video Ready" point.
     assert 't("upload_ready_label");\n        setRecapPreviewState("ready");' in js
 
 
 def test_clearing_or_failing_source_returns_to_empty():
     js = _js()
-    # Failures and URL-clearing re-evaluate from the actual source state.
-    assert js.count('setRecapPreviewState(recapHasSource() ? "ready" : "empty");') >= 3
+    # Part C centralises URL failure/clear reset in resetRecapUrlVerification, which sets empty unless a completed upload exists.
+    assert 'setRecapPreviewState((state.uploadedVideoPath && !state.recapUploadPending) ? "ready" : "empty");' in js
+    assert 'setRecapPreviewState(recapHasSource() ? "ready" : "empty");' in js
     assert "function recapHasSource()" in js
     assert "state.recapThumbnailUrl" in js and "state.uploadedVideoPath" in js
 

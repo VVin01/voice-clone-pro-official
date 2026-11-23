@@ -273,10 +273,12 @@ def _duration_side_effect(source: Path, output_seconds: int):
 
 
 def _clone_balance_total(bal) -> int:
-    """Clone-spendable seconds (consume_seconds' cascade buckets)."""
+    """Clone-spendable seconds (consume_seconds' cascade buckets incl. daily_free & referral_voice)."""
     return (
-        int(bal.monthly_free_seconds or 0)
+        int(bal.effective_daily_free_seconds or 0)
+        + int(bal.monthly_free_seconds or 0)
         + int(bal.welcome_seconds or 0)
+        + int(bal.referral_voice_seconds or 0)
         + int(bal.purchased_seconds or 0)
     )
 
@@ -459,7 +461,7 @@ def test_ch_cache_token_is_r105():
     html = (
         Path(__file__).resolve().parents[2] / "app/webapp/static/index.html"
     ).read_text(encoding="utf-8")
-    assert html.count("20261118_r164") == 4
+    assert html.count("20261123_followup1") == 5
     assert ("20261104_r" + "105") not in html
 
 

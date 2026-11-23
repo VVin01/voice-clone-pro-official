@@ -16,10 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config import settings
 from app.db import session as session_mod
 from app.db.base import Base
-from app.handlers.menu import (
-    render_history_ledger_content,
-    render_history_overview_content,
-)
 from app.models.enums import (
     AccountCategory,
     JobStatus,
@@ -432,8 +428,10 @@ async def test_consumed_seconds_net_across_refund_partial_replay_and_floor(
         assert bal.consumed_seconds == 45  # remaining 60 refunded too
 
         # 4) Partial refund when a prior-month MONTHLY_FREE debit is non-refundable:
-        # consume 180s monthly_free + 20s purchased = 200s
-        await grant_monthly_free_allowance(s, uid)
+        # seed 180s legacy monthly_free + 20s purchased = 200s (grant_monthly_free_allowance became a no-op in Limits round)
+        bal = await get_minute_balance(s, uid)
+        bal.monthly_free_seconds = 180
+        await s.flush()
         await consume_seconds(s, uid, 200, job_id="job_prior_month")
         bal = await get_minute_balance(s, uid)
         assert bal.consumed_seconds == 245
@@ -506,13 +504,11 @@ async def test_voice_cancel_updates_consumed_seconds_in_menu_and_admin_detail(
         )
         await s.commit()
 
-        # Before cancel: consumed_seconds == 120 (2.0m) across admin detail + menu
+        # Before cancel: consumed_seconds == 120 (2.0m) in admin detail
         detail_before = await api_mod.get_admin_user_detail(
             uid, admin=SimpleNamespace(id=admin_id), db=s
         )
         assert detail_before["balance_breakdown"]["consumed_seconds"] == 120
-        overview_before, _ = await render_history_overview_content(s, uid)
-        assert "2.0" in overview_before
 
         # User voice cancel routes through refund_job_seconds
         res = await api_mod.cancel_voice_job("vc_cancel_net", user=user, db=s)
@@ -524,9 +520,5 @@ async def test_voice_cancel_updates_consumed_seconds_in_menu_and_admin_detail(
             uid, admin=SimpleNamespace(id=admin_id), db=s
         )
         assert detail_after["balance_breakdown"]["consumed_seconds"] == 0
-        overview_after, _ = await render_history_overview_content(s, uid)
-        ledger_after, _ = await render_history_ledger_content(s, uid)
-        assert "0.0" in overview_after
-        assert "0.0" in ledger_after
 
     await engine.dispose()

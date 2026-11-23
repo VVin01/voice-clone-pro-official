@@ -65,7 +65,7 @@ def _i18n_values(key: str) -> list[str]:
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_bb_cache_token_is_r79():
-    assert HTML.count("20261118_r164") == 4
+    assert HTML.count("20261123_followup1") == 5
     assert "20261104_r74" not in HTML
 
 
@@ -188,10 +188,11 @@ async def test_bb5_delivery_sends_a_branded_wav_name(tmp_path, monkeypatch):
         def __init__(self, token):
             self.session = FakeSession()
 
-        async def send_audio(self, chat_id, audio, caption, parse_mode):
+        async def send_audio(self, chat_id, audio, caption, parse_mode, **kwargs):
             sent["chat_id"] = chat_id
             sent["audio"] = audio
             sent["caption"] = caption
+            sent["reply_markup"] = kwargs.get("reply_markup")
 
     monkeypatch.setattr(aiogram, "Bot", FakeBot)
     monkeypatch.setattr(aiogram.types, "FSInputFile", FakeFSInputFile)
@@ -212,17 +213,22 @@ async def test_bb5_delivery_sends_a_branded_wav_name(tmp_path, monkeypatch):
 
 def _capsule(html_id: str) -> str:
     m = re.search(
-        rf'<div class="speed-capsule" id="{html_id}">(.*?)</div>', HTML, re.S
+        rf'<div class="speed-capsule[^"]*" id="{html_id}">(.*?)</div>', HTML, re.S
     )
     assert m, f"capsule missing: {html_id}"
     return m.group(1)
 
 
 def test_bb2_all_three_selectors_are_capsules():
-    for cid in ("speed-selector", "tts-speed-picker", "recap-speed-picker"):
+    # Round 13 switched recap-speed-picker to a 5-col grid (.recap-speed-grid, no sliding pill);
+    # speed-selector and tts-speed-picker remain sliding speed-capsules.
+    for cid in ("speed-selector", "tts-speed-picker"):
         block = _capsule(cid)
         assert '<span class="speed-capsule-pill"' in block
         assert 'class="pill-btn"' not in block
+    recap_block = _capsule("recap-speed-picker")
+    assert 'class="speed-seg' in recap_block
+    assert 'class="pill-btn"' not in recap_block
 
 
 def test_bb2_voice_capsule_values_defaults_and_labels():
@@ -243,8 +249,9 @@ def test_bb2_five_option_capsules_values_defaults_and_labels():
         assert re.findall(rf'{attr}="([^"]+)"', block) == ["-6%", "+0%", "+12%", "+20%", "+25%"]
         assert f'<button type="button" class="speed-seg active" {attr}="+12%">' in block \
             or f'<button class="speed-seg active" {attr}="+12%">' in block
-        for key in ("speed_m6", "speed_0", "speed_12_capsule", "speed_20", "speed_25"):
-            assert f'data-i18n="{key}"' in block, (cid, key)
+        if cid != "recap-speed-picker":
+            for key in ("speed_m6", "speed_0", "speed_12_capsule", "speed_20", "speed_25"):
+                assert f'data-i18n="{key}"' in block, (cid, key)
         for short in ("-6%", "+0%", "+12%", "+20%", "+25%"):
             assert f'<span class="seg-short">{short}</span>' in block
 

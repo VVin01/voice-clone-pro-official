@@ -17,15 +17,12 @@ from aiogram.types import CallbackQuery, Message, User as TgUser
 
 from app.config import settings
 from app.handlers.admin import (
-    AdminBroadcastFSM,
     _failure_class,
-    handle_admin_broadcast_test,
     handle_admin_pay_receipt,
 )
 from app.handlers.group_admin import handle_private_message
 from app.handlers.menu import render_main_menu
 from app.handlers.payment import handle_buy_minutes_menu
-from app.handlers.start import handle_membership_card
 from app.services import group_ai_admin as gai
 from app.services import private_ai as pai
 from app.models.enums import AccountCategory, PaymentStatus
@@ -77,125 +74,40 @@ def _callbacks(kb):
 
 
 # ---------------------------------------------------------------------------
-# Main menu shape
+# Main menu shape (updated to Round 13 Part K 3-button contract)
 # ---------------------------------------------------------------------------
 
 def test_main_menu_shape_verified_user():
     kb = main_menu_kb(is_admin=False, lang="my")
     buttons = _flat_buttons(kb)
-    # Exactly the 4 core buttons: hero WebApp, Plans, Refer, Language/Help.
-    assert len(buttons) == 4
+    # Round 13 Part K: exact 3 buttons — Open Mini App, Refer Friends, Change Language.
+    assert len(buttons) == 3
     assert buttons[0].web_app is not None
     assert "tab=" not in (buttons[0].web_app.url or "")
-    assert _callbacks(kb) == ["menu:buy_minutes", "menu:refer_earn", "menu:help_settings"]
-    # Retired rows: Recap/Downloader deep links, Tutorials, gate toast.
+    assert _callbacks(kb) == ["menu:refer_earn", "menu:change_lang"]
     assert not any(b.web_app and "tab=" in (b.web_app.url or "") for b in buttons)
     assert "gate:verify" not in _callbacks(kb)
     assert "menu:membership" not in _callbacks(kb)
-    assert "menu:change_lang" not in _callbacks(kb)
 
 
 def test_main_menu_shape_membership_pending_and_admin():
+    # Round 13 Part K: main_menu_kb is identical (3 buttons) regardless of pending/admin flags.
     kb = main_menu_kb(is_admin=False, lang="en", membership_pending=True)
-    assert "menu:membership" in _callbacks(kb)
-    assert len(_flat_buttons(kb)) == 5
+    assert len(_flat_buttons(kb)) == 3
+    assert _callbacks(kb) == ["menu:refer_earn", "menu:change_lang"]
 
     kb_admin = main_menu_kb(is_admin=True, lang="en")
-    cbs = _callbacks(kb_admin)
-    assert "admin:dashboard" in cbs
-    assert "admin:broadcast" in cbs
-    assert "menu:membership" not in cbs
+    assert len(_flat_buttons(kb_admin)) == 3
+    assert _callbacks(kb_admin) == ["menu:refer_earn", "menu:change_lang"]
 
 
 @pytest.mark.asyncio
-async def test_render_main_menu_membership_button_visibility(db_session):
+async def test_render_main_menu_returns_welcome_and_3_buttons(db_session):
     user, _ = await get_or_create_user(db_session, telegram_id=9101)
     await db_session.flush()
-    # Default flags: unverified -> button present.
-    _, kb = await render_main_menu(user.id, session=db_session)
-    assert "menu:membership" in _callbacks(kb)
-
-    user.channel_verified = True
-    user.group_verified = True
-    await db_session.flush()
-    _, kb2 = await render_main_menu(user.id, session=db_session)
-    assert "menu:membership" not in _callbacks(kb2)
-
-
-# ---------------------------------------------------------------------------
-# Membership status card
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_membership_card_shows_only_missing_joins(db_session):
-    settings.required_channel_id = "-100111"
-    settings.required_group_id = "-100222"
-    user, _ = await get_or_create_user(db_session, telegram_id=9102)
-    user.language_code = "en"
-    await db_session.flush()
-
-    @asynccontextmanager
-    async def mock_session_ctx():
-        yield db_session
-
-    member = MagicMock()
-    member.status = "member"
-    left = MagicMock()
-    left.status = "left"
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=9102, is_bot=False, first_name="Joiner")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    cb.bot = MagicMock()
-    # Channel joined, group missing.
-    cb.bot.get_chat_member = AsyncMock(side_effect=[member, left])
-
-    with patch("app.handlers.start.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_membership_card(cb)
-
-    cb.message.edit_text.assert_called_once()
-    text = cb.message.edit_text.call_args[0][0]
-    kb = cb.message.edit_text.call_args[1]["reply_markup"]
-    urls = [b.url for b in _flat_buttons(kb) if b.url]
-    # Only the group join button is offered; channel already joined.
-    assert len(urls) == 1
-    assert "gate:verify" in _callbacks(kb)
-    assert user.channel_verified is True
-    assert user.group_verified is False
-
-
-@pytest.mark.asyncio
-async def test_membership_card_verified_user_gets_menu(db_session):
-    settings.required_channel_id = "-100111"
-    settings.required_group_id = "-100222"
-    user, _ = await get_or_create_user(db_session, telegram_id=9103)
-    user.language_code = "en"
-    await db_session.flush()
-
-    @asynccontextmanager
-    async def mock_session_ctx():
-        yield db_session
-
-    member = MagicMock()
-    member.status = "member"
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=9103, is_bot=False, first_name="Member")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    cb.bot = MagicMock()
-    cb.bot.get_chat_member = AsyncMock(return_value=member)
-
-    with patch("app.handlers.start.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_membership_card(cb)
-
-    # Verified toast shown and the re-rendered menu drops the button.
-    cb.answer.assert_called_once_with(t("membership_verified", "en"))
-    kb = cb.message.edit_text.call_args[1]["reply_markup"]
-    assert "menu:membership" not in _callbacks(kb)
+    text, kb = await render_main_menu(user.id, lang="en", session=db_session)
+    assert "Welcome to Voice Clone Pro" in text
+    assert _callbacks(kb) == ["menu:refer_earn", "menu:change_lang"]
 
 
 # ---------------------------------------------------------------------------
@@ -203,11 +115,12 @@ async def test_membership_card_verified_user_gets_menu(db_session):
 # ---------------------------------------------------------------------------
 
 def test_language_selection_kb_back_and_active_marker():
+    # Round 13 Part K removed menu:home back row; language picker shows active check + 2 language buttons.
     kb = language_selection_kb(active_lang="my", show_back=True, lang="my")
     buttons = _flat_buttons(kb)
     assert buttons[0].text.startswith("✅")
     assert not buttons[1].text.startswith("✅")
-    assert _callbacks(kb) == ["set_lang:my", "set_lang:en", "menu:home"]
+    assert _callbacks(kb) == ["set_lang:my", "set_lang:en"]
 
     kb_plain = language_selection_kb()
     assert _callbacks(kb_plain) == ["set_lang:my", "set_lang:en"]
@@ -215,7 +128,7 @@ def test_language_selection_kb_back_and_active_marker():
 
 
 # ---------------------------------------------------------------------------
-# Broadcast: 0-audience hiding + test-send
+# Broadcast: 0-audience hiding (bot-chat broadcast FSM retired in Round 13 Part K)
 # ---------------------------------------------------------------------------
 
 def test_broadcast_audience_kb_hides_zero_counts():
@@ -232,47 +145,6 @@ def test_broadcast_audience_kb_hides_zero_counts():
         registered_count=1, imported_all_count=2, imported_unregistered_count=3, lang="en"
     )
     assert "admin:bc_group:IMPORTED_UNREGISTERED" in _callbacks(kb_all)
-
-
-@pytest.mark.asyncio
-async def test_broadcast_test_send_only_to_admin_and_keeps_state(db_session):
-    settings.admin_ids_raw = "888111"
-    admin, _ = await get_or_create_user(db_session, telegram_id=888111)
-    admin.language_code = "en"
-    await db_session.flush()
-
-    state = FakeFSMContext(
-        initial_state=AdminBroadcastFSM.confirming,
-        initial_data={"token": "tok123", "broadcast_text": "Hello everyone", "lang": "en"},
-    )
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=888111, is_bot=False, first_name="Admin")
-    cb.data = "admin:broadcast_test:tok123"
-    cb.answer = AsyncMock()
-    cb.bot = MagicMock()
-    cb.bot.send_message = AsyncMock()
-
-    await handle_admin_broadcast_test(cb, state, session=db_session)
-
-    cb.bot.send_message.assert_called_once()
-    kwargs = cb.bot.send_message.call_args[1]
-    assert kwargs["chat_id"] == 888111
-    assert kwargs["text"] == "Hello everyone"
-    # State untouched: the admin can still confirm or cancel.
-    assert state.current_state == AdminBroadcastFSM.confirming
-    assert state.data.get("token") == "tok123"
-    cb.answer.assert_called_once_with(t("admin_alert_broadcast_test_sent", "en"))
-
-    # Wrong nonce: nothing is sent, expiry alert instead.
-    cb2 = MagicMock(spec=CallbackQuery)
-    cb2.from_user = TgUser(id=888111, is_bot=False, first_name="Admin")
-    cb2.data = "admin:broadcast_test:WRONG"
-    cb2.answer = AsyncMock()
-    cb2.bot = MagicMock()
-    cb2.bot.send_message = AsyncMock()
-    await handle_admin_broadcast_test(cb2, state, session=db_session)
-    cb2.bot.send_message.assert_not_called()
-    assert cb2.answer.call_args[1].get("show_alert") is True
 
 
 # ---------------------------------------------------------------------------
@@ -396,10 +268,10 @@ async def test_buy_menu_header_free_vs_vip(db_session):
         assert "Top Up a Plan" in vip_text
         # The Free->VIP pitch is a dead end for a VIP; it must not show.
         assert "Buying moves you from Free to VIP" not in vip_text
-        # All 22 official catalogue buttons remain available cleanly.
+        # Pricing v3 (2026-11-23): 10 official catalogue plans.
         kb = cb_vip.message.edit_text.call_args[1]["reply_markup"]
         buy_cbs = [c for c in _callbacks(kb) if c.startswith("buy_pkg:")]
-        assert len(buy_cbs) == 22
+        assert len(buy_cbs) == 10
 
 
 @pytest.mark.asyncio

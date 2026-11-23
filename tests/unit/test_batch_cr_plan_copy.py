@@ -33,7 +33,8 @@ def test_tiered_rate_stated_for_every_recap_plan():
 
 
 def test_reference_range_corrected():
-    assert "Dedicated 10% Combo Savings" in API or "10% Combo သက်သာခွင့်" in API
+    # Pricing v3 (2026-11-23): bundle copy updated to describe Voice + Recap bundle package.
+    assert "Voice + Recap bundle package" in API or "Works across Custom Voice Clone Recap & AI Recap" in API
     assert "Lossless WAV" in API
 
 
@@ -49,4 +50,4 @@ def test_style_counts_dropped():
 
 
 def test_cache_token_r114():
-    assert INDEX.count("20261118_r164") == 4
+    assert INDEX.count("20261123_followup1") == 5

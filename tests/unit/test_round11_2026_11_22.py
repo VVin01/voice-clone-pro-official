@@ -360,7 +360,34 @@ def test_round11_config_build_parity_vs_base_3d501f1():
             "function recapCompositePayload() {",
             "function scheduleRecapCompositeRefresh()",
         )
-        # Extract the exact payload object literal inside handleStartRecap()
+        # Support both refactored buildRecapConfig(url) and legacy inline payload inside handleStartRecap()
+        if "function buildRecapConfig(url)" in js_src:
+            builder_fn = _extract_block(
+                js_src,
+                "function buildRecapConfig(url)",
+                "async function handleStartRecap()",
+            )
+            quality_fn = (
+                _extract_block(js_src, "function canUseRecapRenderQuality()", "function refreshRecapQualityLock()")
+                if "function canUseRecapRenderQuality()" in js_src
+                else "function canUseRecapRenderQuality() { return true; }"
+            )
+            edge_norm = (
+                "function normalizeEdgeVoiceKey(v) { return String(v || 'thiha').trim().toLowerCase() || 'thiha'; }"
+            )
+            return f"""
+{locked_and_extras}
+{quality_fn}
+{edge_norm}
+function recapCompositeSourceUrl() {{ return state.recapVerifiedSourceUrl || null; }}
+{composite_fns}
+{builder_fn}
+function buildSubmitPayload(url) {{
+    const p = buildRecapConfig(url);
+    delete p.edge_voice;
+    return p;
+}}
+"""
         start_recap = js_src.index("async function handleStartRecap()")
         payload_start = js_src.index("const sliderBlurY = document.getElementById", start_recap)
         payload_end = js_src.index('const res = await fetch("/api/recap/generate"', payload_start)
@@ -545,7 +572,12 @@ console.log(JSON.stringify(results));
     results = json.loads(proc.stdout.strip())
     assert len(results) == 2
     for row in results:
-        assert row["curr"] == row["base"], (
+        base_obj = json.loads(row["base"])
+        curr_obj = json.loads(row["curr"])
+        # Round 13 retired the Recap Source Language picker and locked source_language to "auto".
+        assert curr_obj["submit"]["source_language"] == "auto"
+        base_obj["submit"]["source_language"] = "auto"
+        assert curr_obj == base_obj, (
             f"Config parity mismatch in case {row['name']}:\n"
-            f"BASE: {row['base']}\nCURR: {row['curr']}"
+            f"BASE: {json.dumps(base_obj)}\nCURR: {json.dumps(curr_obj)}"
         )

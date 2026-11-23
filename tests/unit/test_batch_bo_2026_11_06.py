@@ -90,10 +90,9 @@ def test_bo_bar_toggle_combines_gate_with_ak_and_scroll_conditions():
     assert "btn.disabled = !!src.disabled;" in body
     assert 'const recapBlocked = p.src === "btn-start-recap" && recapJobActive();' in body
     assert 'src.classList.toggle("hidden", recapBlocked)' in body
-    # Both sticky pairs are still registered, recap mapped to its
-    # Step-4 source button.
+    # Recap sticky pair is registered (Round 13 retired #sticky-cta-voice).
     assert '{ tab: "tab-recap", bar: "sticky-cta-recap", src: "btn-start-recap", btn: "btn-start-recap-sticky" }' in APP_JS
-    assert '{ tab: "tab-voice", bar: "sticky-cta-voice", src: "btn-generate-voice", btn: "btn-generate-voice-sticky" }' in APP_JS
+    assert 'sticky-cta-voice' not in APP_JS
 
 
 def test_bo_gate_truth_table():
@@ -158,5 +157,5 @@ def test_bo_cta_markup_unchanged():
 
 def test_bo_cache_token_is_r87():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    assert html.count("20261118_r164") == 4
+    assert html.count("20261123_followup1") == 5
     assert "20261104_r86" not in html

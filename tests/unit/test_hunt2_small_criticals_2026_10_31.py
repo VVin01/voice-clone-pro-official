@@ -305,10 +305,11 @@ async def test_v2_models_list_scopes_personal_models(db_session):
 
 
 def test_v2_frontend_loads_samples_with_auth():
-    # Audio() / <audio src> cannot send the initData header, so both
-    # preview paths fetch the sample with auth and play a blob URL.
+    # Audio() / <audio src> cannot send the initData header, so preview
+    # playback fetches samples with auth via fetchAuthImageUrl and plays a blob URL
+    # (Round 13 retired #home-samples-card's data-sample-url buttons).
     assert "await fetchAuthImageUrl(audioUrl)" in APP_JS
-    assert 'getAttribute("data-sample-url")' in APP_JS
+    assert "async function runSharedVoicePreview(" in APP_JS
 
 
 # ── R1: recap double-submit guards ───────────────────────────────────────

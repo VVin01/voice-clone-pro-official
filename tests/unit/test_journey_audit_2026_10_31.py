@@ -160,14 +160,15 @@ async def test_j2_profile_grants_monthly_free_and_counts_completed(db_session):
     assert profile2["balance_seconds"] == 180
 
 
-# ── J3: extract metadata honesty flag ─────────────────────────────────
+# ── J3: extract metadata honesty flag (superseded by Part C strict 422 gate) ──
 
-def test_j3_extract_marks_unverified_fallback():
+def test_j3_extract_marks_verified_and_rejects_unverified_with_422():
+    # Part C (2026-11-23): /api/downloader/extract marks verified payloads and raises HTTP 422
+    # instead of returning a shallow metadata_verified=False fallback.
     assert '"metadata_verified": True' in API_PY
-    assert '"metadata_verified": False' in API_PY
-    # The client consumes the flag in the recap analyze success path.
-    assert 'data.metadata_verified === false' in APP_JS
-    assert 'recap_unverified_note' in APP_JS
+    assert "status_code=422" in API_PY
+    assert "isVerifiedRecapInfoPayload" in APP_JS
+    assert "showRecapUrlError()" in APP_JS
 
 
 # ── J4: welcome strip + link help wiring ──────────────────────────────
@@ -175,8 +176,7 @@ def test_j3_extract_marks_unverified_fallback():
 NEW_KEYS = (
     "err_link_blocked", "err_link_blocked_named",
     "err_link_advice_upload", "err_link_advice_dl",
-    "link_help_recap", "link_help_dl",
-    "recap_unverified_note",
+    "recap_url_verify_err_title", "recap_url_verify_err_body",
     "welcome_strip_text", "welcome_strip_btn",
 )
 
@@ -210,9 +210,8 @@ def test_j4_welcome_strip_and_help_markup_present():
     assert 'class="welcome-strip hidden"' in home
     assert 'onclick="dismissWelcomeStrip()"' in home
     assert "switchTab('tab-recap')" in home
-    # Quiet inline help inside the two link-paste components.
-    assert 'data-i18n="link_help_recap"' in INDEX_HTML
-    assert 'data-i18n="link_help_dl"' in INDEX_HTML
+    # link_help_recap / link_help_dl inline copy retired in Round 13; Recap uses strict URL error card.
+    assert 'id="recap-url-error-card"' in INDEX_HTML
     # The JS gate: Free-only, zero completed jobs, per-device dismiss.
     assert 'localStorage.getItem("vcp_welcome_dismissed")' in APP_JS
     assert "u.completed_jobs === 0" in APP_JS

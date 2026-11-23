@@ -60,7 +60,7 @@ def _css_rule(selector: str) -> str:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_r37():
-    assert HTML.count("?v=20261118_r164") == 4
+    assert HTML.count("?v=20261123_followup1") == 5
     assert "20261102_ma1" not in HTML
 
 
@@ -113,10 +113,10 @@ def test_d2_refit_helper_defined():
 def test_d2_analyze_completion_refits_plate():
     body = _js_slice(
         "// 14. Analyze / Video Info Check Button",
-        "// Auto-detect on input / paste",
+        "// URL input edit resets verified state immediately",
     )
     finally_at = body.index("} finally {")
-    # Batch AK: the analyze settle schedules the composite frame.
+    # Batch AK + Part C: the analyze settle schedules the composite frame when a verified source exists.
     assert "scheduleRecapCompositeRefresh();" in body[finally_at:]
 
 

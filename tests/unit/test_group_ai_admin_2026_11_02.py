@@ -182,14 +182,10 @@ def test_fact_sheet_built_from_ground_truth():
         assert f"{entry['price_mmk']:,}" in sheet
     assert "180 စက္ကန့်" in sheet  # free voice allowance (settings default)
     assert "Recap Credit 3 ခု" in sheet  # one-time free recap credits
-    # Batch BZ: at the retired default (free_daily_job_limit = 0)
-    # the job-count line is ABSENT, and the daily MINUTE caps are
-    # stated instead — FREE voice unlimited (monthly governs), paid
-    # voice 30, TTS 15/60.
+    # Part G/H + Limits round: free_daily_job_limit & paid daily voice cap retired; TTS daily caps 15/60 live.
     assert "တစ်နေ့ Job" not in sheet
     assert "Voice Clone တစ်နေ့ ကန့်သတ်ချက်" in sheet
     assert "အကန့်အသတ် မရှိ" in sheet
-    assert "တစ်နေ့ 30 မိနစ်" in sheet
     assert "TTS (TTS Tab) တစ်နေ့ ကန့်သတ်ချက်" in sheet
     assert "တစ်နေ့ 15 မိနစ်" in sheet
     assert "တစ်နေ့ 60 မိနစ်" in sheet
@@ -200,8 +196,9 @@ def test_fact_sheet_built_from_ground_truth():
 
 
 def test_fact_sheet_tracks_settings(monkeypatch):
-    monkeypatch.setattr(settings, "free_daily_job_limit", 9)
-    assert "တစ်နေ့ Job 9 ခု" in gai.build_fact_sheet()
+    # Live TTS daily limit setting flows dynamically into the fact sheet.
+    monkeypatch.setattr(settings, "tts_daily_limit_minutes_free", 19)
+    assert "တစ်နေ့ 19 မိနစ်" in gai.build_fact_sheet()
 
 
 # ---------------------------------------------------------------------------
@@ -514,12 +511,11 @@ def test_deferral_copy_tone():
 
 def test_prompt_tone_and_decision_spec():
     prompt = gai.SYSTEM_INSTRUCTIONS
-    # New voice spec: sweet/gentle, ခင်ဗျာ capped, no over-the-top.
+    # Part H Senior Admin persona: warm/natural Burmese, 1-3 sentences, zero emoji, no pressure.
     assert "ချိုချိုသာသာ" in prompt
-    assert "အများဆုံး တစ်ကြိမ်" in prompt  # the ခင်ဗျာ cap
-    assert "အိုဗာ မဖြစ်ရပါ" in prompt
-    # New decision spec: member-to-member chat is the silence case,
-    # NOT "everything by default".
+    assert "ဝါကျ ၁–၃ ကြောင်း" in prompt
+    assert "Emoji လုံးဝ မထည့်ရပါ" in prompt
+    # Member-to-member chat is the silence case.
     assert "အဖွဲ့ဝင် အချင်းချင်း" in prompt
     assert "စကားဝိုင်း အားလုံးကို မဖြေရပါ" not in prompt
     # Hard rules survive the rewrite.
@@ -530,7 +526,7 @@ def test_prompt_tone_and_decision_spec():
 def test_fact_sheet_knowledge_coverage():
     sheet = gai.build_fact_sheet()
     # Product map: tabs + downloader + custom voice.
-    assert "Voice Studio" in sheet and "VIP" in sheet
+    assert "Voice Studio" in sheet and "Buy (ဝယ်ရန်)" in sheet
     assert "Custom Voice" in sheet
     # R40 deck D4: only platforms the product actually supports are
     # listed (Instagram / X were stated as fact but are not supported).
@@ -538,14 +534,13 @@ def test_fact_sheet_knowledge_coverage():
     # Personas derived from the curated catalogue + Gemini voices.
     assert "ကိုမင်း" in sheet and "မနှင်း" in sheet
     assert "ကိုသီဟ" in sheet and "မသွန်းရည်" in sheet
-    # Recap knowledge: styles, engines, 1 Credit = 1 Min Final Output rule, watermark rule.
+    # Recap knowledge: 4 live styles (Viral, Funny, Recap/Standard, POV), engines, 1 Credit = 1 Min rule, watermark.
     assert "POV" in sheet and "Funny" in sheet
     assert "1 Credit = Final Recap Output 1" in sheet and "Normal AI Voice" in sheet
     assert "Watermark" in sheet
-    # Refer programme constants from the ledger (Batch AW: the reward
-    # is 120 seconds of TTS-only time per referral).
-    assert "120 စက္ကန့်" in sheet and "20 ယောက်" in sheet
-    assert "TTS Tab တွင်သာ" in sheet
+    # Limits round + Part H: Refer programme pays 60s Voice Clone per referral, unlimited.
+    assert "60 စက္ကန့်" in sheet and "အကန့်အသတ် မရှိ" in sheet
+    assert "Voice Clone 1 မိနစ်" in sheet
     # Membership gate + tutorial pointer.
     assert "Join" in sheet and "@VoiceClonePro" in sheet
 

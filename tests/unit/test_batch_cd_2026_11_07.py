@@ -86,7 +86,7 @@ async def _seed(db, *objs):
 
 def test_cd_cache_token_is_r102():
     html = _read("app/webapp/static/index.html")
-    assert html.count("20261118_r164") == 4
+    assert html.count("20261123_followup1") == 5
     assert ("20261104_r" + "101") not in html
 
 
@@ -182,8 +182,10 @@ async def test_cd_detail_payload_completed(db_session):
 
     bb = detail["balance_breakdown"]
     assert bb == {
+        "daily_free_seconds": 0,
         "monthly_free_seconds": 600, "welcome_seconds": 60,
-        "referral_seconds": 120, "purchased_seconds": 3600,
+        "referral_seconds": 120, "referral_voice_seconds": 0,
+        "purchased_seconds": 3600,
         "consumed_seconds": 900,
     }
 

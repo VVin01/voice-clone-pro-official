@@ -54,7 +54,6 @@ def test_downloader_preserves_section_and_uses_vcp_state_machine():
     sec = INDEX_HTML.split('<section id="tab-downloader" class="tab-pane">', 1)[1].split("</section>", 1)[0]
     assert 'id="dl-extract-stage"' in sec
     assert 'data-ui-state="empty"' in sec
-    assert "vcp-state-empty" in sec
     assert "vcp-state-loading" in sec
     assert "vcp-skel dl-skel-thumb" in sec
     assert "vcp-skel dl-skel-fmt" in sec
@@ -152,7 +151,7 @@ def test_history_js_duration_and_22h_display_only_expires_soon_node_vm():
     ]
     ret_block = APP_JS[
         APP_JS.index("function computeRetentionBadgeHtml(j)"):
-        APP_JS.index("function openRecentProjectAction(")
+        APP_JS.index("function toggleVcpHelpHub(")
     ]
     helper_stubs = """
     const window = {};
@@ -251,12 +250,13 @@ def test_history_actions_switch_to_owning_tab_before_mutating():
 
 # ── 3. VIP Design Pass & Untouched Payment / Expiry Guardrails ────────
 
-def test_vip_design_pass_preserves_prices_and_never_expires_copy():
+def test_vip_design_pass_preserves_prices_and_payment_flow():
+    # Pricing v3 + Part G retired blanket vip_never_expires_badge and vip-grid-topup (3 grids remain).
     vip = INDEX_HTML.split('<section id="tab-vip" class="tab-pane">', 1)[1].split("</section>", 1)[0]
-    assert 'data-i18n="vip_never_expires_badge"' in vip
     assert 'data-i18n="vip_pay_step_hint"' in vip
-    for eid in ("vip-sub-plans", "vip-grid-voice", "vip-grid-recap", "vip-grid-combo", "vip-grid-topup"):
+    for eid in ("vip-sub-plans", "vip-grid-combo", "vip-grid-voice", "vip-grid-recap"):
         assert f'id="{eid}"' in vip
+    assert 'id="vip-grid-topup"' not in vip
     assert "syncPlanPrices" in APP_JS
     assert 'for="slip-file-input"' in vip
     assert 'id="slip-file-input"' in vip
@@ -278,7 +278,7 @@ def test_phase6_i18n_parity_and_cache_token():
     en = _extract_i18n_block("en")
     assert set(my.keys()) == set(en.keys())
     required = [
-        "dl_empty_title", "dl_empty_sub", "dl_loading_title", "dl_retry_btn",
+        "dl_loading_title", "dl_retry_btn",
         "dl_fallback_title", "dl_fallback_uploader",
         "hist_type_recap", "hist_status_cancelled",
         "hist_duration_sec", "hist_duration_min_sec", "hist_duration_min",
@@ -287,9 +287,9 @@ def test_phase6_i18n_parity_and_cache_token():
         "hist_dl_video", "hist_dl_audio", "hist_dl_srt", "hist_dl_txt", "hist_dl_voice",
         "hist_sub_margin_lbl", "hist_sub_pos_lbl", "hist_blur_pos_lbl",
         "hist_empty_cta_voice", "hist_empty_cta_recap",
-        "vip_never_expires_badge", "pay_account_name_prefix", "vip_pay_step_hint",
+        "pay_account_name_prefix", "vip_pay_step_hint",
     ]
     for key in required:
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5

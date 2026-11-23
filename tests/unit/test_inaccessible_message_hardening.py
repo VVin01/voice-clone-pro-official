@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, Chat, ErrorEvent, InaccessibleMessage, 
 from aiogram.types import User as TgUser
 
 from app.handlers import setup_handlers
-from app.handlers.menu import handle_menu_home, handle_menu_refer_earn
+from app.handlers.menu import handle_menu_refer_earn
 from app.ui.helpers import safe_answer_callback, safe_edit_message
 from app.models.enums import AccountCategory
 from app.services.ledger import get_or_create_user
@@ -112,6 +112,9 @@ async def test_handle_menu_refer_earn_with_inaccessible_message(db_session):
 
     inaccessible = MagicMock(spec=InaccessibleMessage)
     del inaccessible.edit_text
+    # Round 13 Part K: handle_menu_refer_earn sends a fresh non-ephemeral DM via _send_dm
+    # (message.answer when available, or bot.send_message fallback when absent).
+    del inaccessible.answer
     inaccessible.chat = MagicMock(spec=Chat, id=user_id)
 
     cb = MagicMock(spec=CallbackQuery)
@@ -135,34 +138,6 @@ async def test_handle_menu_refer_earn_with_inaccessible_message(db_session):
     cb.bot.send_message.assert_awaited_once()
     sent_text = cb.bot.send_message.call_args[1]["text"]
     assert f"start={user.referral_code}" in sent_text
-    cb.answer.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_handle_menu_home_with_inaccessible_message(db_session):
-    """Verify handle_menu_home gracefully falls back when callback.message is InaccessibleMessage."""
-    user_id = 8902721285
-    await get_or_create_user(db_session, telegram_id=user_id, username="htetlynnzaw")
-
-    inaccessible = MagicMock(spec=InaccessibleMessage)
-    del inaccessible.edit_text
-    inaccessible.chat = MagicMock(spec=Chat, id=user_id)
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.message = inaccessible
-    cb.from_user = TgUser(id=user_id, is_bot=False, first_name="Htet")
-    cb.bot = MagicMock()
-    cb.bot.send_message = AsyncMock(return_value=MagicMock(spec=Message, message_id=102))
-    cb.answer = AsyncMock()
-
-    @asynccontextmanager
-    async def mock_session_ctx():
-        yield db_session
-
-    with patch("app.handlers.menu.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await handle_menu_home(cb)
-
-    cb.bot.send_message.assert_awaited_once()
     cb.answer.assert_awaited_once()
 
 

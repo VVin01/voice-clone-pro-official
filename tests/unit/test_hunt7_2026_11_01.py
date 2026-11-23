@@ -433,7 +433,7 @@ def test_gate_verify_fetches_use_timeout():
 
 def test_profile_sub500_failure_shows_error_strip():
     body = _slice(APP_JS, "async function loadUserProfile", "async function loadCuratedVoices")
-    assert "res.status !== 403" in body
+    assert "if (res.status === 403)" in body
     assert "setHomeLoadErrorVisible(true)" in body
     assert "res.status >= 500) setHomeLoadErrorVisible(true)" not in body
 

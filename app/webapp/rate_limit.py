@@ -82,7 +82,6 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/tts/generate": (15, 60),
     "/api/tts/gemini-key": (10, 60),
     "/api/recap/preview-composite": (30, 60),
-    "/api/recap/{job_id}/thumbnail": (6, 60),
     "/api/recap/{job_id}/script": (20, 60),
     "/api/recap/upload_voice_ref": (10, 60),
     "/api/recap/upload_sub_font": (10, 60),

@@ -331,61 +331,11 @@ console.log(JSON.stringify({
     assert out["afterCiBlock"]["toast"]["dur"] == 6000
 
 
-def test_voice_clone_stepper_is_non_interactive_indicator_with_state_truth():
-    block = INDEX_HTML[INDEX_HTML.index('id="custom-clone-stepper"'):]
-    block = block[: block.index("</div>")]
-    assert "<button" not in block
-    spans = re.findall(r'<span class="([^"]+)" data-clone-step="(\d)"[^>]*data-i18n="[^"]+"', block)
-    assert [n for _, n in spans] == ["1", "2", "3", "4", "5"]
-    assert "is-active" in spans[0][0] and "is-locked" not in spans[0][0]
-    for cls, n in spans[1:]:
-        assert "is-locked" in cls, f"clone step {n} must start muted/locked"
-
+def test_voice_clone_stepper_retired_in_round13():
+    # Round 13 retired #custom-clone-stepper while keeping Phase 4 zero-backdrop CSS budget intact.
+    assert 'id="custom-clone-stepper"' not in INDEX_HTML
     p4_start = STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 4")
     p4_end = STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 5")
     p4 = STYLE_CSS[p4_start:p4_end]
     assert "backdrop-filter" not in p4
-    step_rule = re.search(r"#tab-voice \.vcp-clone-step \{([^}]+)\}", p4)
-    assert step_rule
-    step_body = step_rule.group(1)
-    assert "pointer-events:none" in step_body
-    assert "cursor:default" in step_body
-    assert "user-select:none" in step_body
-    assert "line-height:1.5" in step_body
-    assert '#tab-voice .vcp-clone-step.is-done::before{content:"✓"' in p4
-    assert '#tab-voice .vcp-clone-step.is-locked{' in p4
-    assert '#tab-voice .vcp-clone-step.is-locked::before{content:"🔒"' in p4
-    assert 'html[data-theme="dark"] #tab-voice .vcp-clone-step.is-locked{' in p4
 
-    script = _NODE_DOM_HARNESS + _extract_wizard_slice() + r"""
-const states = {};
-setCustomCloneStep(1, null);
-states.s1 = cloneSpans.map(s => [s.classList.contains("is-done"), s.classList.contains("is-active"), s.classList.contains("is-locked")]);
-setCustomCloneStep(3, { size: 4096 });
-states.s3 = cloneSpans.map(s => [s.classList.contains("is-done"), s.classList.contains("is-active"), s.classList.contains("is-locked")]);
-setCustomCloneStep(5, { size: 4096 });
-states.s5 = cloneSpans.map(s => [s.classList.contains("is-done"), s.classList.contains("is-active"), s.classList.contains("is-locked")]);
-console.log(JSON.stringify(states));
-"""
-    out = _run_node(script)
-    assert out["s1"] == [
-        [False, True, False],
-        [False, False, True],
-        [False, False, True],
-        [False, False, True],
-        [False, False, True],
-    ]
-    assert out["s3"] == [
-        [True, False, False],
-        [True, False, False],
-        [False, True, False],
-        [False, False, True],
-        [False, False, True],
-    ]
-    assert out["s5"] == [
-        [True, False, False],
-        [True, False, False],
-        [True, False, False],
-        [True, False, False],
-        [False, True, False],
-    ]

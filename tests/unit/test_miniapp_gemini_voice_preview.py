@@ -101,7 +101,7 @@ def test_gemini_preview_dir_has_exactly_the_ten_samples():
 def test_gemini_preview_button_markup():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     assert 'id="btn-preview-gemini-voice"' in html
-    assert 'onclick="previewSelectedGeminiVoice()"' in html
+    assert 'onclick="previewSelectedGeminiVoice(event)"' in html
     # Same button anatomy as the persona recap preview button, so the
     # shared controller's icon/label state resets apply unchanged.
     assert 'class="preview-recap-voice-btn" id="btn-preview-gemini-voice"' in html
@@ -109,7 +109,7 @@ def test_gemini_preview_button_markup():
 
 def test_gemini_preview_playback_wiring():
     js = (STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
-    assert "function previewSelectedGeminiVoice()" in js
+    assert "function previewSelectedGeminiVoice(e)" in js
     assert "async function playGeminiVoicePreview(" in js
     assert "function resolveGeminiPreviewVoice()" in js
     # Static sample path template, one file per voice.

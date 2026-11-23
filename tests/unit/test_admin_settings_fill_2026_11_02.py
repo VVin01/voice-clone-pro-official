@@ -45,11 +45,12 @@ API_PY = (ROOT / "app/webapp/api.py").read_text(encoding="utf-8")
 
 ADMIN_ID = 999002
 
-# key -> (registry type, declared config default)
+# key -> declared config default (Limits round bumped character_limit_purchased to 15000;
+# Part G replaced retired free_monthly_allowance_seconds with free_daily_allowance_seconds
+# and retired free_daily_job_limit).
 INT_KEYS = {
-    "character_limit_purchased": 5000,
-    "free_monthly_allowance_seconds": 180,
-    "free_daily_job_limit": 0,  # Batch BZ: retired default (mechanism stays, 0 = off)
+    "character_limit_purchased": 15000,
+    "free_daily_allowance_seconds": 180,
     "recap_free_max_duration_seconds": 120,
     "recap_max_duration_seconds": 600,
 }
@@ -63,8 +64,7 @@ ALL_KEYS = {**INT_KEYS, **STR_KEYS}
 
 FIELD_IDS = {
     "character_limit_purchased": "adm-set-char-limit-purchased",
-    "free_monthly_allowance_seconds": "adm-set-free-allowance",
-    "free_daily_job_limit": "adm-set-daily-job-limit",
+    "free_daily_allowance_seconds": "adm-set-free-allowance",
     "recap_free_max_duration_seconds": "adm-set-recap-free-max",
     "recap_max_duration_seconds": "adm-set-recap-max",
     "required_channel_id": "adm-set-required-channel-id",
@@ -78,8 +78,6 @@ I18N_KEYS = [
     "settings_char_limit_purchased_hint",
     "settings_free_allowance",
     "settings_free_allowance_hint",
-    "settings_daily_job_limit",
-    "settings_daily_job_limit_hint",
     "settings_recap_free_max",
     "settings_recap_free_max_hint",
     "settings_recap_max",
@@ -124,9 +122,8 @@ def test_gap_key_config_defaults():
 
 def test_payload_model_accepts_gap_keys():
     sample = {
-        "character_limit_purchased": 5000,
-        "free_monthly_allowance_seconds": 300,
-        "free_daily_job_limit": 10,
+        "character_limit_purchased": 15000,
+        "free_daily_allowance_seconds": 300,
         "recap_free_max_duration_seconds": 300,
         "recap_max_duration_seconds": 900,
         "required_channel_id": "-1004459167607",
@@ -199,8 +196,7 @@ async def test_purchased_limit_post_regression(db_session):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("key,value", [
     ("character_limit_purchased", 3000),
-    ("free_monthly_allowance_seconds", 300),
-    ("free_daily_job_limit", 10),
+    ("free_daily_allowance_seconds", 300),
     ("recap_free_max_duration_seconds", 300),
     ("recap_max_duration_seconds", 900),
 ])
@@ -257,9 +253,10 @@ async def test_str_key_round_trip(db_session, key, value):
 
 def test_purchased_limit_validation_bounds():
     out = api_mod._validate_admin_settings_updates(
-        {"character_limit_purchased": 5000})
-    assert out["character_limit_purchased"] == 5000
-    for bad in (0, 50, 99, 10001, "abc"):
+        {"character_limit_purchased": 15000})
+    assert out["character_limit_purchased"] == 15000
+    # Bounds widened to [100, 50000] in Limits round.
+    for bad in (0, 50, 99, 50001, "abc"):
         with pytest.raises(HTTPException):
             api_mod._validate_admin_settings_updates(
                 {"character_limit_purchased": bad})
@@ -272,8 +269,7 @@ def test_admin_settings_ui_controls_present():
         assert f'id="{el_id}"' in INDEX_HTML, el_id
     # numeric gap fields are number inputs like the free-limit editor
     for el_id in ("adm-set-char-limit-purchased", "adm-set-free-allowance",
-                  "adm-set-daily-job-limit", "adm-set-recap-free-max",
-                  "adm-set-recap-max"):
+                  "adm-set-recap-free-max", "adm-set-recap-max"):
         assert f'type="number" id="{el_id}"' in INDEX_HTML, el_id
     # every new label/hint is i18n-bound in the markup
     for key in I18N_KEYS:
@@ -292,8 +288,7 @@ def test_admin_settings_js_wiring():
         assert f"s.{key}" in load_body, key
     for fragment in (
         "character_limit_purchased: charLimitPurchased",
-        "free_monthly_allowance_seconds: freeAllowance",
-        "free_daily_job_limit: dailyJobLimit",
+        "free_daily_allowance_seconds: freeAllowance",
         "recap_free_max_duration_seconds: recapFreeMax",
         "recap_max_duration_seconds: recapMax",
         "required_channel_id: reqChannelId",
@@ -313,12 +308,12 @@ def test_i18n_keys_present_both_languages():
 def test_api_source_carries_gap_keys():
     assert "character_limit_purchased: Optional[int] = None" in API_PY
     assert ('"character_limit_purchased": int(getattr(settings, '
-            '"character_limit_purchased", 5000) or 5000)') in API_PY
+            '"character_limit_purchased", 15000) or 15000)') in API_PY
     # the already-present gemini fallbacks were not disturbed
     assert "gemini_fallback_2: Optional[str] = None" in API_PY
     assert "gemini_fallback_3: Optional[str] = None" in API_PY
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261102_ga1" not in INDEX_HTML

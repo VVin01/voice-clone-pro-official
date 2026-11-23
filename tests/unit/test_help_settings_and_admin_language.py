@@ -6,29 +6,22 @@ from aiogram.types import CallbackQuery, Message, User as TgUser
 from sqlalchemy import select
 
 from app.config import settings
-# Bot cleanup 2026-11-03: this file's chat Bot Settings tests retired
-# with the admin:settings screens. The Help & Settings (user-side),
-# language-toggle and payment-invoice tests below stay.
+# Round 13 Part K retired bot-chat Help & Settings screens; user language toggle
+# (menu:change_lang -> user_lang:*) and payment invoice tests remain live below.
 from app.handlers.menu import (
-    handle_help_command,
-    handle_menu_help_settings,
+    handle_change_language,
     handle_user_language_toggle,
 )
 from app.models.schema import User
 from app.services.ledger import get_or_create_user
 from app.ui.keyboards import (
-    help_settings_kb,
     main_menu_kb,
 )
 
 
-
-
-
-
 @pytest.mark.asyncio
-async def test_help_and_settings_navigation_and_language_toggle(db_session):
-    """User can view Help & Settings and toggle language instantly with floating toast."""
+async def test_language_change_and_toggle_updates_user_and_renders_welcome(db_session):
+    """User opens language picker via menu:change_lang and toggles language via user_lang:en."""
     user, _ = await get_or_create_user(db_session, telegram_id=555001)
     user.language_code = "my"
     await db_session.flush()
@@ -36,51 +29,37 @@ async def test_help_and_settings_navigation_and_language_toggle(db_session):
     cb = MagicMock(spec=CallbackQuery)
     cb.from_user = TgUser(id=555001, is_bot=False, first_name="User")
     cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
+    cb.message.answer = AsyncMock()
+    cb.message.delete = AsyncMock()
     cb.answer = AsyncMock()
 
-    # 1. Open Help & Settings via menu:help_settings
-    cb.data = "menu:help_settings"
-    await handle_menu_help_settings(cb, session=db_session)
+    # 1. Open language picker via menu:change_lang
+    cb.data = "menu:change_lang"
+    await handle_change_language(cb, session=db_session)
 
-    cb.message.edit_text.assert_called_once()
-    rendered_text = cb.message.edit_text.call_args[0][0]
-    kb = cb.message.edit_text.call_args[1].get("reply_markup")
-
-    assert "အသုံးပြုနည်းလမ်းညွှန်နှင့် ဆက်တင်များ" in rendered_text
+    cb.message.answer.assert_awaited_once()
+    kb = cb.message.answer.await_args.kwargs.get("reply_markup")
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "user_lang:my" in callbacks
-    assert "user_lang:en" in callbacks
-    assert "menu:home" in callbacks
+    assert callbacks == ["user_lang:my", "user_lang:en"]
 
     # 2. Switch language to English
-    cb.message.edit_text.reset_mock()
+    cb.message.answer.reset_mock()
     cb.answer.reset_mock()
     cb.data = "user_lang:en"
 
     await handle_user_language_toggle(cb, session=db_session)
 
-    # Toast feedback must be floating (show_alert=False)
-    cb.answer.assert_called_once()
-    assert cb.answer.call_args[1].get("show_alert") is False
-    assert "English" in cb.answer.call_args[0][0]
+    cb.message.delete.assert_awaited_once()
+    cb.answer.assert_awaited_once()
 
     # Database updated
     updated_user = (await db_session.execute(select(User).where(User.id == 555001))).scalar_one()
     assert updated_user.language_code == "en"
 
-    # Re-rendered in English
-    cb.message.edit_text.assert_called_once()
-    en_text = cb.message.edit_text.call_args[0][0]
-    assert "Guide & Settings" in en_text
-
-    # 3. Legacy menu:tutorial callback also works
-    cb.message.edit_text.reset_mock()
-    cb.data = "menu:tutorial"
-    await handle_menu_help_settings(cb, session=db_session)
-    cb.message.edit_text.assert_called_once()
-
-
+    # Re-rendered fresh EN welcome with exact 3-button menu
+    cb.message.answer.assert_awaited_once()
+    en_text = cb.message.answer.await_args.args[0]
+    assert "Welcome to Voice Clone Pro" in en_text
 
 
 @pytest.mark.asyncio
@@ -90,8 +69,9 @@ async def test_payment_invoice_has_no_copy_buttons(db_session):
     from app.handlers.payment import handle_package_selected
     from app.services.payments import get_active_pricing_plans
 
-    # Seed default plans first
-    await get_active_pricing_plans(db_session)
+    # Seed default v3 plans first
+    plans = await get_active_pricing_plans(db_session)
+    pkg_code = plans[0].code
     user, _ = await get_or_create_user(db_session, telegram_id=555002)
 
     cb = MagicMock(spec=CallbackQuery)
@@ -99,14 +79,12 @@ async def test_payment_invoice_has_no_copy_buttons(db_session):
     cb.message = MagicMock(spec=Message)
     cb.message.edit_text = AsyncMock()
     cb.answer = AsyncMock()
-    cb.data = "buy_pkg:MIN_10"
+    cb.data = f"buy_pkg:{pkg_code}"
 
     mock_state = MagicMock(spec=FSMContext)
     mock_state.set_state = AsyncMock()
     mock_state.update_data = AsyncMock()
 
-    # Hermetic: the handler opens its own session via the payment
-    # module's factory — route it to the test DB (repo pattern).
     from contextlib import asynccontextmanager
     from unittest.mock import patch as _patch
 
@@ -127,66 +105,6 @@ async def test_payment_invoice_has_no_copy_buttons(db_session):
     # Navigation remains
     assert "menu:buy_minutes" in callbacks
     assert "menu:home" in callbacks
-
-
-@pytest.mark.asyncio
-async def test_help_settings_dynamically_reflects_admin_changes(db_session):
-    """Help & Settings dynamically updates allowance, char limits, and daily limits when Admin changes them."""
-    from app.handlers.menu import render_help_settings_content
-    from app.services.dynamic_settings import set_dynamic_setting
-
-    orig_allowance = settings.free_monthly_allowance_seconds
-    orig_free_chars = settings.character_limit_free
-    orig_purchased_chars = settings.character_limit_purchased
-    orig_daily_limit = settings.free_daily_job_limit
-    orig_voice_daily_free = settings.voice_daily_limit_minutes_free
-
-    try:
-        user, _ = await get_or_create_user(db_session, telegram_id=555003)
-        user.language_code = "my"
-        await db_session.flush()
-
-        # 1. Baseline rendering in Burmese (current defaults: 180s = 3m, 1000 free chars, 5000 purchased chars)
-        # Batch BX: §4 names the monthly free minutes without the old
-        # "(180 seconds)" parenthetical — the per-day MINUTE caps are
-        # the limits the section now states.
-        text_my, _ = await render_help_settings_content(db_session, user.id)
-        assert "3 မိနစ်" in text_my
-        assert "၁,၀၀၀" in text_my or "1,000" in text_my
-        assert "၅,၀၀၀" in text_my or "5,000" in text_my
-        assert "၅" in text_my or "5" in text_my
-
-        # 2. Admin modifies settings dynamically
-        await set_dynamic_setting(db_session, "free_monthly_allowance_seconds", 300, admin_id=999)
-        await set_dynamic_setting(db_session, "character_limit_free", 800, admin_id=999)
-        await set_dynamic_setting(db_session, "character_limit_purchased", 5000, admin_id=999)
-        await set_dynamic_setting(db_session, "free_daily_job_limit", 10, admin_id=999)
-        # Batch BX: the guide's daily figure is now the voice daily
-        # MINUTE cap (the legacy job-count limit left the guide).
-        await set_dynamic_setting(db_session, "voice_daily_limit_minutes_free", 9, admin_id=999)
-        await db_session.commit()
-
-        # 3. Help & Settings immediately renders modified values in Burmese
-        text_updated_my, _ = await render_help_settings_content(db_session, user.id)
-        assert "5 မိနစ်" in text_updated_my
-        assert "800" in text_updated_my
-        assert "5,000" in text_updated_my
-        assert "9 မိနစ်" in text_updated_my
-
-        # 4. English user also immediately sees updated values
-        user.language_code = "en"
-        await db_session.commit()
-        text_updated_en, _ = await render_help_settings_content(db_session, user.id)
-        assert "5 free Voice Clone minutes" in text_updated_en
-        assert "800" in text_updated_en
-        assert "5,000" in text_updated_en
-        assert "9 minutes" in text_updated_en
-    finally:
-        settings.free_monthly_allowance_seconds = orig_allowance
-        settings.character_limit_free = orig_free_chars
-        settings.character_limit_purchased = orig_purchased_chars
-        settings.free_daily_job_limit = orig_daily_limit
-        settings.voice_daily_limit_minutes_free = orig_voice_daily_free
 
 
 

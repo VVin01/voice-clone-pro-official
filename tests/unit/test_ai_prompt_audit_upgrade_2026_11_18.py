@@ -46,7 +46,8 @@ def test_prompt_registry_profiles_catalog_and_xml_sanitization(monkeypatch):
     assert reg.get_prompt_profile() == "v2"
     assert reg.is_v2_prompts() is True
 
-    assert len(reg.PROMPT_REGISTRY_CATALOG) == 14
+    # Part E (2026-11-23): recap_thumbnail prompt removed -> 13 active prompts in registry catalog.
+    assert len(reg.PROMPT_REGISTRY_CATALOG) == 13
     for entry_name, meta in reg.PROMPT_REGISTRY_CATALOG.items():
         mod_path = REPO_ROOT / meta["module"]
         assert mod_path.is_file(), f"{entry_name}: missing module {meta['module']}"
@@ -378,7 +379,7 @@ def test_section8_frontend_toast_lite_toggle_and_bundle_budget():
     assert ".lite-pill-btn" in STYLE_CSS
     assert 'id="btn-lite-toggle"' in INDEX_HTML
     assert 'onclick="toggleLiteMode()"' in INDEX_HTML
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
 
     assert "function toggleLiteMode()" in APP_JS
     assert "function syncLiteModeUiState(" in APP_JS

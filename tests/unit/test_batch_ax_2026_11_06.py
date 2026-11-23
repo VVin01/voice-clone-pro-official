@@ -257,71 +257,27 @@ def test_ax_step4_choices_line():
     assert re.search(r"\.recap-step4-choice-title[^{]*\{[^}]*text-overflow: ellipsis", STYLE_CSS)
 
 
-# ── AX-5: compact source-language picker ──
+# ── AX-5: source language auto-detected (picker retired in Round 13) ──
 
-def _lang_block() -> str:
-    return TAB[TAB.index('class="recap-lang-block'):TAB.index('id="recap-script-review-toggle"')]
-
-
-def test_ax_language_pills_are_auto_plus_the_frequent_six():
-    # Batch AZ-11 (owner, 2026-11-06 01:18): the AX-5 frequent pills
-    # are RETIRED — the language control is ONE compact dropdown.
-    # This pin now asserts the single-control state: no pill group,
-    # no pill buttons anywhere in the language block.
-    block = _lang_block()
-    assert 'id="recap-lang-picker"' not in TAB
+def test_ax_language_picker_retired_and_payload_sends_auto():
+    # Round 13 retired #recap-lang-picker and #recap-lang-more; Recap auto-detects source language.
     assert 'id="recap-lang-picker"' not in INDEX_HTML
-    assert "pill-btn" not in block
-    assert block.count("<select") == 1
-
-
-def test_ax_language_dropdown_lists_all_eighteen():
-    block = _lang_block()
-    select = block[block.index('id="recap-lang-more"'):]
-    values = re.findall(r'<option value="([a-z]*)"', select)
-    # AZ-11: no placeholder option — the select IS the control, so
-    # its first option is the default selection (auto) itself.
-    assert "" not in values, "the AZ-11 control has no placeholder option"
-    assert values == ["auto", "my", "en", "th", "zh", "ko", "ja", "hi",
-                      "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"]
-    assert sorted(values) == sorted(ALL_LANGS)
-    # AK language parity: every option still carries its data-lang.
-    assert re.findall(r'data-lang="([a-z]+)"', select) == values
-    # The one control wears the AZ-11 glass-dropdown pattern and is
-    # labelled by the field's own key.
-    assert 'class="studio-select glass-dropdown recap-lang-more mt-2"' in select
-    assert 'data-i18n-aria="recap_lang_label"' in select
-
-
-def test_ax_language_two_views_one_state():
-    # Both controls write the same single state via one function; the
-    # sync repaints BOTH views (pill highlight + dropdown selection),
-    # so a saved out-of-frequent value displays on load.
-    assert "function setRecapSourceLanguage(code)" in APP_JS
-    assert "function syncRecapLangViews()" in APP_JS
-    assert 'state.recapSourceLanguage = code || "auto";' in APP_JS
-    assert 'langSel.addEventListener("change"' in APP_JS
-    assert "setRecapSourceLanguage(langSel.value);" in APP_JS
-    # The prefs-restore path re-syncs the two views too.
-    assert "if (window.syncRecapLangViews) syncRecapLangViews();" in APP_JS
-    # The enum of restorable values is unchanged (all 18 still valid).
+    assert 'id="recap-lang-more"' not in INDEX_HTML
+    assert 'source_language: "auto"' in APP_JS
     assert 'recapSourceLanguage: ["auto", "en", "zh", "ko", "th", "ja", "hi", "my", "es", "fr", "de", "id", "vi", "ru", "ar", "it", "pt", "tr"]' in APP_JS
-    # Payload still reads the same state field.
-    assert 'source_language: state.recapSourceLanguage || "auto"' in APP_JS
 
 
 def test_ax_new_i18n_keys_in_both_locales():
-    for key in ("recap_step_word", "recap_lang_more_label"):
-        assert I18N_JS.count(f"{key}:") >= 2, f"{key} missing in one locale"
+    assert I18N_JS.count("recap_step_word:") >= 2
     assert 'recap_step_word: "အဆင့်"' in I18N_JS
     assert 'recap_step_word: "Step"' in I18N_JS
-    assert 'recap_lang_more_label: "More languages…"' in I18N_JS
 
 
 # ── Hard invariants: payload + prefs + token ──
 
 def test_ax_payload_and_prefs_invariants_hold():
-    i = APP_JS.index("const payload = {")
+    fn_start = APP_JS.index("function buildRecapConfig(")
+    i = APP_JS.index("return {", fn_start)
     depth, j = 0, i
     while True:
         c = APP_JS[j]
@@ -333,23 +289,14 @@ def test_ax_payload_and_prefs_invariants_hold():
                 break
         j += 1
     keys = re.findall(r"^\s+([a-z_]+):", APP_JS[i:j], re.M)
-    # Batch BI deliberate pin update: 43 — the payload gained
-    # blur_auto_detect (the auto-detect blur switch).
-    # Batch BV deliberate pin update: 44 — the payload gained
-    # voice_ref_id (the own-voice sample handle).
-    # Batch DD deliberate pin update: 41 — the four title keys left
-    # (title_enabled/title_text/title_x/title_y), sub_y joined for
-    # the Top/Center position bands, and the DD settings ride the
-    # ddConfigExtras() spread (not literal keys).
-    # 2026-11-19 UX Redesign deliberate pin update: 43 — added logo_scale
-    # and logo_opacity for end-to-end Logo Size & Opacity preview/render parity.
-    assert len(keys) == 43, keys
+    # 44 keys in buildRecapConfig (43 prior + edge_voice).
+    assert len(keys) == 44, keys
     assert keys[0] == "url" and keys[-1] == "split_minutes"
     assert 'RECAP_SETTINGS_KEY = "vcp_recap_settings"' in APP_JS
 
 
 def test_ax_cache_token_r79():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "20261104_r69" not in INDEX_HTML
 
 
@@ -360,42 +307,31 @@ def test_ax4r_output_card_is_step4s_opening_surface():
     out_at = step4.index('id="recap-step4-output"')
     choices_at = step4.index('id="recap-step4-choices"')
     quote_at = step4.index('id="recap-step4-quote-credits"')
-    # Order per AX-4R §4 + AX-6: preview → facts → choices → quote.
     assert out_at < choices_at < quote_at
+    # Round 13 retired #recap-step4-facts (choices summary rows hold title/voice/ratio).
     for marker in ('id="recap-step4-output-frame"', 'id="recap-step4-thumb"',
-                   'id="recap-step4-output-empty"', 'id="recap-step4-facts"',
-                   'data-i18n="recap_output_caption"'):
+                   'id="recap-step4-output-empty"', 'data-i18n="recap_output_caption"'):
         assert marker in step4, marker
-    # Round 12 (D2): output format facts show canvas & duration only
-    # (voice/subtitles/blur moved to the 3-row choice summary).
-    for fid in ("recap-fact-canvas", "recap-fact-duration"):
-        assert f'id="{fid}"' in step4, fid
     for dead_fid in ("recap-fact-subs", "recap-fact-title", "recap-fact-blur", "recap-fact-quality"):
         assert f'id="{dead_fid}"' not in step4, dead_fid
-    # The no-source frame reuses Step 2's designed empty state language.
-    assert 'id="recap-step4-output-empty"' in step4
     assert step4.count('data-i18n="recap_preview_empty_title"') >= 1
 
 
 def test_ax4r_refresh_on_entry_and_swap_without_flash():
     assert "function refreshRecapStep4Output()" in APP_JS
-    # Batch CF: the Step-4 entry branch also refreshes the ETA line.
     assert "if (n === 4) { refreshRecapStep4Output(); refreshRecapStep4Eta(); }" in APP_JS
-    # Re-request uses the EXISTING composite helper (no new API).
     assert "window.refreshRecapCompositePreview()" in APP_JS
     assert APP_JS.count('fetch("/api/recap/preview-composite"') == 1
-    # The composite success path swaps the Step 4 frame when it lands.
     assert "isRecapStepOpen(4)" in APP_JS
     assert "window.refreshRecapStep4Thumb()" in APP_JS
-    # The Step 4 frame prefers the engine composite URL of record.
     assert "state.recapCompositeUrl ||" in APP_JS
 
 
-def test_ax4r_facts_are_derived_from_live_config():
-    assert "function refreshRecapStep4Facts()" in APP_JS
-    for marker in ('"9:16": "1080×1920 · 9:16"', '"16:9": "1920×1080 · 16:9"',
-                   "state.recapSourceDuration", "formatRecapQuoteDuration(dur)"):
-        assert marker in APP_JS, marker
+def test_ax4r_choices_are_derived_from_live_config():
+    # Round 13 consolidated Step 4 summary into refreshRecapStep4Choices().
+    assert "function refreshRecapStep4Choices()" in APP_JS
+    assert "state.recapSourceDuration" in APP_JS
+    assert "formatRecapQuoteDuration(" in APP_JS
 
 
 def test_ax4r_caption_and_fact_keys_in_both_locales():

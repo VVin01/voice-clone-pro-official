@@ -257,7 +257,7 @@ def _with_stream_url(urls: Dict[str, Any], job_id: str, user_id: int) -> Dict[st
     wins. Stored registry URLs are never mutated — parts entries are
     copied before signing."""
     out = dict(urls or {})
-    for key in ("video", "audio", "srt", "script", "thumbnail"):
+    for key in ("video", "audio", "srt", "script"):
         if out.get(key):
             out[key] = _append_stream_token(
                 out[key], _make_stream_token(job_id, user_id, key)
@@ -278,10 +278,6 @@ def _with_stream_url(urls: Dict[str, Any], job_id: str, user_id: int) -> Dict[st
         token = _make_stream_token(job_id, user_id, "video")
         if token:
             out["stream_url"] = f"/api/recap/stream/{job_id}/video?t={token}"
-    if out.get("thumbnail"):
-        t_tok = _make_stream_token(job_id, user_id, "thumbnail")
-        if t_tok:
-            out["thumbnail_stream_url"] = f"/api/recap/stream/{job_id}/thumbnail?t={t_tok}"
     return out
 
 
@@ -1105,32 +1101,6 @@ def _logo_state_payload(user: User) -> Dict[str, Any]:
         "has_logo": found is not None,
         "logo_url": logo_url,
     }
-
-
-async def _safe_get_monthly_thumbnail_usage(db: AsyncSession) -> Dict[str, Any]:
-    try:
-        from app.services.recap_thumbnail import get_monthly_thumbnail_usage
-
-        return await get_monthly_thumbnail_usage(db)
-    except Exception:
-        from app.services.recap_thumbnail import (
-            DEFAULT_THUMBNAIL_COST_PER_IMAGE_USD,
-            get_thumbnail_model,
-            get_thumbnail_monthly_cap_usd,
-            get_thumbnail_prompt_template,
-        )
-
-        return {
-            "period": datetime.now(timezone.utc).strftime("%Y-%m"),
-            "generations_count": 0,
-            "estimated_spend_usd": 0.0,
-            "monthly_cap_usd": get_thumbnail_monthly_cap_usd(),
-            "exhausted": False,
-            "cap_reached": False,
-            "model": get_thumbnail_model(),
-            "prompt_template": get_thumbnail_prompt_template(),
-            "cost_per_image_usd": DEFAULT_THUMBNAIL_COST_PER_IMAGE_USD,
-        }
 
 
 async def _recap_active_job_count(db, user_id: int) -> int:
@@ -3021,8 +2991,8 @@ _RECAP_BAND_SECONDS = 180
 
 
 def _tiered_recap_pricing_enabled() -> bool:
-    """The Batch AO arming switch (dynamic setting, default False)."""
-    return bool(getattr(settings, "tiered_recap_pricing_enabled", False))
+    """Tiered recap pricing is retired under v3 flat pricing (1 credit = 1 min)."""
+    return False
 
 
 def _recap_band_credits(duration_seconds) -> int:
@@ -3731,7 +3701,7 @@ async def get_user_profile(
         **{k: getattr(settings, k, v) for k, v in TUTORIAL_EXTRA_LINKS.items()},
     }
 
-    async def _group_wallet_and_thumb(sess: AsyncSession):
+    async def _group_wallet(sess: AsyncSession):
         snap = await get_wallet_snapshot(
             sess,
             user_id,
@@ -3743,8 +3713,7 @@ async def get_user_profile(
                 await sess.commit()
             except Exception:
                 pass
-        thumb = await _safe_get_monthly_thumbnail_usage(sess)
-        return snap, thumb
+        return snap
 
     async def _group_jobs_and_tts(sess: AsyncSession):
         recap_id = None
@@ -3863,16 +3832,16 @@ async def get_user_profile(
                 return await _group_settings_counts_and_referrals(s3)
 
         (
-            (wallet_snap, thumb_usage),
+            wallet_snap,
             (active_recap_job_id, active_voice_job_id, active_tts_job_id, tts_ok, tts_consumed_raw),
             (dyn_map, completed_jobs, referral_stats),
         ) = await asyncio.gather(
-            _group_wallet_and_thumb(db),
+            _group_wallet(db),
             _run_jobs_parallel(),
             _run_settings_parallel(),
         )
     else:
-        wallet_snap, thumb_usage = await _group_wallet_and_thumb(db)
+        wallet_snap = await _group_wallet(db)
         (
             active_recap_job_id,
             active_voice_job_id,
@@ -3961,18 +3930,22 @@ async def get_user_profile(
         "character_limit_free": int(getattr(settings, "character_limit_free", 3000) or 3000),
         "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 15000) or 15000),
         "free_daily_allowance_seconds": int(getattr(settings, "free_daily_allowance_seconds", 180) or 180),
-        "recap_max_duration_seconds": 600 if is_vip else 120,
-        "recap_max_duration_minutes": 10 if is_vip else 2,
-        # Batch AO: the Mini App's recap quote display follows the
-        # tiered-pricing switch (off = the legacy per-part estimate).
-        "tiered_pricing_enabled": _tiered_recap_pricing_enabled(),
+        "recap_max_duration_seconds": (
+            int(getattr(settings, "recap_max_duration_seconds", 600) or 600)
+            if is_vip
+            else int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120)
+        ),
+        "recap_max_duration_minutes": (
+            max(1, int(getattr(settings, "recap_max_duration_seconds", 600) or 600) // 60)
+            if is_vip
+            else max(1, int(getattr(settings, "recap_free_max_duration_seconds", 120) or 120) // 60)
+        ),
+        "tiered_pricing_enabled": False,
         "has_recap_watermark": bool(get_watermark_config(is_vip)["watermark"]),
         "watermark_config": get_watermark_config(is_vip),
         # Custom channel logo (owner decision 2026-11-02): paid-only,
         # the user's own upload — see /api/user/logo endpoints.
         "can_use_logo": bool(is_vip),
-        "can_use_ai_thumbnail": bool(is_vip),
-        "ai_thumbnail_cap_reached": bool(thumb_usage.get("cap_reached")),
         "has_custom_logo": _find_user_logo(user.id) is not None,
         "active_recap_job_id": active_recap_job_id,
         "active_voice_job_id": active_voice_job_id,
@@ -5903,6 +5876,9 @@ async def get_voice_sample_audio(
     raise HTTPException(status_code=404, detail="Sample audio not found")
 
 
+_EDGE_VOICE_SAMPLE_TEXT = "မင်္ဂလာပါခင်ဗျာ၊ ဗွိုက်စ် ကလိုန်း ပရို စတူဒီယိုမှ ကြိုဆိုပါတယ်။"
+
+
 @api_router.get("/voices/edge-sample/{voice_key}")
 async def get_edge_voice_sample_audio(
     voice_key: str,
@@ -5910,10 +5886,10 @@ async def get_edge_voice_sample_audio(
 ):
     """Serve an audio preview for each of the 8 Microsoft Edge TTS voices.
 
-    Looks for a bundled static MP3 first, then a cached Edge-synthesized MP3
-    under storage/cache/edge_samples/, synthesizing via edge_tts on demand so
-    every voice plays its own true neural voice (falling back to a gender-matched
-    bundled sample only if edge_tts synthesis fails offline).
+    Prefers the bundled static MP3 under app/webapp/static/audio/edge/,
+    then a cached Edge-synthesized MP3 under storage/cache/edge_samples/,
+    synthesizing via edge_tts on demand if needed. Never substitutes a
+    different voice's persona clip on failure.
     """
     from app.services.tts_service import EDGE_TTS_VOICES
 
@@ -5927,7 +5903,7 @@ async def get_edge_voice_sample_audio(
 
     full_voice = EDGE_TTS_VOICES[key]
     static_mp3 = settings.root / "app" / "webapp" / "static" / "audio" / "edge" / f"preview_{key}.mp3"
-    if static_mp3.is_file():
+    if static_mp3.is_file() and static_mp3.stat().st_size >= 256:
         return FileResponse(str(static_mp3), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
 
     cache_dir = settings.storage_root / "cache" / "edge_samples"
@@ -5937,9 +5913,8 @@ async def get_edge_voice_sample_audio(
             import edge_tts
 
             cache_dir.mkdir(parents=True, exist_ok=True)
-            sample_text = "မင်္ဂလာပါခင်ဗျာ၊ Voice Clone Pro စတူဒီယိုမှ ကြိုဆိုပါတယ်။"
             tmp_mp3 = cache_dir / f"preview_{key}.{uuid.uuid4().hex[:8]}.tmp.mp3"
-            comm = edge_tts.Communicate(sample_text, full_voice, rate="+0%")
+            comm = edge_tts.Communicate(_EDGE_VOICE_SAMPLE_TEXT, full_voice, rate="+0%")
             await asyncio.wait_for(comm.save(str(tmp_mp3)), timeout=20)
             if tmp_mp3.is_file() and tmp_mp3.stat().st_size >= 256:
                 tmp_mp3.replace(cache_mp3)
@@ -5951,14 +5926,145 @@ async def get_edge_voice_sample_audio(
     if cache_mp3.is_file() and cache_mp3.stat().st_size >= 256:
         return FileResponse(str(cache_mp3), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
 
-    fallback_slug = "mahnin" if key in {"nilar", "ava", "emma", "vivienne"} else "komin"
-    fallback = settings.root / "app" / "webapp" / "static" / "audio" / "samples" / f"{fallback_slug}.mp3"
-    if fallback.is_file():
-        return FileResponse(str(fallback), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
-    raise HTTPException(status_code=404, detail="Edge voice sample not found")
+    raise HTTPException(status_code=503, detail="Edge voice sample unavailable")
 
 
 # ── 4. Quick Downloader & Video Info ───────────────────────────────────────
+_RECAP_URL_VERIFY_ERR_MY_TITLE = "Link စစ်ဆေး၍ မရပါ"
+_RECAP_URL_VERIFY_ERR_MY_BODY = (
+    "ဒီ link ကနေ ဗီဒီယို ရှာမတွေ့ပါ။ Link ကို စစ်ပြီး ပြန်စမ်းပါ — ဒါမှမဟုတ် ဗီဒီယိုဖိုင် တိုက်ရိုက် တင်ပါ။"
+)
+_RECAP_URL_VERIFY_ERR_EN_TITLE = "Couldn't verify this link"
+_RECAP_URL_VERIFY_ERR_EN_BODY = (
+    "No video was found at this link. Check the link and try again — or upload the video file directly."
+)
+
+_GENERIC_VIDEO_TITLES = frozenset({
+    "",
+    "media",
+    "video",
+    "video content",
+    "web media",
+    "web media content",
+    "online content",
+    "youtube content",
+    "tiktok content",
+    "facebook content",
+    "douyin content",
+    "instagram content",
+    "twitter content",
+    "x content",
+    "bilibili content",
+    "vimeo content",
+    "reddit content",
+    "untitled",
+    "untitled video",
+    "unknown",
+    "none",
+})
+
+_VERIFIED_URL_INFO_CACHE: Dict[tuple[int, str], tuple[float, Dict[str, Any]]] = {}
+_VERIFIED_URL_INFO_CACHE_TTL_S = 180.0
+_VERIFIED_URL_INFO_CACHE_MAX = 256
+
+
+def _recap_url_verify_error_detail(lang: Optional[str] = "my") -> str:
+    if (lang or "my").strip().lower().startswith("en"):
+        return f"{_RECAP_URL_VERIFY_ERR_EN_TITLE} — {_RECAP_URL_VERIFY_ERR_EN_BODY}"
+    return f"{_RECAP_URL_VERIFY_ERR_MY_TITLE} — {_RECAP_URL_VERIFY_ERR_MY_BODY}"
+
+
+def _is_generic_video_title(title: Any, platform: str = "") -> bool:
+    norm = re.sub(r"\s+", " ", str(title or "")).strip().lower()
+    if not norm or norm in _GENERIC_VIDEO_TITLES:
+        return True
+    plat_norm = re.sub(r"\s+", " ", str(platform or "")).strip().lower()
+    if plat_norm and norm in (plat_norm, f"{plat_norm} content", f"{plat_norm} video"):
+        return True
+    return False
+
+
+def _validate_extracted_video_info(
+    info: Any,
+    platform: str = "",
+) -> tuple[bool, str, float, str]:
+    """Strict Part C verification rule for extracted video metadata.
+
+    Requires:
+      1. dict payload from extractor
+      2. real, non-generic title
+      3. positive finite numeric duration (> 0)
+      4. when raw_info explicitly exposes a formats list, at least one real
+         video/audio stream (or direct media URL / TikWM play_url)
+    """
+    if not isinstance(info, dict):
+        return (False, "", 0.0, "empty_info")
+    resolved_platform = str(info.get("platform") or platform or "").strip()
+    title = str(info.get("title") or "").strip()
+    if _is_generic_video_title(title, resolved_platform):
+        return (False, "", 0.0, "generic_or_missing_title")
+
+    raw_dur = info.get("duration")
+    if isinstance(raw_dur, bool) or not isinstance(raw_dur, (int, float)):
+        return (False, title, 0.0, "non_numeric_duration")
+    dur = float(raw_dur)
+    if not math.isfinite(dur) or dur <= 0:
+        return (False, title, 0.0, "non_positive_duration")
+
+    raw_info = info.get("raw_info")
+    if isinstance(raw_info, dict) and "formats" in raw_info:
+        raw_formats = raw_info.get("formats") or []
+        has_media_formats = any(
+            isinstance(f, dict)
+            and (
+                (f.get("vcodec") not in (None, "none"))
+                or (f.get("acodec") not in (None, "none"))
+            )
+            for f in raw_formats
+        ) or bool(raw_info.get("url")) or bool(raw_info.get("play_url"))
+        if not has_media_formats:
+            return (False, title, 0.0, "no_media_formats")
+
+    return (True, title, dur, "")
+
+
+def _is_unmocked_downloader_get_info(downloader_cls: Any) -> bool:
+    fn = getattr(downloader_cls, "get_info", None)
+    return getattr(fn, "__module__", "") == "app.services.downloader"
+
+
+def _get_cached_verified_url_info(
+    user_id: int,
+    canonical_url: str,
+    downloader_cls: Any,
+) -> Optional[Dict[str, Any]]:
+    if not _is_unmocked_downloader_get_info(downloader_cls):
+        return None
+    entry = _VERIFIED_URL_INFO_CACHE.get((user_id, canonical_url))
+    if not entry:
+        return None
+    ts, cached = entry
+    if (time.monotonic() - ts) > _VERIFIED_URL_INFO_CACHE_TTL_S:
+        _VERIFIED_URL_INFO_CACHE.pop((user_id, canonical_url), None)
+        return None
+    return cached
+
+
+def _set_cached_verified_url_info(
+    user_id: int,
+    canonical_url: str,
+    info: Dict[str, Any],
+    downloader_cls: Any,
+) -> None:
+    if not _is_unmocked_downloader_get_info(downloader_cls):
+        return
+    if len(_VERIFIED_URL_INFO_CACHE) >= _VERIFIED_URL_INFO_CACHE_MAX:
+        # Evict oldest entry
+        oldest_key = min(_VERIFIED_URL_INFO_CACHE, key=lambda k: _VERIFIED_URL_INFO_CACHE[k][0])
+        _VERIFIED_URL_INFO_CACHE.pop(oldest_key, None)
+    _VERIFIED_URL_INFO_CACHE[(user_id, canonical_url)] = (time.monotonic(), info)
+
+
 class ExtractMediaRequest(BaseModel):
     url: str
 
@@ -5973,7 +6079,7 @@ async def extract_media_info(
     from app.services.downloader import extract_first_url, unshorten_url, detect_platform
     raw_url = req.url.strip()
     url = extract_first_url(raw_url) or raw_url
-    if not url.startswith("http"):
+    if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="မှန်ကန်တဲ့ Video URL ထည့်သွင်းပေးပါ")
 
     try:
@@ -6000,34 +6106,43 @@ async def extract_media_info(
         # every extract (deep-hunt #4 D1). Same to_thread wrap the
         # neighbouring download endpoints already use.
         info = await asyncio.to_thread(downloader.get_info, canonical_url)
-        duration_sec = info.get("duration", 0) or 0
+        platform = (info.get("platform") if isinstance(info, dict) else None) or detect_platform(canonical_url)
+        ok, clean_title, duration_sec, reject_reason = _validate_extracted_video_info(info, platform)
+        if not ok:
+            logger.warning(
+                f"extract_media_info rejected unverifiable media for {canonical_url}: {reject_reason}"
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=_recap_url_verify_error_detail(user.language_code),
+            )
+
         mins, secs = divmod(int(duration_sec), 60)
         duration_str = f"{mins:02d}:{secs:02d}"
 
-        # Real downloadable formats only (journey audit 2026-11-02):
-        # the payload used to claim a fixed MP4/MP3/SRT list for EVERY
-        # result, so a generic page with no media formats at all (the
-        # audit's example.com case) still rendered working download
-        # buttons. The fetch cards are offered only when yt-dlp's own
-        # format list carries at least one audio/video stream; the
-        # SRT card only when subtitles actually exist.
-        raw_formats = (info.get("raw_info") or {}).get("formats") or []
+        raw_info = info.get("raw_info") or {}
+        raw_formats = raw_info.get("formats") or []
         has_media_formats = any(
-            (f.get("vcodec") not in (None, "none"))
-            or (f.get("acodec") not in (None, "none"))
+            isinstance(f, dict)
+            and (
+                (f.get("vcodec") not in (None, "none"))
+                or (f.get("acodec") not in (None, "none"))
+            )
             for f in raw_formats
-        ) or bool((info.get("raw_info") or {}).get("url"))
+        ) or bool(raw_info.get("url")) or bool(raw_info.get("play_url"))
         formats_available: list[str] = []
         if has_media_formats:
             formats_available = ["MP4 (Full HD Video)", "MP3 (192kbps Audio)"]
             if info.get("has_subtitles"):
                 formats_available.append("SRT (Subtitles)")
 
+        _set_cached_verified_url_info(user.id, canonical_url, info, MediaDownloader)
+
         return {
             "success": True,
             "url": canonical_url,
-            "platform": info.get("platform") or detect_platform(canonical_url),
-            "title": info.get("title", "Video Content"),
+            "platform": platform,
+            "title": clean_title,
             "uploader": info.get("uploader", "Creator"),
             "thumbnail": info.get("thumbnail", ""),
             "width": info.get("width"),
@@ -6038,41 +6153,14 @@ async def extract_media_info(
             "metadata_verified": True,
             "formats_available": formats_available,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(f"yt-dlp extract error for {canonical_url}: {e}")
-        # Graceful fallback response. NOTE: metadata could not be
-        # verified, so has_subtitles must NOT claim True here — the SRT
-        # card renders its honest per-item state from this flag, and the
-        # fetch endpoint re-checks for real before producing any SRT.
-        platform = detect_platform(canonical_url)
-        return {
-            "success": True,
-            "url": canonical_url,
-            "platform": platform,
-            "title": f"{platform} Content",
-            "uploader": "Online Creator",
-            "thumbnail": "",
-            "estimated_duration": "03:30",
-            "has_subtitles": False,
-            # Shape parity with the verified payload above: unknown
-            # dimensions (None) / unverified duration (0) are explicit,
-            # so the client never has to guess at missing keys.
-            "width": None,
-            "height": None,
-            "duration_seconds": 0,
-            # metadata_verified=False: the payload above is a graceful
-            # placeholder (title/duration invented). The client must
-            # not present it as verified fact (journey audit
-            # 2026-10-31 — the "✅ Ready" + fake 03:30 card sent users
-            # into jobs pre-doomed at sources that block downloads).
-            "metadata_verified": False,
-            # No formats were extracted, so none may be offered: the
-            # old invented MP4/MP3/SRT list made the Downloader render
-            # working download buttons for unverifiable links (journey
-            # audit 2026-11-02). The client routes an empty list (or
-            # metadata_verified=False) to the persistent error box.
-            "formats_available": [],
-        }
+        raise HTTPException(
+            status_code=422,
+            detail=_recap_url_verify_error_detail(user.language_code),
+        )
 
 
 # ── 4.1. Downloader format delivery (Video / MP3 / SRT cards) ──────────
@@ -7284,16 +7372,6 @@ def resolve_recap_deliverable_path(
                 return str(txts[0])
         return None
 
-    if file_type == "thumbnail":
-        explicit_thumbs = [
-            job_dir / "ai_thumbnail.jpg",
-            job_dir / "ai_thumbnail.png",
-        ]
-        for cand in explicit_thumbs:
-            if cand.is_file() and cand.stat().st_size > 500:
-                return str(cand)
-        return None
-
     return None
 
 
@@ -8339,6 +8417,131 @@ async def _recap_job_marked_cancelled(job_id: str, entry: Optional[dict] = None)
         return False
 
 
+def _format_delivery_duration(seconds: Optional[float | int]) -> str:
+    """Format a media duration in seconds cleanly for bot delivery messages."""
+    try:
+        total = int(round(float(seconds or 0)))
+    except (TypeError, ValueError):
+        total = 0
+    if total <= 0:
+        return "—"
+    hours, rem = divmod(total, 3600)
+    mins, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
+
+
+def _format_retention_hours_localized(hours: int, lang: str) -> str:
+    raw = str(int(hours))
+    if (lang or "my").strip().lower().startswith("my"):
+        return raw.translate(str.maketrans("0123456789", "၀၁၂၃၄၅၆၇၈၉"))
+    return raw
+
+
+def build_recap_completion_message(
+    lang: str,
+    *,
+    clean_title: str,
+    voice_name: str,
+    duration_seconds: Optional[float | int],
+    job_id: str,
+    retention_hours: int = 24,
+    fallback_count: int = 0,
+    voice_name_note: Optional[dict] = None,
+    reference_trimmed: bool = False,
+    gemini_taste_blocked: bool = False,
+    gemini_key_broken: bool = False,
+) -> str:
+    """Build the compact Recap job-completion bot message (Part F)."""
+    text = t(
+        "recap_notify_text",
+        lang,
+        clean_title=html.escape(str(clean_title or "Movie Recap")[:60]),
+        voice_name=html.escape(str(voice_name or "")),
+        duration=_format_delivery_duration(duration_seconds),
+        job_id=job_id,
+    )
+    if fallback_count > 0:
+        text += t("recap_fallback_note", lang, count=fallback_count)
+    elif voice_name_note:
+        text += t(
+            "recap_voice_name_note",
+            lang,
+            picked_name=html.escape(str(voice_name_note.get("picked_name") or "")),
+            heard_name=html.escape(str(voice_name_note.get("heard_name") or "")),
+            engine_name=str(voice_name_note.get("engine_name") or ""),
+        )
+    if reference_trimmed:
+        text += t("recap_ref_trim_note", lang)
+    if gemini_taste_blocked:
+        text += t("recap_key_hint_note", lang)
+    if gemini_key_broken:
+        text += t("recap_own_key_broken_note", lang)
+    text += t(
+        "recap_retention_note",
+        lang,
+        retention_hours=_format_retention_hours_localized(retention_hours, lang),
+    )
+    return text
+
+
+def build_recap_completion_keyboard(
+    lang: str,
+    *,
+    job_id: str,
+    app_url: str,
+    has_video: bool = True,
+    has_audio: bool = True,
+    has_srt: bool = True,
+    has_script: bool = True,
+):
+    """Build the 1-button-per-full-width-row Recap completion keyboard (Part F).
+
+    Order: Video -> Recap Audio -> SRT -> Script -> Mini App.
+    File buttons are included only when the corresponding file exists.
+    Callback data values are strictly preserved.
+    """
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if has_video:
+        rows.append([
+            InlineKeyboardButton(
+                text=t("clone_btn_send_video", lang),
+                callback_data=f"send_recap_{job_id}",
+            )
+        ])
+    if has_audio:
+        rows.append([
+            InlineKeyboardButton(
+                text=t("clone_btn_send_recap_audio", lang),
+                callback_data=f"send_recap_audio_{job_id}",
+            )
+        ])
+    if has_srt:
+        rows.append([
+            InlineKeyboardButton(
+                text=t("clone_btn_send_srt", lang),
+                callback_data=f"send_recap_srt_{job_id}",
+            )
+        ])
+    if has_script:
+        rows.append([
+            InlineKeyboardButton(
+                text=t("clone_btn_send_script", lang),
+                callback_data=f"send_recap_script_{job_id}",
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text=t("clone_btn_miniapp_watch", lang),
+            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}"),
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _build_recap_failure_dm_text(
     lang: str,
     *,
@@ -8348,7 +8551,7 @@ def _build_recap_failure_dm_text(
     reason_key: Optional[str] = None,
     credits_refunded: float | int = 0,
 ) -> str:
-    """Compose the recap failure DM (batch K)."""
+    """Compose the recap failure DM (headline + facts + reason + next step)."""
     clean_title = html.escape(str(title or "").strip()) or "Recap"
     if reason_key:
         reason_text = t(reason_key, lang)
@@ -8367,6 +8570,7 @@ def _build_recap_failure_dm_text(
         text += t(
             "recap_failure_refund_note", lang, credits=cr_disp
         )
+    text += t("recap_failure_next_step", lang)
     if "Uploaded Video" in str(title or ""):
         text += t("recap_failure_upload_hint", lang)
     return text
@@ -9595,114 +9799,68 @@ async def _execute_recap_background_job(
                 from aiogram import Bot
                 from aiogram.client.default import DefaultBotProperties
                 from aiogram.enums import ParseMode
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-                app_url = settings.mini_app_url
-                clean_title = _clean_recap_display_title(entry.get("title"), req.url)
-                # Batch AP: the completion message is the ONLY place
-                # the companion files are offered, one button per file.
-                # Nothing is pushed with the video itself; each extra
-                # is sent solely when its button is pressed (handlers
-                # in app/handlers/clone.py). The buttons are always
-                # shown — a job that never produced a given file gets
-                # the honest file-missing reply from its handler.
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text=t("clone_btn_miniapp_watch", _recap_notify_lang),
-                            web_app=WebAppInfo(url=f"{app_url}?tab=tab-recap&recap_job_id={job_id}")
-                        ),
-                        InlineKeyboardButton(
-                            text=t("clone_btn_send_video", _recap_notify_lang),
-                            callback_data=f"send_recap_{job_id}"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text=t("clone_btn_send_srt", _recap_notify_lang),
-                            callback_data=f"send_recap_srt_{job_id}"
-                        ),
-                        InlineKeyboardButton(
-                            text=t("clone_btn_send_recap_audio", _recap_notify_lang),
-                            callback_data=f"send_recap_audio_{job_id}"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text=t("clone_btn_send_script", _recap_notify_lang),
-                            callback_data=f"send_recap_script_{job_id}"
-                        )
-                    ]
-                ])
                 from app.services.voice_display import (
                     recap_voice_display_name,
                     recap_voice_name_note_params,
                 )
 
-                # Batch BK: the completion message names the voice the
-                # user actually HEARS (the heard-voice resolver — the
-                # pre-BI behaviour; owner decision 2026-11-06 reversing
-                # BI-3). When the Gemini engine mapped the picked
-                # persona to a differently-named Gemini voice, the
-                # polite note below explains the difference; it never
-                # stacks on the fallback note, which already explains
-                # a substitution when one happened.
-                notify_text = t(
-                    "recap_notify_text",
-                    _recap_notify_lang,
-                    clean_title=html.escape(str(clean_title[:60])),
-                    voice_name=html.escape(
-                        recap_voice_display_name(
-                            tts_engine,
-                            gemini_voice,
-                            req.voice_slug,
-                            # Batch BV: an own-voice job names the
-                            # user's own voice, not the fallback
-                            # persona recorded on the row.
-                            own_voice=bool(getattr(req, "voice_ref_path", None)),
-                        )
-                    ),
-                    job_id=job_id,
+                app_url = settings.mini_app_url
+                clean_title = _clean_recap_display_title(entry.get("title"), req.url)
+                has_video = bool(
+                    resolve_recap_deliverable_path(job_id, "video")
+                    or entry.get("video_path")
+                    or entry.get("parts")
                 )
-                if entry.get("fallback_used"):
-                    notify_text += t(
-                        "recap_fallback_note",
-                        _recap_notify_lang,
-                        count=len(entry.get("fallback_segments") or []) or 1,
-                    )
-                else:
-                    _voice_name_note = recap_voice_name_note_params(
-                        tts_engine, gemini_voice, req.voice_slug
-                    )
-                    if _voice_name_note:
-                        notify_text += t(
-                            "recap_voice_name_note",
-                            _recap_notify_lang,
-                            picked_name=html.escape(_voice_name_note["picked_name"]),
-                            heard_name=html.escape(_voice_name_note["heard_name"]),
-                            engine_name=_voice_name_note["engine_name"],
-                        )
-                # Batch BV: disclose the BU auto-trim when the
-                # own-voice sample exceeded the 50 s Space cap (the
-                # recap twin of worker_ref_trim_note). Orthogonal to
-                # the fallback note above — a job can carry both.
-                if entry.get("reference_trimmed"):
-                    notify_text += t("recap_ref_trim_note", _recap_notify_lang)
-                # Batch CG: when Gemini narration ran on the persona
-                # fallback because the FREE taste was spent (no route
-                # at all), name the own-key way to keep Gemini; and
-                # when Google rejected the user's saved key mid-job,
-                # say so plainly (the job still delivered).
-                if entry.get("gemini_taste_blocked"):
-                    notify_text += t("recap_key_hint_note", _recap_notify_lang)
-                if entry.get("gemini_key_broken"):
-                    notify_text += t("recap_own_key_broken_note", _recap_notify_lang)
-                # Batch K: disclose the retention window at delivery
-                # time too (it was previously stated only in History).
-                # Batch X: the copy states the window in HOURS (24).
-                notify_text += t(
-                    "recap_retention_note",
+                has_audio = bool(
+                    resolve_recap_deliverable_path(job_id, "audio")
+                    or entry.get("audio_path")
+                )
+                has_srt = bool(
+                    resolve_recap_deliverable_path(job_id, "srt")
+                    or entry.get("srt_path")
+                )
+                has_script = bool(
+                    resolve_recap_deliverable_path(job_id, "script")
+                    or entry.get("script_path")
+                )
+                kb = build_recap_completion_keyboard(
                     _recap_notify_lang,
+                    job_id=job_id,
+                    app_url=app_url,
+                    has_video=has_video,
+                    has_audio=has_audio,
+                    has_srt=has_srt,
+                    has_script=has_script,
+                )
+                heard_voice = recap_voice_display_name(
+                    tts_engine,
+                    gemini_voice,
+                    req.voice_slug,
+                    own_voice=bool(getattr(req, "voice_ref_path", None)),
+                )
+                fb_count = (
+                    (len(entry.get("fallback_segments") or []) or 1)
+                    if entry.get("fallback_used")
+                    else 0
+                )
+                v_note = (
+                    None
+                    if fb_count > 0
+                    else recap_voice_name_note_params(tts_engine, gemini_voice, req.voice_slug)
+                )
+                notify_dur = _real_seconds if _real_seconds and _real_seconds > 0 else req.duration_seconds
+                notify_text = build_recap_completion_message(
+                    _recap_notify_lang,
+                    clean_title=clean_title,
+                    voice_name=heard_voice,
+                    duration_seconds=notify_dur,
+                    job_id=job_id,
                     retention_hours=_media_retention_days() * 24,
+                    fallback_count=fb_count,
+                    voice_name_note=v_note,
+                    reference_trimmed=bool(entry.get("reference_trimmed")),
+                    gemini_taste_blocked=bool(entry.get("gemini_taste_blocked")),
+                    gemini_key_broken=bool(entry.get("gemini_key_broken")),
                 )
                 bot_inst = create_telegram_bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 try:
@@ -10537,6 +10695,7 @@ async def create_recap_job(
         req.title = convert_zawgyi_to_unicode(req.title)
     # SSRF + local-file containment, before any probe, deduction, or queueing.
     _req_url = (req.url or "").strip()
+    _verified_url_info: Optional[Dict[str, Any]] = None
     if _req_url.startswith(("http://", "https://")):
         try:
             from app.services.downloader import extract_first_url as _extract_first, unshorten_url as _unshorten
@@ -10545,11 +10704,47 @@ async def create_recap_job(
             # Redirect-following is synchronous network work — off the
             # event loop like the pre-check below (deep-hunt #4 D1).
             _canon = await asyncio.to_thread(_unshorten, _extract_first(_req_url) or _req_url)
-            _validate_url(_canon)
+            _canon = _validate_url(_canon)
         except HTTPException:
             raise
         except Exception:
             raise HTTPException(status_code=400, detail="This video URL is not allowed")
+
+        # Part C strict URL backstop: every HTTP(S) URL must pass metadata
+        # verification (extraction success + non-generic title + positive
+        # numeric duration) BEFORE any credit reservation or Job row.
+        try:
+            from app.services.downloader import (
+                MediaDownloader as _VerifyDownloader,
+                detect_platform as _verify_detect_platform,
+            )
+
+            _url_info = _get_cached_verified_url_info(user.id, _canon, _VerifyDownloader)
+            if _url_info is None:
+                _url_info = await asyncio.to_thread(_VerifyDownloader().get_info, _canon)
+            _plat = (
+                (_url_info.get("platform") if isinstance(_url_info, dict) else None)
+                or _verify_detect_platform(_canon)
+            )
+            _ok, _v_title, _v_dur, _v_reason = _validate_extracted_video_info(_url_info, _plat)
+            if not _ok:
+                logger.warning(
+                    f"create_recap_job rejected unverifiable URL {_canon}: {_v_reason}"
+                )
+                raise HTTPException(
+                    status_code=422,
+                    detail=_recap_url_verify_error_detail(user.language_code),
+                )
+            _verified_url_info = _url_info
+            _set_cached_verified_url_info(user.id, _canon, _url_info, _VerifyDownloader)
+        except HTTPException:
+            raise
+        except Exception as _verify_err:
+            logger.warning(f"create_recap_job URL verify failed for {_canon}: {_verify_err}")
+            raise HTTPException(
+                status_code=422,
+                detail=_recap_url_verify_error_detail(user.language_code),
+            )
     elif _req_url and not _req_url.startswith(("http://", "https://")):
         # Local source: only files the user uploaded into storage are
         # allowed, never arbitrary server paths.
@@ -10679,17 +10874,14 @@ async def create_recap_job(
     is_admin_user = settings.is_admin(user.id)
     max_duration_allowed = _recap_max_duration_allowed(is_vip, is_admin_user)
     checked_duration = req.duration_seconds
+    if _verified_url_info is not None:
+        _verified_dur = _verified_url_info.get("duration")
+        if _verified_dur and float(_verified_dur) > 0:
+            checked_duration = float(_verified_dur)
 
     if (not checked_duration or checked_duration <= 0) and req.url:
         try:
-            if req.url.startswith("http://") or req.url.startswith("https://"):
-                from app.services.downloader import extract_first_url, unshorten_url, MediaDownloader
-                can_url = await asyncio.to_thread(
-                    unshorten_url, extract_first_url(req.url) or req.url
-                )
-                info = await asyncio.to_thread(MediaDownloader().get_info, can_url)
-                checked_duration = info.get("duration", 0) or 0
-            elif os.path.isfile(req.url):
+            if not req.url.startswith(("http://", "https://")) and os.path.isfile(req.url):
                 from app.services.recap_engine.core import probe_duration, find_ffprobe
                 ffprobe_bin = find_ffprobe()
                 checked_duration = probe_duration(ffprobe_bin, Path(req.url))
@@ -11069,9 +11261,6 @@ async def get_recap_status(
             except Exception:
                 _e_can_retry = None
         _e_dl_urls = dict(entry.get("download_urls") or {})
-        if entry.get("status") == "SUCCESS" and not _e_dl_urls.get("thumbnail"):
-            if resolve_recap_deliverable_path(job_id, "thumbnail"):
-                _e_dl_urls["thumbnail"] = f"/api/recap/download/{job_id}/thumbnail"
         _e_title = _clean_recap_display_title(entry.get("title"))
         return {
             "id": job_id,
@@ -11184,9 +11373,6 @@ async def get_recap_status(
             "eta_range_seconds": None,
             "eta_overrun": False,
         }
-    _db_thumb_exists = bool(
-        is_success and resolve_recap_deliverable_path(job_id, "thumbnail")
-    )
     _db_title = _clean_recap_display_title(
         ((_db_state.get("config") or {}).get("title")),
         getattr(job, "input_text", None),
@@ -11247,7 +11433,6 @@ async def get_recap_status(
             "audio": f"/api/recap/download/{job_id}/audio" if media_available else None,
             "srt": f"/api/recap/download/{job_id}/srt" if media_available else None,
             "script": f"/api/recap/download/{job_id}/script" if media_available else None,
-            "thumbnail": f"/api/recap/download/{job_id}/thumbnail" if _db_thumb_exists else None,
             "parts": _db_parts,
         }, job_id, user.id),
     }
@@ -11706,7 +11891,6 @@ async def download_recap_file(
         "audio": (audio_mime, branded_download_filename("RecapAudio", audio_ext.lstrip("."), title=_dl_title, job_id=job_id)),
         "srt": ("text/plain; charset=utf-8", branded_download_filename("Subtitles", "srt", title=_dl_title, job_id=job_id)),
         "script": ("text/plain; charset=utf-8", branded_download_filename("Script", "txt", title=_dl_title, job_id=job_id)),
-        "thumbnail": ("image/jpeg", branded_download_filename("Thumbnail", "jpg", title=_dl_title, job_id=job_id)),
     }
     _part_dl = re.fullmatch(r"part([1-9][0-9]?)", file_type or "")
     if _part_dl:
@@ -11804,162 +11988,6 @@ async def send_recap_to_telegram(
         )
         raise HTTPException(status_code=502, detail="telegram_delivery_failed")
     return {"success": True, "message": "Telegram သို့ ဗီဒီယို ပို့ပြီးပါပြီခင်ဗျာ!"}
-
-
-class RecapThumbnailRequest(BaseModel):
-    headline_text: Optional[str] = None
-
-
-async def _send_recap_thumbnail_telegram(
-    *,
-    chat_id: int,
-    photo_path: str | Path,
-    title: str,
-    lang: str = "my",
-) -> bool:
-    """Deliver the generated 9:16 AI Thumbnail to the user's Telegram chat."""
-    if not settings.bot_token:
-        return False
-    from aiogram import Bot
-    from aiogram.types import FSInputFile
-
-    bot = create_telegram_bot(token=settings.bot_token)
-    try:
-        caption = t("recap_thumb_telegram_caption", lang, title=title or "Movie Recap")
-        await bot.send_photo(
-            chat_id=chat_id,
-            photo=FSInputFile(str(photo_path), filename="VoiceClonePro_Thumbnail.jpg"),
-            caption=caption,
-            parse_mode="HTML",
-        )
-        return True
-    except Exception as exc:
-        logger.warning("Could not send AI thumbnail to Telegram chat %s: %s", chat_id, exc)
-        return False
-    finally:
-        try:
-            await bot.session.close()
-        except Exception:
-            pass
-
-
-@api_router.post("/recap/{job_id}/thumbnail")
-async def create_recap_ai_thumbnail(
-    job_id: str,
-    req: Optional[RecapThumbnailRequest] = None,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session),
-    _gate: User = Depends(require_gate_verified),
-):
-    """Generate a 9:16 vertical AI Thumbnail for a completed recap job (PAID + Admin only).
-
-    Uses the HF PRO account's included monthly compute credits with a hard
-    server-side monthly USD cap (default $1.80). Never deducts recap credits,
-    voice minutes, or any user balance.
-    """
-    from app.services.recap_thumbnail import (
-        ThumbnailCapReachedError,
-        ThumbnailGenerationError,
-        ThumbnailTierError,
-        generate_recap_ai_thumbnail,
-        is_user_eligible_for_thumbnail,
-    )
-
-    if (user.status or "") == UserStatus.BLOCKED.value and not settings.is_admin(user.id):
-        raise HTTPException(
-            status_code=403,
-            detail="USER_BANNED: This account has been suspended by the admin. Please contact support.",
-        )
-
-    lang = user.language_code or "my"
-
-    # 1. Tier gate first: FREE accounts never trigger a generation
-    if not is_user_eligible_for_thumbnail(user):
-        raise HTTPException(
-            status_code=403,
-            detail=t("recap_thumb_vip_only", lang),
-        )
-
-    # 2. Verify job ownership and completion
-    db_job = await db.get(Job, job_id)
-    if not _recap_registry_owner_ok(job_id, user):
-        raise HTTPException(status_code=404, detail="Recap job not found")
-    entry = RECAP_JOBS_REGISTRY.get(job_id)
-    if entry is None:
-        if not db_job or (db_job.user_id != user.id and not settings.is_admin(user.id)):
-            raise HTTPException(status_code=404, detail="Recap job not found")
-        if db_job.status != JobStatus.SUCCESS.value:
-            raise HTTPException(status_code=409, detail="Recap job is not completed yet")
-    else:
-        if entry.get("status") != "SUCCESS" and (
-            not db_job or db_job.status != JobStatus.SUCCESS.value
-        ):
-            raise HTTPException(status_code=409, detail="Recap job is not completed yet")
-
-    entry_dict = entry or {}
-    persisted_cfg = (
-        (_load_persisted_recap_state(db_job) or {}).get("config", {})
-        if db_job is not None
-        else {}
-    )
-    clean_title = _clean_recap_display_title(
-        entry_dict.get("title") or persisted_cfg.get("title"),
-        db_job.input_text if db_job else None,
-    )
-    if req is not None and req.headline_text is not None:
-        headline_text = str(req.headline_text).strip()
-    else:
-        headline_text = ""
-
-    story_style = entry_dict.get("story_style") or persisted_cfg.get("story_style") or ""
-    job_dir = settings.storage_root / "recap_output" / job_id
-    out_path = job_dir / "ai_thumbnail.jpg"
-
-    try:
-        res = await generate_recap_ai_thumbnail(
-            db,
-            user=user,
-            job_id=job_id,
-            recap_title=clean_title,
-            headline_text=headline_text,
-            genre=story_style,
-            output_path=out_path,
-        )
-    except ThumbnailTierError:
-        raise HTTPException(status_code=403, detail=t("recap_thumb_vip_only", lang))
-    except ThumbnailCapReachedError:
-        raise HTTPException(status_code=429, detail=t("recap_thumb_cap_reached", lang))
-    except ThumbnailGenerationError:
-        raise HTTPException(status_code=502, detail=t("recap_thumb_failed", lang))
-
-    if entry is not None:
-        entry["thumbnail_path"] = str(out_path)
-        entry.setdefault("download_urls", {})["thumbnail"] = (
-            f"/api/recap/download/{job_id}/thumbnail"
-        )
-
-    tg_sent = await _send_recap_thumbnail_telegram(
-        chat_id=user.id,
-        photo_path=out_path,
-        title=res["headline_text"] or clean_title,
-        lang=lang,
-    )
-
-    signed = _with_stream_url(
-        {"thumbnail": f"/api/recap/download/{job_id}/thumbnail"},
-        job_id,
-        user.id,
-    )
-    return {
-        "success": True,
-        "job_id": job_id,
-        "thumbnail_url": signed.get("thumbnail"),
-        "thumbnail_stream_url": signed.get("thumbnail_stream_url"),
-        "headline_text": res["headline_text"],
-        "logo_only": res["logo_only"],
-        "telegram_sent": tg_sent,
-        "pool_usage": res["pool_usage"],
-    }
 
 
 # ── 5.05. Batch AW: standalone TTS tab ─────────────────────────────────
@@ -12292,8 +12320,6 @@ def _job_deliverables(job, is_recap: bool, file_exists: bool):
             "srt": f"/api/recap/download/{job.id}/srt",
             "script": f"/api/recap/download/{job.id}/script",
         }
-        if resolve_recap_deliverable_path(job.id, "thumbnail"):
-            deliv["thumbnail"] = f"/api/recap/download/{job.id}/thumbnail"
         return download_url, deliv
     download_url = f"/api/audio/stream/{job.id}"
     return download_url, {
@@ -12473,8 +12499,6 @@ async def get_user_history(
             recap_entry = RECAP_JOBS_REGISTRY.get(j.id)
             if recap_entry and recap_entry.get("download_urls"):
                 deliverables = dict(recap_entry["download_urls"])
-                if not deliverables.get("thumbnail") and resolve_recap_deliverable_path(j.id, "thumbnail"):
-                    deliverables["thumbnail"] = f"/api/recap/download/{j.id}/thumbnail"
                 download_url = deliverables.get("video") or download_url
         if is_recap and deliverables:
             # Sign the recap URLs for their owner: a history download
@@ -15264,11 +15288,9 @@ class AdminSettingsPayload(BaseModel):
     payment_wave_number: Optional[str] = None
     payment_wave_name: Optional[str] = None
     tutorial_video_link: Optional[str] = None
-    tutorial_video_enabled: Optional[bool] = None
     tutorial_voice_title: Optional[str] = None
     tutorial_voice_link: Optional[str] = None
     tutorial_voice_enabled: Optional[bool] = None
-    tutorial_recap_title: Optional[str] = None
     tutorial_recap_link: Optional[str] = None
     tutorial_recap_enabled: Optional[bool] = None
     # Batch L: recap demo sample reference — a Telegram file_id OR a
@@ -15312,19 +15334,12 @@ class AdminSettingsPayload(BaseModel):
     character_limit_free: Optional[int] = None
     character_limit_purchased: Optional[int] = None
     free_daily_allowance_seconds: Optional[int] = None
-    free_monthly_allowance_seconds: Optional[int] = None
-    free_daily_job_limit: Optional[int] = None
-    voice_daily_limit_minutes_free: Optional[int] = None
-    voice_daily_limit_minutes_paid: Optional[int] = None
     tts_daily_limit_minutes_free: Optional[int] = None
     tts_daily_limit_minutes_paid: Optional[int] = None
     # Batch CG / 2026-11-23: Gemini pool taste (minutes/day per user) + global FREE daily request budget.
     free_gemini_taste_minutes: Optional[int] = None
     paid_gemini_taste_minutes: Optional[int] = None
     free_gemini_daily_budget_requests: Optional[int] = None
-    # Batch AO: tiered recap pricing arming switch (ships dark; the
-    # owner flips it only at the announced effective date).
-    tiered_recap_pricing_enabled: Optional[bool] = None
     recap_free_max_duration_seconds: Optional[int] = None
     recap_max_duration_seconds: Optional[int] = None
     required_channel_id: Optional[str] = None
@@ -15352,9 +15367,6 @@ class AdminSettingsPayload(BaseModel):
     watermark_position: Optional[str] = None
     watermark_opacity: Optional[int] = None
     watermark_size: Optional[int] = None
-    recap_thumbnail_monthly_cap_usd: Optional[float] = None
-    recap_thumbnail_model: Optional[str] = None
-    recap_thumbnail_prompt_template: Optional[str] = None
     recap_stale_job_timeout_seconds: Optional[int] = None
     recap_worker_concurrency: Optional[int] = None
     ai_prompt_profile: Optional[str] = None
@@ -15371,18 +15383,15 @@ async def get_admin_settings(
     from app.services.dynamic_settings import load_dynamic_settings
     await load_dynamic_settings(db)
     wm_cfg = get_watermark_config(False)
-    thumb_usage = await _safe_get_monthly_thumbnail_usage(db)
     return {
         "payment_kpay_number": getattr(settings, "payment_kpay_number", ""),
         "payment_kpay_name": getattr(settings, "payment_kpay_name", ""),
         "payment_wave_number": getattr(settings, "payment_wave_number", ""),
         "payment_wave_name": getattr(settings, "payment_wave_name", ""),
         "tutorial_video_link": getattr(settings, "tutorial_video_link", "https://t.me/VoiceClonePro/28"),
-        "tutorial_video_enabled": getattr(settings, "tutorial_video_enabled", True),
         "tutorial_voice_title": getattr(settings, "tutorial_voice_title", "Voice Clone ပြုလုပ်နည်း လမ်းညွှန်"),
         "tutorial_voice_link": getattr(settings, "tutorial_voice_link", "https://t.me/VoiceClonePro/29"),
         "tutorial_voice_enabled": getattr(settings, "tutorial_voice_enabled", True),
-        "tutorial_recap_title": getattr(settings, "tutorial_recap_title", "Movie Recap ပြုလုပ်နည်း လမ်းညွှန်"),
         "tutorial_recap_link": getattr(settings, "tutorial_recap_link", "https://t.me/VoiceClonePro/30"),
         "tutorial_recap_enabled": getattr(settings, "tutorial_recap_enabled", True),
         "recap_demo_asset": getattr(settings, "recap_demo_asset", ""),
@@ -15412,16 +15421,11 @@ async def get_admin_settings(
         "character_limit_free": int(getattr(settings, "character_limit_free", 3000) or 3000),
         "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 15000) or 15000),
         "free_daily_allowance_seconds": int(getattr(settings, "free_daily_allowance_seconds", 180)),
-        "free_monthly_allowance_seconds": int(getattr(settings, "free_monthly_allowance_seconds", 180)),
-        "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
-        "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 0)),
-        "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 0)),
         "free_gemini_taste_minutes": int(getattr(settings, "free_gemini_taste_minutes", 2)),
         "paid_gemini_taste_minutes": int(getattr(settings, "paid_gemini_taste_minutes", 10)),
         "free_gemini_daily_budget_requests": int(getattr(settings, "free_gemini_daily_budget_requests", 100)),
         "tts_daily_limit_minutes_free": int(getattr(settings, "tts_daily_limit_minutes_free", 15)),
         "tts_daily_limit_minutes_paid": int(getattr(settings, "tts_daily_limit_minutes_paid", 60)),
-        "tiered_recap_pricing_enabled": bool(getattr(settings, "tiered_recap_pricing_enabled", False)),
         "recap_free_max_duration_seconds": int(getattr(settings, "recap_free_max_duration_seconds", 120)),
         "recap_max_duration_seconds": int(getattr(settings, "recap_max_duration_seconds", 600)),
         "voxcpm_timeout": int(getattr(settings, "voxcpm_timeout", 60) or 60),
@@ -15448,15 +15452,6 @@ async def get_admin_settings(
         "watermark_position": str(wm_cfg["watermark_position"]),
         "watermark_opacity": int(wm_cfg["watermark_opacity"]),
         "watermark_size": int(wm_cfg["watermark_size"]),
-        "recap_thumbnail_monthly_cap_usd": thumb_usage["monthly_cap_usd"],
-        "recap_thumbnail_model": thumb_usage["model"],
-        "recap_thumbnail_prompt_template": thumb_usage["prompt_template"],
-        "recap_thumbnail_month_period": thumb_usage["period"],
-        "recap_thumbnail_month_count": thumb_usage["generations_count"],
-        "recap_thumbnail_month_spend_usd": thumb_usage["estimated_spend_usd"],
-        "recap_thumbnail_month_exhausted": thumb_usage["exhausted"],
-        "recap_thumbnail_cap_reached": thumb_usage["cap_reached"],
-        "recap_thumbnail_cost_per_image_usd": thumb_usage["cost_per_image_usd"],
         "recap_on_queue": bool(getattr(settings, "recap_on_queue", False)),
         "recap_stale_job_timeout_seconds": int(getattr(settings, "recap_stale_job_timeout_seconds", 2700) or 2700),
         "recap_worker_concurrency": int(getattr(settings, "recap_worker_concurrency", 1) or 1),
@@ -15642,49 +15637,6 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
             cleaned[key] = model
-        elif key == "recap_thumbnail_monthly_cap_usd":
-            try:
-                cap_val = round(float(value), 2)
-            except (TypeError, ValueError):
-                cap_val = -1.0
-            if cap_val < 0.0 or cap_val > 50.0:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "AI Thumbnail လစဉ် ကန့်သတ်ချက် (recap_thumbnail_monthly_cap_usd) သည် "
-                        "$0.00 မှ $50.00 အတွင်း ဖြစ်ရပါမည်။ "
-                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
-                    ),
-                )
-            cleaned[key] = cap_val
-        elif key == "recap_thumbnail_model":
-            from app.services.recap_thumbnail import DEFAULT_THUMBNAIL_MODEL
-
-            model = str(value).strip() or DEFAULT_THUMBNAIL_MODEL
-            if len(model) > 200:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "AI Thumbnail Model (recap_thumbnail_model) သည် "
-                        "စာလုံး 200 ထက် မရှည်ရပါ။ "
-                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
-                    ),
-                )
-            cleaned[key] = model
-        elif key == "recap_thumbnail_prompt_template":
-            from app.services.recap_thumbnail import DEFAULT_THUMBNAIL_PROMPT_TEMPLATE
-
-            tpl = str(value).strip() or DEFAULT_THUMBNAIL_PROMPT_TEMPLATE
-            if len(tpl) > 1000:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "AI Thumbnail Prompt Template (recap_thumbnail_prompt_template) သည် "
-                        "စာလုံး 1000 ထက် မရှည်ရပါ။ "
-                        "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
-                    ),
-                )
-            cleaned[key] = tpl
         elif key in (
             "gemini_tts_primary_model",
             "gemini_tts_fallback_1",
@@ -15747,10 +15699,6 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             cleaned[key] = limit_val
         elif key in (
             "free_daily_allowance_seconds",
-            "free_monthly_allowance_seconds",
-            "free_daily_job_limit",
-            "voice_daily_limit_minutes_free",
-            "voice_daily_limit_minutes_paid",
             "tts_daily_limit_minutes_free",
             "tts_daily_limit_minutes_paid",
             "free_gemini_taste_minutes",
@@ -15760,16 +15708,8 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             "recap_max_duration_seconds",
             "voxcpm_timeout",
         ):
-            # Batch AJ M6: the money-adjacent settings were stored
-            # verbatim — a free_monthly_allowance_seconds of -1 wrapped
-            # the free allowance to an absurd value, and zero/negative
-            # recap durations bricked or unbound the recap tiers.
             _bounds = {
                 "free_daily_allowance_seconds": (0, 86_400),
-                "free_monthly_allowance_seconds": (0, 31_536_000),
-                "free_daily_job_limit": (0, 1000),
-                "voice_daily_limit_minutes_free": (0, 1440),
-                "voice_daily_limit_minutes_paid": (0, 1440),
                 "tts_daily_limit_minutes_free": (0, 1440),
                 "tts_daily_limit_minutes_paid": (0, 1440),
                 "free_gemini_taste_minutes": (0, 1440),
@@ -16016,7 +15956,7 @@ async def update_group_ai_knowledge_sheet(
     return {
         "success": True,
         "char_count": len(sheet),
-        "char_limit": 8000,
+        "char_limit": 20000,
         "last_saved_at": now_iso,
         "last_saved_by": saved_by,
         "is_custom": True,

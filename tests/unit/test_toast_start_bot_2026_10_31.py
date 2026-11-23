@@ -14,7 +14,6 @@ import pytest
 from aiogram.types import CallbackQuery, Chat, Message, User as TgUser
 
 from app.config import settings
-from app.handlers.clone import voice_queue_failure_message
 from app.handlers.menu import render_main_menu
 from app.handlers.start import handle_set_language, handle_start
 from app.models.enums import UserStatus
@@ -42,7 +41,7 @@ def test_welcome_desc_shortened_both_locales():
     assert t("welcome_desc", "en") == "Welcome to Myanmar's all-in-one AI studio."
 
 
-# --- B1: handle_set_language verified branch prepends welcome block ------
+# --- B1: handle_set_language verified branch sends compact welcome (Round 13 Part K) ------
 
 @pytest.mark.asyncio
 async def test_set_language_verified_branch_includes_welcome_block(db_session):
@@ -52,7 +51,8 @@ async def test_set_language_verified_branch_includes_welcome_block(db_session):
 
     msg = MagicMock(spec=Message)
     msg.chat = MagicMock(spec=Chat, id=user_id)
-    msg.edit_text = AsyncMock(return_value=msg)
+    msg.delete = AsyncMock()
+    msg.answer = AsyncMock(return_value=msg)
 
     cb = MagicMock(spec=CallbackQuery)
     cb.message = msg
@@ -66,149 +66,13 @@ async def test_set_language_verified_branch_includes_welcome_block(db_session):
     ):
         await handle_set_language(cb)
 
-    msg.edit_text.assert_awaited_once()
-    sent = msg.edit_text.call_args[0][0]
-    expected_prefix = f"{t('welcome_title', 'my')}\n\n{t('welcome_desc', 'my')}\n\n"
-    assert sent.startswith(expected_prefix)
-    # The menu account info follows the welcome block.
-    assert "အကောင့်" in sent
+    msg.delete.assert_awaited_once()
+    msg.answer.assert_awaited_once()
+    sent = msg.answer.call_args[0][0]
+    assert "Voice Clone Pro မှ ကြိုဆိုပါတယ်" in sent
 
 
-# --- B4/B5/B7: main menu keyboard -----------------------------------------
-
-
-
-def test_main_menu_buy_button_before_refer_row():
-    # Renamed in the bot-chat cleanup (2026-11-03): the locked menu
-    # order is hero → Buy → Refer & Earn → Language / Help, so Buy now
-    # sits immediately BEFORE Refer & Earn.
-    for lang, label in (("my", "💎 မိနစ် / Plan ဝယ်မည်"), ("en", "💎 Buy Minutes / Plans")):
-        kb = main_menu_kb(is_admin=False, lang=lang)
-        flat = _flat(kb)
-        buy = [b for b in flat if b.callback_data == "menu:buy_minutes"]
-        assert len(buy) == 1
-        assert buy[0].text == label
-        datas = [b.callback_data for b in flat]
-        assert datas.index("menu:buy_minutes") == datas.index("menu:refer_earn") - 1
-
-
-
-
-
-
-# --- BUG: recap_credits 0 vs None ------------------------------------------
-
-@pytest.mark.asyncio
-async def test_recap_credits_zero_renders_zero(db_session):
-    user_id = 730001002
-    user, _ = await get_or_create_user(db_session, telegram_id=user_id)
-    user.recap_credits = 0
-    await db_session.flush()
-    text, _kb = await render_main_menu(user_id, session=db_session)
-    assert "<b>0 Credits</b>" in text
-    assert "<b>3 Credits</b>" not in text
-
-
-@pytest.mark.asyncio
-async def test_recap_credits_none_falls_back_to_default(db_session):
-    stub_user = SimpleNamespace(
-        account_category="FREE", language_code="en", recap_credits=None
-    )
-    # Batch AW: the menu reads the clone-spendable figure and the
-    # referral (TTS) bucket separately — the stub carries both.
-    stub_balance = SimpleNamespace(
-        total_usable_minutes=1.0, purchased_minutes=0.0,
-        clone_spendable_minutes=1.0, referral_seconds=0,
-    )
-    with patch(
-        "app.handlers.menu.get_or_create_user",
-        new=AsyncMock(return_value=(stub_user, False)),
-    ), patch(
-        "app.handlers.menu.grant_monthly_free_allowance", new=AsyncMock()
-    ), patch(
-        "app.handlers.menu.get_minute_balance",
-        new=AsyncMock(return_value=stub_balance),
-    ):
-        text, _kb = await render_main_menu(730001003, lang="en", session=db_session)
-    assert "<b>3 credits</b>" in text
-
-
-# --- Batch 4: help guide -----------------------------------------------------
-
-@pytest.mark.parametrize(
-    "lang,markers",
-    [
-        (
-            "my",
-            [
-                "<b>၂။ Movie Recap (Mini App)</b>",
-                "<b>၃။ Media Downloader (Mini App)</b>",
-                "<b>၄။ လက်ကျန်မိနစ်နှင့် အကောင့်အဆင့်များ</b>",
-                "<b>၅။ TTS အသံ အခမဲ့ ရယူနည်း (Refer & Earn)</b>",
-                "<b>၆။ ဘာသာစကား (Language)</b>",
-                "• ဖန်တီးထားသော ဖိုင်များကို မှတ်တမ်း (History) မှာ 24 နာရီအထိ ပြန်ဒေါင်းနိုင်ပါတယ်။",
-                "• 🚀 <b>Studio ဖွင့်မည်</b> ခလုတ်မှ Voice Tab ကို ဖွင့်ပါ (သို့မဟုတ် ဒီ Chat ထဲမှာပဲ စာသား ပို့လည်း ရပါတယ်)။",
-                "1 Recap Credit = Final Output 1 မိနစ်",
-            ],
-        ),
-        (
-            "en",
-            [
-                "<b>2. Movie Recap (Mini App)</b>",
-                "<b>3. Media Downloader (Mini App)</b>",
-                "<b>4. Balances & Tiers</b>",
-                "<b>5. Free TTS Audio (Refer & Earn)</b>",
-                "<b>6. Language</b>",
-                "• Your creations stay downloadable from History for 24 hours.",
-                "• 🚀 Open the Voice tab from <b>Launch Studio</b> (or just send your text right here in this chat).",
-                "1 Recap Credit = 1 Minute Final Recap Output",
-            ],
-        ),
-    ],
-)
-def test_help_guide_new_sections_and_formatting(lang, markers):
-    raw = t("help_settings_guide", lang)
-    # R40: the retention line is dynamic ({retention_hours} since
-    # Batch X — the 24-hour window, a setting) — its marker is only
-    # meaningful in the rendered text below.
-    dynamic = ("ပြန်ဒေါင်းနိုင်ပါတယ်", "stay downloadable")
-    for m in markers:
-        if any(d in m for d in dynamic):
-            continue
-        assert m in raw
-    # All live placeholders still format without error / leftovers.
-    rendered = t(
-        "help_settings_guide",
-        lang,
-        free_min="5",
-        free_sec=300,
-        char_free="1,000",
-        char_purchased="5,000",
-        # Batch BX: the guide's placeholders are the voice/TTS daily
-        # minute caps + the FREE recap length (the legacy daily_limit
-        # job-count placeholder left the guide entirely).
-        # Batch BZ: the FREE voice day is a pre-built clause now.
-        voice_daily_free_clause=", up to <b>5 minutes</b> of Voice Clone per day",
-        voice_daily_paid=30,
-        tts_daily_free=15,
-        tts_daily_paid=60,
-        recap_free_min=2,
-        vip_recap_min=10,
-        retention_hours=24,
-        referral_seconds=120,
-        referral_cap_min=40,
-    )
-    assert "{free_min}" not in rendered
-    assert "{char_free}" not in rendered
-    assert "{voice_daily_free_clause}" not in rendered
-    assert "{retention_hours}" not in rendered
-    assert "{vip_recap_min}" not in rendered
-    assert "{referral_seconds}" not in rendered
-    for m in markers:
-        assert m in rendered
-
-
-# --- Batch 5: sample alerts + cvr + queue failure map ------------------------
+# --- Batch 5: sample alerts + cvr + tts queue copy (Round 13 Part K retired bot clone/help/buy menu) ---
 
 def test_sample_alert_keys_both_locales():
     assert t("sample_invalid_request", "my") == "နမူနာ တောင်းဆိုမှု မမှန်ပါ"
@@ -222,35 +86,6 @@ def test_sample_alert_keys_both_locales():
 def test_cvr_limit_reached_new_text():
     assert t("cvr_limit_reached", "my") == "❌ Custom Voice တောင်းဆိုမှု ကန့်သတ်ချက် ပြည့်သွားပါပြီ — နောက်မှ ပြန်ကြိုးစားပါ"
     assert t("cvr_limit_reached", "en") == "❌ Custom Voice request limit reached — please try again later"
-
-
-_REASONS = [
-    "MODEL_NOT_AUTHORIZED",
-    "LEGACY_MODEL_ENGINE_REMOVED",
-    "CONCURRENT_JOB_LIMIT_EXCEEDED",
-    "DAILY_JOB_LIMIT_EXCEEDED",
-    "INSUFFICIENT_BALANCE",
-    "TEXT_EXCEEDS_CHARACTER_LIMIT",
-    "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT",
-    "AUDIO_FILE_NOT_FOUND",
-    "SOME_UNKNOWN_REASON_XYZ",
-    None,
-    "",
-]
-
-
-@pytest.mark.parametrize("lang", ["my", "en"])
-def test_queue_failure_mapping_never_leaks_raw_code(lang):
-    for reason in _REASONS:
-        msg = voice_queue_failure_message(reason, lang)
-        assert msg
-        if reason:
-            assert reason not in msg
-    # Known reasons resolve to the webapp-mirrored Burmese messages.
-    assert voice_queue_failure_message("INSUFFICIENT_BALANCE", "my") == "လက်ကျန်မိနစ် မလုံလောက်ပါ။"
-    assert voice_queue_failure_message("AUDIO_FILE_NOT_FOUND", "my") == "အသံဖိုင် မတွေ့ရှိပါ။"
-    # Unknown reasons get the generic message.
-    assert voice_queue_failure_message("WHATEVER", "my") == voice_queue_failure_message(None, "my")
 
 
 def test_tts_queue_failed_key_has_no_reason_placeholder():

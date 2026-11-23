@@ -153,7 +153,7 @@ PAYLOAD_KEYS = [
     "sub_font_size", "sub_font", "sub_lines", "include_logo", "logo_pos",
     "logo_scale", "logo_opacity",
     "duration_seconds", "script_review", "source_language",
-    "render_quality", "tts_engine", "gemini_voice",
+    "render_quality", "tts_engine", "gemini_voice", "edge_voice",
     # Batch BV deliberate pin update: the own-voice sample handle
     # rides the submit payload as voice_ref_id.
     "voice_ref_id",
@@ -163,7 +163,7 @@ PAYLOAD_KEYS = [
 
 NEW_I18N_KEYS = [
     "recap_step_nav_preview", "recap_step_nav_voice", "recap_step4_title",
-    "recap_step_word", "recap_lang_more_label",
+    "recap_step_word",
     "recap_fine_title", "recap_step_continue", "recap_summary_no_source",
     "recap_step4_quote_label", "recap_subtitle_group_title",
     "recap_blur_group_title",
@@ -179,8 +179,21 @@ def _step_slice(n: int, end: int | None = None) -> str:
 
 # ── Inventory: nothing lost, removals are exactly the documented set ──
 
+# Deliberately retired after Batch AV:
+# - recap-lang-more (Round 13: source_language auto)
+# - recap-unverified-warning (Part C: strict Step 1 URL gate)
+# - carousel-dots / btn-carousel-prev / btn-carousel-next (Round 13 single-slide notice)
+_POST_AV_RETIRED = {
+    "recap-lang-more",
+    "recap-unverified-warning",
+    "carousel-dots",
+    "btn-carousel-prev",
+    "btn-carousel-next",
+}
+
+
 def test_av_every_surviving_control_id_still_exists():
-    missing = [i for i in SURVIVING_IDS if f'id="{i}"' not in TAB]
+    missing = [i for i in SURVIVING_IDS if i not in _POST_AV_RETIRED and f'id="{i}"' not in TAB]
     assert missing == [], f"controls lost in the AV restructure: {missing}"
 
 
@@ -196,7 +209,8 @@ def test_av_no_duplicate_ids_in_tab():
 
 
 def test_av_submit_payload_keys_unchanged():
-    i = APP_JS.index("const payload = {")
+    fn_start = APP_JS.index("function buildRecapConfig(")
+    i = APP_JS.index("return {", fn_start)
     depth, j = 0, i
     while True:
         c = APP_JS[j]
@@ -288,17 +302,14 @@ def test_av_step3_holds_voice_speed_language_script_review():
     step3 = _step_slice(3)
     for marker in ('id="recap-engine-picker"', 'id="recap-persona-area"',
                    'id="story-style-picker-quick"', 'id="recap-speed-picker"',
-                   # AZ-11: the language control in Step 3 is the one
-                   # compact dropdown (the pill group is retired).
-                   'id="recap-lang-more"', 'id="recap-script-review-toggle"'):
+                   'id="recap-script-review-toggle"'):
         assert marker in step3, marker
 
 
 def test_av_step4_holds_quote_quality_split_and_cta():
     step4 = _step_slice(4)
     for marker in ('id="recap-step4-thumb"', 'id="recap-step4-quote-credits"',
-                   'id="recap-quality-picker"',
-                   'id="btn-start-recap"', 'id="recap-unverified-warning"'):
+                   'id="recap-quality-picker"', 'id="btn-start-recap"'):
         assert marker in step4, marker
     # The large quote is fed by the same function that paints the CTA.
     assert APP_JS.count("setRecapStep4Quote(") >= 3
@@ -377,6 +388,5 @@ def test_av_touch_targets_and_text_fit_guards():
 
 
 def test_av_cache_token_bumped():
-    # Token swept per batch: r69 (AV) → r70 (AX) → r71 (AY) → r72 (AZ) → r73 (AW) → r74 (BA) → r75 (BB) → r76 (BF) → r77 (BC) → r78 (BG) → r79 (BE) → r80 (BD) → r81 (BH) → r82 (BI) → r83 (BJ) → r84 (BK) → r85 (BM) → r86 (BN) → r87 (BO) → r88 (BP) → r89 (BR) → r90 (BS) → r91 (BT) → r92 (BU) → r93 (BV) → r94 (BW) → r95 (BX) → r96 (BY) → r97 (BZ) → r98 (CA) → r99 (CB) → r100 (CF) → r101 (CC) → r102 (CD) → r103 (CE) → r104 (CG) → r105 (CH) → r106 (CI) → r107 (CJ) → r108 (CK) → r109 (CL) → r110 (CN) → r111 (CO).
-    assert INDEX_HTML.count("r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "r70" not in INDEX_HTML

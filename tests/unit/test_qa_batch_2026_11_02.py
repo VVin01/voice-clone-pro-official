@@ -48,7 +48,7 @@ ADMIN_ID = 999001
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_qa1():
-    assert HTML.count("?v=20261118_r164") == 4
+    assert HTML.count("?v=20261123_followup1") == 5
     assert "20261102_tb1" not in HTML
 
 
@@ -122,18 +122,14 @@ def test_q2_network_error_classifier():
 
 
 def test_q2_guarded_branch_precedes_generic_toast():
+    # Part C strict URL gate replaced the shallow unverified-card fallback in btnAnalyze:
+    # failed checks reset verification, render #recap-url-error-card, and never fabricate
+    # metadata_verified: false or unlock Steps 2/3.
     handler = _js_slice('btnAnalyze.addEventListener("click"',
                         'urlInput.addEventListener("input"')
-    guard = "} else if (isNetworkLevelError(err) && recapHasSource()) {"
-    assert guard in handler
-    # The specific branches stay ahead of the guard…
-    assert handler.index('msg.includes("Douyin")') < handler.index(guard)
-    assert handler.index("blockedLinkInfo(msg).blocked") < handler.index(guard)
-    # …and the generic toast still exists AFTER it (failures with no
-    # preview on the canvas must keep toasting honestly).
-    assert handler.index(guard) < handler.index("showErrorToast(err, 'generic');")
-    # The catch still paints the honest unverified info card.
-    assert "metadata_verified: false" in handler
+    assert "resetRecapUrlVerification({ clearInfo: true, hideError: false });" in handler
+    assert "showRecapUrlError();" in handler
+    assert "metadata_verified: false" not in handler
 
 
 # ── F4: /admin/users honours `search` ───────────────────────────────

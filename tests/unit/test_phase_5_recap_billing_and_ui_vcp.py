@@ -671,13 +671,16 @@ async def test_p5_tier_matrix_free_persona_vs_own_clone_and_gemini_edge_credit_o
     assert r_persona["remaining_credits"] == pytest.approx(1.75, abs=0.01)
     assert r_persona["remaining_voice_seconds"] == 75
 
-    # 2) FREE user attempting Own Clone Voice -> _clamp_recap_voice_ref strips it cleanly to persona-only
+    # 2) Round 13 E3 unlocked Own Clone Voice for ALL users, so a missing/forged voice_ref_id
+    # reaches _resolve_recap_voice_ref and is rejected cleanly with HTTP 404 before any charge.
+    from fastapi import HTTPException
+
     forged_req = _req(tts_engine="voxcpm", duration_seconds=60, voice_ref_id="webapp_ref_u881010_abcdef012345")
     async with maker() as db:
         fu = (await db.execute(select(User).where(User.id == free_uid))).scalar_one()
-        r_own = await api_mod.create_recap_job(forged_req, user=fu, db=db, _gate=fu)
-    assert forged_req.voice_ref_id is None
-    assert api_mod.RECAP_JOBS_REGISTRY[r_own["recap_id"]]["voice_ref_used"] is False
+        with pytest.raises(HTTPException) as exc_forged:
+            await api_mod.create_recap_job(forged_req, user=fu, db=db, _gate=fu)
+    assert exc_forged.value.status_code == 404
 
     # 3) Gemini & Edge paths with ZERO voice minutes -> credit_only succeeds, 0 minutes touched!
     # Two 90s outputs require 3.00 Recap Credits total (1.50 each).
@@ -1046,18 +1049,10 @@ async def test_part_c_cross_type_concurrent_submit_and_script_ready_cancel_vs_ex
 
 def test_p5_frontend_steps_3_4_and_option_b_controls_present():
     # Cache token pinned
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
 
-    # Step 3 controls & badges (Round 12 C3: billing badge removed; hint moved into collapsed details)
-    for eid in (
-        "recap-engine-billing-details",
-        "recap-engine-billing-hint",
-        "recap-own-voice-vip-tag",
-        "btn-recap-own-voice-vip",
-        "btn-open-recap-lang-sheet",
-        "recap-lang-sheet-backdrop",
-        "recap-lang-sheet-grid",
-    ):
+    # Step 3 controls (Round 13 retired billing-details collapsible, own-voice VIP tag, and language sheet).
+    for eid in ("recap-engine-picker", "recap-own-voice-card", "recap-persona-select"):
         assert f'id="{eid}"' in INDEX_HTML, eid
     assert 'id="recap-voice-billing-badge"' not in INDEX_HTML
 
@@ -1090,7 +1085,6 @@ def test_p5_frontend_steps_3_4_and_option_b_controls_present():
     # JS handlers wired cleanly
     for fn in (
         "switchRecapTtsEngine",
-        "openRecapLangSheet",
         "closeRecapLangSheet",
         "paintRecapDualQuote",
         "INSUFFICIENT_VOICE_MINUTES",
@@ -1111,18 +1105,13 @@ def test_p5_frontend_steps_3_4_and_option_b_controls_present():
 
 
 def test_p5_all_new_i18n_keys_complete_in_my_en_and_html_inline_matches():
+    # Round 13 retired recap_engine_hint_*, recap_own_voice_vip_cta, and recap_lang_sheet_* keys.
     keys = [
         "unit_min_short",
         "unit_credit_short",
-        "recap_engine_hint_voxcpm",
-        "recap_engine_hint_gemini",
-        "recap_engine_hint_edge",
         "recap_badge_credit_plus_min",
         "recap_badge_credit_only",
         "recap_badge_vip_only",
-        "recap_own_voice_vip_cta",
-        "recap_lang_sheet_btn",
-        "recap_lang_sheet_title",
         "recap_step4_credit_math",
         "recap_step4_credit_admin",
         "recap_step4_voice_label",

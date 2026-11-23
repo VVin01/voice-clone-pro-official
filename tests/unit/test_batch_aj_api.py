@@ -327,13 +327,12 @@ async def test_batch_aj_m5_recap_adjust_writes_ledger_and_reports_clamped_delta(
 
 
 def test_batch_aj_m6_money_settings_are_bounded():
-    """Unfixed: free_monthly_allowance_seconds = -1 passed validation
-    and was stored, wrapping the free allowance to an absurd value;
-    the recap duration settings were likewise unbounded."""
+    """Money & duration settings must stay bounded (Part G replaced retired
+    free_monthly_allowance_seconds / free_daily_job_limit with live free_daily_allowance_seconds)."""
     for payload in (
-        {"free_monthly_allowance_seconds": -1},
-        {"free_monthly_allowance_seconds": 10**12},
-        {"free_daily_job_limit": -5},
+        {"free_daily_allowance_seconds": -1},
+        {"free_daily_allowance_seconds": 10**12},
+        {"tts_daily_limit_minutes_free": -5},
         {"recap_max_duration_seconds": 0},
         {"recap_free_max_duration_seconds": -60},
     ):
@@ -341,9 +340,9 @@ def test_batch_aj_m6_money_settings_are_bounded():
             api_mod._validate_admin_settings_updates(payload)
     # Sane values still validate.
     out = api_mod._validate_admin_settings_updates(
-        {"free_monthly_allowance_seconds": 180, "recap_max_duration_seconds": 600}
+        {"free_daily_allowance_seconds": 180, "recap_max_duration_seconds": 600}
     )
-    assert out["free_monthly_allowance_seconds"] == 180
+    assert out["free_daily_allowance_seconds"] == 180
 
 
 # ── M2: Mini App broadcast — records, honesty, plain text ────────────

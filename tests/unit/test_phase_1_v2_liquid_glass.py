@@ -43,7 +43,7 @@ def test_v2_phase1_asset_weight_under_15_percent_cap():
 
 
 def test_v2_phase1_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -144,6 +144,19 @@ _RETIRED_VIP_STATIC_IDS = {
     "recap-split-minutes-wrap", "recap-split-note", "recap-split-toggle",
     "recap-sub-font-custom-row", "recap-voice-billing-badge",
     "sub-font-custom-status",
+    # Post-combined follow-up (2026-11-23):
+    # - Part C: recap-unverified-warning replaced by strict Step 1 URL gate error card
+    # - Part E: AI thumbnail card/controls removed end-to-end
+    # - Part G: 7 dead/duplicate Admin settings controls & tutorial recap title removed
+    "recap-unverified-warning",
+    "adm-ai-thumbnail-card", "adm-set-thumb-cap", "adm-set-thumb-model",
+    "adm-set-thumb-prompt", "adm-thumb-status-badge", "adm-thumb-usage-box",
+    "adm-thumb-usage-stats", "adm-thumb-usage-title", "btn-recap-ai-thumbnail",
+    "btn-recap-dl-thumbnail", "btn-save-ai-thumbnail-settings", "recap-ai-thumbnail-box",
+    "recap-thumb-headline-input", "recap-thumb-preview-img", "recap-thumb-status-note",
+    "adm-set-daily-job-limit", "adm-set-group-ai", "adm-set-tiered-pricing",
+    "adm-set-tutorial-video-enabled", "adm-set-voice-daily-free",
+    "adm-set-voice-daily-paid", "adm-tut-recap-title",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",
@@ -164,6 +177,11 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "applyRecapMasterPreset('yt_16_9')",
     "saveCurrentAsMyRecapPreset()",
     "toggleRecapCropDetail()",
+    # Post-combined follow-up (2026-11-23 Parts D, E, G)
+    "previewSelectedGeminiVoice()",
+    "generateRecapAiThumbnail()",
+    "saveAiThumbnailSettings()",
+    "filterAdminPricing('topup')",
 }
 
 

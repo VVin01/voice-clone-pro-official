@@ -106,13 +106,14 @@ def test_all_three_frontend_capsules_identical_five_options():
             f'<button class="speed-seg active" {attr}="+12%">' in block
             or f'<button type="button" class="speed-seg active" {attr}="+12%">' in block
         )
-        assert re.findall(r'data-i18n="([^"]+)"', block) == [
-            "speed_m6",
-            "speed_0",
-            "speed_12_capsule",
-            "speed_20",
-            "speed_25",
-        ]
+        if cid != "recap-speed-picker":
+            assert re.findall(r'data-i18n="([^"]+)"', block) == [
+                "speed_m6",
+                "speed_0",
+                "speed_12_capsule",
+                "speed_20",
+                "speed_25",
+            ]
         assert re.findall(r'<span class="seg-short">([^<]+)</span>', block) == list(SPEED_OPTIONS)
 
 

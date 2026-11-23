@@ -13,7 +13,7 @@ PASS_CSS = STYLE_CSS.split(PASS_MARKER, 1)[1].split("VCP UI REBUILD V2", 1)[0]
 
 
 def test_cache_token_bumped_to_r142():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "_r141" not in INDEX_HTML
 
 
@@ -27,17 +27,16 @@ def test_a1_welcome_strip_wraps_and_respects_hidden():
 
 
 def test_a2_recent_projects_light_glass_and_full_width_name():
-    assert ".home-recent-row" in PASS_CSS
-    assert "-webkit-line-clamp: 2 !important;" in PASS_CSS
-    assert 'class="home-recent-footer"' in APP_JS
-    assert 'data-job-kind="${kind}"' in APP_JS
+    # Round 13 retired #home-recent-projects-card from Home (History tab carries recent jobs);
+    # the Home TTS tile & glass styling stay active.
+    assert 'id="home-recent-projects-card"' not in INDEX_HTML
     assert "#tab-home .home-tile-tts" in PASS_CSS
 
 
 def test_a3_see_all_chip_never_wraps():
-    see_all_block = PASS_CSS.split("#home-recent-see-all {", 1)[1].split("}", 1)[0]
-    assert "white-space: nowrap !important;" in see_all_block
-    assert "flex: 0 0 auto !important;" in see_all_block
+    # Round 13 retired #home-recent-see-all alongside #home-recent-projects-card.
+    assert 'id="home-recent-see-all"' not in INDEX_HTML
+    assert 'id="home-help-entry-card"' in INDEX_HTML
 
 
 def test_a4_free_today_rows_align_with_first_line():
@@ -60,7 +59,8 @@ def test_a5_vip_current_plan_units_use_i18n():
 def test_a6_help_entry_header_and_accordion_rhythm():
     assert 'class="home-help-entry-head"' in INDEX_HTML
     assert "#tab-home .home-help-entry-head" in PASS_CSS
-    assert "#tab-home #home-tutorials-card .home-tut-head" in PASS_CSS
+    # Round 13 retired #home-tutorials-card in favor of the dedicated Help Hub entry button.
+    assert 'id="btn-home-help-hub"' in INDEX_HTML
 
 
 def test_b1_header_brand_gradient_covers_lite_mode():

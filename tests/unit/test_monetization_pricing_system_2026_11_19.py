@@ -81,42 +81,27 @@ def _make_png_bytes(color=(12, 120, 210)) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_1_official_22_packages_and_api_vip_plans(db_session: AsyncSession):
+async def test_1_official_10_packages_and_api_vip_plans(db_session: AsyncSession):
+    # Pricing v3 (2026-11-23): 10 plans across 3 categories (combo, voice, recap); topup retired.
     plans = await get_active_pricing_plans(db_session)
-    assert len(plans) == 22
+    assert len(plans) == 10
     by_code = {p.code: p for p in plans}
 
-    # Voice Clone Minutes (5)
-    assert by_code["voice_mini"].minutes == 10 and by_code["voice_mini"].price_mmk == 3000
-    assert by_code["voice_starter"].minutes == 20 and by_code["voice_starter"].price_mmk == 5000
-    assert by_code["voice_creator"].minutes == 45 and by_code["voice_creator"].price_mmk == 10000
-    assert by_code["voice_creator"].badge == "popular"
-    assert by_code["voice_pro"].minutes == 100 and by_code["voice_pro"].price_mmk == 20000
-    assert by_code["voice_business"].minutes == 220 and by_code["voice_business"].price_mmk == 40000
+    # Combo Packages (4)
+    assert by_code["pkg_starter"].minutes == 100 and by_code["pkg_starter"].recap_credits == 15 and by_code["pkg_starter"].price_mmk == 14900
+    assert by_code["pkg_creator"].minutes == 200 and by_code["pkg_creator"].recap_credits == 30 and by_code["pkg_creator"].price_mmk == 28500
+    assert by_code["pkg_pro"].minutes == 500 and by_code["pkg_pro"].recap_credits == 60 and by_code["pkg_pro"].price_mmk == 54900
+    assert by_code["pkg_business"].minutes == 1000 and by_code["pkg_business"].recap_credits == 180 and by_code["pkg_business"].price_mmk == 114900
 
-    # Recap Credits (5)
-    assert by_code["recap_mini"].recap_credits == 15 and by_code["recap_mini"].price_mmk == 6000
-    assert by_code["recap_starter"].recap_credits == 30 and by_code["recap_starter"].price_mmk == 10000
-    assert by_code["recap_creator"].recap_credits == 70 and by_code["recap_creator"].price_mmk == 20000
-    assert by_code["recap_pro"].recap_credits == 160 and by_code["recap_pro"].price_mmk == 40000
-    assert by_code["recap_business"].recap_credits == 350 and by_code["recap_business"].price_mmk == 80000
+    # Voice Clone Minutes (3)
+    assert by_code["voice_200"].minutes == 200 and by_code["voice_200"].price_mmk == 19800
+    assert by_code["voice_500"].minutes == 500 and by_code["voice_500"].price_mmk == 39500
+    assert by_code["voice_1000"].minutes == 1200 and by_code["voice_1000"].price_mmk == 79200
 
-    # Combo Packages (5)
-    assert by_code["combo_mini"].recap_credits == 15 and by_code["combo_mini"].minutes == 10 and by_code["combo_mini"].price_mmk == 8100
-    assert by_code["combo_starter"].recap_credits == 30 and by_code["combo_starter"].minutes == 20 and by_code["combo_starter"].price_mmk == 13500
-    assert by_code["combo_creator"].recap_credits == 70 and by_code["combo_creator"].minutes == 45 and by_code["combo_creator"].price_mmk == 27000
-    assert by_code["combo_creator"].badge == "best_value"
-    assert by_code["combo_pro"].recap_credits == 160 and by_code["combo_pro"].minutes == 100 and by_code["combo_pro"].price_mmk == 54000
-    assert by_code["combo_business"].recap_credits == 350 and by_code["combo_business"].minutes == 220 and by_code["combo_business"].price_mmk == 108000
-
-    # Top-up Packages (7)
-    assert by_code["topup_voice_10"].is_topup and by_code["topup_voice_10"].minutes == 10 and by_code["topup_voice_10"].price_mmk == 2500
-    assert by_code["topup_voice_30"].minutes == 30 and by_code["topup_voice_30"].price_mmk == 6000
-    assert by_code["topup_voice_60"].minutes == 60 and by_code["topup_voice_60"].price_mmk == 11000
-    assert by_code["topup_recap_5"].is_topup and by_code["topup_recap_5"].recap_credits == 5 and by_code["topup_recap_5"].price_mmk == 3000
-    assert by_code["topup_recap_15"].recap_credits == 15 and by_code["topup_recap_15"].price_mmk == 8000
-    assert by_code["topup_recap_30"].recap_credits == 30 and by_code["topup_recap_30"].price_mmk == 14000
-    assert by_code["topup_recap_60"].recap_credits == 60 and by_code["topup_recap_60"].price_mmk == 26000
+    # Recap Credits (3)
+    assert by_code["recap_30"].recap_credits == 30 and by_code["recap_30"].price_mmk == 13500
+    assert by_code["recap_60"].recap_credits == 60 and by_code["recap_60"].price_mmk == 25500
+    assert by_code["recap_180"].recap_credits == 180 and by_code["recap_180"].price_mmk == 68400
 
 
 @pytest.mark.asyncio
@@ -125,19 +110,20 @@ async def test_2_combo_and_topup_purchase_credits_wallets_separately(db_session:
     u.recap_credits = 0
     u.recap_credit_seconds = 0
     bal = await get_minute_balance(db_session, u.id)
+    bal.daily_free_seconds = 0
     bal.monthly_free_seconds = 0
     bal.welcome_seconds = 0
     bal.purchased_seconds = 0
     await db_session.flush()
 
     settings.admin_ids_raw = "999999"
-    # Buy Combo Starter (30 Recap Credits + 20 Voice Minutes = 1200s, 13,500 MMK)
+    # Buy Combo Starter (15 Recap Credits + 100 Voice Minutes = 6000s, 14,900 MMK)
     pr = await create_payment_request(
-        db_session, user_id=u.id, package_code="combo_starter", receipt_file_id="slip_combo_1"
+        db_session, user_id=u.id, package_code="pkg_starter", receipt_file_id="slip_combo_1"
     )
-    assert pr.amount_mmk == 13500
-    assert pr.minutes == 20
-    assert pr.recap_credits == 30
+    assert pr.amount_mmk == 14900
+    assert pr.minutes == 100
+    assert pr.recap_credits == 15
 
     ok, _, code = await approve_payment_request(db_session, pr.id, admin_id=999999)
     assert ok and code == "APPROVED"
@@ -145,30 +131,30 @@ async def test_2_combo_and_topup_purchase_credits_wallets_separately(db_session:
     await db_session.refresh(u)
     await db_session.refresh(bal)
 
-    assert u.recap_credits == pytest.approx(30.0, abs=1e-4)
-    assert u.recap_credit_seconds == 1800
-    assert bal.purchased_seconds == 1200
-    assert bal.clone_spendable_seconds == 1200
+    assert u.recap_credits == pytest.approx(15.0, abs=1e-4)
+    assert u.recap_credit_seconds == 900
+    assert bal.purchased_seconds == 6000
+    assert bal.clone_spendable_seconds == 6000
 
-    # Buy Voice Top-up 10 mins (2,500 MMK) -> only voice wallet grows
+    # Buy Voice 200 mins (19,800 MMK) -> only voice wallet grows
     pr2 = await create_payment_request(
-        db_session, user_id=u.id, package_code="topup_voice_10", receipt_file_id="slip_topup_v"
+        db_session, user_id=u.id, package_code="voice_200", receipt_file_id="slip_voice_200"
     )
     await approve_payment_request(db_session, pr2.id, admin_id=999999)
     await db_session.refresh(u)
     await db_session.refresh(bal)
-    assert bal.purchased_seconds == 1800  # 30m
-    assert u.recap_credit_seconds == 1800  # untouched
+    assert bal.purchased_seconds == 18000  # 300m
+    assert u.recap_credit_seconds == 900  # untouched
 
-    # Buy Recap Top-up 15 Credits (8,000 MMK) -> only recap wallet grows
+    # Buy Recap 30 Credits (13,500 MMK) -> only recap wallet grows
     pr3 = await create_payment_request(
-        db_session, user_id=u.id, package_code="topup_recap_15", receipt_file_id="slip_topup_r"
+        db_session, user_id=u.id, package_code="recap_30", receipt_file_id="slip_recap_30"
     )
     await approve_payment_request(db_session, pr3.id, admin_id=999999)
     await db_session.refresh(u)
     await db_session.refresh(bal)
     assert u.recap_credit_seconds == 2700  # 45 credits
-    assert bal.purchased_seconds == 1800  # untouched
+    assert bal.purchased_seconds == 18000  # untouched
 
     txs = (
         await db_session.execute(
@@ -382,11 +368,11 @@ async def test_5_admin_pricing_edit_no_retro_change_refund_and_analytics_endpoin
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # A. VIP Plans endpoint returns all 22 plans across 4 categories
+        # A. VIP Plans endpoint returns all 10 Pricing v3 plans across categories
         r_plans = await client.get("/api/vip/plans")
         assert r_plans.status_code == 200
         pdata = r_plans.json()
-        assert len(pdata["plans"]) == 22
+        assert len(pdata["plans"]) == 10
         assert [c["id"] for c in pdata["categories"]] == ["voice", "recap", "combo", "topup"]
 
         # B. Pre-job estimators
@@ -408,18 +394,18 @@ async def test_5_admin_pricing_edit_no_retro_change_refund_and_analytics_endpoin
         png1 = _make_png_bytes((10, 20, 30))
         r_slip = await client.post(
             "/api/vip/submit-slip",
-            data={"package_code": "recap_starter", "amount_mmk": "999", "payment_reference": "KPAY-TXN-7711"},
+            data={"package_code": "recap_30", "amount_mmk": "999", "payment_reference": "KPAY-TXN-7711"},
             files={"slip_file": ("slip1.png", png1, "image/png")},
         )
         assert r_slip.status_code == 200
-        # Client amount 999 ignored; plan price 10,000 MMK snapshotted!
+        # Client amount 999 ignored; plan price 13,500 MMK snapshotted!
         slip_id = r_slip.json()["request_id"]
 
         # Duplicate payment_reference blocked!
         png2 = _make_png_bytes((50, 60, 70))
         r_dup_ref = await client.post(
             "/api/vip/submit-slip",
-            data={"package_code": "recap_starter", "amount_mmk": "10000", "payment_reference": "KPAY-TXN-7711"},
+            data={"package_code": "recap_30", "amount_mmk": "13500", "payment_reference": "KPAY-TXN-7711"},
             files={"slip_file": ("slip2.png", png2, "image/png")},
         )
         assert r_dup_ref.status_code == 409
@@ -436,11 +422,11 @@ async def test_5_admin_pricing_edit_no_retro_change_refund_and_analytics_endpoin
             v_sec_before = bal_before.purchased_seconds
 
         r_edit = await client.post(
-            "/api/admin/pricing/topup_voice_10",
-            json={"price_mmk": 3200, "minutes": 12, "is_active": False},
+            "/api/admin/pricing/voice_200",
+            json={"price_mmk": 21000, "minutes": 210, "is_active": False},
         )
         assert r_edit.status_code == 200
-        assert r_edit.json()["price_mmk"] == 3200
+        assert r_edit.json()["price_mmk"] == 21000
         assert r_edit.json()["is_active"] is False
 
         # Existing wallet untouched!
@@ -454,7 +440,7 @@ async def test_5_admin_pricing_edit_no_retro_change_refund_and_analytics_endpoin
         png3 = _make_png_bytes((90, 99, 105))
         r_dis = await client.post(
             "/api/vip/submit-slip",
-            data={"package_code": "topup_voice_10", "amount_mmk": "3200"},
+            data={"package_code": "voice_200", "amount_mmk": "21000"},
             files={"slip_file": ("slip3.png", png3, "image/png")},
         )
         assert r_dis.status_code == 400
@@ -485,8 +471,8 @@ async def test_5_admin_pricing_edit_no_retro_change_refund_and_analytics_endpoin
         r_ana = await client.get("/api/admin/analytics?days=30")
         assert r_ana.status_code == 200
         ana = r_ana.json()
-        assert ana["revenue"]["total_approved_mmk"] == 10000
-        assert ana["revenue"]["top_package"]["package_code"] == "recap_starter"
+        assert ana["revenue"]["total_approved_mmk"] == 13500
+        assert ana["revenue"]["top_package"]["package_code"] == "recap_30"
         assert ana["costs"]["gemini_text_usd"] > 0
         assert ana["costs"]["telemetry_summary"]["gemini_input_tokens"] == 10000
 
@@ -497,6 +483,7 @@ async def test_5_admin_pricing_edit_no_retro_change_refund_and_analytics_endpoin
 async def test_6_http_recap_generate_and_cancel_routes(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock
     from app.db import session as session_mod
+    from app.services.downloader import MediaDownloader
     from app.webapp import api as api_mod
 
     db_file = str(tmp_path / "monetization_http.db")
@@ -516,16 +503,28 @@ async def test_6_http_recap_generate_and_cancel_routes(monkeypatch, tmp_path):
         u.recap_credits = 3.0
         u.recap_credit_seconds = 180  # 3.00 Credits
         bal = await get_minute_balance(s, u.id)
+        bal.daily_free_seconds = 0
         bal.monthly_free_seconds = 0
         bal.welcome_seconds = 0
         bal.purchased_seconds = 60  # 1.00 Voice Minute
         await s.commit()
 
-    # Stub background worker dispatch & probe/disk guards
+    # Stub background worker dispatch & probe/disk/URL-verify guards (hermetic — no network)
     monkeypatch.setattr(api_mod, "_require_disk_headroom", lambda: None)
     monkeypatch.setattr(api_mod, "_run_recap_background_job", AsyncMock())
     monkeypatch.setattr(api_mod, "_execute_recap_background_job", AsyncMock())
     monkeypatch.setattr(api_mod, "_recap_submit_eta_range", AsyncMock(return_value=[30, 90]))
+    monkeypatch.setattr(
+        MediaDownloader,
+        "get_info",
+        lambda self, url: {
+            "title": "Sub Only Test",
+            "duration": 120,
+            "webpage_url": url,
+            "extractor": "youtube",
+            "formats": [{"format_id": "18", "ext": "mp4"}],
+        },
+    )
 
     holder = {"user_id": 888999, "admin_id": 777777}
     app = _build_test_app(session_factory, holder)

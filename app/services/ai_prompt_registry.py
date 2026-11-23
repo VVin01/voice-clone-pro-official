@@ -178,12 +178,6 @@ PROMPT_REGISTRY_CATALOG: dict[str, dict[str, Any]] = {
         "model_family": "Deterministic + Structural Audit",
         "rollback_flag": "AI_PROMPT_PROFILE=v1",
     },
-    "recap_thumbnail_brain": {
-        "module": "app/services/recap_thumbnail.py",
-        "function": "call_brain_for_thumbnail",
-        "model_family": "Gemini 3.x + HF FLUX.1-schnell",
-        "rollback_flag": "AI_PROMPT_PROFILE=v1",
-    },
     "whisper_asr": {
         "module": "app/services/recap_engine/services/whisper_service.py",
         "function": "_transcribe_groq",

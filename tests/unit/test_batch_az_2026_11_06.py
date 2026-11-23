@@ -179,7 +179,6 @@ def test_az10_pill_and_chip_line_heights():
     # segments (.speed-seg); the ≥44px touch height carries over.
     assert "min-height: 44px" in _rule(".speed-seg")
     assert "body.lang-my .nav-label { line-height: 1.75; }" in AZ_CSS
-    assert "#tab-voice { padding-bottom: 72px; }" in AZ_CSS
     assert "min-height: 44px" in _rule(".welcome-strip-btn")
 
 
@@ -190,17 +189,12 @@ def test_az10_prefs_confirmation_is_a_toast_not_the_wizard_caption():
 
 # ── AZ-11: compact dropdowns ────────────────────────────────────
 
-def test_az11_language_is_one_dropdown_with_one_write_path():
+def test_az11_language_picker_retired_in_round13():
+    # Round 13 retired both #recap-lang-picker and #recap-lang-more; source_language defaults to "auto".
     assert 'id="recap-lang-picker"' not in INDEX_HTML
+    assert 'id="recap-lang-more"' not in INDEX_HTML
     assert "#recap-lang-picker" not in STYLE_CSS
-    assert "#recap-lang-picker" not in APP_JS
-    m = re.search(r'<select id="recap-lang-more"[^>]*>(.*?)</select>', TAB, re.S)
-    assert m and "glass-dropdown" in m.group(0)
-    assert len(re.findall(r"<option ", m.group(1))) == 18
-    # The single write path is identical in shape to AX's.
-    assert 'langSel.addEventListener("change", () => {' in APP_JS
-    assert "setRecapSourceLanguage(langSel.value);" in APP_JS
-    assert 'state.recapSourceLanguage = code || "auto";' in APP_JS
+    assert 'source_language: "auto"' in APP_JS
 
 
 def test_az11_subtitle_style_is_one_dropdown():
@@ -245,7 +239,6 @@ def test_az12_converted_surfaces_carry_the_keys():
     assert 'data-i18n="sub_lines_one"' in INDEX_HTML
     assert 'data-i18n="sub_lines_two"' in INDEX_HTML
     assert 'data-i18n="recap_gemini_auto"' in INDEX_HTML
-    assert 'data-i18n-title="bal_chip_voice_title"' in INDEX_HTML
     assert 'data-i18n="recap_info_ready"' in INDEX_HTML
 
 
@@ -264,5 +257,5 @@ def test_az_fallbacks_cover_the_new_layers():
 
 
 def test_az_cache_token_is_r79():
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert INDEX_HTML.count("20261123_followup1") == 5
     assert "20261104_r71" not in INDEX_HTML

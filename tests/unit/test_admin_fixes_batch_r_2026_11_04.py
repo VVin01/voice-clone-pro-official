@@ -198,19 +198,14 @@ def _func_source(rel_path: str, name: str) -> str:
     raise AssertionError(f"{name} not found in {rel_path}")
 
 
-def test_dashboard_and_payments_handlers_have_no_raw_edit_text():
-    for name in ("handle_admin_dashboard", "handle_admin_payments"):
-        body = _func_source("app/handlers/admin.py", name)
-        assert ".edit_text(" not in body, name
-        assert "safe_edit_message(" in body, name
-
-
-def test_result_card_buttons_and_safe_edit_survive():
-    src = (ROOT / "app/handlers/admin.py").read_text(encoding="utf-8")
-    # The buttons stay, wired to the same callbacks.
-    assert 'callback_data="admin:payments"' in src
-    assert 'callback_data="admin:dashboard"' in src
-    for name in ("handle_admin_pay_approve_confirm", "handle_admin_pay_reject_confirm"):
+def test_live_payment_review_handlers_use_safe_edit_not_raw_edit_text():
+    """Round 13 Part K retired bot-chat admin dashboard/payments menus; live payment
+    review confirm/detail handlers must still use safe_edit_message (never raw edit_text)."""
+    for name in (
+        "handle_admin_pay_detail",
+        "handle_admin_pay_approve_confirm",
+        "handle_admin_pay_reject_confirm",
+    ):
         body = _func_source("app/handlers/admin.py", name)
         assert "safe_edit_message(" in body, name
         assert ".edit_text(" not in body, name
@@ -219,67 +214,6 @@ def test_result_card_buttons_and_safe_edit_survive():
 def test_no_text_to_edit_error_is_suppressed_globally():
     src = (ROOT / "app/handlers/__init__.py").read_text(encoding="utf-8")
     assert '"there is no text in the message to edit"' in src
-
-
-# ── 2. Behaviour: the buttons work from the slip PHOTO card ─────────
-
-def _photo_message() -> Message:
-    return Message(
-        message_id=42,
-        date=datetime.now(timezone.utc),
-        chat=Chat(id=ADMIN_ID, type="private"),
-        from_user=TgUser(id=ADMIN_ID, is_bot=False, first_name="Boss"),
-        photo=[PhotoSize(file_id="ph", file_unique_id="phu", width=10, height=10)],
-        caption="payment slip",
-    )
-
-
-def _admin_callback(data: str, message: Message) -> MagicMock:
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=ADMIN_ID, is_bot=False, first_name="Boss")
-    cb.data = data
-    cb.message = message
-    cb.bot = AsyncMock()
-    cb.answer = AsyncMock()
-    return cb
-
-
-@pytest.mark.asyncio
-async def test_payments_button_after_last_approval_edits_photo_caption(db_session):
-    """The exact failure Ulfa hit: approve the last slip, tap
-    '💳 Payments Dashboard' on the photo result card → previously the
-    generic error popup; now the caption is edited via safe path."""
-    from app.handlers import admin as admin_handlers
-
-    settings.admin_ids_raw = str(ADMIN_ID)
-
-    @asynccontextmanager
-    async def mock_session_ctx():
-        yield db_session
-
-    cb = _admin_callback("admin:payments", _photo_message())
-    with patch.object(Message, "edit_caption", new=AsyncMock()) as edit_caption, \
-         patch.object(admin_handlers, "AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
-        await admin_handlers.handle_admin_payments(cb)
-
-    edit_caption.assert_awaited_once()
-    assert edit_caption.await_args.kwargs["caption"]  # non-empty text
-    cb.answer.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_dashboard_button_on_photo_card_edits_caption(db_session):
-    """'🛠️ Admin Dashboard' on the same photo card was silently dead
-    (raw edit_text, exception swallowed); it must now navigate."""
-    from app.handlers import admin as admin_handlers
-
-    settings.admin_ids_raw = str(ADMIN_ID)
-    cb = _admin_callback("admin:dashboard", _photo_message())
-    with patch.object(Message, "edit_caption", new=AsyncMock()) as edit_caption:
-        await admin_handlers.handle_admin_dashboard(cb, session=db_session)
-
-    edit_caption.assert_awaited_once()
-    cb.answer.assert_awaited()
 
 
 # ── Frontend wiring + cache pin ──────────────────────────────────────
@@ -315,4 +249,4 @@ def test_frontend_income_and_banned_split_wiring():
 
 def test_cache_version_r52():
     index_html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert index_html.count("?v=20261118_r164") == 4
+    assert index_html.count("?v=20261123_followup1") == 5

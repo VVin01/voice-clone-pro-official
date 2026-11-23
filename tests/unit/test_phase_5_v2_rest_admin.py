@@ -11,7 +11,7 @@ PHASE5_CSS = STYLE_CSS.split(PHASE5_MARKER, 1)[1]
 
 
 def test_v2_phase5_cache_token_current():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -46,7 +46,6 @@ def test_v2_phase5_downloader_vip_history_modals_and_dark_lite_rules():
     for sel in (
         "#tab-downloader .dl-search-card",
         "#tab-downloader .dl-formats-grid .vcp-dl-format-card.active",
-        "#tab-vip .stats-card",
         "#tab-vip .pricing-card",
         "#tab-vip #payment-box",
         "#tab-history .vcp-history-retention-bar",

@@ -396,10 +396,8 @@ def test_studio_survives_submit_pins():
     assert "scrollIntoView" not in recap_submit.replace(insuf_branch, "")
     assert "textInput.value =" not in voice_submit
     assert "urlInput.value =" not in recap_submit
-    # Slim inline status lines carry the job in the studio.
-    assert 'showStudioInlineStatus("voice"' in voice_submit
+    # Slim inline status line carries the job in Recap studio (Voice uses #voice-progress-box directly since Round 7/13).
     assert 'showStudioInlineStatus("recap"' in recap_submit
-    assert 'id="voice-inline-status"' in INDEX_HTML
     assert 'id="recap-inline-status"' in INDEX_HTML
     # (b) A second, ADJUSTED submit is possible — through the
     # duplicate-submit guard (see the guard pins below): the button
@@ -422,8 +420,8 @@ def test_studio_survives_submit_pins():
     # own button may still scroll when the user taps it — by choice).
     assert 'resultBox.classList.remove("hidden");\n                    resultBox.scrollIntoView' not in voice_poller
     assert "resultBox.scrollIntoView" not in poller
+    assert "scrollIntoView" not in poller
     assert "no scroll hijack on completion" in voice_poller
-    assert "no scroll hijack on completion" in poller
 
 
 def test_back_to_studio_pins():
@@ -528,7 +526,7 @@ def test_new_i18n_keys_in_both_languages():
 
 
 def test_cache_bump_r62():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────

@@ -538,26 +538,25 @@ async def test_batch_aj_h11_refund_uses_ledger_total(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_batch_aj_l22_grant_does_not_resurrect_consumed_seconds(db_session):
-    """Behavioural pin for the grant/consume contract (the race itself
-    needs real row locks — PostgreSQL in production; SQLite cannot
-    demonstrate FOR UPDATE). Grant for the current period, consume
-    part of it, grant again: the second grant is a period no-op and
+    """Behavioural pin for the grant/consume contract (Limits round replaced
+    monthly allowance with daily free allowance). Grant for today, consume
+    part of it, grant again: the second grant is a same-day no-op and
     the consumed seconds stay consumed."""
-    from app.services.ledger import grant_monthly_free_allowance
+    from app.services.ledger import grant_daily_free_allowance
 
     user, _ = await get_or_create_user(db_session, telegram_id=8124)
-    await grant_monthly_free_allowance(db_session, user.id)
+    await grant_daily_free_allowance(db_session, user.id)
     bal = await get_minute_balance(db_session, user.id)
-    granted = bal.monthly_free_seconds
+    granted = bal.daily_free_seconds
     assert granted > 0
     await consume_seconds(db_session, user.id, 60, job_id="job-l22")
-    await grant_monthly_free_allowance(db_session, user.id)
+    await grant_daily_free_allowance(db_session, user.id)
     bal = await get_minute_balance(db_session, user.id)
-    assert bal.monthly_free_seconds == granted - 60
+    assert bal.daily_free_seconds == granted - 60
 
 
 def test_batch_aj_l22_grant_locks_user_row():
-    """Source pin: grant_monthly_free_allowance must load the User row
+    """Source pin: grant_daily_free_allowance must load the User row
     WITH FOR UPDATE (mirroring award_welcome_bonus / consume_seconds)
     so a concurrent consume cannot be overwritten by the grant's
     stale absolute bucket write."""
@@ -565,5 +564,5 @@ def test_batch_aj_l22_grant_locks_user_row():
 
     from app.services import ledger
 
-    src = inspect.getsource(ledger.grant_monthly_free_allowance)
+    src = inspect.getsource(ledger.grant_daily_free_allowance)
     assert "with_for_update" in src

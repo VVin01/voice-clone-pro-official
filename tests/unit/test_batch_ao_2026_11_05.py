@@ -143,9 +143,12 @@ def test_band_math_boundaries(duration, expected):
 def test_switch_default_off_and_registered():
     from app.config import settings as settings_obj
     from app.services.dynamic_settings import SETTING_TYPES
+    from app.webapp.api import _tiered_recap_pricing_enabled
 
+    # Part G (2026-11-23): tiered pricing experiment retired; flat v3 pricing always governs.
     assert settings_obj.tiered_recap_pricing_enabled is False
-    assert SETTING_TYPES["tiered_recap_pricing_enabled"] is bool
+    assert "tiered_recap_pricing_enabled" not in SETTING_TYPES
+    assert _tiered_recap_pricing_enabled() is False
 
 
 # ── Segmented top-up: band replaces per-part when tiered ─────────────
@@ -601,12 +604,13 @@ def test_batch_ao_wiring_contracts():
     dyn_py = _read("app/services/dynamic_settings.py")
 
     assert "tiered_recap_pricing_enabled" in settings_py
-    assert '"tiered_recap_pricing_enabled": bool' in dyn_py
-    assert '"tiered_pricing_enabled": _tiered_recap_pricing_enabled()' in api_py
+    # Part G retired tiered_recap_pricing_enabled from dynamic_settings.py and /api/user/me emits False
+    assert '"tiered_recap_pricing_enabled": bool' not in dyn_py
+    assert '"tiered_pricing_enabled": False' in api_py
     assert "reserve_for_job(" in api_py
     assert "settle_job_reservation(" in api_py
     assert "formatRecapQuoteDuration(" in app_js
     assert "estCredits" in app_js
     assert i18n_js.count("recap_tiered_cost_estimate:") == 2
-    assert "20261118_r164" in html
+    assert "20261123_followup1" in html
     assert "20261104_r64" not in html

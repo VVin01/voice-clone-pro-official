@@ -45,8 +45,10 @@ def _patch_sessions(monkeypatch, module, db_session):
 
 
 async def _purchased(db_session, uid):
+    from app.services.ledger import credit_purchased_minutes
+
     user, _ = await get_or_create_user(db_session, telegram_id=uid)
-    user.account_category = AccountCategory.PURCHASED.value
+    await credit_purchased_minutes(db_session, user.id, minutes=10, payment_id=f"PAY-F4-{uid}")
     await db_session.commit()
     return user
 
@@ -220,22 +222,16 @@ async def test_b2s_failed_persistence_leaves_memory_untouched(db_session):
 
 @pytest.mark.asyncio
 async def test_c2_tutorial_toggle_writes_through_service(db_session, monkeypatch):
-    monkeypatch.setattr(settings, "admin_ids_raw", "888111")
-    _patch_sessions(monkeypatch, admin_mod, db_session)
+    # Bot-chat tutorial toggle retired in Round 13 Part K; Mini App writes through set_dynamic_setting.
     original = settings.tutorial_voice_enabled
     try:
-        cb = MagicMock(spec=CallbackQuery)
-        cb.from_user = TgUser(id=888111, is_bot=False, first_name="BossAdmin")
-        cb.message = MagicMock(spec=Message)
-        cb.message.edit_text = AsyncMock()
-        cb.answer = AsyncMock()
-
-        await admin_mod.handle_admin_tutorial_voice_toggle(cb)
+        await set_dynamic_setting(db_session, "tutorial_voice_enabled", False, admin_id=888111)
+        await db_session.commit()
 
         row = (await db_session.execute(
             select(BotSetting).where(BotSetting.key == "tutorial_voice_enabled")
         )).scalar_one_or_none()
-        assert row is not None and row.value == "false"  # default True → toggled off
+        assert row is not None and row.value == "false"
         # …and the in-memory value moved WITH the write (the C2 point).
         assert settings.tutorial_voice_enabled is False
     finally:

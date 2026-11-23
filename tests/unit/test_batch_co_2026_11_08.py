@@ -36,12 +36,12 @@ def test_co_more_text_carries_the_full_picture_in_both_locales():
     # Daily caps.
     assert "15 မိနစ်" in my and "60 မိနစ်" in my
     assert "15 min" in en and "60 min" in en
-    # Per-generation character limits.
-    assert "1,000" in my and "5,000" in my
-    assert "1,000 characters" in en and "5,000" in en
-    # Gemini taste + own-key effect.
-    assert "2 မိနစ်" in my and "ကိုယ်ပိုင် Key" in my
-    assert "2 min/day" in en and "your own key" in en
+    # Per-generation character limits (Limits round: 3,000 free / 15,000 VIP).
+    assert "3,000" in my and "15,000" in my
+    assert "3,000 characters" in en and "15,000" in en
+    # Gemini taste + own-key effect (Limits round: Free 2 min/day, VIP 10 min/day).
+    assert "2 မိနစ်" in my and "10 မိနစ်" in my and "ကိုယ်ပိုင် Key" in my
+    assert "2 min/day" in en and "10 min/day" in en and "your own key" in en
 
 
 def test_co_short_line_unchanged_from_cn():
@@ -55,7 +55,7 @@ def test_co_inline_default_matches_my_and_token_bumped():
     my = _values("tts_cost_hint_more")[0]
     assert f'data-i18n="tts_cost_hint_more">{my}</p>' in HTML
     assert ("20261104_" + "r110") not in HTML
-    assert HTML.count("20261118_r164") == 4
+    assert HTML.count("20261123_followup1") == 5
 
 
 def test_co_taste_note_lives_inside_the_expander():

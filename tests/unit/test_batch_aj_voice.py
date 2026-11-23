@@ -62,6 +62,7 @@ async def _make_voice_job(db_session, tmp_path, monkeypatch, *, welcome_seconds=
     # asserted from this point. Zero every bucket, then fund welcome
     # only — the assertions below track exact bucket movements.
     bal = await get_minute_balance(db_session, user.id)
+    bal.daily_free_seconds = 0
     bal.monthly_free_seconds = 0
     bal.referral_seconds = 0
     bal.purchased_seconds = 0

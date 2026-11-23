@@ -76,13 +76,13 @@ def _all_button_targets(kb):
 
 
 def test_admin_main_menu_broadcast_button_has_handler():
-    """The admin entry in the main menu must emit data a router handles."""
+    """Round 13 Part K moved Admin/Broadcast to Mini App; main_menu_kb emits only live callbacks."""
     from app.ui.keyboards import main_menu_kb
 
     kb = main_menu_kb(is_admin=True, lang="my")
     datas = [d for kind, d in _all_button_targets(kb) if kind == "callback"]
     assert "admin:broadcast_prompt" not in datas
-    assert "admin:broadcast" in datas
+    assert datas == ["menu:refer_earn", "menu:change_lang"]
 
 
 @pytest.mark.asyncio

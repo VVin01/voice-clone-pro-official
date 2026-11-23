@@ -6,7 +6,6 @@ from sqlalchemy import select
 from aiogram.types import CallbackQuery, Message, User as TgUser
 
 from app.config import settings
-from app.handlers.clone import CloneFSM, handle_clone_text_input, handle_voice_clone_start
 from app.models.enums import AccountCategory, JobStatus, LedgerDirection, LedgerSource
 from app.models.schema import AuditLog, Job, MinuteLedgerEvent, VoiceModel
 from app.services.gate import verify_user_membership
@@ -15,6 +14,7 @@ from app.services.ledger import (
     consume_seconds,
     get_minute_balance,
     get_or_create_user,
+    grant_daily_free_allowance,
     grant_monthly_free_allowance,
     refund_job_seconds,
 )
@@ -107,8 +107,10 @@ async def test_admin_zero_balance_job_creation(db_session, tmp_path):
 async def test_non_admin_zero_balance_blocked(db_session, tmp_path):
     """Normal users cannot create voice clone jobs with 0 minute balance."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID)
-    await grant_monthly_free_allowance(db_session, user.id)
+    # Limits round (2026-11-23): daily free allowance replaced monthly allowance.
+    await grant_daily_free_allowance(db_session, user.id)
     bal = await get_minute_balance(db_session, user.id)
+    bal.daily_free_seconds = 0
     bal.monthly_free_seconds = 0
     await db_session.flush()
     assert bal.total_usable_seconds == 0
@@ -140,101 +142,15 @@ async def test_non_admin_zero_balance_blocked(db_session, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_admin_voice_clone_start_handler(db_session):
-    """Admin entering Voice Studio with 0 balance is granted access and notified of exempt status."""
-    admin_user, _ = await get_or_create_user(db_session, telegram_id=ADMIN_TELEGRAM_ID)
-    admin_user.language_code = "en"
-    await db_session.flush()
-    bal = await get_minute_balance(db_session, admin_user.id)
-    assert bal.total_usable_seconds == 0
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=ADMIN_TELEGRAM_ID, is_bot=False, first_name="BossAdmin")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    state = AsyncMock()
-
-    @asynccontextmanager
-    async def mock_session():
-        yield db_session
-
-    with patch("app.handlers.clone.AsyncSessionLocal", side_effect=mock_session):
-        await handle_voice_clone_start(cb, state)
-
-    # Admin should set state to waiting for text
-    state.set_state.assert_called_once_with(CloneFSM.waiting_for_text)
-    # Edit text should have been called welcoming to enter text with admin unlimited message
-    cb.message.edit_text.assert_called_once()
-    call_args = cb.message.edit_text.call_args[0][0]
-    assert "Admin Unlimited Access" in call_args
-    assert f"{settings.infrastructure_safety_character_limit:,}" in call_args
-    cb.answer.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_non_admin_voice_clone_start_handler_blocked(db_session):
-    """Non-admin entering Voice Studio with 0 balance is blocked and prompted with alert."""
-    user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID)
-    bal = await get_minute_balance(db_session, user.id)
-    bal.monthly_free_seconds = 0
-    await db_session.flush()
-    assert bal.total_usable_seconds == 0
-
-    cb = MagicMock(spec=CallbackQuery)
-    cb.from_user = TgUser(id=NORMAL_TELEGRAM_ID, is_bot=False, first_name="NormalUser")
-    cb.message = MagicMock(spec=Message)
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    state = AsyncMock()
-
-    @asynccontextmanager
-    async def mock_session():
-        yield db_session
-
-    with patch("app.handlers.clone.AsyncSessionLocal", side_effect=mock_session):
-        await handle_voice_clone_start(cb, state)
-
-    # Normal user should NOT set state
-    state.set_state.assert_not_called()
-    cb.message.edit_text.assert_not_called()
-    cb.answer.assert_called_once()
-    assert cb.answer.call_args[1].get("show_alert") is True
-
-
-@pytest.mark.asyncio
 async def test_admin_submits_text_longer_than_purchased_limit_allowed(db_session, tmp_path, monkeypatch):
-    """Admin submitting text longer than PURCHASED limit is ALLOWED.
-
-    The current defaults set character_limit_purchased == the 5000-char
-    infrastructure safety limit, so no real text can sit between them.
-    The behaviour under test is the ADMIN EXEMPTION (admins are checked
-    only against the infrastructure limit), so this test pins the
-    purchased limit to 2000 for its own scenario via monkeypatch.
-    """
+    """Admin submitting text longer than PURCHASED limit is ALLOWED in queue service
+    (bot CloneFSM handlers were retired in Round 13 Part K)."""
     monkeypatch.setattr(settings, "character_limit_purchased", 2000)
     admin_user, _ = await get_or_create_user(db_session, telegram_id=ADMIN_TELEGRAM_ID)
-    long_text = "မြန်မာစာ" * 320  # 320 * 8 = 2560 characters, well above the 2000-char purchased limit
+    long_text = "မြန်မာစာ" * 320  # 2560 chars > 2000 purchased limit, < infrastructure safety limit
     assert len(long_text) > settings.character_limit_purchased
     assert len(long_text) < settings.infrastructure_safety_character_limit
 
-    # 1. Handler validation
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=ADMIN_TELEGRAM_ID, is_bot=False, first_name="BossAdmin")
-    msg.text = long_text
-    msg.answer = AsyncMock()
-    state = AsyncMock()
-    state.get_data.return_value = {"lang": "my", "max_chars": settings.infrastructure_safety_character_limit}
-
-    await handle_clone_text_input(msg, state)
-
-    # Admin successfully passed text validation and advanced to voice selection
-    state.update_data.assert_called_once_with(input_text=long_text)
-    state.set_state.assert_called_once_with(CloneFSM.waiting_for_voice)
-    msg.answer.assert_called_once()
-    assert "tts_text_too_long" not in msg.answer.call_args[0][0]
-
-    # 2. Queue service validation
     pth_file = tmp_path / "AdminLongModel.pth"
     pth_file.write_bytes(b"pth_content")
     model = VoiceModel(
@@ -263,30 +179,14 @@ async def test_admin_submits_text_longer_than_purchased_limit_allowed(db_session
 
 @pytest.mark.asyncio
 async def test_ordinary_purchased_user_blocked_above_purchased_limit(db_session, tmp_path):
-    """Ordinary PURCHASED user submitting text longer than 5000 chars is BLOCKED."""
+    """Ordinary PURCHASED user submitting text longer than character_limit_purchased (15,000) is BLOCKED."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID)
     user.account_category = AccountCategory.PURCHASED.value
     await db_session.flush()
 
-    long_text = "A" * 6000  # 6000 characters > current 5000-char purchased limit
+    long_text = "A" * (settings.character_limit_purchased + 100)
     assert len(long_text) > settings.character_limit_purchased
 
-    # 1. Handler validation
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=NORMAL_TELEGRAM_ID, is_bot=False, first_name="NormalPurchasedUser")
-    msg.text = long_text
-    msg.answer = AsyncMock()
-    state = AsyncMock()
-    state.get_data.return_value = {"lang": "en", "max_chars": settings.character_limit_purchased}
-
-    await handle_clone_text_input(msg, state)
-
-    # State should NOT advance to voice
-    state.set_state.assert_not_called()
-    msg.answer.assert_called_once()
-    assert "Text is too long" in msg.answer.call_args[0][0]
-
-    # 2. Queue service validation
     pth_file = tmp_path / "PurchasedModel.pth"
     pth_file.write_bytes(b"pth_content")
     model = VoiceModel(
@@ -309,34 +209,19 @@ async def test_ordinary_purchased_user_blocked_above_purchased_limit(db_session,
         model_id=model.id,
     )
     assert job is None
-    assert reason == "TEXT_EXCEEDS_CHARACTER_LIMIT"
+    assert reason in ("TEXT_EXCEEDS_CHARACTER_LIMIT", "TEXT_EXCEEDS_INFRASTRUCTURE_LIMIT")
 
 
 @pytest.mark.asyncio
 async def test_ordinary_free_user_blocked_above_free_limit(db_session, tmp_path):
-    """Ordinary FREE user submitting text longer than 1000 chars is BLOCKED."""
+    """Ordinary FREE user submitting text longer than character_limit_free (3,000) is BLOCKED."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID + 5)
     user.account_category = AccountCategory.FREE.value
     await db_session.flush()
 
-    medium_text = "B" * 1200  # 1200 characters > current 1000-char free limit
+    medium_text = "B" * (settings.character_limit_free + 200)
     assert len(medium_text) > settings.character_limit_free
 
-    # 1. Handler validation
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=user.id, is_bot=False, first_name="NormalFreeUser")
-    msg.text = medium_text
-    msg.answer = AsyncMock()
-    state = AsyncMock()
-    state.get_data.return_value = {"lang": "en", "max_chars": settings.character_limit_free}
-
-    await handle_clone_text_input(msg, state)
-
-    state.set_state.assert_not_called()
-    msg.answer.assert_called_once()
-    assert "Text is too long" in msg.answer.call_args[0][0]
-
-    # 2. Queue service validation
     pth_file = tmp_path / "FreeModel.pth"
     pth_file.write_bytes(b"pth_content")
     model = VoiceModel(
@@ -364,25 +249,10 @@ async def test_ordinary_free_user_blocked_above_free_limit(db_session, tmp_path)
 
 @pytest.mark.asyncio
 async def test_infrastructure_safety_limit_guard_blocks_excessive_payload(db_session, tmp_path):
-    """Payloads exceeding infrastructure safety limit (5000 chars) are blocked even for admins."""
+    """Payloads exceeding infrastructure safety limit are blocked even for admins."""
     admin_user, _ = await get_or_create_user(db_session, telegram_id=ADMIN_TELEGRAM_ID)
     huge_text = "X" * (settings.infrastructure_safety_character_limit + 100)
 
-    # 1. Handler check
-    msg = MagicMock(spec=Message)
-    msg.from_user = TgUser(id=ADMIN_TELEGRAM_ID, is_bot=False, first_name="BossAdmin")
-    msg.text = huge_text
-    msg.answer = AsyncMock()
-    state = AsyncMock()
-    state.get_data.return_value = {"lang": "en", "max_chars": settings.infrastructure_safety_character_limit}
-
-    await handle_clone_text_input(msg, state)
-
-    state.set_state.assert_not_called()
-    msg.answer.assert_called_once()
-    assert "infrastructure safety limit" in msg.answer.call_args[0][0]
-
-    # 2. Queue service check
     pth_file = tmp_path / "SafetyModel.pth"
     pth_file.write_bytes(b"pth_content")
     model = VoiceModel(
@@ -586,14 +456,15 @@ async def test_identity_spoofing_prevention(db_session):
 
 @pytest.mark.asyncio
 async def test_normal_user_regression(db_session, tmp_path):
-    """Verify normal user behavior is strictly preserved (welcome bonus, deduction, ledger)."""
+    """Verify normal user behavior is strictly preserved (welcome bonus, daily free deduction, ledger)."""
     user, _ = await get_or_create_user(db_session, telegram_id=NORMAL_TELEGRAM_ID + 99)
     awarded, bal = await award_welcome_bonus(db_session, user.id)
     assert awarded is True
     assert bal.welcome_seconds == 300
-    await grant_monthly_free_allowance(db_session, user.id)
+    # Limits round (2026-11-23): daily free allowance (180s) replaced monthly free allowance.
+    await grant_daily_free_allowance(db_session, user.id)
     bal = await get_minute_balance(db_session, user.id)
-    assert bal.monthly_free_seconds == 180
+    assert bal.daily_free_seconds == 180
     assert bal.total_usable_seconds == 480
 
     pth_file = tmp_path / "ModelReg.pth"
@@ -643,13 +514,13 @@ async def test_normal_user_regression(db_session, tmp_path):
         success = await process_single_job(session=db_session, job=job)
         assert success is True
 
-    # User balance debited (monthly free deducted first)
+    # User balance debited (daily free deducted first under Limits round)
     bal_after = await get_minute_balance(db_session, user.id)
     assert bal_after.welcome_seconds == 300
-    assert bal_after.monthly_free_seconds == 168  # 180 - 12 = 168
+    assert bal_after.daily_free_seconds == 168  # 180 - 12 = 168
     assert bal_after.total_usable_seconds == 468
 
-    # Ledger events created: MONTHLY_FREE credit, WELCOME credit, MONTHLY_FREE debit
+    # Ledger events created: DAILY_FREE credit, WELCOME credit, DAILY_FREE debit
     events = (
         await db_session.execute(
             select(MinuteLedgerEvent).where(MinuteLedgerEvent.user_id == user.id)
@@ -658,7 +529,7 @@ async def test_normal_user_regression(db_session, tmp_path):
     assert len(events) == 3
     debit_events = [e for e in events if e.direction == LedgerDirection.DEBIT.value]
     assert len(debit_events) == 1
-    assert debit_events[0].source == LedgerSource.MONTHLY_FREE.value
+    assert debit_events[0].source == LedgerSource.DAILY_FREE.value
     assert debit_events[0].seconds == 12
 
     # Normal user must NOT have any admin audit logs

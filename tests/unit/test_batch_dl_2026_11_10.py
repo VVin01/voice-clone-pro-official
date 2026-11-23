@@ -17,18 +17,18 @@ paths (group + private) carry it because they share the one builder.
 from app.services import group_ai_admin as gai
 from app.services import private_ai as pai
 
+# Round 13 E3 + Part H: Persona & Own Voice (Custom Voice Clone) Recap is unlocked for ALL users (Free + VIP).
 APPROVED_LINE = (
-    "• Recap ပြောပြသူ အသံ: Plan ဝယ်ထားသူတွေက Persona အသံ ၁၂ မျိုးတင် မကဘဲ "
-    "ကိုယ်တိုင် Clone လုပ်ထားတဲ့ ကိုယ်ပိုင် အသံနဲ့ပါ Recap ကို ပြောခိုင်းလို့ ရပါတယ် — "
-    "Persona / Custom Voice Clone (VoxCPM) သုံးရင် Voice Audio Duration အတိုင်း Voice Clone မိနစ်ကို သီးခြားဖြတ်ပြီး "
-    "Normal AI Voice (Gemini/Edge) နဲ့ Subtitle-Only မှာ Voice Clone မိနစ် မဖြတ်ပါဘူး။ "
-    "Free အကောင့်ကတော့ Gemini / Edge / Subtitle-Only နဲ့ပဲ သုံးနိုင်ပါတယ်။"
+    "• Recap ပြောပြသူ အသံ: Persona အသံ ၁၂ မျိုးနှင့် ကိုယ်ပိုင်အသံ (Custom Voice Clone) "
+    "နှစ်မျိုးလုံးကို User အားလုံး (Free ရော VIP ရော) သုံးနိုင်ပါတယ် — "
+    "Voice Clone (VoxCPM) သုံးရင် Recap Credit + Voice Clone မိနစ် နှစ်မျိုးလုံးဖြတ်ပြီး "
+    "Gemini/Edge နဲ့ Subtitle-Only မှာ Recap Credit ပဲ ဖြတ်ပါတယ်။"
 )
 
 FRAGMENTS = (
-    "ကိုယ်ပိုင် အသံနဲ့ပါ",
-    "Voice Clone မိနစ် မဖြတ်ပါဘူး",
-    "Gemini / Edge",
+    "ကိုယ်ပိုင်အသံ (Custom Voice Clone)",
+    "Free ရော VIP ရော",
+    "Gemini/Edge",
 )
 
 

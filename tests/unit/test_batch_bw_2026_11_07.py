@@ -183,32 +183,30 @@ def test_bw_tts_error_detail_admin_names_safety_ceiling_no_upsell(monkeypatch):
 
 
 def test_bw_tts_counter_uses_own_limit():
+    # Limits round (2026-11-23): per-gen char limits raised to 3,000 free / 15,000 purchased.
     body = _between(APP_JS, "function updateTtsCharCount", "function insertTtsSampleText")
     assert "/ 5,000" not in body
     assert "state.user?.character_limit" in body
-    assert "character_limit_purchased ?? 5000" in body
-    assert "character_limit_free ?? 1000" in body
+    assert "character_limit_purchased ?? 15000" in body
+    assert "character_limit_free ?? 3000" in body
     assert 't("char_counter_unit")' in body
 
 
 def test_bw_tts_submit_guard_mirrors_voice_guard():
     body = _between(APP_JS, "async function generateTTS", "window.generateTTS")
     assert "maxChars" in body
-    assert "character_limit_free ?? 1000" in body
+    assert "character_limit_free ?? 3000" in body
     assert 'tf("text_too_long"' in body
 
 
 def test_bw_tts_counter_repaints_on_profile_load():
-    # init + sample-insert + clear + the BW profile-load repaint
-    # (+2: Batch BZ's first-visit prefill repaint, and BZ's input
-    # listener became a wrapper that calls it after settling the
-    # prefill flag — previously a bare function reference).
-    assert APP_JS.count("updateTtsCharCount();") == 6
+    # Round 8 B2 retired TTS first-visit prefill (removing its extra call -> 5 call sites).
+    assert APP_JS.count("updateTtsCharCount();") == 5
 
 
 def test_bw_index_counter_default_and_cache_token():
-    assert 'id="tts-char-count">0 / 1000 chars<' in INDEX_HTML
-    assert INDEX_HTML.count("20261118_r164") == 4
+    assert 'id="tts-char-count">0 / 3000 chars<' in INDEX_HTML
+    assert INDEX_HTML.count("20261123_followup1") == 5
 
 
 # ── BW-5: the voice side is unchanged ─────────────────────────────────

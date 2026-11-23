@@ -92,7 +92,7 @@ def _user(uid: int, **kw) -> User:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_r38():
-    assert HTML.count("?v=20261118_r164") == 4
+    assert HTML.count("?v=20261123_followup1") == 5
     assert "20261102_r37" not in HTML
 
 
@@ -168,11 +168,14 @@ def _extract_req(url="https://example.com/notavideo"):
 
 @pytest.mark.asyncio
 async def test_extract_fallback_offers_no_formats(monkeypatch):
+    # Part C (2026-11-23): extraction failure raises HTTP 422 instead of returning a shallow fallback.
+    from fastapi import HTTPException
+
     _patch_extract(monkeypatch, exc=RuntimeError("no extractor for this"))
     user = _user(700201)
-    data = await api_mod.extract_media_info(_extract_req(), user, user)
-    assert data["metadata_verified"] is False
-    assert data["formats_available"] == []
+    with pytest.raises(HTTPException) as ei:
+        await api_mod.extract_media_info(_extract_req(), user, user)
+    assert ei.value.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -194,8 +197,9 @@ async def test_extract_verified_with_real_formats(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_extract_verified_but_no_media_formats(monkeypatch):
-    # A generic page yt-dlp "reads" but with zero media streams: the
-    # audit's example.com case — nothing downloadable may be offered.
+    # Part C (2026-11-23): a zero-duration generic page (example.com) is rejected with HTTP 422.
+    from fastapi import HTTPException
+
     _patch_extract(monkeypatch, info={
         "title": "Example Domain", "uploader": "Web", "duration": 0,
         "thumbnail": "", "width": None, "height": None,
@@ -203,8 +207,9 @@ async def test_extract_verified_but_no_media_formats(monkeypatch):
         "raw_info": {"formats": []},
     })
     user = _user(700203)
-    data = await api_mod.extract_media_info(_extract_req(), user, user)
-    assert data["formats_available"] == []
+    with pytest.raises(HTTPException) as ei:
+        await api_mod.extract_media_info(_extract_req(), user, user)
+    assert ei.value.status_code == 422
 
 
 def test_downloader_client_honesty_gate_and_stale_clear():
@@ -347,14 +352,13 @@ async def test_recap_job_stores_classified_error(tmp_path, monkeypatch):
 # ── 4. Group AI daily-limit fact ────────────────────────────────────
 
 def test_fact_sheet_daily_limit_on_own_line(monkeypatch):
-    monkeypatch.setattr(settings, "free_daily_job_limit", 7)
+    # Part G/H: free_daily_job_limit is retired from fact sheet; TTS daily limits live on their own line.
+    monkeypatch.setattr(settings, "tts_daily_limit_minutes_free", 18)
     sheet = build_fact_sheet()
-    daily_lines = [ln for ln in sheet.splitlines() if "တစ်နေ့ Job" in ln]
-    assert len(daily_lines) == 1
-    assert "တစ်နေ့ Job 7 ခုအထိ" in daily_lines[0]
-    # The conflation source is gone: the daily-limit line no longer
-    # carries the Recap Credit count.
-    assert "Recap Credit" not in daily_lines[0]
+    tts_lines = [ln for ln in sheet.splitlines() if "TTS (TTS Tab) တစ်နေ့ ကန့်သတ်ချက်" in ln]
+    assert len(tts_lines) == 1
+    assert "18 မိနစ်" in tts_lines[0]
+    assert "Recap Credit" not in tts_lines[0]
 
 
 # ── 5. Voice ETA honesty ────────────────────────────────────────────
@@ -428,7 +432,8 @@ async def test_main_menu_admin_shows_unlimited(db_session, monkeypatch):
     user, _ = await get_or_create_user(db_session, telegram_id=admin_id, language_code="my")
     text, _kb = await render_main_menu(user.id, lang="my", session=db_session)
     assert "SYSTEM ADMIN" in text
-    assert "∞ (အကန့်အသတ်မဲ့)" in text
+    assert "Voice လက်ကျန်: ∞" in text
+    assert "Recap လက်ကျန်: ∞" in text
     # The admin's underlying FREE grants must not be what renders.
     assert "3.0 မိနစ်" not in text
 

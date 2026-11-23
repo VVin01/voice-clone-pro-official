@@ -60,22 +60,18 @@ def _rule(selector: str, css: str) -> str:
 # ── BG-1: card structure ─────────────────────────────────────────────
 
 def test_card_name_is_short_name_on_its_own_line():
+    # Round 13 moved Voice Studio persona selection to compact #voice-persona-select using formatPersonaOptionLabel.
     render = APP_JS.split("function renderCuratedVoices()", 1)[1].split(
         "function personaShortName", 1)[0]
-    assert "personaShortName(v.name) || v.name" in render
-    # The full (parenthesised) label no longer renders as the name.
+    assert 'getElementById("voice-persona-select")' in render
+    assert "formatPersonaOptionLabel(v)" in render
     assert '<span class="persona-name">${v.name}</span>' not in render
 
 
 def test_card_category_is_a_separate_line():
-    render = APP_JS.split("function renderCuratedVoices()", 1)[1].split(
-        "function personaShortName", 1)[0]
-    assert "personaCategoryName(v.name)" in render
-    assert 'class="persona-category"' in render
-    # Category sits between name and badge inside the meta column.
-    assert render.index('class="persona-name"') \
-        < render.index('class="persona-category"') \
-        < render.index('class="persona-badge"')
+    # personaCategoryName helper survives and powers compact option/summary formatting.
+    assert "function personaCategoryName(" in APP_JS
+    assert "personaCategoryName(" in APP_JS
 
 
 def test_category_helper_extracts_the_parenthetical():
@@ -85,13 +81,10 @@ def test_category_helper_extracts_the_parenthetical():
 
 
 def test_card_hooks_and_attributes_unchanged():
-    render = APP_JS.split("function renderCuratedVoices()", 1)[1].split(
-        "function personaShortName", 1)[0]
-    assert 'card.setAttribute("data-voice-id", v.id)' in render
-    assert "playVoicePreview('${v.id}', this)" in render
-    assert 'class="voice-preview-btn"' in render
-    assert 'class="preview-btn-icon"' in render
-    assert 'class="preview-btn-label"' in render
+    # Voice Studio & Recap Step 3 select dropdowns + shared preview buttons survive.
+    assert 'id="voice-persona-select"' in INDEX_HTML
+    assert 'id="btn-voice-persona-preview"' in INDEX_HTML
+    assert "function playVoicePreview(" in APP_JS
 
 
 # ── BG-2 / BG-3 / BG-4: the CSS ──────────────────────────────────────
@@ -175,5 +168,5 @@ def test_recap_voice_cards_not_restructured():
 # ── BG-7: token ──────────────────────────────────────────────────────
 
 def test_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261104_r76" not in INDEX_HTML

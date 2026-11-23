@@ -475,49 +475,14 @@ def test_submit_on_free_user_max_is_clamped_before_pricing(ledger, monkeypatch):
 # ── BE-2: admin toggle rides the audited write path ──────────────────
 
 def test_admin_settings_toggle_round_trip(ledger):
-    from sqlalchemy import select
-
-    from app.models.schema import AuditLog, BotSetting, User
+    from app.services.dynamic_settings import SETTING_TYPES
     from app.webapp import api as api_mod
     from app.webapp.api import _tiered_recap_pricing_enabled
 
+    # Part G (2026-11-23): tiered recap pricing toggle retired; v3 pricing is always flat.
     assert _tiered_recap_pricing_enabled() is False
-
-    async def _main():
-        async with ledger.make_session() as s:
-            s.add(
-                User(id=ADMIN_ID, recap_credits=0, account_category="PURCHASED")
-            )
-            await s.commit()
-            admin = await s.get(User, ADMIN_ID)
-            payload = api_mod.AdminSettingsPayload(
-                tiered_recap_pricing_enabled=True
-            )
-            resp = await api_mod.update_admin_settings(
-                payload, admin=admin, db=s
-            )
-            assert resp["success"] is True
-            row = (
-                await s.execute(
-                    select(BotSetting).where(
-                        BotSetting.key == "tiered_recap_pricing_enabled"
-                    )
-                )
-            ).scalar_one()
-            assert row.value == "true"
-            audit = (
-                await s.execute(
-                    select(AuditLog).where(
-                        AuditLog.action == "settings.update",
-                        AuditLog.target_id == "tiered_recap_pricing_enabled",
-                    )
-                )
-            ).scalar_one()
-            assert audit.admin_id == ADMIN_ID
-
-    asyncio.run(_main())
-    # The live reader the pricing paths consult honours the flip.
-    assert _tiered_recap_pricing_enabled() is True
+    assert "tiered_recap_pricing_enabled" not in SETTING_TYPES
+    assert "tiered_recap_pricing_enabled" not in api_mod.AdminSettingsPayload.model_fields
 
 
 # ── BE-3: price-fact alignment ───────────────────────────────────────
@@ -565,16 +530,11 @@ def test_batch_be_wiring_contracts():
     assert "_tiered_recap_pricing_enabled()" in api_py
 
     assert 'id="recap-step4-quote-breakdown"' in html
-    assert 'id="adm-set-tiered-pricing"' in html
-    assert 'data-i18n="settings_tiered_pricing"' in html
-    assert "_admPaintChecked(elTieredPricing, !!s.tiered_recap_pricing_enabled)" in app_js
-    assert "tiered_recap_pricing_enabled: tieredPricing" in app_js
-    assert '"tiered_recap_pricing_enabled": bool(getattr(settings,' in api_py
-    for key in ("settings_tiered_pricing:", "settings_tiered_pricing_hint:"):
-        assert i18n_js.count(key) == 2, key
+    # Part G retired #adm-set-tiered-pricing UI toggle.
+    assert 'id="adm-set-tiered-pricing"' not in html
 
 
 def test_be_cache_token_is_r79():
     html = _read("app/webapp/static/index.html")
-    assert html.count("?v=20261118_r164") == 4
+    assert html.count("?v=20261123_followup1") == 5
     assert "20261104_r78" not in html

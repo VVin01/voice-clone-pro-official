@@ -39,8 +39,9 @@ FRAGMENTS = (
     "2,000 MB",
 )
 
+# Round 13 + Part H: 5th tab is renamed to Buy (ဝယ်ရန်).
 NEW_TABS_LINE = (
-    "• Mini App ထဲမှာ Tab ၅ ခု ရှိပါတယ် — ပင်မ (Home), Voice Studio, TTS, Recap, VIP။"
+    "• Mini App ထဲမှာ Tab ၅ ခု ရှိပါတယ် — ပင်မ (Home), Voice Studio, TTS, Recap, Buy (ဝယ်ရန်)။"
 )
 
 

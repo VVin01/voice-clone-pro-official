@@ -77,7 +77,7 @@ def _extract_js_fn(src: str, name: str) -> str:
 
 
 def test_r150_cache_token():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261114_r149" not in INDEX_HTML
 
 

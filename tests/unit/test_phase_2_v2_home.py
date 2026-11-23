@@ -17,11 +17,12 @@ PHASE2_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 2") :]
 
 
 def test_v2_phase2_cache_token_current():
-    assert INDEX_HTML.count("?v=20261118_r164") == 4
+    assert INDEX_HTML.count("?v=20261123_followup1") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
 def test_v2_phase2_four_zone_home_ia_order():
+    # Round 13 retired #home-recent-projects-card & #home-refer-card from Home.
     seq = [
         'id="home-hero-card"',
         'id="home-status-strip"',
@@ -29,13 +30,11 @@ def test_v2_phase2_four_zone_home_ia_order():
         'id="home-welcome-strip"',
         'id="home-start-card"',
         'id="home-start-recap-tile"',
-        'id="home-recent-projects-card"',
         'id="home-tools-card"',
         'id="home-help-entry-card"',
-        'id="home-refer-card"',
     ]
     positions = [HOME.index(marker) for marker in seq]
-    assert positions == sorted(positions), "Home 4-Zone IA order mismatch"
+    assert positions == sorted(positions), "Home IA order mismatch"
 
 
 def test_v2_phase2_zone_a_hero_balances_and_vip_tier_binding():
@@ -53,7 +52,7 @@ def test_v2_phase2_zone_a_hero_balances_and_vip_tier_binding():
 
 
 def test_v2_phase2_zone_b_recap_hero_and_twin_studios():
-    start = HOME.split('id="home-start-card"', 1)[1].split('id="home-recent-projects-card"', 1)[0]
+    start = HOME.split('id="home-start-card"', 1)[1].split('id="home-tools-card"', 1)[0]
     assert 'id="home-start-recap-tile"' in start
     assert "switchTab('tab-recap')" in start
     assert 'class="home-tile-grid"' in start
@@ -64,28 +63,15 @@ def test_v2_phase2_zone_b_recap_hero_and_twin_studios():
     assert "#tab-home #home-start-card .home-tile-grid" in PHASE2_CSS
 
 
-def test_v2_phase2_zone_c_designed_states_and_svg_recent_icons():
-    recent = HOME.split('id="home-recent-projects-card"', 1)[1].split('id="home-tools-card"', 1)[0]
-    for marker in ("vcp-skel-row", "vcp-empty-glass", "vcp-empty-medallion", "vcp-error-glass"):
-        assert marker in recent, marker
-    recent_fn = APP_JS.split("function renderHomeRecentProjects()", 1)[1].split("window.renderHomeRecentProjects", 1)[0]
-    assert 'class="vcp-ico"' in recent_fn
-    assert 'class="home-recent-footer"' in recent_fn
-    assert 'vcp-job-card' in recent_fn
-    assert 'vcp-job-footer-row' in recent_fn
-    assert 'data-job-kind="${kind}"' in recent_fn
-
-
 def test_v2_phase2_unified_queue_job_card_system_no_badge_button_overlap():
+    # Round 13 retired #home-recent-projects-card (History & Live Sheet & Admin Queue keep .vcp-job-card).
     for marker in (
         ".vcp-job-card",
         ".vcp-job-progress",
         ".vcp-job-footer-row",
-        "#tab-home .vcp-job-card .home-recent-footer",
         "#tab-history .hub-row.vcp-job-card .hub-row-badges",
     ):
         assert marker in PHASE2_CSS, marker
-    # Non-overlapping flex-column footer separation on both Home Recent & History & Live Sheet & Admin Queue
     live_fn = APP_JS.split("function liveJobsSheetRowHtml(job)", 1)[1].split("function renderLiveJobsSheet()", 1)[0]
     hist_fn = APP_JS.split("function hubHistoryRowHtml(j)", 1)[1].split("function renderHistoryHub()", 1)[0]
     queue_fn = APP_JS.split("function renderAdminQueueData(", 1)[1].split("window.loadAdminQueue", 1)[0]
@@ -105,14 +91,11 @@ def test_v2_phase2_zone_d_grouped_tools_and_dark_lite_css():
 
 def test_v2_phase2_i18n_new_keys_both_locales():
     for key in (
-        "home_hero_tagline",
         "home_status_ready",
         "home_start_hint",
         "home_bal_tts_short",
         "home_bal_voice_short",
         "home_bal_recap_short",
-        "home_recent_empty_sub",
-        "home_recent_error_sub",
     ):
         assert I18N_JS.count(f"{key}:") == 2, f"{key} must exist in my and en"
 
@@ -149,6 +132,16 @@ _RETIRED_VIP_STATIC_IDS = {
     "recap-split-minutes-wrap", "recap-split-note", "recap-split-toggle",
     "recap-sub-font-custom-row", "recap-voice-billing-badge",
     "sub-font-custom-status",
+    # Post-combined follow-up (2026-11-23 Parts C, E, G)
+    "recap-unverified-warning",
+    "adm-ai-thumbnail-card", "adm-set-thumb-cap", "adm-set-thumb-model",
+    "adm-set-thumb-prompt", "adm-thumb-status-badge", "adm-thumb-usage-box",
+    "adm-thumb-usage-stats", "adm-thumb-usage-title", "btn-recap-ai-thumbnail",
+    "btn-recap-dl-thumbnail", "btn-save-ai-thumbnail-settings", "recap-ai-thumbnail-box",
+    "recap-thumb-headline-input", "recap-thumb-preview-img", "recap-thumb-status-note",
+    "adm-set-daily-job-limit", "adm-set-group-ai", "adm-set-tiered-pricing",
+    "adm-set-tutorial-video-enabled", "adm-set-voice-daily-free",
+    "adm-set-voice-daily-paid", "adm-tut-recap-title",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",
@@ -169,6 +162,11 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "applyRecapMasterPreset('yt_16_9')",
     "saveCurrentAsMyRecapPreset()",
     "toggleRecapCropDetail()",
+    # Post-combined follow-up (2026-11-23 Parts D, E, G)
+    "previewSelectedGeminiVoice()",
+    "generateRecapAiThumbnail()",
+    "saveAiThumbnailSettings()",
+    "filterAdminPricing('topup')",
 }
 
 

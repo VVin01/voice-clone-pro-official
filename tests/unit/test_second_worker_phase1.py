@@ -269,6 +269,16 @@ async def test_worker_mode_contract_no_bot_updates_no_web_server():
 # ── 4. Singleton-Duty Gating ──────────────────────────────────────────────────
 
 
+class _NoOpAsyncSessionCtx:
+    """Hermetic stand-in for AsyncSessionLocal so worker-loop tests never hit a real DB."""
+
+    async def __aenter__(self):
+        return MagicMock()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_secondary_instance_skips_boot_cutoff_orphan_sweep():
     """Secondary instance (INSTANCE_PRIMARY=0) must skip the boot-cutoff
@@ -278,6 +288,10 @@ async def test_secondary_instance_skips_boot_cutoff_orphan_sweep():
     """
     with (
         patch.object(settings, "instance_primary", False),
+        patch.object(settings, "worker_laptop_status", "ONLINE"),
+        patch("app.worker.AsyncSessionLocal", return_value=_NoOpAsyncSessionCtx()),
+        patch("app.services.dynamic_settings.load_dynamic_settings", new_callable=AsyncMock),
+        patch("app.services.dynamic_settings.set_dynamic_setting", new_callable=AsyncMock),
         patch("app.services.recovery.recover_stale_running_jobs", new_callable=AsyncMock) as mock_recover,
         patch("app.worker.claim_and_process_next_job", new_callable=AsyncMock) as mock_claim,
         patch("app.worker._boot_cutoff_sweep_due", return_value=True),
@@ -303,6 +317,9 @@ async def test_primary_instance_runs_boot_cutoff_orphan_sweep():
     """
     with (
         patch.object(settings, "instance_primary", True),
+        patch("app.worker.AsyncSessionLocal", return_value=_NoOpAsyncSessionCtx()),
+        patch("app.services.dynamic_settings.load_dynamic_settings", new_callable=AsyncMock),
+        patch("app.services.dynamic_settings.set_dynamic_setting", new_callable=AsyncMock),
         patch("app.services.recovery.recover_stale_running_jobs", new_callable=AsyncMock) as mock_recover,
         patch("app.worker.claim_and_process_next_job", new_callable=AsyncMock) as mock_claim,
         patch("app.worker._boot_cutoff_sweep_due", return_value=False),
