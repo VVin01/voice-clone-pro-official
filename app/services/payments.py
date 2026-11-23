@@ -80,50 +80,61 @@ def _claimed_by_other(payment: PaymentRequest, admin_id: int) -> bool:
         return False
     return not payment_claim_is_stale(payment)
 
-# Single source of truth for ALL 22 official packages in 4 categories:
-#   1. voice  (5 packages: Mini, Starter, Creator [Popular], Pro, Business)
-#   2. recap  (5 packages: Mini, Starter, Creator [Popular], Pro, Business — 1 Credit = 1 Min Final Output)
-#   3. combo  (5 packages: Mini Combo .. Business Combo — credits BOTH wallets separately, Best Value)
-#   4. topup  (3 Voice Top-ups + 4 Recap Credit Top-ups)
-# Database PricingPlan rows win wherever present (admin-editable price/credits/minutes/is_active).
+# Single source of truth for ALL 10 official v3 packages in 3 categories:
+#   1. combo  (4 packages: Starter, Creator, Pro, Business — credits BOTH wallets separately)
+#   2. voice  (3 packages: 200, 500, 1000 [+200 bonus = 1200 grant minutes])
+#   3. recap  (3 packages: 30, 60, 180 — 1 Credit = 1 Min Final Output)
+# Database PricingPlan rows win wherever present (admin-editable price/credits/minutes/validity/is_active).
+# validity_days=0 means No Expiry (expires_at=None on wallet grant).
 PLAN_CATALOGUE = [
-    # A. Voice Clone Minutes
-    {"code": "voice_mini", "name": "Mini", "category": "voice", "sub_type": "voice", "minutes": 10, "recap_credits": 0, "price_mmk": 3000, "is_topup": False, "badge": ""},
-    {"code": "voice_starter", "name": "Starter", "category": "voice", "sub_type": "voice", "minutes": 20, "recap_credits": 0, "price_mmk": 5000, "is_topup": False, "badge": ""},
-    {"code": "voice_creator", "name": "Creator", "category": "voice", "sub_type": "voice", "minutes": 45, "recap_credits": 0, "price_mmk": 10000, "is_topup": False, "badge": "popular"},
-    {"code": "voice_pro", "name": "Pro", "category": "voice", "sub_type": "voice", "minutes": 100, "recap_credits": 0, "price_mmk": 20000, "is_topup": False, "badge": ""},
-    {"code": "voice_business", "name": "Business", "category": "voice", "sub_type": "voice", "minutes": 220, "recap_credits": 0, "price_mmk": 40000, "is_topup": False, "badge": ""},
-    # B. Recap Credits (1 Recap Credit = 1 Minute Final Recap Output)
-    {"code": "recap_mini", "name": "Mini", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 15, "price_mmk": 6000, "is_topup": False, "badge": ""},
-    {"code": "recap_starter", "name": "Starter", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 30, "price_mmk": 10000, "is_topup": False, "badge": ""},
-    {"code": "recap_creator", "name": "Creator", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 70, "price_mmk": 20000, "is_topup": False, "badge": "popular"},
-    {"code": "recap_pro", "name": "Pro", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 160, "price_mmk": 40000, "is_topup": False, "badge": ""},
-    {"code": "recap_business", "name": "Business", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 350, "price_mmk": 80000, "is_topup": False, "badge": ""},
-    # C. Combo Packages (Credits BOTH wallets separately; Best Value)
-    {"code": "combo_mini", "name": "Mini Combo", "category": "combo", "sub_type": "combo", "minutes": 10, "recap_credits": 15, "price_mmk": 8100, "is_topup": False, "badge": ""},
-    {"code": "combo_starter", "name": "Starter Combo", "category": "combo", "sub_type": "combo", "minutes": 20, "recap_credits": 30, "price_mmk": 13500, "is_topup": False, "badge": ""},
-    {"code": "combo_creator", "name": "Creator Combo", "category": "combo", "sub_type": "combo", "minutes": 45, "recap_credits": 70, "price_mmk": 27000, "is_topup": False, "badge": "best_value"},
-    {"code": "combo_pro", "name": "Pro Combo", "category": "combo", "sub_type": "combo", "minutes": 100, "recap_credits": 160, "price_mmk": 54000, "is_topup": False, "badge": ""},
-    {"code": "combo_business", "name": "Business Combo", "category": "combo", "sub_type": "combo", "minutes": 220, "recap_credits": 350, "price_mmk": 108000, "is_topup": False, "badge": ""},
-    # D. Top-up Packages (Voice Clone Top-up + Recap Credit Top-up)
-    {"code": "topup_voice_10", "name": "Voice Top-up 10m", "category": "topup", "sub_type": "voice", "minutes": 10, "recap_credits": 0, "price_mmk": 2500, "is_topup": True, "badge": ""},
-    {"code": "topup_voice_30", "name": "Voice Top-up 30m", "category": "topup", "sub_type": "voice", "minutes": 30, "recap_credits": 0, "price_mmk": 6000, "is_topup": True, "badge": ""},
-    {"code": "topup_voice_60", "name": "Voice Top-up 60m", "category": "topup", "sub_type": "voice", "minutes": 60, "recap_credits": 0, "price_mmk": 11000, "is_topup": True, "badge": ""},
-    {"code": "topup_recap_5", "name": "Recap Top-up 5c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 5, "price_mmk": 3000, "is_topup": True, "badge": ""},
-    {"code": "topup_recap_15", "name": "Recap Top-up 15c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 15, "price_mmk": 8000, "is_topup": True, "badge": ""},
-    {"code": "topup_recap_30", "name": "Recap Top-up 30c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 30, "price_mmk": 14000, "is_topup": True, "badge": ""},
-    {"code": "topup_recap_60", "name": "Recap Top-up 60c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 60, "price_mmk": 26000, "is_topup": True, "badge": ""},
+    # A. Combo Packages (Credits BOTH wallets separately)
+    {"code": "pkg_starter", "name": "Starter", "category": "combo", "sub_type": "combo", "minutes": 100, "recap_credits": 15, "price_mmk": 14900, "validity_days": 30, "is_topup": False, "badge": ""},
+    {"code": "pkg_creator", "name": "Creator", "category": "combo", "sub_type": "combo", "minutes": 200, "recap_credits": 30, "price_mmk": 28500, "validity_days": 30, "is_topup": False, "badge": ""},
+    {"code": "pkg_pro", "name": "Pro", "category": "combo", "sub_type": "combo", "minutes": 500, "recap_credits": 60, "price_mmk": 54900, "validity_days": 90, "is_topup": False, "badge": ""},
+    {"code": "pkg_business", "name": "Business", "category": "combo", "sub_type": "combo", "minutes": 1000, "recap_credits": 180, "price_mmk": 114900, "validity_days": 0, "is_topup": False, "badge": ""},
+    # B. Voice Clone Minutes (No Expiry)
+    {"code": "voice_200", "name": "200", "category": "voice", "sub_type": "voice", "minutes": 200, "recap_credits": 0, "price_mmk": 19800, "validity_days": 0, "is_topup": False, "badge": ""},
+    {"code": "voice_500", "name": "500", "category": "voice", "sub_type": "voice", "minutes": 500, "recap_credits": 0, "price_mmk": 39500, "validity_days": 0, "is_topup": False, "badge": ""},
+    {"code": "voice_1000", "name": "1000", "category": "voice", "sub_type": "voice", "minutes": 1200, "display_minutes": 1000, "recap_credits": 0, "price_mmk": 79200, "validity_days": 0, "is_topup": False, "badge": "bonus_200"},
+    # C. Recap Credits (1 Recap Credit = 1 Minute Final Recap Output; No Expiry)
+    {"code": "recap_30", "name": "30", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 30, "price_mmk": 13500, "validity_days": 0, "is_topup": False, "badge": ""},
+    {"code": "recap_60", "name": "60", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 60, "price_mmk": 25500, "validity_days": 0, "is_topup": False, "badge": ""},
+    {"code": "recap_180", "name": "180", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 180, "price_mmk": 68400, "validity_days": 0, "is_topup": False, "badge": ""},
 ]
 
 # Legacy retired package codes kept read-only for in-flight historical requests / compatibility.
 LEGACY_PLAN_CATALOGUE = {
-    "MIN_10": {"code": "MIN_10", "name": "Legacy 10m", "category": "voice", "sub_type": "voice", "minutes": 10, "recap_credits": 0, "price_mmk": 8000, "is_topup": False, "badge": ""},
-    "MIN_30": {"code": "MIN_30", "name": "Legacy 30m", "category": "voice", "sub_type": "voice", "minutes": 30, "recap_credits": 0, "price_mmk": 20000, "is_topup": False, "badge": ""},
-    "MIN_60": {"code": "MIN_60", "name": "Legacy 60m", "category": "voice", "sub_type": "voice", "minutes": 60, "recap_credits": 0, "price_mmk": 38000, "is_topup": False, "badge": ""},
-    "voice_studio_pro": {"code": "voice_studio_pro", "name": "Legacy Voice Pro", "category": "voice", "sub_type": "voice", "minutes": 250, "recap_credits": 0, "price_mmk": 75000, "is_topup": False, "badge": ""},
-    "recap_studio_pro": {"code": "recap_studio_pro", "name": "Legacy Recap Pro", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 25, "price_mmk": 90000, "is_topup": False, "badge": ""},
-    "combined_starter": {"code": "combined_starter", "name": "Legacy Combined Starter", "category": "combo", "sub_type": "combo", "minutes": 30, "recap_credits": 5, "price_mmk": 30000, "is_topup": False, "badge": ""},
-    "all_in_one_master": {"code": "all_in_one_master", "name": "Legacy Master", "category": "combo", "sub_type": "combo", "minutes": 500, "recap_credits": 60, "price_mmk": 180000, "is_topup": False, "badge": ""},
+    # Pre-v2 legacy codes
+    "MIN_10": {"code": "MIN_10", "name": "Legacy 10m", "category": "voice", "sub_type": "voice", "minutes": 10, "recap_credits": 0, "price_mmk": 8000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "MIN_30": {"code": "MIN_30", "name": "Legacy 30m", "category": "voice", "sub_type": "voice", "minutes": 30, "recap_credits": 0, "price_mmk": 20000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "MIN_60": {"code": "MIN_60", "name": "Legacy 60m", "category": "voice", "sub_type": "voice", "minutes": 60, "recap_credits": 0, "price_mmk": 38000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "voice_studio_pro": {"code": "voice_studio_pro", "name": "Legacy Voice Pro", "category": "voice", "sub_type": "voice", "minutes": 250, "recap_credits": 0, "price_mmk": 75000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "recap_studio_pro": {"code": "recap_studio_pro", "name": "Legacy Recap Pro", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 25, "price_mmk": 90000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "combined_starter": {"code": "combined_starter", "name": "Legacy Combined Starter", "category": "combo", "sub_type": "combo", "minutes": 30, "recap_credits": 5, "price_mmk": 30000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "all_in_one_master": {"code": "all_in_one_master", "name": "Legacy Master", "category": "combo", "sub_type": "combo", "minutes": 500, "recap_credits": 60, "price_mmk": 180000, "validity_days": 30, "is_topup": False, "badge": ""},
+    # Retired v2 22-package catalogue (read-only for historical orders/grants)
+    "voice_mini": {"code": "voice_mini", "name": "Mini", "category": "voice", "sub_type": "voice", "minutes": 10, "recap_credits": 0, "price_mmk": 3000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "voice_starter": {"code": "voice_starter", "name": "Starter", "category": "voice", "sub_type": "voice", "minutes": 20, "recap_credits": 0, "price_mmk": 5000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "voice_creator": {"code": "voice_creator", "name": "Creator", "category": "voice", "sub_type": "voice", "minutes": 45, "recap_credits": 0, "price_mmk": 10000, "validity_days": 30, "is_topup": False, "badge": "popular"},
+    "voice_pro": {"code": "voice_pro", "name": "Pro", "category": "voice", "sub_type": "voice", "minutes": 100, "recap_credits": 0, "price_mmk": 20000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "voice_business": {"code": "voice_business", "name": "Business", "category": "voice", "sub_type": "voice", "minutes": 220, "recap_credits": 0, "price_mmk": 40000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "recap_mini": {"code": "recap_mini", "name": "Mini", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 15, "price_mmk": 6000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "recap_starter": {"code": "recap_starter", "name": "Starter", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 30, "price_mmk": 10000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "recap_creator": {"code": "recap_creator", "name": "Creator", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 70, "price_mmk": 20000, "validity_days": 30, "is_topup": False, "badge": "popular"},
+    "recap_pro": {"code": "recap_pro", "name": "Pro", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 160, "price_mmk": 40000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "recap_business": {"code": "recap_business", "name": "Business", "category": "recap", "sub_type": "recap", "minutes": 0, "recap_credits": 350, "price_mmk": 80000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "combo_mini": {"code": "combo_mini", "name": "Mini Combo", "category": "combo", "sub_type": "combo", "minutes": 10, "recap_credits": 15, "price_mmk": 8100, "validity_days": 30, "is_topup": False, "badge": ""},
+    "combo_starter": {"code": "combo_starter", "name": "Starter Combo", "category": "combo", "sub_type": "combo", "minutes": 20, "recap_credits": 30, "price_mmk": 13500, "validity_days": 30, "is_topup": False, "badge": ""},
+    "combo_creator": {"code": "combo_creator", "name": "Creator Combo", "category": "combo", "sub_type": "combo", "minutes": 45, "recap_credits": 70, "price_mmk": 27000, "validity_days": 30, "is_topup": False, "badge": "best_value"},
+    "combo_pro": {"code": "combo_pro", "name": "Pro Combo", "category": "combo", "sub_type": "combo", "minutes": 100, "recap_credits": 160, "price_mmk": 54000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "combo_business": {"code": "combo_business", "name": "Business Combo", "category": "combo", "sub_type": "combo", "minutes": 220, "recap_credits": 350, "price_mmk": 108000, "validity_days": 30, "is_topup": False, "badge": ""},
+    "topup_voice_10": {"code": "topup_voice_10", "name": "Voice Top-up 10m", "category": "topup", "sub_type": "voice", "minutes": 10, "recap_credits": 0, "price_mmk": 2500, "validity_days": 30, "is_topup": True, "badge": ""},
+    "topup_voice_30": {"code": "topup_voice_30", "name": "Voice Top-up 30m", "category": "topup", "sub_type": "voice", "minutes": 30, "recap_credits": 0, "price_mmk": 6000, "validity_days": 30, "is_topup": True, "badge": ""},
+    "topup_voice_60": {"code": "topup_voice_60", "name": "Voice Top-up 60m", "category": "topup", "sub_type": "voice", "minutes": 60, "recap_credits": 0, "price_mmk": 11000, "validity_days": 30, "is_topup": True, "badge": ""},
+    "topup_recap_5": {"code": "topup_recap_5", "name": "Recap Top-up 5c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 5, "price_mmk": 3000, "validity_days": 30, "is_topup": True, "badge": ""},
+    "topup_recap_15": {"code": "topup_recap_15", "name": "Recap Top-up 15c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 15, "price_mmk": 8000, "validity_days": 30, "is_topup": True, "badge": ""},
+    "topup_recap_30": {"code": "topup_recap_30", "name": "Recap Top-up 30c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 30, "price_mmk": 14000, "validity_days": 30, "is_topup": True, "badge": ""},
+    "topup_recap_60": {"code": "topup_recap_60", "name": "Recap Top-up 60c", "category": "topup", "sub_type": "recap", "minutes": 0, "recap_credits": 60, "price_mmk": 26000, "validity_days": 30, "is_topup": True, "badge": ""},
 }
 
 
@@ -150,9 +161,10 @@ DEFAULT_PRICING_PLANS = [
         "category": p["category"],
         "sub_type": p["sub_type"],
         "minutes": p["minutes"],
+        "display_minutes": int(p["display_minutes"]) if p.get("display_minutes") is not None else int(p["minutes"]),
         "recap_credits": p["recap_credits"],
         "price_mmk": p["price_mmk"],
-        "validity_days": int(p.get("validity_days", 30)),
+        "validity_days": int(p["validity_days"]) if p.get("validity_days") is not None else 30,
         "is_topup": p["is_topup"],
         "badge": p["badge"],
         "sort_order": i + 1,
@@ -163,21 +175,26 @@ _DEFAULT_BY_CODE = {p["code"]: p for p in DEFAULT_PRICING_PLANS}
 
 
 async def _ensure_pricing_plans_seeded(session: AsyncSession) -> None:
-    """Idempotently seed all 22 official plans and upgrade pre-v3 DB rows safely."""
+    """Idempotently seed all 10 official v3 plans and deactivate legacy DB rows safely."""
     existing_rows = list((await session.execute(select(PricingPlan))).scalars().all())
     by_code = {row.code: row for row in existing_rows}
     changed = False
 
-    # 1. Upgrade un-migrated pre-v3 DB rows (empty name / recap_credits=0 on recap_starter, retire pre-v3 legacy codes)
+    # 1. Idempotently deactivate retired legacy rows (never delete them; keep historical orders resolvable)
+    #    and upgrade any un-named rows safely.
     for row in existing_rows:
-        if row.code in LEGACY_PLAN_CATALOGUE and not getattr(row, "name", ""):
-            row.name = LEGACY_PLAN_CATALOGUE[row.code]["name"]
-            row.category = LEGACY_PLAN_CATALOGUE[row.code]["category"]
-            row.sub_type = LEGACY_PLAN_CATALOGUE[row.code]["sub_type"]
-            row.recap_credits = LEGACY_PLAN_CATALOGUE[row.code]["recap_credits"]
-            row.is_active = False
-            row.sort_order = 900
-            changed = True
+        if row.code in LEGACY_PLAN_CATALOGUE:
+            leg = LEGACY_PLAN_CATALOGUE[row.code]
+            if not getattr(row, "name", ""):
+                row.name = leg["name"]
+                row.category = leg["category"]
+                row.sub_type = leg["sub_type"]
+                row.recap_credits = leg["recap_credits"]
+                row.sort_order = 900
+                changed = True
+            if bool(row.is_active):
+                row.is_active = False
+                changed = True
         elif row.code in _DEFAULT_BY_CODE and not getattr(row, "name", ""):
             spec = _DEFAULT_BY_CODE[row.code]
             row.name = spec["name"]
@@ -187,13 +204,12 @@ async def _ensure_pricing_plans_seeded(session: AsyncSession) -> None:
             row.is_topup = spec["is_topup"]
             row.badge = spec["badge"]
             row.sort_order = spec["sort_order"]
-            if row.code == "recap_starter" and row.price_mmk == 20000 and row.minutes == 0:
-                row.price_mmk = spec["price_mmk"]
             changed = True
 
-    # 2. Fill-only seed for any missing official catalogue plan
+    # 2. Fill-only seed for any missing official v3 catalogue plan (never overwrite existing v3 rows)
     for p_data in DEFAULT_PRICING_PLANS:
         if p_data["code"] not in by_code:
+            vdays = int(p_data["validity_days"]) if p_data.get("validity_days") is not None else 30
             plan = PricingPlan(
                 code=p_data["code"],
                 name=p_data["name"],
@@ -202,7 +218,7 @@ async def _ensure_pricing_plans_seeded(session: AsyncSession) -> None:
                 minutes=p_data["minutes"],
                 recap_credits=p_data["recap_credits"],
                 price_mmk=p_data["price_mmk"],
-                validity_days=int(p_data.get("validity_days", 30)),
+                validity_days=vdays,
                 is_topup=p_data["is_topup"],
                 badge=p_data["badge"],
                 sort_order=p_data["sort_order"],
@@ -323,6 +339,7 @@ async def create_payment_request(
             minutes=cat["minutes"],
             recap_credits=plan_recap,
             price_mmk=cat["price_mmk"],
+            validity_days=int(cat["validity_days"]) if cat.get("validity_days") is not None else 30,
             is_topup=bool(cat.get("is_topup", False)),
             badge=cat.get("badge", ""),
             sort_order=0,
@@ -330,7 +347,8 @@ async def create_payment_request(
         )
 
     pay_id = f"PAY-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:12].upper()}"
-    _plan_vdays = int(getattr(plan, "validity_days", 30) or 30)
+    _raw_plan_vdays = getattr(plan, "validity_days", None)
+    _plan_vdays = int(_raw_plan_vdays) if _raw_plan_vdays is not None else 30
     payment = PaymentRequest(
         id=pay_id,
         user_id=user_id,
@@ -995,7 +1013,8 @@ async def update_pricing_plan_config(
         val_v = int(validity_days)
         if not (0 <= val_v <= 3650):
             return False, None, "VALIDITY_OUT_OF_RANGE"
-        old_v = int(getattr(plan, "validity_days", 30) or 30)
+        _old_v_raw = getattr(plan, "validity_days", None)
+        old_v = int(_old_v_raw) if _old_v_raw is not None else 30
         if old_v != val_v:
             changes["validity_days"] = {"old": old_v, "new": val_v}
             plan.validity_days = val_v

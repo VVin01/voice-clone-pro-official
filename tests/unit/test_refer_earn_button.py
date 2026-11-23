@@ -21,7 +21,7 @@ def _flat(kb):
 
 
 def test_main_menu_has_refer_earn_button_both_languages():
-    for lang, label in (("my", "မိတ်ဆက်ဆု"), ("en", "Refer & Earn")):
+    for lang, label in (("my", "မိတ်ဆက်ရန်"), ("en", "Refer Friends")):
         kb = main_menu_kb(is_admin=False, lang=lang)
         matches = [b for b in _flat(kb) if b.callback_data == "menu:refer_earn"]
         assert len(matches) == 1
@@ -36,13 +36,13 @@ def test_admin_main_menu_also_has_refer_earn_button():
 
 @pytest.mark.asyncio
 async def test_refer_earn_button_callback_renders_referral_page(db_session):
-    """Pressing the menu button must render stats + the user's own link."""
+    """Pressing the menu button sends a NEW non-ephemeral referral message + Share button."""
     user_id = 700001001
     user, _ = await get_or_create_user(db_session, telegram_id=user_id)
 
     msg = MagicMock(spec=Message)
     msg.chat = MagicMock(spec=Chat, id=user_id)
-    msg.edit_text = AsyncMock(return_value=msg)
+    msg.answer = AsyncMock(return_value=msg)
 
     cb = MagicMock(spec=CallbackQuery)
     cb.message = msg
@@ -58,10 +58,11 @@ async def test_refer_earn_button_callback_renders_referral_page(db_session):
     with patch("app.handlers.menu.AsyncSessionLocal", side_effect=lambda: mock_session_ctx()):
         await handle_menu_refer_earn(cb)
 
-    msg.edit_text.assert_awaited_once()
-    sent_text = msg.edit_text.call_args[0][0]
+    msg.answer.assert_awaited_once()
+    sent_text = msg.answer.call_args[0][0]
     assert f"https://t.me/voiceclonepro_bot?start={user.referral_code}" in sent_text
-    markup = msg.edit_text.call_args[1]["reply_markup"]
-    back_datas = [b.callback_data for b in _flat(markup)]
-    assert "menu:home" in back_datas
+    markup = msg.answer.call_args[1]["reply_markup"]
+    btns = _flat(markup)
+    assert len(btns) == 1
+    assert btns[0].url and btns[0].url.startswith("https://t.me/share/url?url=")
     cb.answer.assert_awaited_once()

@@ -13,6 +13,7 @@ class AccountCategory(str, Enum):
 
 
 class LedgerSource(str, Enum):
+    DAILY_FREE = "DAILY_FREE"
     MONTHLY_FREE = "MONTHLY_FREE"
     WELCOME = "WELCOME"
     REFERRAL = "REFERRAL"

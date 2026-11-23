@@ -136,7 +136,7 @@
                             </span>
                             <span class="vcp-sr-only" data-i18n="home_free_voice_label">Voice Clone လက်ကျန်</span>
                             <span class="home-free-value vcp-bal-val t-num" id="home-free-voice-value">—</span>
-                            <span class="vcp-badge vcp-badge-info home-free-period-badge vcp-bal-period" data-i18n="home_free_voice_period">180 စက္ကန့် / လစဉ်</span>
+                            <span class="vcp-badge vcp-badge-info home-free-period-badge vcp-bal-period" data-i18n="home_free_voice_period">180 စက္ကန့် / နေ့စဉ်</span>
                         </button>
                         <button type="button" class="vcp-bal-tile" onclick="switchTab('tab-recap')">
                             <span class="vcp-bal-head">
@@ -353,10 +353,10 @@
                         </div>
                         <div class="segmented-control sm mb-2">
                             <button class="seg-btn active" id="btn-submode-custom" onclick="switchVoxCPMSubMode('custom')">
-                                <span class="seg-title" data-i18n="btn_mode_custom">🎙️ ကိုယ်ပိုင်အသံ</span>
+                                <span class="seg-title" data-i18n="btn_mode_custom">ကိုယ်ပိုင်အသံ</span>
                             </button>
                             <button class="seg-btn" id="btn-submode-curated" onclick="switchVoxCPMSubMode('curated')">
-                                <span class="seg-title" data-i18n="btn_mode_curated">🌟 Persona</span>
+                                <span class="seg-title" data-i18n="btn_mode_curated">Persona</span>
                             </button>
                         </div>
 
@@ -426,7 +426,7 @@
                             <span class="step-num-pill">1</span>
                             <span class="step-title" data-i18n="text_input_label">အသံထွက်မည့် စာသား</span>
                         </div>
-                        <span class="char-counter" id="char-count">0 / 1000 chars</span>
+                        <span class="char-counter" id="char-count">0 / 3000 chars</span>
                     </div>
                     <textarea id="voice-text-input" data-i18n-ph="text_placeholder" placeholder="မြန်မာစာသား ရိုက်ထည့်ပါ / ကူးထည့်ပါ…" rows="5"></textarea>
                     <!-- Phase 3: Non-destructive character excess highlight & actions -->
@@ -434,7 +434,7 @@
                         <span class="vcp-excess-text" id="voice-char-excess-text"></span>
                         <div class="vcp-excess-actions">
                             <button type="button" class="vcp-chip" id="btn-voice-excess-trim" onclick="trimVoiceTextToLimit()" data-i18n="char_excess_use_free_part">✂️ ကန့်သတ်ချက်အတွင်း အပိုင်းကိုသာ သုံးမည်</button>
-                            <button type="button" class="vcp-chip active" id="btn-voice-excess-vip" onclick="switchTab('tab-vip')" data-i18n="char_excess_upgrade_vip">👑 VIP (5,000 လုံး) သို့ မြှင့်မည်</button>
+                            <button type="button" class="vcp-chip active" id="btn-voice-excess-vip" onclick="switchTab('tab-vip')" data-i18n="char_excess_upgrade_vip">👑 VIP (15,000 လုံး) သို့ မြှင့်မည်</button>
                         </div>
                     </div>
                     <div class="sample-chips">
@@ -460,7 +460,7 @@
                 <div class="cta-block" id="voice-cta-block">
                     <div id="voice-preflight" class="voice-preflight" aria-live="polite"></div>
                     <button class="btn gold-gradient-btn" id="btn-generate-voice">
-                        <span class="btn-text" data-i18n="btn_generate">🚀 အသံ ထုတ်မည်</span>
+                        <span class="btn-text" data-i18n="btn_generate">အသံ ထုတ်မည်</span>
                         <span class="vcp-btn-est-cost" id="voice-btn-est-cost"></span>
                     </button>
                     <div class="queue-notice-banner" id="voice-queue-notice">
@@ -526,10 +526,10 @@
                     </div>
                     <div class="segmented-control sm mb-2" id="tts-engine-picker">
                         <button type="button" class="seg-btn active" data-tts-engine="gemini">
-                            <span class="seg-title" data-i18n="tts_engine_gemini">✨ Gemini AI</span>
+                            <span class="seg-title" data-i18n="tts_engine_gemini">Gemini</span>
                         </button>
                         <button type="button" class="seg-btn" data-tts-engine="edge">
-                            <span class="seg-title" data-i18n="tts_engine_edge">🎧 Edge TTS</span>
+                            <span class="seg-title" data-i18n="tts_engine_edge">Edge</span>
                         </button>
                     </div>
                     <div class="control-row voice-selected-row mt-2" id="tts-gemini-voice-row">
@@ -578,7 +578,7 @@
                     </button>
                     <div class="hidden" id="tts-cost-hint-more">
                         <p class="ref-desc hidden" id="tts-taste-note"></p>
-                        <p class="ref-desc" data-i18n="tts_cost_hint_more">တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။</p>
+                        <p class="ref-desc" data-i18n="tts_cost_hint_more">တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 3,000 (VIP 15,000) အထိ ရပါတယ်။ Gemini Pool စမ်းသုံးခွင့် — Free 2 မိနစ်/နေ့ · VIP 10 မိနစ်/နေ့ (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။</p>
                     </div>
                 </div>
 
@@ -588,7 +588,7 @@
                             <span class="step-num-pill">1</span>
                             <span class="step-title" data-i18n="text_input_label">အသံထွက်မည့် စာသား</span>
                         </div>
-                        <span class="char-counter" id="tts-char-count">0 / 1000 chars</span>
+                        <span class="char-counter" id="tts-char-count">0 / 3000 chars</span>
                     </div>
                     <textarea id="tts-text-input" data-i18n-ph="tts_text_placeholder" placeholder="အသံပြောင်းမည့် စာသား ရိုက်ထည့်ပါ…" rows="5"></textarea>
                     <!-- Phase 3: Non-destructive character excess highlight & actions for TTS -->
@@ -596,7 +596,7 @@
                         <span class="vcp-excess-text" id="tts-char-excess-text"></span>
                         <div class="vcp-excess-actions">
                             <button type="button" class="vcp-chip" id="btn-tts-excess-trim" onclick="trimTtsTextToLimit()" data-i18n="char_excess_use_free_part">✂️ ကန့်သတ်ချက်အတွင်း အပိုင်းကိုသာ သုံးမည်</button>
-                            <button type="button" class="vcp-chip active" id="btn-tts-excess-vip" onclick="switchTab('tab-vip')" data-i18n="char_excess_upgrade_vip">👑 VIP (5,000 လုံး) သို့ မြှင့်မည်</button>
+                            <button type="button" class="vcp-chip active" id="btn-tts-excess-vip" onclick="switchTab('tab-vip')" data-i18n="char_excess_upgrade_vip">👑 VIP (15,000 လုံး) သို့ မြှင့်မည်</button>
                         </div>
                     </div>
                     <div class="sample-chips">
@@ -620,7 +620,7 @@
                 <div class="cta-block" id="tts-cta-block">
                     <div id="tts-preflight" class="voice-preflight" aria-live="polite"></div>
                     <button type="button" class="btn gold-gradient-btn" id="btn-generate-tts" onclick="generateTTS()">
-                        <span class="btn-text" data-i18n="tts_generate_btn">🎧 အသံ ထုတ်မည်</span>
+                        <span class="btn-text" data-i18n="tts_generate_btn">အသံ ထုတ်မည်</span>
                         <span class="vcp-btn-est-cost" id="tts-btn-est-cost"></span>
                     </button>
                     <div class="queue-notice-banner">
@@ -848,7 +848,11 @@
                             <div class="box-resize-handle bottom"></div>
                         </div>
                         <div class="preview-sub-box draggable-box" id="preview-sub-box" style="top: 85%; transform: translateY(-50%);" title="ဖိဆွဲ၍ နေရာရွှေ့ပါ" data-i18n-title="preview_drag_hint">
+                            <div class="box-resize-handle top"></div>
+                            <div class="box-resize-handle left"></div>
                             <span class="drag-grip-icon sub-grip" data-i18n="sub_box_short_label">Subtitle</span>
+                            <div class="box-resize-handle right"></div>
+                            <div class="box-resize-handle bottom"></div>
                         </div>
                     </div>
                 </div>
@@ -892,7 +896,7 @@
                 </div>
 
                 <!-- Row 1: Ratio -->
-                <div class="recap-dock-section hidden dd-acc-group" id="recap-preview-ratio-group" data-acc-title-key="recap_ratio_label">
+                <div class="recap-dock-section hidden dd-acc-group" id="recap-preview-ratio-group" data-acc-title-key="recap_ratio_label" data-no-acc-val="1">
                     <div class="card-label" data-i18n="recap_ratio_label">ဗီဒီယို အချိုးအစား:</div>
                     <div class="ratio-pills-grid" id="recap-ratio-picker">
                         <button class="ratio-btn active" data-ratio="9:16">
@@ -917,7 +921,7 @@
                             <span class="ratio-icon">🎞️</span>
                             <span class="ratio-name" data-i18n="ratio_original">Original</span>
                             <span class="ratio-sub" data-i18n="ratio_original_sub">မူရင်းအချိုး</span>
-                            <span class="ratio-dims" data-i18n="ratio_original_dims">မူရင်းအချိုး · မူရင်းအရွယ်</span>
+                            <span class="ratio-dims" data-i18n="ratio_original_dims">မူရင်းအရွယ်</span>
                         </button>
                     </div>
                 </div>
@@ -1241,14 +1245,10 @@
         <div class="capsule-field">
             <span class="spec-lbl" data-i18n="recap_engine_label">ဇာတ်လမ်းပြော Engine:</span>
             <select id="recap-engine-picker" class="studio-select glass-dropdown" data-i18n-aria="recap_engine_label" aria-label="ဇာတ်လမ်းပြော Engine:">
-                <option value="voxcpm" data-engine="voxcpm" data-i18n="recap_engine_voxcpm" selected>🎙️ Persona Voice</option>
-                <option value="gemini" data-engine="gemini" data-i18n="recap_engine_gemini">✨ Gemini AI</option>
-                <option value="edge" data-engine="edge" data-i18n="recap_engine_edge">🎧 Edge TTS</option>
+                <option value="voxcpm" data-engine="voxcpm" data-i18n="recap_engine_voxcpm" selected>Voice Clone</option>
+                <option value="gemini" data-engine="gemini" data-i18n="recap_engine_gemini">Gemini TTS</option>
+                <option value="edge" data-engine="edge" data-i18n="recap_engine_edge">Edge TTS</option>
             </select>
-            <details class="vcp-engine-billing-details mt-2" id="recap-engine-billing-details">
-                <summary><span data-i18n="recap_sub_l2_title">အသေးစိတ်</span><span aria-hidden="true">▾</span></summary>
-                <p class="vcp-engine-billing-hint" id="recap-engine-billing-hint" data-i18n="recap_engine_hint_voxcpm">🎙️ Persona 12 သံကို FREE / VIP အားလုံး သုံးနိုင်ပါတယ် (Recap Credit + Voice မိနစ် ပူးတွဲကုန်ကျပါမယ်) • ကိုယ်ပိုင်အသံက VIP အတွက်သာ ဖြစ်ပါတယ်</p>
-            </details>
         </div>
                                             <div class="recap-gemini-wrap hidden mt-2" id="recap-gemini-voice-wrap">
                                                 <span class="spec-lbl" data-i18n="recap_gemini_voice_label">Gemini အသံ:</span>
@@ -1265,36 +1265,51 @@
                                                     <option value="Gacrux" data-i18n="gem_voice_gacrux">မသီရိ (မ)</option>
                                                     <option value="Achernar" data-i18n="gem_voice_achernar">မသွန်းရည် (မ)</option>
                                                 </select>
-                                                <p class="recap-auto-hint" data-i18n="recap_gemini_auto_hint">Auto ဆိုရင် ရွေးထားတဲ့ Persona အသံရဲ့ ကျား/မ အလိုက် အလိုက်ဖက်ဆုံး Gemini အသံကို သုံးပါမယ်</p>
                                                 <button type="button" class="preview-recap-voice-btn" id="btn-preview-gemini-voice" onclick="previewSelectedGeminiVoice()">
                                                     <span class="preview-icon">🔊</span>
                                                     <span data-i18n="btn_preview_voice">နမူနာ နားထောင်မည်</span>
                                                 </button>
                                             </div>
-                                <!-- Persona voices (engine = Persona Voice) -->
+                                            <div class="recap-edge-wrap hidden mt-2" id="recap-edge-voice-wrap">
+                                                <span class="spec-lbl" data-i18n="recap_edge_voice_label">Edge အသံ:</span>
+                                                <select id="recap-edge-voice-select" class="studio-select glass-dropdown recap-edge-select">
+                                                    <option value="thiha" data-i18n="tts_edge_thiha">ကိုသီဟ (ကျား)</option>
+                                                    <option value="nilar" data-i18n="tts_edge_nilar">မနီလာ (မ)</option>
+                                                    <option value="andrew" data-i18n="tts_edge_andrew">ကိုအန်ဒရူး (ကျား)</option>
+                                                    <option value="brian" data-i18n="tts_edge_brian">ကိုဘရိုင်ယန် (ကျား)</option>
+                                                    <option value="remy" data-i18n="tts_edge_remy">ကိုရီမီ (ကျား)</option>
+                                                    <option value="ava" data-i18n="tts_edge_ava">မအေဗာ (မ)</option>
+                                                    <option value="emma" data-i18n="tts_edge_emma">မအမ်မာ (မ)</option>
+                                                    <option value="vivienne" data-i18n="tts_edge_vivienne">မဗီဗီယန် (မ)</option>
+                                                </select>
+                                                <button type="button" class="preview-recap-voice-btn" id="btn-recap-edge-preview" onclick="previewSelectedRecapEdgeVoice(event)">
+                                                    <span class="preview-icon">🔊</span>
+                                                    <span data-i18n="btn_preview_voice">နမူနာ နားထောင်မည်</span>
+                                                </button>
+                                            </div>
+                                <!-- Voice Clone area (engine = voxcpm): chooser FIRST (Own Voice vs Persona) -->
                                 <div id="recap-persona-area">
-                                <!-- Batch BX: Edge-engine honesty note — shown only while the Edge engine is selected (syncRecapEngineAreas) -->
-                                <p id="recap-persona-engine-note" class="hint-line hidden" data-i18n="recap_persona_note_edge">Edge အသံဖြင့် ပြောပြပါမည် — ရွေးထားသော Persona အလိုက် ကိုသီဟ သို့မဟုတ် မနီလာ အသံ ဖြစ်ပါမည်။</p>
+                                <div class="segmented-control sm mt-2" id="recap-clone-mode-picker" role="tablist">
+                                    <button type="button" class="seg-btn" id="btn-recap-clone-own" data-clone-mode="own" onclick="switchRecapCloneMode('own')">
+                                        <span class="seg-title" data-i18n="recap_clone_mode_own">ကိုယ်ပိုင်အသံ</span>
+                                    </button>
+                                    <button type="button" class="seg-btn active" id="btn-recap-clone-persona" data-clone-mode="persona" onclick="switchRecapCloneMode('persona')">
+                                        <span class="seg-title" data-i18n="recap_clone_mode_persona">Persona အသံ</span>
+                                    </button>
+                                </div>
 
-                                <!-- FIRST: My Voice (Own-voice custom upload / saved voice) -->
+                                <!-- Own Voice (open to all users — VIP gate removed in Round 13 E3) -->
                                 <div class="recap-own-voice-wrap hidden mt-2" id="recap-own-voice-wrap">
-                                    <div class="voice-card" id="recap-own-voice-card" role="button" tabindex="0" aria-pressed="false">
-                                        <div class="v-avatar">🎙️</div>
+                                    <div class="voice-card hidden" id="recap-own-voice-card" role="button" tabindex="0" aria-pressed="false">
                                         <div class="v-info">
                                             <span class="v-name" data-i18n="recap_own_voice_name">ကိုယ်ပိုင်အသံ</span>
                                         </div>
-                                        <span class="vcp-billing-badge is-vip" id="recap-own-voice-vip-tag" data-i18n="recap_badge_vip_only">👑 VIP သီးသန့်</span>
-                                        <span class="own-voice-lock-badge hidden" id="recap-own-voice-lock-badge" aria-hidden="true">🔒</span>
-                                    </div>
-                                    <div class="vcp-own-voice-upsell-row">
-                                        <p class="recap-own-voice-locked-hint hidden" id="recap-own-voice-locked-hint" data-i18n="recap_own_voice_locked_hint">🔒 ကိုယ်ပိုင်အသံနဲ့ ဇာတ်လမ်းပြောခြင်းသည် VIP အသုံးပြုသူများအတွက်သာ ဖြစ်ပါသည်</p>
-                                        <button type="button" class="vcp-own-voice-vip-btn hidden" id="btn-recap-own-voice-vip" onclick="switchTab('tab-vip')" data-i18n="recap_own_voice_vip_cta">👑 VIP ရယူမည်</button>
                                     </div>
                                     <div class="vcp-saved-voice-bar hidden" id="recap-saved-voice-bar">
                                         <span id="recap-saved-voice-label"></span>
                                         <button type="button" class="mini-chip" onclick="applySavedCustomVoiceToRecap()" data-i18n="saved_custom_voice_use_btn">💾 သုံးမည်</button>
                                     </div>
-                                    <div class="recap-own-voice-body hidden" id="recap-own-voice-body">
+                                    <div class="recap-own-voice-body" id="recap-own-voice-body">
                                         <p class="ref-desc" data-i18n="recap_own_voice_hint">ကိုယ်ပိုင်အသံ နမူနာ (၁၀–၃၀ စက္ကန့် အကောင်းဆုံး၊ အများဆုံး ၅၀ စက္ကန့်) တင်ပါ။ ၅၀ စက္ကန့်ထက် ရှည်ရင် ပထမ ၄၅ စက္ကန့်ကို အလိုအလျောက် ဖြတ်သုံးပါမည်။</p>
                                         <div class="ref-upload-row">
                                             <label class="btn-file-upload" for="recap-own-voice-input" id="recap-own-voice-upload-btn">
@@ -1446,84 +1461,43 @@
 
                                 </div><!-- /#recap-persona-area -->
 
-        <div class="dd-acc-group recap-step3-acc mt-3" id="recap-story-style-acc" data-acc-title-key="recap_style_label">
+        <div class="dd-acc-group recap-step3-acc mt-3" id="recap-story-style-acc" data-acc-title-key="recap_style_label" data-no-acc-val="1">
         <div class="story-style-block">
                                             <div class="card-label story-style-label" data-i18n="recap_style_label">ဇာတ်လမ်းပြော စတိုင်လ်:</div>
-                                            <div class="style-pills-grid seg-capsule" id="story-style-picker-quick">
-                                                <span class="seg-capsule-pill" aria-hidden="true"></span>
-                                                <button type="button" class="style-select-pill capsule-seg" data-story="viral">
-                                                    <span class="pill-main" data-i18n="style_viral">ချက်ချင်းစွဲဆောင်</span>
+                                            <div class="style-pills-grid style-grid-2x2" id="story-style-picker-quick">
+                                                <button type="button" class="style-select-pill" data-story="viral">
+                                                    <span class="pill-main" data-i18n="style_viral">စွဲဆောင်</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill capsule-seg" data-story="dramatic">
-                                                    <span class="pill-main" data-i18n="style_dramatic">ဒရာမာ ပရိုင်း</span>
+                                                <button type="button" class="style-select-pill" data-story="funny">
+                                                    <span class="pill-main" data-i18n="style_funny">ဟာသ</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill capsule-seg" data-story="funny">
-                                                    <span class="pill-main" data-i18n="style_funny">ပေါ့ပါးဟာသ</span>
+                                                <button type="button" class="style-select-pill" data-story="standard">
+                                                    <span class="pill-main" data-i18n="style_standard">ဇာတ်လမ်းပြော</span>
                                                 </button>
-                                                <button type="button" class="style-select-pill capsule-seg active" data-story="pov">
-                                                    <span class="pill-main" data-i18n="style_pov">ကိုယ်တွေ့ ရှုထောင့်</span>
-                                                </button>
-                                                <button type="button" class="style-select-pill capsule-seg" data-story="standard">
-                                                    <span class="pill-main" data-i18n="style_standard">ရုပ်ရှင်ဟန် ဇာတ်လမ်းပြော</span>
+                                                <button type="button" class="style-select-pill active" data-story="pov">
+                                                    <span class="pill-main" data-i18n="style_pov">ကိုယ်တွေ့</span>
                                                 </button>
                                             </div>
                                         </div><!-- /.story-style-block -->
         </div>
-        <div class="dd-acc-group recap-step3-acc mt-2" id="recap-pace-acc" data-acc-title-key="recap_pace_acc_title">
+        <div class="dd-acc-group recap-step3-acc mt-2" id="recap-pace-acc" data-acc-title-key="recap_pace_acc_title" data-no-acc-val="1">
         <div class="recap-adv-group hidden" id="recap-preview-speed-group">
             <div class="card-label" data-i18n="recap_speed_label">ဇာတ်လမ်းပြောနှုန်း:</div>
-            <div class="speed-capsule" id="recap-speed-picker">
-                <span class="speed-capsule-pill" aria-hidden="true"></span>
-                <button class="speed-seg" data-speed="-6%"><span class="seg-short">-6%</span><span class="seg-full" data-i18n="speed_m6">-6% နှေး</span></button>
-                <button class="speed-seg" data-speed="+0%"><span class="seg-short">+0%</span><span class="seg-full" data-i18n="speed_0">+0% ပုံမှန်</span></button>
-                <button class="speed-seg active" data-speed="+12%"><span class="seg-short">+12%</span><span class="seg-full" data-i18n="speed_12_capsule">+12% အကြံပြု</span></button>
-                <button class="speed-seg" data-speed="+20%"><span class="seg-short">+20%</span><span class="seg-full" data-i18n="speed_20">+20% မြန်</span></button>
-                <button class="speed-seg" data-speed="+25%"><span class="seg-short">+25%</span><span class="seg-full" data-i18n="speed_25">+25% အထူးမြန်</span></button>
+            <div class="speed-capsule recap-speed-grid" id="recap-speed-picker">
+                <button type="button" class="speed-seg" data-speed="-6%"><span class="seg-short">-6%</span></button>
+                <button type="button" class="speed-seg" data-speed="+0%"><span class="seg-short">+0%</span></button>
+                <button type="button" class="speed-seg active" data-speed="+12%"><span class="seg-short">+12%</span></button>
+                <button type="button" class="speed-seg" data-speed="+20%"><span class="seg-short">+20%</span></button>
+                <button type="button" class="speed-seg" data-speed="+25%"><span class="seg-short">+25%</span></button>
             </div>
         </div>
         </div>
-        <div class="dd-acc-group recap-step3-acc mt-2" id="recap-lang-acc" data-acc-title-key="recap_lang_acc_title">
-        <div class="recap-lang-block">
-                                            <div class="vcp-lang-head-row">
-                                                <span class="spec-lbl" data-i18n="recap_lang_label">မူရင်းဗီဒီယို ဘာသာစကား:</span>
-                                                <button type="button" class="vcp-lang-sheet-btn" id="btn-open-recap-lang-sheet" onclick="openRecapLangSheet()" data-i18n="recap_lang_sheet_btn">🌐 ဘာသာစကား အမြန်ရွေးမည်</button>
-                                            </div>
-                                            <!-- Batch AZ-11: ONE compact dropdown row — the
-                                                 AX-5 frequent pills are retired; this select
-                                                 is the only control and lists all 18 values.
-                                                 It still writes through setRecapSourceLanguage
-                                                 (single state, single payload field). -->
-                                            <select id="recap-lang-more" class="studio-select glass-dropdown recap-lang-more mt-2" data-i18n-aria="recap_lang_label" aria-label="မူရင်းဗီဒီယို ဘာသာစကား:">
-                                                <option value="auto" data-lang="auto" data-i18n="recap_lang_auto">Auto (အလိုအလျောက်)</option>
-                                                <option value="my" data-lang="my" data-i18n="recap_lang_my">Myanmar (မြန်မာ)</option>
-                                                <option value="en" data-lang="en" data-i18n="recap_lang_en">English (အင်္ဂလိပ်)</option>
-                                                <option value="th" data-lang="th" data-i18n="recap_lang_th">Thai (ထိုင်း)</option>
-                                                <option value="zh" data-lang="zh" data-i18n="recap_lang_zh">Chinese (တရုတ်)</option>
-                                                <option value="ko" data-lang="ko" data-i18n="recap_lang_ko">Korean (ကိုရီးယား)</option>
-                                                <option value="ja" data-lang="ja" data-i18n="recap_lang_ja">Japanese (ဂျပန်)</option>
-                                                <option value="hi" data-lang="hi" data-i18n="recap_lang_hi">Hindi (ဟိန္ဒီ)</option>
-                                                <option value="es" data-lang="es" data-i18n="recap_lang_es">Spanish (စပိန်)</option>
-                                                <option value="fr" data-lang="fr" data-i18n="recap_lang_fr">French (ပြင်သစ်)</option>
-                                                <option value="de" data-lang="de" data-i18n="recap_lang_de">German (ဂျာမန်)</option>
-                                                <option value="id" data-lang="id" data-i18n="recap_lang_id">Indonesian (အင်ဒိုနီးရှား)</option>
-                                                <option value="vi" data-lang="vi" data-i18n="recap_lang_vi">Vietnamese (ဗီယက်နမ်)</option>
-                                                <option value="ru" data-lang="ru" data-i18n="recap_lang_ru">Russian (ရုရှား)</option>
-                                                <option value="ar" data-lang="ar" data-i18n="recap_lang_ar">Arabic (အာရဗီ)</option>
-                                                <option value="it" data-lang="it" data-i18n="recap_lang_it">Italian (အီတလီ)</option>
-                                                <option value="pt" data-lang="pt" data-i18n="recap_lang_pt">Portuguese (ပေါ်တူဂီ)</option>
-                                                <option value="tr" data-lang="tr" data-i18n="recap_lang_tr">Turkish (တူရကီ)</option>
-                                            </select>
-                                        </div>
-        </div>
-        <div class="dd-acc-group recap-step3-acc mt-2" id="recap-review-acc" data-acc-title-key="recap_review_acc_title">
-        <label class="script-review-row recap-script-review-main vcp-script-review-card" for="recap-script-review-toggle">
+        <label class="script-review-row vcp-switch-row vcp-compact-row mt-2" for="recap-script-review-toggle" id="recap-review-switch-row">
             <input type="checkbox" id="recap-script-review-toggle">
             <span class="script-review-main-text">
-                <span data-i18n="recap_script_review_label">📝 Script ကို အရင် စစ်ပြင်မည် (အသံ မထုတ်ခင်)</span>
-                <span class="script-review-hint" data-i18n="recap_script_review_hint">အသံမထုတ်ခင် Script ကို ကိုယ်တိုင် စစ်ပြီး ပြင်နိုင်ပါတယ်</span>
+                <span class="t-lbl" data-i18n="recap_script_review_label">Script ကို အရင် စစ်မည်</span>
             </span>
         </label>
-        </div>
         <div class="recap-step-next-row mt-3">
             <button type="button" class="btn secondary-btn recap-step-next" data-step-next="4"><span data-i18n="recap_step_continue">ဆက်လုပ်မည်</span> →</button>
         </div>
@@ -1540,17 +1514,7 @@
                     <span class="preview-empty-desc" data-i18n="recap_preview_empty_desc">အဆင့် ၁ မှာ Video Link ထည့်ပါ (သို့) ဖိုင် တင်ပါ — ဗီဒီယို အဆင်သင့် ဖြစ်တာနဲ့ စာတန်း နဲ့ Blur နေရာ ချိန်ညှိဖို့ ဒီနေရာမှာ ပေါ်လာပါမယ်။</span>
                 </div>
             </div>
-            <p class="recap-output-caption" data-i18n="recap_output_caption">ပြီးမယ့် ဗီဒီယိုရဲ့ ပုံစံပါ (လက်ရှိနေရာမှ နမူနာရုပ်ပုံ) — မကြိုက်တာ ရှိရင် မဖန်တီးခင် အဆင့် ၂ မှာ ပြန်ပြင်နိုင်ပါတယ်</p>
-            <div class="recap-output-facts" id="recap-step4-facts">
-                <div class="recap-format-fact-item">
-                    <span class="recap-format-fact-label" data-i18n="recap_fact_format_label">ပုံစံ</span>
-                    <span class="recap-format-fact-val" id="recap-fact-canvas"></span>
-                </div>
-                <div class="recap-format-fact-item">
-                    <span class="recap-format-fact-label" data-i18n="recap_fact_duration_label">ကြာချိန်</span>
-                    <span class="recap-format-fact-val" id="recap-fact-duration"></span>
-                </div>
-            </div>
+            <p class="recap-output-caption recap-output-caption-card" data-i18n="recap_output_caption">Output နမူနာပါ — မကြိုက်တာ ရှိရင် အဆင့် ၂ မှာ ပြန်ပြင်နိုင်ပါတယ်</p>
         </div>
         <div class="recap-step4-choices" id="recap-step4-choices">
             <div class="recap-choice-row">
@@ -1604,7 +1568,7 @@
         </div>
                             <div class="recap-action-cta-wrap mt-3">
                                 <button class="btn gold-gradient-btn massive-btn" id="btn-start-recap">
-            <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည်</span>
+            <span class="btn-text" data-i18n="btn_start_recap">ဖန်တီးမည်</span>
         </button>
                             </div>
         <!-- Batch CI: persistent reason under the CTA — shown while a
@@ -1702,25 +1666,13 @@
                     <summary><span data-i18n="recap_step1_notes_toggle">ℹ️ သတိပြုရန်နှင့် ကန့်သတ်ချက်များ</span><span aria-hidden="true">▾</span></summary>
                     <p class="rights-note recap-rights-note" data-i18n="recap_rights_note">🛡️ မူပိုင်ခွင့် သတိပေးချက်: ကိုယ်ပိုင် (သို့) အသုံးပြုခွင့်ရှိသော ဗီဒီယိုများကိုသာ Recap လုပ်ပါ။ မူပိုင်ခွင့် တာဝန်မှာ အသုံးပြုသူ၏ တာဝန်သာ ဖြစ်ပါသည်။</p>
 
-                    <!-- 🌟 AUTO-SLIDING STUDIO ANNOUNCEMENT & POLICY CAROUSEL (CLEAN & COMPACT) 🌟 -->
+                    <!-- Studio Tier Limit & Watermark Policy -->
                     <div class="studio-alert-carousel" id="studio-alert-carousel">
                         <div class="carousel-track" id="carousel-track">
-                            <!-- Slide 0: Telegram Background Delivery -->
-                            <div class="carousel-slide active" data-slide="0">
-                                <span class="slide-text" data-i18n="telegram_bg_assurance">✨ ဒီမှာ စောင့်နေစရာ မလိုပါ — Render ပြီးပါက Telegram Bot ထံသို့ တိုက်ရိုက် ပို့ပေးပါမည်။</span>
-                            </div>
-                            <!-- Slide 1: Tier Limit & Watermark Policy -->
-                            <div class="carousel-slide" data-slide="1" id="recap-limit-pill">
+                            <!-- Slide 0: Tier Limit & Watermark Policy -->
+                            <div class="carousel-slide active" data-slide="0" id="recap-limit-pill">
                                 <span class="slide-text" id="recap-tier-limit-text" data-i18n="recap_limit_notice">🎬 Free: အများဆုံး ၂ မိနစ် (Watermark ပါမည်) • VIP: ၁၀ မိနစ်အထိ (Watermark မပါ)</span>
                             </div>
-                        </div>
-                        <div class="carousel-nav-bar">
-                            <button type="button" class="carousel-arrow prev" id="btn-carousel-prev" data-i18n-aria="carousel_prev_aria" aria-label="Previous Slide">‹</button>
-                            <div class="carousel-dots" id="carousel-dots">
-                                <span class="carousel-dot active" data-slide-idx="0"></span>
-                                <span class="carousel-dot" data-slide-idx="1"></span>
-                            </div>
-                            <button type="button" class="carousel-arrow next" id="btn-carousel-next" data-i18n-aria="carousel_next_aria" aria-label="Next Slide">›</button>
                         </div>
                     </div>
                 </details>
@@ -1730,15 +1682,6 @@
                 <button type="button" class="hub-link mt-4" onclick="openHistoryHub()">
                     <span data-i18n="history_view_all">မှတ်တမ်း အကုန် ကြည့်ရန်</span><span class="hub-link-arrow">→</span>
                 </button>
-                <div class="vcp-lang-sheet-backdrop hidden" id="recap-lang-sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="recap-lang-sheet-title" onclick="if (event.target === this) closeRecapLangSheet()">
-                    <div class="vcp-lang-sheet">
-                        <div class="vcp-lang-head-row">
-                            <span class="card-label" id="recap-lang-sheet-title" data-i18n="recap_lang_sheet_title">🌐 မူရင်းဗီဒီယို ဘာသာစကား ရွေးပါ</span>
-                            <button type="button" class="vcp-lang-sheet-btn" id="btn-close-recap-lang-sheet" onclick="closeRecapLangSheet()" data-i18n-aria="btn_close_aria" aria-label="Close">✕</button>
-                        </div>
-                        <div class="vcp-lang-sheet-grid" id="recap-lang-sheet-grid"></div>
-                    </div>
-                </div>
             </section>
 
             <!-- ════ TAB 3: DOWNLOADER ════ -->
@@ -1821,83 +1764,36 @@
 
             <!-- ════ TAB 4: BUY / VIP PLANS ════ -->
             <section id="tab-vip" class="tab-pane">
-                <div class="pane-header">
-                    <div class="pane-title-row">
-                        <h2 data-i18n="vip_title">💎 Creator VIP Plans</h2>
-                        <span class="badge-studio gold">PREMIUM</span>
-                    </div>
-                    <p data-i18n="vip_subtitle">Creator များအတွက် အဆင့်မြင့် စတူဒီယို အစီအစဉ်များ</p>
-                </div>
-
-                <!-- Storefront vs Wallet & Orders Sub-View Toggle -->
-                <div class="segmented-control vcp-vip-subnav mb-2" role="tablist">
-                    <button type="button" class="seg-btn active" id="vip-subbtn-plans" onclick="switchVipSubView('plans')">
-                        <span class="seg-title" data-i18n="vip_sub_plans">🛒 Packages &amp; Top-up</span>
-                    </button>
-                    <button type="button" class="seg-btn" id="vip-subbtn-wallet" onclick="switchVipSubView('wallet')">
-                        <span class="seg-title" data-i18n="vip_sub_wallet">💼 Wallet &amp; Orders</span>
-                    </button>
-                </div>
-
                 <div id="vip-sub-plans">
-                    <details class="card glass vcp-card plan-how-card">
-                        <summary class="card-label plan-how-summary"><span data-i18n="plan_how_title">💎 Plan ဘယ်လို အလုပ်လုပ်သလဲ</span><span class="plan-how-chevron" aria-hidden="true">▾</span></summary>
-                        <p class="plan-how-text" data-i18n="plan_how_text1">၁) Package ရွေးပါ → ၂) KBZPay / WavePay ဖြင့် ငွေလွှဲ၍ ပြေစာ တင်ပါ → ၃) Admin အတည်ပြုပြီးနောက် Wallet ထဲသို့ အလိုအလျောက် ဝင်ပါမည်။ 1 Recap Credit = Final Output 1 မိနစ်ဖြစ်ပြီး Combo ဝယ်ယူပါက 10% သက်သာကာ Wallet နှစ်ခုလုံးထဲ သီးခြားစီ ထည့်ပေးပါသည်။</p>
-                    </details>
-
-                    <!-- 4 Package Categories dynamically populated from /api/vip/plans -->
-                    <div class="segmented-control plan-tabs plan-tabs-4" role="tablist">
-                        <button type="button" class="seg-btn plan-tab-btn active" data-plan-cat="voice" onclick="switchPlanCategory('voice')">
-                            <span class="seg-title" data-i18n="plan_tab_voice">🎙️ Voice</span>
+                    <!-- 3 Package Categories dynamically populated from /api/vip/plans -->
+                    <div class="segmented-control plan-tabs plan-tabs-3" role="tablist">
+                        <button type="button" class="seg-btn plan-tab-btn active" data-plan-cat="combo" onclick="switchPlanCategory('combo')">
+                            <span class="seg-title">Package</span>
+                        </button>
+                        <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="voice" onclick="switchPlanCategory('voice')">
+                            <span class="seg-title">Voice</span>
                         </button>
                         <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="recap" onclick="switchPlanCategory('recap')">
-                            <span class="seg-title" data-i18n="plan_tab_recap">🎬 Recap</span>
+                            <span class="seg-title">Recap</span>
                         </button>
-                        <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="combo" onclick="switchPlanCategory('combo')">
-                            <span class="seg-title" data-i18n="plan_tab_combo">🎁 Combo</span>
-                        </button>
-                        <button type="button" class="seg-btn plan-tab-btn" data-plan-cat="topup" onclick="switchPlanCategory('topup')">
-                            <span class="seg-title" data-i18n="plan_tab_topup">⚡ Top-up</span>
-                        </button>
-                    </div>
-                    <p class="plan-free-note" data-i18n="plan_free_note">💡 1 Recap Credit = Final Output 1 မိနစ် (တစ်စက္ကန့်ချင်း အတိအကျ) • Unused Reserve အလိုအလျောက် ပြန်အမ်းသည်</p>
-                    <div class="vcp-vip-trust-note">
-                        <span class="vcp-badge vcp-badge--info" data-i18n="vip_never_expires_badge">⏳ အသစ်ဝယ်ယူသော Package များ သက်တမ်း ၃၀ ရက် (30 Days) အကျုံးဝင်ပါသည်</span>
                     </div>
 
-                    <div class="plan-panel" id="plan-panel-voice"><div class="pricing-grid" id="vip-grid-voice"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div></div>
+                    <div class="plan-panel" id="plan-panel-combo"><div class="pricing-grid" id="vip-grid-combo"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div></div>
+                    <div class="plan-panel hidden" id="plan-panel-voice"><div class="pricing-grid" id="vip-grid-voice"></div></div>
                     <div class="plan-panel hidden" id="plan-panel-recap"><div class="pricing-grid" id="vip-grid-recap"></div></div>
-                    <div class="plan-panel hidden" id="plan-panel-combo"><div class="pricing-grid" id="vip-grid-combo"></div></div>
-                    <div class="plan-panel hidden" id="plan-panel-topup"><div class="pricing-grid" id="vip-grid-topup"></div></div>
-                </div>
 
-                <div id="vip-sub-wallet" class="hidden">
-                    <div class="card glass vcp-card mb-3">
-                        <div class="card-header-row">
-                            <span class="card-label" data-i18n="vip_grants_title">⏳ ဝယ်ယူထားသော Package သက်တမ်းများ</span>
-                            <button type="button" class="mini-chip" onclick="loadVipWalletHistory(true)">🔄</button>
-                        </div>
-                        <div id="vip-grants-list" class="mt-2"><p class="text-muted text-xs" data-i18n="admin_loading">ရယူနေသည်…</p></div>
-                    </div>
-                    <div class="card glass vcp-card">
-                        <div class="card-header-row">
-                            <span class="card-label" data-i18n="vip_orders_title">🧾 ဝယ်ယူမှု မှတ်တမ်း (Orders)</span>
-                            <button type="button" class="mini-chip" onclick="loadVipWalletHistory(true)">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
-                        </div>
-                        <div id="vip-orders-list" class="mt-2"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div>
-                    </div>
-                    <div class="card glass vcp-card mt-3">
-                        <div class="card-header-row">
-                            <span class="card-label" data-i18n="vip_tx_title">📒 Wallet Transaction Ledger</span>
-                            <div class="vcp-tx-filters">
-                                <button type="button" class="mini-chip active" data-tx-kind="" onclick="loadVipWalletTx('')">All</button>
-                                <button type="button" class="mini-chip" data-tx-kind="RECAP" onclick="loadVipWalletTx('RECAP')">Recap</button>
-                                <button type="button" class="mini-chip" data-tx-kind="VOICE" onclick="loadVipWalletTx('VOICE')">Voice</button>
-                                <button type="button" class="mini-chip" data-tx-kind="COMBO" onclick="loadVipWalletTx('COMBO')">Combo</button>
-                            </div>
-                        </div>
-                        <div id="vip-tx-list" class="mt-2"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div>
-                    </div>
+                    <details class="card glass vcp-card buy-terms-card mt-3" id="buy-terms-card">
+                        <summary class="card-label plan-how-summary"><span data-i18n="buy_terms_title">📋 စည်းကမ်းများ</span><span class="plan-how-chevron" aria-hidden="true">▾</span></summary>
+                        <ol class="buy-terms-list">
+                            <li data-i18n="buy_terms_1">1 Recap Credit = ဗီဒီယို ၁ မိနစ် (Final Output)</li>
+                            <li data-i18n="buy_terms_2">Recap တစ်ခါထုတ် — Free: အများဆုံး ၂ မိနစ် (Watermark ပါမည်) · ဝယ်ယူထားသူများ: အများဆုံး ၁၀ မိနစ်</li>
+                            <li data-i18n="buy_terms_3">Voice Clone တစ်ခါထုတ် စာလုံး — Free: 3,000 အထိ · ဝယ်ယူထားသူများ: 15,000 အထိ</li>
+                            <li data-i18n="buy_terms_4">Persona / ကိုယ်ပိုင်အသံ ဖြင့် Recap ထုတ်လျှင် Credit + Voice မိနစ် နှစ်ခုလုံး ကုန်သည်</li>
+                            <li data-i18n="buy_terms_5">Edge အသံ ဖြင့် Recap ထုတ်လျှင် Credit သာ ကုန်သည်</li>
+                            <li data-i18n="buy_terms_6">Gemini အသံ ဖြင့် Recap ထုတ်လျှင် Credit သာ ကုန်သည် — သို့သော် ကိုယ်ပိုင် Gemini API Key ထည့်ထားရန် လိုအပ်သည် (Profile တွင် ထည့်နိုင်သည်)။ Key မထည့်လျှင် အခမဲ့ Pool မှ သုံးရသဖြင့် အကန့်အသတ် ကြုံရပြီး Edge သို့ Fallback ပြောင်းသွားနိုင်သည်</li>
+                            <li data-i18n="buy_terms_7">တစ်ချိန်တည်း အလုပ် ၁ ခုသာ လုပ်နိုင်သည်</li>
+                        </ol>
+                    </details>
                 </div>
 
                 <!-- Payment Info Drawer -->
@@ -2044,13 +1940,45 @@
                     </div>
                 </div>
 
+                <!-- 2b. Wallet & Orders (moved from #tab-vip; all IDs preserved) -->
+                <div id="profile-wallet-orders-section" class="profile-wallet-orders-section">
+                    <div class="profile-section-heading" data-i18n="profile_wallet_orders_title">💼 Wallet &amp; Orders</div>
+                    <div class="card glass vcp-card mb-3">
+                        <div class="card-header-row">
+                            <span class="card-label" data-i18n="vip_grants_title">⏳ ဝယ်ယူထားသော Package သက်တမ်းများ</span>
+                            <button type="button" class="mini-chip" onclick="loadVipWalletHistory(true)">🔄</button>
+                        </div>
+                        <div id="vip-grants-list" class="mt-2"><p class="text-muted text-xs" data-i18n="admin_loading">ရယူနေသည်…</p></div>
+                    </div>
+                    <div class="card glass vcp-card">
+                        <div class="card-header-row">
+                            <span class="card-label" data-i18n="vip_orders_title">🧾 ဝယ်ယူမှု မှတ်တမ်း (Orders)</span>
+                            <button type="button" class="mini-chip" onclick="loadVipWalletHistory(true)">🔄 <span data-i18n="btn_refresh">Refresh</span></button>
+                        </div>
+                        <div id="vip-orders-list" class="mt-2"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div>
+                    </div>
+                    <div class="card glass vcp-card mt-3">
+                        <div class="card-header-row">
+                            <span class="card-label" data-i18n="vip_tx_title">📒 Wallet Transaction Ledger</span>
+                            <div class="vcp-tx-filters">
+                                <button type="button" class="mini-chip active" data-tx-kind="" onclick="loadVipWalletTx('')">All</button>
+                                <button type="button" class="mini-chip" data-tx-kind="RECAP" onclick="loadVipWalletTx('RECAP')">Recap</button>
+                                <button type="button" class="mini-chip" data-tx-kind="VOICE" onclick="loadVipWalletTx('VOICE')">Voice</button>
+                                <button type="button" class="mini-chip" data-tx-kind="COMBO" onclick="loadVipWalletTx('COMBO')">Combo</button>
+                            </div>
+                        </div>
+                        <div id="vip-tx-list" class="mt-2"><p class="text-muted text-sm" data-i18n="admin_loading">ရယူနေသည်…</p></div>
+                    </div>
+                </div>
+
                 <!-- 3. Referral Summary -->
                 <div class="card glass vcp-card profile-refer-card" id="profile-refer-card">
                     <div class="card-label" data-i18n="ref_card_title">🎁 မိတ်ဆက်ဆု</div>
+                    <p class="ref-desc" id="profile-ref-terms" data-i18n="profile_ref_terms">သူငယ်ချင်း ၁ ယောက် ဖိတ်တိုင်း Voice Clone ၁ မိနစ် · အကန့်အသတ် မရှိ</p>
                     <div class="profile-ref-stats-grid">
                         <div class="profile-ref-stat-box">
                             <span class="stat-label" data-i18n="profile_ref_friends_label">ဖိတ်ခေါ်ပြီး သူငယ်ချင်း</span>
-                            <span class="stat-val t-num" id="profile-ref-friends">0 / 20</span>
+                            <span class="stat-val t-num" id="profile-ref-friends">0</span>
                         </div>
                         <div class="profile-ref-stat-box">
                             <span class="stat-label" data-i18n="profile_ref_minutes_label">ရရှိပြီး မိနစ်</span>
@@ -2745,7 +2673,7 @@
                             <div class="form-row-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_char_limit_free">အခမဲ့ စာလုံးရေ ကန့်သတ်ချက် (Free Character Limit)</label>
-                                    <input type="number" id="adm-set-char-limit-free" class="studio-input" min="100" max="10000" step="50" inputmode="numeric">
+                                    <input type="number" id="adm-set-char-limit-free" class="studio-input" min="100" max="50000" step="50" inputmode="numeric">
                                     <p class="text-xs text-muted" data-i18n="settings_char_limit_free_hint">အခမဲ့ အသုံးပြုသူများ တစ်ကြိမ်လျှင် ထုတ်လုပ်နိုင်သော စာလုံးရေ အများဆုံး</p>
                                 </div>
                                 <div class="toggle-control-col">
@@ -2930,13 +2858,13 @@
                             <div class="form-row-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_char_limit_purchased">ဝယ်ယူ စာလုံးရေ ကန့်သတ်ချက် (Purchased Character Limit)</label>
-                                    <input type="number" id="adm-set-char-limit-purchased" class="studio-input" min="100" max="10000" step="50" inputmode="numeric">
+                                    <input type="number" id="adm-set-char-limit-purchased" class="studio-input" min="100" max="50000" step="50" inputmode="numeric">
                                     <p class="text-xs text-muted" data-i18n="settings_char_limit_purchased_hint">ဝယ်ယူထားသော အသုံးပြုသူများ တစ်ကြိမ်လျှင် ထုတ်လုပ်နိုင်သော စာလုံးရေ အများဆုံး</p>
                                 </div>
                                 <div>
-                                    <label class="input-label" data-i18n="settings_free_allowance">အခမဲ့ လစဉ် အချိန် ပမာဏ (Free Monthly Allowance)</label>
-                                    <input type="number" id="adm-set-free-allowance" class="studio-input" min="60" max="600" step="60" inputmode="numeric">
-                                    <p class="text-xs text-muted" data-i18n="settings_free_allowance_hint">အခမဲ့ အသုံးပြုသူများ တစ်လလျှင် ရသော အသံ ထုတ်လုပ်ချိန် (စက္ကန့်)</p>
+                                    <label class="input-label" data-i18n="settings_free_allowance">အခမဲ့ နေ့စဉ် အချိန် ပမာဏ (Free Daily Allowance)</label>
+                                    <input type="number" id="adm-set-free-allowance" class="studio-input" min="0" max="86400" step="60" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_free_allowance_hint">အခမဲ့ အသုံးပြုသူများ တစ်နေ့လျှင် ရသော အသံ ထုတ်လုပ်ချိန် — မပေါင်းပါ (စက္ကန့်)</p>
                                 </div>
                             </div>
                             <div class="form-row-2 mt-2">
@@ -2957,6 +2885,13 @@
                                     <input type="number" id="adm-set-free-gemini-taste" class="studio-input" min="0" max="1440" step="1" inputmode="numeric">
                                     <p class="text-xs text-muted" data-i18n="settings_free_gemini_taste_minutes_hint">Free အကောင့် တစ်ခု Pool Gemini ကို တစ်နေ့ စမ်းသုံးနိုင်သော မိနစ် (ကိုယ်ပိုင် Key ရှိသူများ မပါ)</p>
                                 </div>
+                                <div>
+                                    <label class="input-label" data-i18n="settings_paid_gemini_taste_minutes">VIP Gemini စမ်းသုံးခွင့် (မိနစ်/နေ့)</label>
+                                    <input type="number" id="adm-set-paid-gemini-taste" class="studio-input" min="0" max="1440" step="1" inputmode="numeric">
+                                    <p class="text-xs text-muted" data-i18n="settings_paid_gemini_taste_minutes_hint">VIP/Paid အကောင့် တစ်ခု Pool Gemini ကို တစ်နေ့ စမ်းသုံးနိုင်သော မိနစ် (ကိုယ်ပိုင် Key ရှိသူများ မပါ)</p>
+                                </div>
+                            </div>
+                            <div class="form-row-2 mt-2">
                                 <div>
                                     <label class="input-label" data-i18n="settings_free_gemini_budget_requests">Free Gemini နေ့စဉ် Budget (Requests)</label>
                                     <input type="number" id="adm-set-free-gemini-budget" class="studio-input" min="0" max="100000" step="10" inputmode="numeric">
@@ -3416,7 +3351,7 @@
              Clicks forward to the real button — no duplicate logic. -->
         <div class="sticky-cta-bar hidden" id="sticky-cta-recap">
             <button type="button" class="btn gold-gradient-btn sticky-cta-btn" id="btn-start-recap-sticky">
-                <span class="btn-text" data-i18n="btn_start_recap">⚡ 1-Click Recap ဖန်တီးမည်</span>
+                <span class="btn-text" data-i18n="btn_start_recap">ဖန်တီးမည်</span>
             </button>
         </div>
 

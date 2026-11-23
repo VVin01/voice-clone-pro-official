@@ -15,7 +15,12 @@ from app.services.billing import (
     BillingError,
     reserve_for_job,
 )
-from app.services.ledger import get_minute_balance, get_or_create_user, grant_monthly_free_allowance
+from app.services.ledger import (
+    get_minute_balance,
+    get_or_create_user,
+    grant_daily_free_allowance,
+    grant_monthly_free_allowance,
+)
 from app.services.models import get_authorized_model
 from app.services.speed import (
     DEFAULT_SPEED,
@@ -305,10 +310,10 @@ async def create_voice_clone_job(
     # 4. Check balance & reserve (admins have unlimited access and do not require balance)
     estimated_seconds = 0
     if not is_admin:
-        await grant_monthly_free_allowance(session, user_id)
+        await grant_daily_free_allowance(session, user_id)
         balance = await get_minute_balance(session, user_id)
-        # Batch AW: clone jobs check the CLONE-SPENDABLE balance —
-        # referral seconds are TTS-only and no longer count here.
+        # Voice Clone jobs check clone_spendable_seconds (today's daily free +
+        # legacy monthly free + welcome + referral_voice + purchased).
         if balance.clone_spendable_seconds <= 0:
             return None, "INSUFFICIENT_BALANCE"
 

@@ -105,11 +105,11 @@ async def test_concurrent_referral_rewarding(tmp_path):
     results = await asyncio.gather(*(run_confirm(8000 + i) for i in range(1, 31)))
     async with session_maker() as s:
         bal = await get_minute_balance(s, 8000)
-        assert bal.referral_seconds == 2400  # Exactly 20 * 120s = 2400s (Batch AW reward)
+        assert bal.referral_voice_seconds == 30 * 60  # Part I: uncapped 60s Voice Clone per referral
         rewards = (await s.execute(
             select(ReferralReward).where(ReferralReward.referrer_id == 8000)
         )).scalars().all()
-        assert len(rewards) == 20
+        assert len(rewards) == 30
 
     await engine.dispose()
 

@@ -196,8 +196,14 @@ def validate_gemini_key(candidate: str) -> tuple[bool, str]:
 
 # ── Taste / budget accounting ────────────────────────────────────────
 
-def taste_limit_seconds() -> float:
+def taste_limit_seconds(tier: str = AccountCategory.FREE.value) -> float:
+    if tier == AccountCategory.PURCHASED.value:
+        return paid_taste_limit_seconds()
     return max(0, int(getattr(settings, "free_gemini_taste_minutes", 2) or 0)) * 60.0
+
+
+def paid_taste_limit_seconds() -> float:
+    return max(0, int(getattr(settings, "paid_gemini_taste_minutes", 10) or 0)) * 60.0
 
 
 def free_budget_limit_requests() -> int:
@@ -239,10 +245,15 @@ async def debit_pool_usage(
     seconds: float,
     requests: int,
 ) -> None:
-    """Record SUCCESSFUL pool draws. FREE tier only — PURCHASED pool
-    use is not taste-governed and admins are exempt, so no rows are
-    ever written for them. Zero-draw calls are no-ops."""
-    if tier != AccountCategory.FREE.value:
+    """Record SUCCESSFUL pool draws for FREE and PURCHASED users.
+
+    Admins are exempt (never written). Global FREE request budget queries
+    filter by ``tier == FREE``, so PURCHASED rows do not count against
+    the global FREE budget. Zero-draw calls are no-ops.
+    """
+    if settings.is_admin(user_id):
+        return
+    if tier not in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value):
         return
     if seconds <= 0 and requests <= 0:
         return
@@ -258,6 +269,8 @@ async def debit_pool_usage(
     if row is None:
         row = GeminiPoolUsage(day=day, user_id=user_id, tier=tier)
         session.add(row)
+    else:
+        row.tier = tier
     row.pool_seconds = float(row.pool_seconds or 0.0) + float(seconds)
     row.pool_requests = int(row.pool_requests or 0) + int(requests)
     await session.flush()
@@ -288,8 +301,10 @@ class GeminiRouteContext:
 
     @property
     def pool_allowed(self) -> bool:
-        if self.is_admin or self.tier == AccountCategory.PURCHASED.value:
+        if self.is_admin:
             return True
+        if self.tier == AccountCategory.PURCHASED.value:
+            return self.taste_used_seconds < self.taste_limit_seconds
         return (
             self.taste_used_seconds < self.taste_limit_seconds
             and self.budget_used_requests < self.budget_limit_requests
@@ -297,17 +312,16 @@ class GeminiRouteContext:
 
     @property
     def taste_blocked(self) -> bool:
-        """The Item-3b case: FREE, no usable own key, pool closed."""
+        """Non-admin, no usable own key, and pool taste/budget closed."""
         return (
             not self.is_admin
-            and self.tier == AccountCategory.FREE.value
             and not self.has_usable_own_key
             and not self.pool_allowed
         )
 
     @property
     def taste_remaining_seconds(self) -> float | None:
-        if self.is_admin or self.tier != AccountCategory.FREE.value:
+        if self.is_admin:
             return None
         return max(0.0, self.taste_limit_seconds - self.taste_used_seconds)
 
@@ -326,12 +340,13 @@ async def resolve_gemini_route(
         is_admin=is_admin,
         own_key=(user.gemini_api_key or "").strip() or None,
         own_key_state=getattr(user, "gemini_key_state", "") or "",
-        taste_limit_seconds=taste_limit_seconds(),
+        taste_limit_seconds=taste_limit_seconds(tier),
         budget_limit_requests=free_budget_limit_requests(),
     )
-    if tier == AccountCategory.FREE.value and not is_admin:
+    if not is_admin:
         ctx.taste_used_seconds = await taste_used_seconds(session, user.id)
-        ctx.budget_used_requests = await free_budget_used_requests(session)
+        if tier == AccountCategory.FREE.value:
+            ctx.budget_used_requests = await free_budget_used_requests(session)
     return ctx
 
 

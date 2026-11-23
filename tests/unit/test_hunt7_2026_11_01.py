@@ -194,7 +194,7 @@ async def test_referral_two_confirms_end_state(db_session):
     )).scalars().all()
     assert [r.reward_index for r in rewards] == [1, 2]
     bal = await get_minute_balance(db_session, referrer.id)
-    assert bal.referral_seconds == 240  # 2 rewards * 120s (Batch AW reward)
+    assert bal.referral_voice_seconds == 120  # Part I: 2 rewards * 60s Voice Clone
 
 
 

@@ -19,12 +19,19 @@ from app.ui.keyboards import membership_gate_kb
 
 logger = logging.getLogger(__name__)
 
-# Events that already run the LIVE gate themselves (verify_user_membership)
-# and must stay reachable for a user who has just been sent the reminder:
-# /start, the first-run language pick and the "I've joined — check again"
-# button.
-_EXEMPT_CALLBACK_PREFIXES = ("set_lang:",)
-_EXEMPT_CALLBACK_DATA = {"gate:verify"}
+# Events that must NOT be intercepted by periodic re-check:
+# Round 13 Part K4: gate frequency is first-time ONLY; afterwards
+# membership is re-probed only at /start (do not gate Refer, Change
+# Language, job delivery callbacks, or admin slip-review pushes).
+_EXEMPT_CALLBACK_PREFIXES = (
+    "set_lang:",
+    "user_lang:",
+    "dp:",
+    "send_audio_",
+    "send_recap_",
+    "admin:pay_",
+)
+_EXEMPT_CALLBACK_DATA = {"gate:verify", "menu:refer_earn", "menu:change_lang"}
 
 
 def _is_exempt(event: TelegramObject) -> bool:

@@ -151,14 +151,19 @@ class MinuteBalance(Base):
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
+    daily_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_daily_grant_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # YYYY-MM-DD (UTC)
     monthly_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     last_monthly_grant_period: Mapped[str | None] = mapped_column(String(7), nullable=True)  # YYYY-MM
     welcome_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    referral_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referral_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)  # Legacy TTS-only referral seconds (untouched)
+    referral_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)  # Voice Clone referral rewards (60s/friend)
     purchased_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     consumed_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_daily_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     reserved_monthly_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     reserved_welcome_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_referral_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     reserved_purchased_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     updated_at: Mapped[datetime] = mapped_column(
@@ -171,28 +176,50 @@ class MinuteBalance(Base):
     user: Mapped["User"] = relationship("User", back_populates="balance")
 
     @property
+    def effective_daily_free_seconds(self) -> int:
+        """Today's non-accumulating free daily allowance (0 once the UTC day rolls over)."""
+        from app.services.ledger import get_current_daily_period
+
+        if getattr(self, "last_daily_grant_date", None) != get_current_daily_period():
+            return 0
+        return max(0, int(getattr(self, "daily_free_seconds", 0) or 0))
+
+    @property
+    def effective_reserved_daily_free_seconds(self) -> int:
+        from app.services.ledger import get_current_daily_period
+
+        if getattr(self, "last_daily_grant_date", None) != get_current_daily_period():
+            return 0
+        return max(0, int(getattr(self, "reserved_daily_free_seconds", 0) or 0))
+
+    @property
     def total_usable_seconds(self) -> int:
         gross = (
-            self.monthly_free_seconds
+            self.effective_daily_free_seconds
+            + self.monthly_free_seconds
             + self.purchased_seconds
             + self.welcome_seconds
+            + int(getattr(self, "referral_voice_seconds", 0) or 0)
             + self.referral_seconds
         )
         return max(0, gross - self.reserved_seconds)
 
     @property
     def clone_spendable_seconds(self) -> int:
-        """Seconds a VOICE CLONE job may spend (Batch AW re-scope).
+        """Seconds a VOICE CLONE job may spend.
 
-        Referral-earned seconds are TTS-only since Batch AW: they are
-        excluded here, and every clone balance check / deduction uses
-        this figure instead of the grand total. Reserved holds from
-        in-flight jobs are subtracted so concurrent jobs cannot overdraft.
+        Includes today's non-accumulating daily free allowance, legacy
+        already-granted monthly_free_seconds, welcome_seconds, new
+        referral_voice_seconds (Voice Clone referral rewards), and
+        purchased_seconds. Legacy TTS-only referral_seconds stay
+        excluded so past TTS rewards are not converted.
         """
         gross = (
-            self.monthly_free_seconds
+            self.effective_daily_free_seconds
+            + self.monthly_free_seconds
             + self.purchased_seconds
             + self.welcome_seconds
+            + int(getattr(self, "referral_voice_seconds", 0) or 0)
         )
         return max(0, gross - self.reserved_seconds)
 
@@ -203,6 +230,10 @@ class MinuteBalance(Base):
     @property
     def total_usable_minutes(self) -> float:
         return self.total_usable_seconds / 60.0
+
+    @property
+    def daily_free_minutes(self) -> float:
+        return self.effective_daily_free_seconds / 60.0
 
     @property
     def monthly_free_minutes(self) -> float:
@@ -221,11 +252,17 @@ class MinuteBalance(Base):
         return max(0, self.referral_seconds) / 60.0
 
     @property
+    def referral_voice_minutes(self) -> float:
+        return max(0, int(getattr(self, "referral_voice_seconds", 0) or 0)) / 60.0
+
+    @property
     def reserved_seconds(self) -> int:
         return max(
             0,
-            int(getattr(self, "reserved_monthly_free_seconds", 0) or 0)
+            self.effective_reserved_daily_free_seconds
+            + int(getattr(self, "reserved_monthly_free_seconds", 0) or 0)
             + int(getattr(self, "reserved_welcome_seconds", 0) or 0)
+            + int(getattr(self, "reserved_referral_voice_seconds", 0) or 0)
             + int(getattr(self, "reserved_purchased_seconds", 0) or 0),
         )
 
@@ -234,9 +271,11 @@ class MinuteBalance(Base):
         return round(self.reserved_seconds / 60.0, 2)
 
     __table_args__ = (
+        CheckConstraint("daily_free_seconds >= 0", name="chk_balance_daily_free_non_neg"),
         CheckConstraint("monthly_free_seconds >= 0", name="chk_balance_monthly_free_non_neg"),
         CheckConstraint("welcome_seconds >= 0", name="chk_balance_welcome_non_neg"),
         CheckConstraint("referral_seconds >= 0", name="chk_balance_referral_non_neg"),
+        CheckConstraint("referral_voice_seconds >= 0", name="chk_balance_referral_voice_non_neg"),
         CheckConstraint("purchased_seconds >= 0", name="chk_balance_purchased_non_neg"),
         CheckConstraint("consumed_seconds >= 0", name="chk_balance_consumed_non_neg"),
     )
@@ -273,7 +312,7 @@ class MinuteLedgerEvent(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "source IN ('MONTHLY_FREE', 'WELCOME', 'REFERRAL', 'PURCHASE', 'ADJUST', 'CONSUME')",
+            "source IN ('DAILY_FREE', 'MONTHLY_FREE', 'WELCOME', 'REFERRAL', 'PURCHASE', 'ADJUST', 'CONSUME')",
             name="chk_ledger_source",
         ),
         CheckConstraint(
@@ -377,8 +416,8 @@ class ReferralReward(Base):
     referral_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("referrals.id", ondelete="CASCADE"), nullable=False
     )
-    reward_index: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 to 20
-    seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=30)
+    reward_index: Mapped[int] = mapped_column(Integer, nullable=False)  # 1, 2, ... (uncapped)
+    seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=60)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
@@ -387,7 +426,7 @@ class ReferralReward(Base):
     __table_args__ = (
         UniqueConstraint("referrer_id", "reward_index", name="uq_referral_reward_user_index"),
         CheckConstraint(
-            "reward_index >= 1 AND reward_index <= 20",
+            "reward_index >= 1",
             name="chk_referral_reward_index_range",
         ),
         CheckConstraint("seconds > 0", name="chk_referral_reward_seconds_pos"),
@@ -1039,6 +1078,26 @@ class MonthlyFreeAllowanceGrant(Base):
     )
 
 
+class DailyFreeAllowanceGrant(Base):
+    """Per-user per-UTC-day (YYYY-MM-DD) grant record for the non-accumulating daily free voice allowance."""
+
+    __tablename__ = "daily_free_allowance_grants"
+
+    id: Mapped[int] = mapped_column(PK_INT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    day: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # Format: "YYYY-MM-DD" (UTC)
+    seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=180)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "day", name="uq_user_daily_grant_day"),
+    )
+
+
 class RecapThumbnailPoolUsage(Base):
     """Per-calendar-month (UTC 'YYYY-MM') counter for AI Thumbnail generations.
 
@@ -1073,8 +1132,11 @@ class WalletReservation(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="RESERVED")
     reserved_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     reserved_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_daily: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_daily_day: Mapped[str | None] = mapped_column(String(10), nullable=True)
     reserved_voice_monthly: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     reserved_voice_welcome: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    reserved_voice_referral: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     reserved_voice_purchased: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     settled_recap_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     settled_voice_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

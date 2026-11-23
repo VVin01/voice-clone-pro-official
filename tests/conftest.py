@@ -76,12 +76,22 @@ def restore_settings():
     orig_required_group_id = settings.required_group_id
     orig_char_limit = settings.character_limit_free
     orig_purchased_limit = settings.character_limit_purchased
+    orig_safety_limit = settings.infrastructure_safety_character_limit
+    orig_free_daily_allowance = settings.free_daily_allowance_seconds
+    orig_paid_gemini_taste = settings.paid_gemini_taste_minutes
+    orig_free_gemini_taste = settings.free_gemini_taste_minutes
+    orig_voice_daily_paid = settings.voice_daily_limit_minutes_paid
     orig_recap_on_queue = getattr(settings, "recap_on_queue", False)
     orig_prompt_profile = getattr(settings, "ai_prompt_profile", "v2")
     settings.required_channel_id = ""
     settings.required_group_id = ""
-    settings.character_limit_free = 1000
-    settings.character_limit_purchased = 5000
+    settings.character_limit_free = 3000
+    settings.character_limit_purchased = 15000
+    settings.infrastructure_safety_character_limit = 15000
+    settings.free_daily_allowance_seconds = 180
+    settings.paid_gemini_taste_minutes = 10
+    settings.free_gemini_taste_minutes = 2
+    settings.voice_daily_limit_minutes_paid = 0
     settings.recap_on_queue = False
     settings.ai_prompt_profile = "v2"
     yield
@@ -92,6 +102,11 @@ def restore_settings():
     settings.required_group_id = orig_required_group_id
     settings.character_limit_free = orig_char_limit
     settings.character_limit_purchased = orig_purchased_limit
+    settings.infrastructure_safety_character_limit = orig_safety_limit
+    settings.free_daily_allowance_seconds = orig_free_daily_allowance
+    settings.paid_gemini_taste_minutes = orig_paid_gemini_taste
+    settings.free_gemini_taste_minutes = orig_free_gemini_taste
+    settings.voice_daily_limit_minutes_paid = orig_voice_daily_paid
     settings.recap_on_queue = orig_recap_on_queue
     settings.ai_prompt_profile = orig_prompt_profile
     settings.bot_mode = orig_bot_mode

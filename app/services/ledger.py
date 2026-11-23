@@ -15,6 +15,7 @@ from app.models.enums import AccountCategory, LedgerDirection, LedgerSource
 from app.models.schema import (
     AdjustmentIdempotencyRecord,
     AuditLog,
+    DailyFreeAllowanceGrant,
     ImportedAudience,
     MinuteBalance,
     MinuteLedgerEvent,
@@ -31,13 +32,12 @@ logger = logging.getLogger(__name__)
 
 WELCOME_BONUS_SECONDS = 300       # 5 minutes
 DEFAULT_SIGNUP_RECAP_CREDITS = 3  # Default recap credits granted at user signup
-# Batch AW (owner decision 2026-11-05 23:57): the referral reward is
-# now 2 minutes of TTS-only time per rewarded referral (was 30s of
-# clone-spendable time). New rewards only — existing balances keep
-# their value and simply become TTS-spendable under the re-scope.
-REFERRAL_REWARD_SECONDS = 120    # 2 minutes of TTS time per referral
-MAX_REFERRALS_REWARDED = 20      # Max 20 eligible referrals
-MAX_REFERRAL_SECONDS = 2400      # Max 40 minutes total (20 * 120s)
+# 2026-11-23 Limits & Rewards update: referral reward is 60s (1 minute) of
+# Voice Clone time per rewarded referral, with NO friend cap. Already-earned
+# past TTS referral seconds in MinuteBalance.referral_seconds stay untouched.
+REFERRAL_REWARD_SECONDS = 60          # 1 minute of Voice Clone time per referral
+MAX_REFERRALS_REWARDED: int | None = None  # Unlimited (no friend cap)
+MAX_REFERRAL_SECONDS: int | None = None    # Unlimited
 
 
 async def _find_available_referral_code(
@@ -250,29 +250,32 @@ async def get_minute_balance(session: AsyncSession, user_id: int) -> MinuteBalan
     return bal
 
 
+def get_current_daily_period() -> str:
+    """Return the current UTC calendar day as 'YYYY-MM-DD'."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
 def get_current_monthly_period() -> str:
     """Return the current calendar month in UTC as 'YYYY-MM'."""
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
-async def grant_monthly_free_allowance(
+async def grant_daily_free_allowance(
     session: AsyncSession,
     user_id: int,
-    period: str | None = None,
+    day: str | None = None,
 ) -> tuple[bool, MinuteBalance]:
-    """Grant 3 minutes (180 seconds) free allowance once per calendar month.
+    """Grant the non-accumulating daily free voice allowance (default 180s) once per UTC day.
 
-    - Free users receive 180 seconds free allowance once per calendar month (YYYY-MM UTC).
-    - Admins skip balance allowances since they have unlimited access.
-    - Idempotent: protected by MonthlyFreeAllowanceGrant unique constraint (user_id, period).
-    - Deductions use monthly_free_seconds first before purchased_seconds.
+    - Free users receive `settings.free_daily_allowance_seconds` (default 180s = 3 min)
+      once per UTC calendar day (`YYYY-MM-DD`).
+    - Non-accumulating: each day stands alone. Unspent seconds from prior days are
+      never carried over (effective_daily_free_seconds returns 0 once the UTC day rolls
+      over, and the new day's grant overwrites daily_free_seconds rather than adding).
+    - Existing already-granted `monthly_free_seconds` in wallets stay untouched.
+    - Admins are exempt; PURCHASED/VIP users are unaffected (they spend purchased balances).
+    - Idempotent within a UTC day via DailyFreeAllowanceGrant unique constraint (user_id, day).
     """
-    # Batch AJ (L22): serialise on the User row FIRST (the same lock
-    # consume_seconds and award_welcome_bonus take). The grant writes
-    # the monthly bucket ABSOLUTELY from the balance it loaded; a
-    # consume committing between that load and this flush used to be
-    # overwritten by the stale absolute value, resurrecting seconds
-    # the user had already spent.
     _locked_user = (await session.execute(
         select(User).where(User.id == user_id).with_for_update()
     )).scalar_one_or_none()
@@ -281,50 +284,77 @@ async def grant_monthly_free_allowance(
     if settings.is_admin(user_id):
         return False, balance
 
-    current_period = period or get_current_monthly_period()
+    if _locked_user is not None and _locked_user.account_category == AccountCategory.PURCHASED.value:
+        return False, balance
 
-    # Check if already granted for this period
-    stmt = select(MonthlyFreeAllowanceGrant).where(
-        MonthlyFreeAllowanceGrant.user_id == user_id,
-        MonthlyFreeAllowanceGrant.period == current_period,
+    current_day = day or get_current_daily_period()
+    allowance_seconds = max(0, int(getattr(settings, "free_daily_allowance_seconds", 180) or 0))
+    if allowance_seconds <= 0:
+        return False, balance
+
+    stmt = select(DailyFreeAllowanceGrant).where(
+        DailyFreeAllowanceGrant.user_id == user_id,
+        DailyFreeAllowanceGrant.day == current_day,
     )
     existing = (await session.execute(stmt)).scalar_one_or_none()
     if existing is not None:
         return False, balance
 
-    allowance_seconds = settings.free_monthly_allowance_seconds
-
     try:
         async with session.begin_nested():
-            grant = MonthlyFreeAllowanceGrant(
+            grant = DailyFreeAllowanceGrant(
                 user_id=user_id,
-                period=current_period,
+                day=current_day,
                 seconds=allowance_seconds,
             )
             session.add(grant)
             await session.flush()
     except IntegrityError:
-        # Concurrent grant attempt
         return False, balance
 
-    # Set / replenish monthly free seconds for the new period
-    balance.monthly_free_seconds = allowance_seconds
-    balance.last_monthly_grant_period = current_period
+    # Non-accumulating overwrite for the new UTC day; monthly_free_seconds is untouched.
+    balance.daily_free_seconds = allowance_seconds
+    balance.last_daily_grant_date = current_day
+    balance.reserved_daily_free_seconds = 0
     balance.updated_at = utc_now()
 
+    mins_label = (
+        f"{allowance_seconds // 60} minutes"
+        if allowance_seconds % 60 == 0
+        else f"{allowance_seconds} seconds"
+    )
     event = MinuteLedgerEvent(
         user_id=user_id,
-        source=LedgerSource.MONTHLY_FREE.value,
+        source=LedgerSource.DAILY_FREE.value,
         direction=LedgerDirection.CREDIT.value,
         seconds=allowance_seconds,
-        reference_id=current_period,
-        note=f"Monthly Free Allowance {current_period} (3 minutes)",
+        reference_id=current_day,
+        note=f"Daily Free Allowance {current_day} ({mins_label})",
     )
     session.add(event)
     await session.flush()
 
-    logger.info("Granted monthly free allowance (%ss) to user %s for period %s", allowance_seconds, user_id, current_period)
+    logger.info(
+        "Granted daily free allowance (%ss) to user %s for day %s",
+        allowance_seconds,
+        user_id,
+        current_day,
+    )
     return True, balance
+
+
+async def grant_monthly_free_allowance(
+    session: AsyncSession,
+    user_id: int,
+    period: str | None = None,
+) -> tuple[bool, MinuteBalance]:
+    """Retired monthly free allowance grant (replaced by grant_daily_free_allowance).
+
+    No longer grants seconds so there is zero double-granting. Existing
+    already-granted monthly_free_seconds in wallets remain untouched.
+    """
+    balance = await get_minute_balance(session, user_id)
+    return False, balance
 
 
 async def _sync_imported_and_allowance(session: AsyncSession, user_id: int) -> None:
@@ -407,7 +437,7 @@ async def confirm_referral_and_reward(
     session: AsyncSession,
     referred_user_id: int,
 ) -> tuple[bool, bool, int]:
-    """Confirm membership of referred user and award referrer 120s TTS-only if under cap.
+    """Confirm membership of referred user and award referrer 60s Voice Clone time (uncapped).
 
     Returns (was_pending: bool, reward_awarded: bool, reward_index: int).
     """
@@ -423,58 +453,43 @@ async def confirm_referral_and_reward(
 
     referrer_id = ref.referrer_id
 
-    # Serialize reward grants per referrer (hunt #7): two friends of
-    # the same referrer confirming membership at the same moment each
-    # counted the existing rewards and inserted the SAME reward_index
-    # - the unique constraint then failed one confirm with an
-    # IntegrityError inside the referred user's gate verification
-    # (reproduced live on the SQLite test harness), and the balance
-    # credit was a stale read-modify-write that could lose one grant.
-    # Locking the referrer's User row makes count + insert + credit
-    # atomic per referrer on Postgres - the same pattern the payment
-    # approval and purchased-credit paths already rely on. (On
-    # SQLite FOR UPDATE is a no-op, so the harness pins the lock
-    # ordering and the sequential end state instead.)
+    # Serialize reward grants per referrer (hunt #7)
     await session.execute(
         select(User).where(User.id == referrer_id).with_for_update()
     )
 
-    # Check how many rewards this referrer has already earned
+    # Check how many rewards this referrer has already earned (no cap)
     count_stmt = select(func.count()).select_from(ReferralReward).where(ReferralReward.referrer_id == referrer_id)
     awarded_count = (await session.execute(count_stmt)).scalar() or 0
 
-    reward_granted = False
-    reward_idx = 0
+    reward_idx = awarded_count + 1
+    reward = ReferralReward(
+        referrer_id=referrer_id,
+        referral_id=ref.id,
+        reward_index=reward_idx,
+        seconds=REFERRAL_REWARD_SECONDS,
+    )
+    session.add(reward)
 
-    if awarded_count < MAX_REFERRALS_REWARDED:
-        reward_idx = awarded_count + 1
-        reward = ReferralReward(
-            referrer_id=referrer_id,
-            referral_id=ref.id,
-            reward_index=reward_idx,
-            seconds=REFERRAL_REWARD_SECONDS,
-        )
-        session.add(reward)
+    ref_bal = await get_minute_balance(session, referrer_id)
+    # Credit the Voice Clone referral bucket (leaving legacy TTS referral_seconds untouched).
+    ref_bal.referral_voice_seconds = int(getattr(ref_bal, "referral_voice_seconds", 0) or 0) + REFERRAL_REWARD_SECONDS
+    ref_bal.updated_at = utc_now()
 
-        ref_bal = await get_minute_balance(session, referrer_id)
-        ref_bal.referral_seconds += REFERRAL_REWARD_SECONDS
-        ref_bal.updated_at = utc_now()
-
-        event = MinuteLedgerEvent(
-            user_id=referrer_id,
-            source=LedgerSource.REFERRAL.value,
-            direction=LedgerDirection.CREDIT.value,
-            seconds=REFERRAL_REWARD_SECONDS,
-            reference_id=str(ref.id),
-            note=f"Referral reward #{reward_idx}/{MAX_REFERRALS_REWARDED} (+{REFERRAL_REWARD_SECONDS}s TTS)",
-        )
-        session.add(event)
-        reward_granted = True
-        logger.info(
-            "Awarded referral reward %s/20 to referrer %s for referred user %s",
-            reward_idx, referrer_id, referred_user_id
-        )
-
+    event = MinuteLedgerEvent(
+        user_id=referrer_id,
+        source=LedgerSource.REFERRAL.value,
+        direction=LedgerDirection.CREDIT.value,
+        seconds=REFERRAL_REWARD_SECONDS,
+        reference_id=str(ref.id),
+        note=f"Referral reward #{reward_idx} (+{REFERRAL_REWARD_SECONDS}s Voice Clone)",
+    )
+    session.add(event)
+    reward_granted = True
+    logger.info(
+        "Awarded referral reward #%s (+%ss Voice Clone) to referrer %s for referred user %s",
+        reward_idx, REFERRAL_REWARD_SECONDS, referrer_id, referred_user_id,
+    )
 
     ref.status = "REWARDED"
     ref.rewarded_at = utc_now()
@@ -619,7 +634,28 @@ async def consume_seconds(
 
     remaining_to_deduct = seconds_to_charge
 
-    # 1. Deduct from monthly free balance
+    # 1. Deduct from today's non-accumulating daily free allowance FIRST
+    today_day = get_current_daily_period()
+    if (
+        remaining_to_deduct > 0
+        and balance.last_daily_grant_date == today_day
+        and balance.daily_free_seconds > 0
+    ):
+        daily_deduct = min(balance.daily_free_seconds, remaining_to_deduct)
+        balance.daily_free_seconds -= daily_deduct
+        remaining_to_deduct -= daily_deduct
+        session.add(
+            MinuteLedgerEvent(
+                user_id=user_id,
+                source=LedgerSource.DAILY_FREE.value,
+                direction=LedgerDirection.DEBIT.value,
+                seconds=daily_deduct,
+                reference_id=job_id,
+                note=note or "Voice generation deduction (Daily Free)",
+            )
+        )
+
+    # 2. Deduct from legacy untouched monthly free balance (if any remains)
     if remaining_to_deduct > 0 and balance.monthly_free_seconds > 0:
         monthly_deduct = min(balance.monthly_free_seconds, remaining_to_deduct)
         balance.monthly_free_seconds -= monthly_deduct
@@ -635,7 +671,7 @@ async def consume_seconds(
             )
         )
 
-    # 2. Deduct from welcome balance (legacy)
+    # 3. Deduct from welcome balance (legacy)
     if remaining_to_deduct > 0 and balance.welcome_seconds > 0:
         welcome_deduct = min(balance.welcome_seconds, remaining_to_deduct)
         balance.welcome_seconds -= welcome_deduct
@@ -651,10 +687,24 @@ async def consume_seconds(
             )
         )
 
-    # Batch AW: the referral bucket is skipped entirely — it is
-    # TTS-only balance now (see the docstring above).
+    # 4. Deduct from Voice Clone referral rewards (legacy TTS referral_seconds stays separate)
+    ref_voice_avail = int(getattr(balance, "referral_voice_seconds", 0) or 0)
+    if remaining_to_deduct > 0 and ref_voice_avail > 0:
+        ref_deduct = min(ref_voice_avail, remaining_to_deduct)
+        balance.referral_voice_seconds = ref_voice_avail - ref_deduct
+        remaining_to_deduct -= ref_deduct
+        session.add(
+            MinuteLedgerEvent(
+                user_id=user_id,
+                source=LedgerSource.REFERRAL.value,
+                direction=LedgerDirection.DEBIT.value,
+                seconds=ref_deduct,
+                reference_id=job_id,
+                note=note or "Voice generation deduction (Referral Voice)",
+            )
+        )
 
-    # 3. Deduct from purchased balance
+    # 5. Deduct from purchased balance
     if remaining_to_deduct > 0 and balance.purchased_seconds > 0:
         purchased_deduct = min(balance.purchased_seconds, remaining_to_deduct)
         balance.purchased_seconds -= purchased_deduct
@@ -734,8 +784,12 @@ async def refund_job_seconds(
 
     _now = utc_now()
     current_period = (_now.year, _now.month)
+    current_day = get_current_daily_period()
     debit_by_source: dict[str, int] = {}
     for debit in debits:
+        if debit.source == LedgerSource.DAILY_FREE.value and debit.created_at is not None:
+            if debit.created_at.strftime("%Y-%m-%d") != current_day:
+                continue
         if debit.source == LedgerSource.MONTHLY_FREE.value and debit.created_at is not None:
             if (debit.created_at.year, debit.created_at.month) != current_period:
                 continue
@@ -754,12 +808,16 @@ async def refund_job_seconds(
 
     refunded_now = 0
     for source, seconds in refundable.items():
-        if source == LedgerSource.MONTHLY_FREE.value:
+        if source == LedgerSource.DAILY_FREE.value:
+            if balance.last_daily_grant_date != current_day:
+                continue
+            balance.daily_free_seconds += seconds
+        elif source == LedgerSource.MONTHLY_FREE.value:
             balance.monthly_free_seconds += seconds
         elif source == LedgerSource.WELCOME.value:
             balance.welcome_seconds += seconds
         elif source == LedgerSource.REFERRAL.value:
-            balance.referral_seconds += seconds
+            balance.referral_voice_seconds = int(getattr(balance, "referral_voice_seconds", 0) or 0) + seconds
         elif source == LedgerSource.PURCHASE.value:
             balance.purchased_seconds += seconds
             if user:
@@ -792,8 +850,10 @@ async def refund_job_seconds(
 
 
 _CLONE_LEDGER_SOURCES = (
+    LedgerSource.DAILY_FREE.value,
     LedgerSource.MONTHLY_FREE.value,
     LedgerSource.WELCOME.value,
+    LedgerSource.REFERRAL.value,
     LedgerSource.PURCHASE.value,
 )
 _RECAP_VOICE_SETTLE_OVERRUN_PREFIX = "Recap clone settle overrun"
@@ -922,9 +982,13 @@ async def settle_recap_voice_seconds(
     debit_refundable_by_source: dict[str, int] = {}
     _now = utc_now()
     current_period = (_now.year, _now.month)
+    current_day = get_current_daily_period()
     for debit in debits:
         sec = int(debit.seconds or 0)
         debit_all_by_source[debit.source] = debit_all_by_source.get(debit.source, 0) + sec
+        if debit.source == LedgerSource.DAILY_FREE.value and debit.created_at is not None:
+            if debit.created_at.strftime("%Y-%m-%d") != current_day:
+                continue
         if debit.source == LedgerSource.MONTHLY_FREE.value and debit.created_at is not None:
             if (debit.created_at.year, debit.created_at.month) != current_period:
                 continue
@@ -963,8 +1027,10 @@ async def settle_recap_voice_seconds(
         refunded_now = 0
         for src in (
             LedgerSource.PURCHASE.value,
+            LedgerSource.REFERRAL.value,
             LedgerSource.WELCOME.value,
             LedgerSource.MONTHLY_FREE.value,
+            LedgerSource.DAILY_FREE.value,
         ):
             if give_back <= 0:
                 break
@@ -980,10 +1046,16 @@ async def settle_recap_voice_seconds(
             if src == LedgerSource.PURCHASE.value:
                 balance.purchased_seconds += give
                 user.account_category = AccountCategory.PURCHASED.value
+            elif src == LedgerSource.REFERRAL.value:
+                balance.referral_voice_seconds = int(getattr(balance, "referral_voice_seconds", 0) or 0) + give
             elif src == LedgerSource.WELCOME.value:
                 balance.welcome_seconds += give
             elif src == LedgerSource.MONTHLY_FREE.value:
                 balance.monthly_free_seconds += give
+            elif src == LedgerSource.DAILY_FREE.value:
+                if balance.last_daily_grant_date != current_day:
+                    continue
+                balance.daily_free_seconds += give
             balance.consumed_seconds = max(0, int(balance.consumed_seconds or 0) - give)
             session.add(
                 MinuteLedgerEvent(
@@ -1024,11 +1096,15 @@ async def settle_recap_voice_seconds(
         )
         rem = charge
         for _src_val, _attr, _label in (
+            (LedgerSource.DAILY_FREE.value, "daily_free_seconds", "Daily Free"),
             (LedgerSource.MONTHLY_FREE.value, "monthly_free_seconds", "Monthly Free"),
             (LedgerSource.WELCOME.value, "welcome_seconds", "Welcome"),
+            (LedgerSource.REFERRAL.value, "referral_voice_seconds", "Referral Voice"),
             (LedgerSource.PURCHASE.value, "purchased_seconds", "Purchased"),
         ):
-            _avail = getattr(balance, _attr)
+            if _src_val == LedgerSource.DAILY_FREE.value and balance.last_daily_grant_date != current_day:
+                continue
+            _avail = int(getattr(balance, _attr, 0) or 0)
             if rem > 0 and _avail > 0:
                 d = min(_avail, rem)
                 setattr(balance, _attr, _avail - d)
@@ -1622,7 +1698,7 @@ async def admin_adjust_balance(
 
 
 async def get_referral_stats(session: AsyncSession, user_id: int) -> dict:
-    """Return rewarded referrals count, earned minutes, and remaining capacity."""
+    """Return rewarded referrals count and earned minutes (uncapped)."""
     count_stmt = select(func.count()).select_from(ReferralReward).where(ReferralReward.referrer_id == user_id)
     rewarded_count = (await session.execute(count_stmt)).scalar() or 0
 
@@ -1632,17 +1708,22 @@ async def get_referral_stats(session: AsyncSession, user_id: int) -> dict:
     )
     pending_count = (await session.execute(pending_stmt)).scalar() or 0
 
-    earned_seconds = rewarded_count * REFERRAL_REWARD_SECONDS
-    remaining_slots = max(0, MAX_REFERRALS_REWARDED - rewarded_count)
-    remaining_seconds = remaining_slots * REFERRAL_REWARD_SECONDS
+    earned_rows = (
+        await session.execute(
+            select(ReferralReward.seconds).where(ReferralReward.referrer_id == user_id)
+        )
+    ).scalars().all()
+    earned_seconds = sum(int(sec or 0) for sec in earned_rows)
 
     return {
         "rewarded_referrals": rewarded_count,
         "max_referrals": MAX_REFERRALS_REWARDED,
+        "unlimited": True,
         "pending_referrals": pending_count,
         "earned_seconds": earned_seconds,
         "earned_minutes": earned_seconds / 60.0,
-        "remaining_slots": remaining_slots,
-        "remaining_seconds": remaining_seconds,
-        "remaining_minutes": remaining_seconds / 60.0,
+        "reward_seconds_per_friend": REFERRAL_REWARD_SECONDS,
+        "remaining_slots": None,
+        "remaining_seconds": None,
+        "remaining_minutes": None,
     }

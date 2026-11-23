@@ -632,6 +632,43 @@ _RECAP_BILLING_SUBTITLE_ONLY = "subtitle_only"
 _RECAP_ALLOWED_TTS_ENGINES = ("voxcpm", "gemini", "edge", "none", "subtitle_only", "no_voice")
 
 
+def _normalize_edge_voice_or_none(raw_voice: Optional[str]) -> Optional[str]:
+    """Resolve an Edge voice key ('andrew') or full neural voice name
+    ('en-US-AndrewMultilingualNeural') to its canonical neural voice name,
+    or return None if unrecognized."""
+    from app.services.tts_service import EDGE_TTS_VOICES
+
+    val = str(raw_voice or "").strip()
+    if not val:
+        return None
+    low = val.lower()
+    if low in EDGE_TTS_VOICES:
+        return EDGE_TTS_VOICES[low]
+    for canonical in EDGE_TTS_VOICES.values():
+        if canonical.lower() == low:
+            return canonical
+    return None
+
+
+def _resolve_recap_edge_voice(
+    raw_edge_voice: Optional[str],
+    *,
+    p_info: Optional[dict] = None,
+    is_female: bool = False,
+) -> str:
+    """Resolve the Edge TTS voice for a Recap job.
+
+    Explicit edge_voice ALWAYS wins; persona-derived mapping is ONLY a fallback
+    when no explicit edge_voice was provided (defaulting to my-MM-ThihaNeural).
+    """
+    explicit = _normalize_edge_voice_or_none(raw_edge_voice)
+    if explicit:
+        return explicit
+    if p_info and p_info.get("edge_voice"):
+        return str(p_info["edge_voice"])
+    return "my-MM-NilarNeural" if is_female else "my-MM-ThihaNeural"
+
+
 def _clamp_recap_tts_engine(
     req: "RecapConfigRequest",
     *,
@@ -885,51 +922,26 @@ def _clamp_recap_voice_ref(
     user_id: Optional[int] = None,
     is_vip: Optional[bool] = None,
 ) -> Optional[str]:
-    """Batch BV: own-voice narration is a purchased-tier benefit.
+    """Own-voice narration is open to ALL authenticated users (Round 13 E3).
 
-    A FREE user's uploaded-sample reference is dropped (handle AND
-    resolved path) at the same two choke points as the Batch AW
-    engine clamp — submit and execution entry — and the substitution
-    is logged at INFO. The job itself is never rejected: it narrates
-    with the picked persona on the clamped engine instead. Returns
-    the surviving resolved path (or None).
+    Ownership validation still runs strictly via _resolve_recap_voice_ref
+    at submit; non-voxcpm engines ignore voice_ref_id/voice_ref_path.
     """
     if req is None:
         return None
-    if user is not None:
-        # The user row is the tier's source of truth (the AW clamp's
-        # rule): the canonical tier helper, plus an is_admin attribute
-        # when a caller supplies one (real User rows carry none — for
-        # them the helper's settings.is_admin(id) check decides).
-        is_vip = _can_use_custom_logo(user) or bool(
-            getattr(user, "is_admin", False)
-        )
-    elif is_vip is None and user_id is not None:
-        is_vip = settings.is_admin(user_id)
-    if is_vip:
-        return getattr(req, "voice_ref_path", None)
-    had_ref = bool(
-        getattr(req, "voice_ref_id", None) or getattr(req, "voice_ref_path", None)
-    )
-    req.voice_ref_id = None
-    req.voice_ref_path = None
-    if had_ref:
-        logger.info(
-            "Recap own-voice reference clamped for user %s: dropped (free tier)",
-            user_id if user_id is not None else (user.id if user is not None else None),
-        )
-    return None
+    if str(getattr(req, "tts_engine", "voxcpm") or "voxcpm").strip().lower() != "voxcpm":
+        req.voice_ref_id = None
+        req.voice_ref_path = None
+        return None
+    return getattr(req, "voice_ref_path", None)
 
 
 def _resolve_recap_voice_ref(ref_id: str, user: User) -> Path:
     """Resolve an upload handle from POST /recap/upload_voice_ref to
     its on-disk sample, validating shape, ownership and existence.
 
-    Raises 400 (the invalid-voice style) on any problem — callers run
-    this before any credit moves, so a bad handle can never charge.
-    Admins keep the service-wide ownership exemption (the
-    _recap_frame_owner_id precedent); everyone else may only resolve
-    a handle whose embedded owner id is their own.
+    Raises 400 on malformed id, 403 when the handle belongs to another
+    user (admins exempt), and 404 when the file is missing on disk.
     """
     detail = "ရွေးထားတဲ့ အသံနမူနာ မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ နမူနာ ပြန်တင်ပေးပါခင်ဗျာ။"
     m = _RECAP_VOICE_REF_ID_RE.match(str(ref_id or "").strip())
@@ -937,13 +949,13 @@ def _resolve_recap_voice_ref(ref_id: str, user: User) -> Path:
         raise HTTPException(status_code=400, detail=detail)
     owner_id = int(m.group(1))
     if owner_id != user.id and not settings.is_admin(user.id):
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=403, detail=detail)
     ref_dir = settings.storage_root / "temp" / "voxcpm_refs"
     for ext in VOXCPM_REF_AUDIO_EXTS:
         candidate = ref_dir / f"{ref_id}{ext}"
         if candidate.is_file():
             return candidate
-    raise HTTPException(status_code=400, detail=detail)
+    raise HTTPException(status_code=404, detail=detail)
 
 
 # ── Batch DD: Step-2 rebuild shared pieces ──────────────────────
@@ -3614,18 +3626,14 @@ async def get_user_profile(
 ):
     """Retrieve user's VIP status, minute balance, allowance, and platform config."""
     from app.services.dynamic_settings import get_dynamic_setting
-    # Monthly free allowance: grant it here too (the bot /start flow
+    # Daily free allowance: grant it here too (the bot /start flow
     # and the voice submit path already do) so a Mini-App-first or
-    # new-month user sees their REAL free balance — the configured
-    # monthly grant — in the header chips, the Plans stats and the
-    # voice preflight, instead of a false "0 minutes — buy VIP"
-    # state (journey audit 2026-10-31). The grant is idempotent per
-    # calendar month, and a grant failure must never break the
-    # profile read.
+    # new-day FREE user sees their real daily allowance (180s/UTC day,
+    # non-accumulating). Idempotent per UTC day.
     try:
-        from app.services.ledger import grant_monthly_free_allowance
+        from app.services.ledger import grant_daily_free_allowance
 
-        _granted, _bal = await grant_monthly_free_allowance(db, user.id)
+        _granted, _bal = await grant_daily_free_allowance(db, user.id)
         if _granted:
             await db.commit()
     except Exception:
@@ -3855,8 +3863,9 @@ async def get_user_profile(
         # R40 deck I4: the plan "how it works" copy states BOTH limits
         # via placeholders — expose the pair so the client never
         # hardcodes them.
-        "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
-        "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
+        "character_limit_free": int(getattr(settings, "character_limit_free", 3000) or 3000),
+        "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 15000) or 15000),
+        "free_daily_allowance_seconds": int(getattr(settings, "free_daily_allowance_seconds", 180) or 180),
         "recap_max_duration_seconds": 600 if is_vip else 120,
         "recap_max_duration_minutes": 10 if is_vip else 2,
         # Batch AO: the Mini App's recap quote display follows the
@@ -4220,7 +4229,7 @@ async def list_voice_models(
 
 # ── 3. Voice Generation ───────────────────────────────────────────────────
 class VoiceGenerateRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=5000)
+    text: str = Field(..., min_length=1, max_length=50000)
     # Length caps aligned to the columns these values land in
     # (hunt #4 A2): an over-long string used to sail through
     # validation and die as a Postgres truncation 500 at insert.
@@ -5834,6 +5843,61 @@ async def get_voice_sample_audio(
     raise HTTPException(status_code=404, detail="Sample audio not found")
 
 
+@api_router.get("/voices/edge-sample/{voice_key}")
+async def get_edge_voice_sample_audio(
+    voice_key: str,
+    user: User = Depends(get_current_user),
+):
+    """Serve an audio preview for each of the 8 Microsoft Edge TTS voices.
+
+    Looks for a bundled static MP3 first, then a cached Edge-synthesized MP3
+    under storage/cache/edge_samples/, synthesizing via edge_tts on demand so
+    every voice plays its own true neural voice (falling back to a gender-matched
+    bundled sample only if edge_tts synthesis fails offline).
+    """
+    from app.services.tts_service import EDGE_TTS_VOICES
+
+    raw = (voice_key or "").strip()
+    key = raw.lower()
+    if key not in EDGE_TTS_VOICES:
+        rev = {v.lower(): k for k, v in EDGE_TTS_VOICES.items()}
+        key = rev.get(key, "")
+    if not key or key not in EDGE_TTS_VOICES:
+        raise HTTPException(status_code=404, detail="Edge voice sample not found")
+
+    full_voice = EDGE_TTS_VOICES[key]
+    static_mp3 = settings.root / "app" / "webapp" / "static" / "audio" / "edge" / f"preview_{key}.mp3"
+    if static_mp3.is_file():
+        return FileResponse(str(static_mp3), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
+
+    cache_dir = settings.storage_root / "cache" / "edge_samples"
+    cache_mp3 = cache_dir / f"preview_{key}.mp3"
+    if not cache_mp3.is_file() or cache_mp3.stat().st_size < 256:
+        try:
+            import edge_tts
+
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            sample_text = "မင်္ဂလာပါခင်ဗျာ၊ Voice Clone Pro စတူဒီယိုမှ ကြိုဆိုပါတယ်။"
+            tmp_mp3 = cache_dir / f"preview_{key}.{uuid.uuid4().hex[:8]}.tmp.mp3"
+            comm = edge_tts.Communicate(sample_text, full_voice, rate="+0%")
+            await asyncio.wait_for(comm.save(str(tmp_mp3)), timeout=20)
+            if tmp_mp3.is_file() and tmp_mp3.stat().st_size >= 256:
+                tmp_mp3.replace(cache_mp3)
+            else:
+                tmp_mp3.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning("Edge voice sample synth failed for %s (%s): %s", key, full_voice, exc)
+
+    if cache_mp3.is_file() and cache_mp3.stat().st_size >= 256:
+        return FileResponse(str(cache_mp3), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
+
+    fallback_slug = "mahnin" if key in {"nilar", "ava", "emma", "vivienne"} else "komin"
+    fallback = settings.root / "app" / "webapp" / "static" / "audio" / "samples" / f"{fallback_slug}.mp3"
+    if fallback.is_file():
+        return FileResponse(str(fallback), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
+    raise HTTPException(status_code=404, detail="Edge voice sample not found")
+
+
 # ── 4. Quick Downloader & Video Info ───────────────────────────────────────
 class ExtractMediaRequest(BaseModel):
     url: str
@@ -6335,21 +6399,9 @@ async def upload_recap_voice_ref(
     user: User = Depends(get_current_user),
     _gate: User = Depends(require_gate_verified),
 ):
-    """Batch BV: upload an own-voice narration sample for ONE recap
-    job. The recap submit itself is JSON, so the sample is uploaded
-    first and referenced by the returned handle (``ref_id``).
-
-    Save machinery is the Voice tab's (Batch AJ H3): streamed to
-    disk with the 50 MB cap enforced DURING the write, behind the
-    disk-headroom gate, into the same ``temp/voxcpm_refs`` store.
-    The filename embeds the owner id (``webapp_ref_u<uid>_<uuid12>``)
-    so submit-time ownership validation is a prefix check — no
-    registry table. Purchased + admin only (Option 1): own-voice is
-    clone narration, so the upload itself carries the Batch AW tier
-    gate — free users get the VIP upsell and nothing is stored.
+    """Round 13 E3: upload an own-voice narration sample for a recap job
+    (open to ALL authenticated users; strict owner-id prefix validation).
     """
-    if not _can_use_custom_logo(user):
-        raise HTTPException(status_code=403, detail=RECAP_OWN_VOICE_VIP_ONLY_DETAIL)
     if not reference_audio.filename:
         raise HTTPException(status_code=400, detail="အသံနမူနာဖိုင် ရွေးချယ်ပေးပါ")
 
@@ -7337,6 +7389,11 @@ class RecapConfigRequest(BaseModel):
     #   fallback to the persona engine (fallback stays visible).
     tts_engine: str = "voxcpm"
     gemini_voice: Optional[str] = None
+    # Round 13 Part F: explicit Microsoft Edge voice selection (either
+    # short key like "andrew" or full neural voice name like
+    # "en-US-AndrewMultilingualNeural"). When set in Edge mode, it wins
+    # over any persona-derived mapping and stamps Job.edge_voice directly.
+    edge_voice: Optional[str] = Field(None, max_length=80)
     # Batch BV: own-voice narration. voice_ref_id is the client
     # handle of a sample uploaded via /api/recap/upload_voice_ref
     # (filename stem, ownership embedded). voice_ref_path is
@@ -8575,21 +8632,16 @@ async def _execute_recap_background_job(
             if not gemini_voice:
                 gemini_voice = "Kore" if is_female else "Charon"
 
-        # Batch AW-1: Edge TTS as a user-selected PRIMARY engine. The
-        # persona resolution above already produced an Edge voice in
-        # every path (curated persona -> its gender-matched Edge base,
-        # legacy female slugs -> Nilar, otherwise Thiha), so selecting
-        # Edge simply keeps that voice as the render voice with the
-        # plain "edge_tts" engine label. Downstream, the pipeline runs
-        # it through the plain-Edge primary path (EdgeSmartSync with a
-        # non-voxcpm voice) — it does NOT detour through VoxCPM, so
-        # Edge here is never recorded as a fallback.
+        # Round 13 Part F: explicit Edge voice selection wins in Edge mode.
+        # Persona-derived mapping is ONLY a fallback when no edge_voice was provided.
         if req.tts_engine == "edge":
             tts_engine = "edge_tts"
-            if p_info:
-                selected_voice = p_info.get("edge_voice") or (
-                    "my-MM-NilarNeural" if is_female else "my-MM-ThihaNeural"
-                )
+            resolved_edge = _resolve_recap_edge_voice(
+                getattr(req, "edge_voice", None),
+                p_info=p_info,
+                is_female=is_female,
+            )
+            selected_voice = resolved_edge
 
         logo_pos_map = {
             "top-right": [0.82, 0.04],
@@ -10503,6 +10555,26 @@ async def create_recap_job(
     # the persisted config and the dispatched runner carry the engine
     # this tier may actually use (free: gemini/edge, never voxcpm).
     _clamp_recap_tts_engine(req, user=user, user_id=user.id, is_vip=is_vip)
+
+    # Round 13 Part F: validate & normalize explicit Edge voice selection
+    resolved_recap_edge_voice: Optional[str] = None
+    if req.tts_engine == "edge":
+        _raw_ev = (req.edge_voice or "").strip()
+        if _raw_ev:
+            resolved_recap_edge_voice = _normalize_edge_voice_or_none(_raw_ev)
+            if not resolved_recap_edge_voice:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ရွေးထားတဲ့ Edge အသံ မမှန်ကန်ပါ — အသံ ပြန်ရွေးပေးပါ။",
+                )
+            req.edge_voice = resolved_recap_edge_voice
+        else:
+            _p_meta = get_curated_voice(_voice_slug)
+            _is_fem = (_p_meta.get("gender") == "female") if _p_meta else (_voice_slug == "nilar")
+            resolved_recap_edge_voice = _resolve_recap_edge_voice(None, p_info=_p_meta, is_female=_is_fem)
+            req.edge_voice = resolved_recap_edge_voice
+    else:
+        req.edge_voice = None
     # Batch BV: own-voice reference. voice_ref_path is server-only —
     # whatever the client sent is discarded here and recomputed from
     # the upload handle below, so a forged path can never take
@@ -10716,6 +10788,7 @@ async def create_recap_job(
         job_type=JobType.RECAP.value,
         engine="recap",
         preset_voice=req.voice_slug,
+        edge_voice=resolved_recap_edge_voice if req.tts_engine == "edge" else None,
         input_text=clean_display_title,
         source_audio_path=req.url,
         recap_ref_audio_path=req.voice_ref_path,
@@ -12901,9 +12974,15 @@ def _format_plan_presentation(row: "PricingPlan", is_my: bool) -> dict:
     cat_group = "topup" if is_topup else raw_cat
     sub_type = getattr(row, "sub_type", None) or meta.get("sub_type")
     mins = int(row.minutes or 0)
+    _meta_disp = meta.get("display_minutes")
+    if _meta_disp is not None and mins == int(meta.get("minutes", mins)):
+        display_minutes = int(_meta_disp)
+    else:
+        display_minutes = mins
     credits = int(getattr(row, "recap_credits", None) if getattr(row, "recap_credits", None) is not None else meta.get("recap_credits", 0))
     price_mmk = int(row.price_mmk or 0)
-    vdays = int(getattr(row, "validity_days", 30) if getattr(row, "validity_days", None) is not None else 30)
+    _raw_vdays = getattr(row, "validity_days", None)
+    vdays = int(_raw_vdays) if _raw_vdays is not None else 30
     validity_label = (
         (f"သက်တမ်း {vdays} ရက်" if is_my else f"Valid {vdays} Days")
         if vdays > 0
@@ -12913,7 +12992,9 @@ def _format_plan_presentation(row: "PricingPlan", is_my: bool) -> dict:
     badge_raw = getattr(row, "badge", None) if getattr(row, "badge", None) is not None else meta.get("badge")
 
     badge_text = ""
-    if badge_raw == "popular":
+    if badge_raw == "bonus_200":
+        badge_text = "Bonus +200 မိနစ်" if is_my else "Bonus +200 min"
+    elif badge_raw == "popular":
         badge_text = "Popular ⭐"
     elif badge_raw == "best_value":
         badge_text = "Best Value 💎"
@@ -12939,7 +13020,7 @@ def _format_plan_presentation(row: "PricingPlan", is_my: bool) -> dict:
         alloc = f"{credits} Recap Credits + {mins} Voice Mins"
         features = [
             f"Recap Wallet +{credits} Credits (Output {credits} မိနစ်) & Voice Wallet +{mins} Mins" if is_my else f"Recap Wallet +{credits} Credits & Voice Wallet +{mins} Mins (stored separately)",
-            f"တစ်ခုချင်းဝယ်သည်ထက် 10% Combo သက်သာခွင့် · {validity_label}" if is_my else f"10% Combo Savings vs separate packs · {validity_label}",
+            f"Voice + Recap တွဲဖက် Combo Package · {validity_label}" if is_my else f"Voice + Recap bundle package · {validity_label}",
             "Custom Voice Clone Recap + Normal AI Recap အားလုံးသုံးနိုင်သည်" if is_my else "Works across Custom Voice Clone Recap & AI Recap",
             "Watermark လုံးဝမပါ & VIP Priority" if is_my else "Zero Watermark & VIP Priority",
         ]
@@ -12952,7 +13033,7 @@ def _format_plan_presentation(row: "PricingPlan", is_my: bool) -> dict:
             "Watermark လုံးဝမပါ & Custom Branding" if is_my else "Zero Watermark & Custom Branding",
         ]
     else:
-        alloc = f"{mins} Voice Clone Minutes" if not is_my else f"Voice Clone {mins} မိနစ်"
+        alloc = f"{display_minutes} Voice Clone Minutes" if not is_my else f"Voice Clone {display_minutes} မိနစ်"
         features = [
             f"Voice Clone မိနစ် {mins} မိနစ် · {validity_label}" if is_my else f"{mins} Voice Clone Minutes · {validity_label}",
             "တကယ့် Generate လုပ်သော Audio Duration အတိုင်းသာ ဖြတ်သည်" if is_my else "Deducted strictly by actual synthesized audio duration",
@@ -12968,6 +13049,7 @@ def _format_plan_presentation(row: "PricingPlan", is_my: bool) -> dict:
         "sub_type": sub_type or ("combo" if cat_group == "combo" else raw_cat),
         "allocation": alloc,
         "minutes": mins,
+        "display_minutes": display_minutes,
         "recap_credits": credits,
         "output_minutes": credits if cat_group in ("recap", "combo") or sub_type == "recap" else 0,
         "price": f"{price_mmk:,}",
@@ -13156,6 +13238,8 @@ async def submit_payment_slip(
             minutes = int(_db_plan.minutes or 0)
             snap_recap_credits = int(getattr(_db_plan, "recap_credits", 0) or 0)
             amount_mmk = int(_db_plan.price_mmk or 0)
+            _raw_v = getattr(_db_plan, "validity_days", None)
+            snap_validity_days = int(_raw_v) if _raw_v is not None else 30
         else:
             _plan = get_plan_by_code(package_code)
             if _plan is None:
@@ -13163,6 +13247,8 @@ async def submit_payment_slip(
             minutes = int(_plan["minutes"])
             snap_recap_credits = int(_plan.get("recap_credits", 0))
             amount_mmk = int(_plan["price_mmk"])
+            _raw_v = _plan.get("validity_days")
+            snap_validity_days = int(_raw_v) if _raw_v is not None else 30
 
         pay_req = PaymentRequest(
             id=str(uuid.uuid4()),
@@ -13171,6 +13257,7 @@ async def submit_payment_slip(
             minutes=minutes,
             recap_credits=snap_recap_credits,
             amount_mmk=amount_mmk,
+            validity_days=snap_validity_days,
             slip_url=f"/api/receipts/{clean_name}",
             status=PaymentStatus.PENDING.value,
             slip_fingerprint=slip_fingerprint,
@@ -14220,8 +14307,10 @@ async def get_admin_user_detail(
 
     bal = await db.get(MinuteBalance, user_id)
     payload["balance_breakdown"] = {
+        "daily_free_seconds": int(bal.effective_daily_free_seconds) if bal else 0,
         "monthly_free_seconds": int(bal.monthly_free_seconds or 0) if bal else 0,
         "welcome_seconds": int(bal.welcome_seconds or 0) if bal else 0,
+        "referral_voice_seconds": int(getattr(bal, "referral_voice_seconds", 0) or 0) if bal else 0,
         "referral_seconds": int(bal.referral_seconds or 0) if bal else 0,
         "purchased_seconds": int(bal.purchased_seconds or 0) if bal else 0,
         "consumed_seconds": int(bal.consumed_seconds or 0) if bal else 0,
@@ -15161,15 +15250,16 @@ class AdminSettingsPayload(BaseModel):
     private_ai_daily_budget: Optional[int] = None
     character_limit_free: Optional[int] = None
     character_limit_purchased: Optional[int] = None
+    free_daily_allowance_seconds: Optional[int] = None
     free_monthly_allowance_seconds: Optional[int] = None
     free_daily_job_limit: Optional[int] = None
     voice_daily_limit_minutes_free: Optional[int] = None
     voice_daily_limit_minutes_paid: Optional[int] = None
     tts_daily_limit_minutes_free: Optional[int] = None
     tts_daily_limit_minutes_paid: Optional[int] = None
-    # Batch CG: FREE Gemini taste (minutes/day per user) + the global
-    # FREE daily pool-request budget.
+    # Batch CG / 2026-11-23: Gemini pool taste (minutes/day per user) + global FREE daily request budget.
     free_gemini_taste_minutes: Optional[int] = None
+    paid_gemini_taste_minutes: Optional[int] = None
     free_gemini_daily_budget_requests: Optional[int] = None
     # Batch AO: tiered recap pricing arming switch (ships dark; the
     # owner flips it only at the announced effective date).
@@ -15258,13 +15348,15 @@ async def get_admin_settings(
         "private_ai_user_cooldown_seconds": int(getattr(settings, "private_ai_user_cooldown_seconds", 60) or 0),
         "private_ai_hourly_budget": int(getattr(settings, "private_ai_hourly_budget", 40) or 40),
         "private_ai_daily_budget": int(getattr(settings, "private_ai_daily_budget", 300) or 300),
-        "character_limit_free": int(getattr(settings, "character_limit_free", 1000) or 1000),
-        "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 5000) or 5000),
+        "character_limit_free": int(getattr(settings, "character_limit_free", 3000) or 3000),
+        "character_limit_purchased": int(getattr(settings, "character_limit_purchased", 15000) or 15000),
+        "free_daily_allowance_seconds": int(getattr(settings, "free_daily_allowance_seconds", 180)),
         "free_monthly_allowance_seconds": int(getattr(settings, "free_monthly_allowance_seconds", 180)),
         "free_daily_job_limit": int(getattr(settings, "free_daily_job_limit", 5)),
         "voice_daily_limit_minutes_free": int(getattr(settings, "voice_daily_limit_minutes_free", 0)),
-        "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 30)),
+        "voice_daily_limit_minutes_paid": int(getattr(settings, "voice_daily_limit_minutes_paid", 0)),
         "free_gemini_taste_minutes": int(getattr(settings, "free_gemini_taste_minutes", 2)),
+        "paid_gemini_taste_minutes": int(getattr(settings, "paid_gemini_taste_minutes", 10)),
         "free_gemini_daily_budget_requests": int(getattr(settings, "free_gemini_daily_budget_requests", 100)),
         "tts_daily_limit_minutes_free": int(getattr(settings, "tts_daily_limit_minutes_free", 15)),
         "tts_daily_limit_minutes_paid": int(getattr(settings, "tts_daily_limit_minutes_paid", 60)),
@@ -15361,39 +15453,31 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                     ),
                 )
         elif key == "character_limit_free":
-            # Round-6 P5: the free character limit became admin-visible;
-            # keep it inside sane bounds so a typo can neither brick the
-            # free tier (0) nor silently hand out the farm (huge).
             try:
                 limit_val = int(value)
             except (TypeError, ValueError):
                 limit_val = -1
-            if limit_val < 100 or limit_val > 10000:
+            if limit_val < 100 or limit_val > 50000:
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "အခမဲ့ စာလုံးရေ ကန့်သတ်ချက် (character_limit_free) သည် "
-                        "100 မှ 10000 အတွင်း ဖြစ်ရပါမည်။ "
+                        "100 မှ 50000 အတွင်း ဖြစ်ရပါမည်။ "
                         "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
                     ),
                 )
             cleaned[key] = limit_val
         elif key == "character_limit_purchased":
-            # Mini App Admin settings fill (2026-11-02): the purchased
-            # character limit joins the payload next to its free sibling
-            # (before this it silently no-opped — the key was not on the
-            # payload model at all); keep the same sane bounds so a typo
-            # can neither brick the paid tier nor hand out the farm.
             try:
                 limit_val = int(value)
             except (TypeError, ValueError):
                 limit_val = -1
-            if limit_val < 100 or limit_val > 10000:
+            if limit_val < 100 or limit_val > 50000:
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "ဝယ်ယူ စာလုံးရေ ကန့်သတ်ချက် (character_limit_purchased) သည် "
-                        "100 မှ 10000 အတွင်း ဖြစ်ရပါမည်။ "
+                        "100 မှ 50000 အတွင်း ဖြစ်ရပါမည်။ "
                         "မည်သည့် ဆက်တင်မှ မပြောင်းလဲပါ။"
                     ),
                 )
@@ -15601,6 +15685,7 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                 )
             cleaned[key] = limit_val
         elif key in (
+            "free_daily_allowance_seconds",
             "free_monthly_allowance_seconds",
             "free_daily_job_limit",
             "voice_daily_limit_minutes_free",
@@ -15608,6 +15693,7 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             "tts_daily_limit_minutes_free",
             "tts_daily_limit_minutes_paid",
             "free_gemini_taste_minutes",
+            "paid_gemini_taste_minutes",
             "free_gemini_daily_budget_requests",
             "recap_free_max_duration_seconds",
             "recap_max_duration_seconds",
@@ -15618,6 +15704,7 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
             # the free allowance to an absurd value, and zero/negative
             # recap durations bricked or unbound the recap tiers.
             _bounds = {
+                "free_daily_allowance_seconds": (0, 86_400),
                 "free_monthly_allowance_seconds": (0, 31_536_000),
                 "free_daily_job_limit": (0, 1000),
                 "voice_daily_limit_minutes_free": (0, 1440),
@@ -15625,6 +15712,7 @@ def _validate_admin_settings_updates(updates: dict) -> dict:
                 "tts_daily_limit_minutes_free": (0, 1440),
                 "tts_daily_limit_minutes_paid": (0, 1440),
                 "free_gemini_taste_minutes": (0, 1440),
+                "paid_gemini_taste_minutes": (0, 1440),
                 "free_gemini_daily_budget_requests": (0, 100000),
                 "recap_free_max_duration_seconds": (0, 86400),
                 "recap_max_duration_seconds": (60, 86400),

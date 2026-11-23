@@ -238,13 +238,13 @@ def tts_character_limit(user: User, *, is_admin: bool) -> int:
     enforced one flat 5,000-char cap for everyone, so a FREE user
     could submit 5,000 chars here while the voice tab rejected them
     at their tier limit."""
-    safety = int(getattr(settings, "infrastructure_safety_character_limit", 5000) or 5000)
+    safety = int(getattr(settings, "infrastructure_safety_character_limit", 15000) or 15000)
     if is_admin:
         return safety
     if user.account_category == AccountCategory.PURCHASED:
-        tier = int(getattr(settings, "character_limit_purchased", 5000) or 5000)
+        tier = int(getattr(settings, "character_limit_purchased", 15000) or 15000)
     else:
-        tier = int(getattr(settings, "character_limit_free", 1000) or 1000)
+        tier = int(getattr(settings, "character_limit_free", 3000) or 3000)
     return min(tier, safety)
 
 
@@ -280,8 +280,15 @@ async def create_tts_job(
         if voice not in GEMINI_VOICE_NAMES:
             return None, "INVALID_VOICE"
     else:
-        if voice not in EDGE_TTS_VOICES:
-            return None, "INVALID_VOICE"
+        ev_key = voice.lower()
+        if ev_key in EDGE_TTS_VOICES:
+            voice = ev_key
+        else:
+            rev = {v.lower(): k for k, v in EDGE_TTS_VOICES.items()}
+            if ev_key in rev:
+                voice = rev[ev_key]
+            else:
+                return None, "INVALID_VOICE"
     norm_speed = normalize_api_speed(speed_rate)
     if norm_speed is None:
         return None, "INVALID_SPEED"

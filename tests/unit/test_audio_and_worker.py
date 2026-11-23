@@ -143,9 +143,9 @@ async def test_worker_processing_lifecycle_and_cleanup(db_session, tmp_path):
     assert job.seconds_consumed == 15
     assert job.finished_at is not None
 
-    # Verify balance was debited by 15 seconds (consumed from monthly_free_seconds first per policy)
+    # Verify balance was debited by 15 seconds (consumed from daily_free_seconds first per Part I policy)
     bal_after = await get_minute_balance(db_session, user.id)
-    assert bal_after.monthly_free_seconds == 165  # 180 - 15 = 165
+    assert bal_after.daily_free_seconds == 165  # 180 - 15 = 165
     assert bal_after.welcome_seconds == 300
     assert bal_after.total_usable_seconds == 465
 

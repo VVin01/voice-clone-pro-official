@@ -74,7 +74,7 @@ async def test_referral_attribution_and_capping(db_session):
     )).scalar_one_or_none()
     assert ref_row is None
 
-    # Simulate 25 referrals to test the 20-referral cap
+    # Simulate 25 referrals — Part I: unlimited (no 20-friend cap), 60s Voice Clone per referral
     for i in range(1, 26):
         uid = 3000 + i
         user_i, _ = await get_or_create_user(
@@ -82,29 +82,24 @@ async def test_referral_attribution_and_capping(db_session):
         )
         was_pending, rewarded, idx = await confirm_referral_and_reward(db_session, uid)
         assert was_pending is True
+        assert rewarded is True
+        assert idx == i
 
-        if i <= MAX_REFERRALS_REWARDED:  # 1 to 20
-            assert rewarded is True
-            assert idx == i
-        else:  # 21 to 25 (over cap)
-            assert rewarded is False
-            assert idx == 0
-
-    # Verify referrer total referral seconds: exactly 20 * 120s = 2400s
-    # (40 min) — Batch AW raised the reward to 2 min of TTS time.
+    # Verify referrer total referral_voice_seconds: 25 * 60s = 1500s (25 min)
     ref_bal = await get_minute_balance(db_session, referrer.id)
-    assert ref_bal.referral_seconds == 2400
-    assert ref_bal.referral_minutes == 40.0
-    # Welcome (300s) + Referral (2400s) = 2700s (45 min)
-    assert ref_bal.total_usable_seconds == 2700
-    assert ref_bal.total_usable_minutes == 45.0
+    assert ref_bal.referral_voice_seconds == 1500
+    assert ref_bal.referral_seconds == 0
+    # Welcome (300s) + Referral Voice (1500s) = 1800s (30 min)
+    assert ref_bal.total_usable_seconds == 1800
+    assert ref_bal.total_usable_minutes == 30.0
 
-    # Verify referral stats
+    # Verify referral stats (Part I: unlimited)
     stats = await get_referral_stats(db_session, referrer.id)
-    assert stats["rewarded_referrals"] == 20
-    assert stats["earned_seconds"] == 2400
-    assert stats["remaining_slots"] == 0
-    assert stats["remaining_seconds"] == 0
+    assert stats["rewarded_referrals"] == 25
+    assert stats["earned_seconds"] == 1500
+    assert stats["remaining_slots"] is None
+    assert stats["remaining_seconds"] is None
+    assert stats["unlimited"] is True
 
 
 @pytest.mark.asyncio
@@ -219,7 +214,7 @@ async def _assert_minute_balance_matches_ledger(db_session, user_id: int) -> Non
     derived = _derive_bucket_totals_from_ledger(events)
     assert bal.monthly_free_seconds == derived[LedgerSource.MONTHLY_FREE.value]
     assert bal.welcome_seconds == derived[LedgerSource.WELCOME.value]
-    assert bal.referral_seconds == derived[LedgerSource.REFERRAL.value]
+    assert (bal.referral_seconds + bal.referral_voice_seconds) == derived[LedgerSource.REFERRAL.value]
     assert bal.purchased_seconds == derived[LedgerSource.PURCHASE.value]
     total_from_all_events = sum(
         int(e.seconds or 0) if e.direction == LedgerDirection.CREDIT.value else -int(e.seconds or 0)
@@ -269,7 +264,20 @@ async def test_part_c_minute_balance_derivable_from_ledger_events(db_session):
     )
     await _assert_minute_balance_matches_ledger(db_session, user.id)
 
-    # 4) TTS referral draw + settle delta
+    # 4) Grandfathered TTS referral draw + settle delta (Part I: past referral_seconds still spendable on TTS)
+    bal_for_tts = await get_minute_balance(db_session, user.id)
+    bal_for_tts.referral_seconds += 120
+    db_session.add(
+        MinuteLedgerEvent(
+            user_id=user.id,
+            source=LedgerSource.REFERRAL.value,
+            direction=LedgerDirection.CREDIT.value,
+            seconds=120,
+            reference_id="LEGACY_TTS_REF",
+            note="Grandfathered TTS referral balance",
+        )
+    )
+    await db_session.flush()
     drawn = await draw_tts_referral_seconds(db_session, user.id, "tts-partc-1", 80)
     assert drawn == 80
     await _assert_minute_balance_matches_ledger(db_session, user.id)

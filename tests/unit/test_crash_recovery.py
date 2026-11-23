@@ -400,10 +400,10 @@ async def test_worker_delivery_failure_job_still_succeeds_result_persisted(db_se
     assert job.result_path is not None
     assert job.result_path.endswith(".wav")
 
-    # Balance stays debited (15s consumed from monthly free first); a
+    # Balance stays debited (15s consumed from daily free first); a
     # best-effort delivery failure does NOT trigger a refund.
     bal_after = await get_minute_balance(db_session, user.id)
     assert bal_after.welcome_seconds == 300
-    assert bal_after.monthly_free_seconds == 165
+    assert bal_after.daily_free_seconds == 165
 
 

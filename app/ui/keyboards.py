@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+from urllib.parse import quote
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from app.services.i18n import t
 
@@ -8,23 +11,16 @@ def language_selection_kb(
     active_lang: str | None = None,
     show_back: bool = False,
     lang: str = "my",
+    callback_prefix: str = "set_lang",
 ) -> InlineKeyboardMarkup:
-    # The active language carries a ✅ marker (same convention as
-    # help_settings_kb) so the current choice is visible at a glance;
-    # callers that re-open this screen for an existing user pass
-    # show_back=True so the screen is never a dead end (bot cleanup
-    # 2026-11-03). The brand-new-user /start call passes neither: there
-    # is no chosen language and nothing to go back to yet.
     my_text = "✅ 🇲🇲 မြန်မာစာ" if active_lang == "my" else "🇲🇲 မြန်မာစာ"
     en_text = "✅ 🇬🇧 English" if active_lang == "en" else "🇬🇧 English"
     rows = [
         [
-            InlineKeyboardButton(text=my_text, callback_data="set_lang:my"),
-            InlineKeyboardButton(text=en_text, callback_data="set_lang:en"),
+            InlineKeyboardButton(text=my_text, callback_data=f"{callback_prefix}:my"),
+            InlineKeyboardButton(text=en_text, callback_data=f"{callback_prefix}:en"),
         ]
     ]
-    if show_back:
-        rows.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -63,37 +59,36 @@ def main_menu_kb(
     lang: str = "my",
     membership_pending: bool = False,
 ) -> InlineKeyboardMarkup:
+    """Round 13 Part K: Welcome inline keyboard — ALWAYS exactly 3 buttons, one per row.
+
+    No reply keyboard anywhere in DM. Every other user/admin function lives in the Mini App.
+    """
     from aiogram.types import WebAppInfo
 
     web_app_url = _mini_app_base_url()
-
-    # Bot cleanup 2026-11-03: the chat menu is a lean launcher — the
-    # Mini App is the primary surface. Four core buttons (hero WebApp,
-    # Plans, Refer, Language/Help) + the membership button ONLY while
-    # the user is unverified + admin entries for admins. The separate
-    # Recap/Downloader WebApp deep-links and the channel Tutorials row
-    # retired: Mini App tabs and the Help screen cover them.
     buttons = [
         [InlineKeyboardButton(text=t("menu_launch_text", lang), web_app=WebAppInfo(url=web_app_url))],
-        [
-            InlineKeyboardButton(text=t("menu_buy_minutes_text", lang), callback_data="menu:buy_minutes"),
-        ],
-        [
-            InlineKeyboardButton(text=t("btn_menu_refer_earn", lang), callback_data="menu:refer_earn"),
-        ],
-        [
-            InlineKeyboardButton(text=t("menu_language_help_text", lang), callback_data="menu:help_settings"),
-        ],
+        [InlineKeyboardButton(text=t("menu_refer_btn", lang), callback_data="menu:refer_earn")],
+        [InlineKeyboardButton(text=t("menu_change_lang_btn", lang), callback_data="menu:change_lang")],
     ]
-    if membership_pending:
-        buttons.append([
-            InlineKeyboardButton(text=t("menu_verify_gate", lang), callback_data="menu:membership"),
-        ])
-    if is_admin:
-        buttons.append([InlineKeyboardButton(text=t("menu_admin_panel_text", lang), callback_data="admin:dashboard")])
-        buttons.append([InlineKeyboardButton(text=t("menu_admin_broadcast", lang), callback_data="admin:broadcast")])
-
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def referral_share_kb(
+    ref_link: str,
+    invite_text: str,
+    lang: str = "my",
+) -> InlineKeyboardMarkup:
+    """Round 13 Part K3b: Single inline Share button under the referral message."""
+    share_url = (
+        f"https://t.me/share/url?url={quote(ref_link, safe='')}"
+        f"&text={quote(invite_text, safe='')}"
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t("refer_share_btn", lang), url=share_url)]
+        ]
+    )
 
 
 def help_settings_kb(

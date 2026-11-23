@@ -445,6 +445,7 @@ const state = {
     recapRenderQuality: "standard",
     recapTtsEngine: "gemini",
     recapGeminiVoice: "",
+    recapEdgeVoice: "thiha",
     recapVoice: "komin",
     // Batch BV: own-voice narration. Per-job state only — it is
     recapOwnVoiceSelected: false,
@@ -2022,7 +2023,7 @@ function _resetTtsSubmitControls() {
     const tInp = document.getElementById("tts-text-input");
     if (tInp && typeof syncTtsExcessAndCost === "function") {
         const u = (typeof state !== "undefined" && state && state.user) || {};
-        const maxC = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+        const maxC = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 15000) : (u.character_limit_free ?? 3000));
         syncTtsExcessAndCost((tInp.value || "").length, maxC);
     }
     if (typeof setSubmitButtonState === "function") setSubmitButtonState("tts");
@@ -2940,8 +2941,8 @@ function updateProfileReferSummary(data) {
     const linkText = document.getElementById("profile-referral-link-text");
     if (friendsEl) {
         const rewarded = (r && r.rewarded_referrals) || 0;
-        const max = (r && r.max_referrals) || 20;
-        friendsEl.textContent = `${rewarded} / ${max}`;
+        const max = r ? r.max_referrals : null;
+        friendsEl.textContent = (max && max > 0) ? `${rewarded} / ${max}` : String(rewarded);
     }
     if (minEl) {
         const earnedMin = r ? Math.round((r.earned_minutes || 0) * 10) / 10 : 0;
@@ -3286,6 +3287,9 @@ function switchTab(tabId) {
         if (typeof window.refreshTtsQuota === "function") {
             window.refreshTtsQuota();
         }
+        if (typeof loadVipWalletHistory === "function") {
+            loadVipWalletHistory(true);
+        }
     }
     // Batch AW: the TTS tab paints its balance line fresh on entry.
     if (tabId === "tab-tts" && typeof window.refreshTtsQuota === "function") {
@@ -3482,7 +3486,7 @@ async function loadUserProfile() {
         paintProfileView(data);
 
         if (charCount) {
-            const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
+            const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 15000) : (data.character_limit_free ?? 3000));
             const curLen = (document.getElementById("voice-text-input")?.value || "").length;
             charCount.innerText = `${curLen} / ${limit} ${t("char_counter_unit")}`;
         }
@@ -3633,7 +3637,8 @@ function renderCuratedVoices() {
         if (Array.from(recapSel.options).some(o => o.value === chosenRecap)) {
             recapSel.value = chosenRecap;
         }
-        if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
+        if (typeof resyncRecapPersonaSelect === "function") resyncRecapPersonaSelect();
+        else if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
     }
 
     updateSelectedVoiceSummary();
@@ -3883,15 +3888,105 @@ window.previewSelectedRecapPersona = function(e) {
     playVoicePreview(id, btn);
 };
 
+// Single source of truth for all 8 Microsoft Edge TTS voices (shared by TTS tab + Recap Step 3)
+const VCP_EDGE_VOICES = [
+    { key: "thiha", neural: "my-MM-ThihaNeural", i18nKey: "tts_edge_thiha" },
+    { key: "nilar", neural: "my-MM-NilarNeural", i18nKey: "tts_edge_nilar" },
+    { key: "andrew", neural: "en-US-AndrewMultilingualNeural", i18nKey: "tts_edge_andrew" },
+    { key: "brian", neural: "en-US-BrianMultilingualNeural", i18nKey: "tts_edge_brian" },
+    { key: "remy", neural: "fr-FR-RemyMultilingualNeural", i18nKey: "tts_edge_remy" },
+    { key: "ava", neural: "en-US-AvaMultilingualNeural", i18nKey: "tts_edge_ava" },
+    { key: "emma", neural: "en-US-EmmaMultilingualNeural", i18nKey: "tts_edge_emma" },
+    { key: "vivienne", neural: "fr-FR-VivienneMultilingualNeural", i18nKey: "tts_edge_vivienne" },
+];
+window.VCP_EDGE_VOICES = VCP_EDGE_VOICES;
+
+function normalizeEdgeVoiceKey(raw) {
+    const val = String(raw || "").trim().toLowerCase();
+    if (!val) return "thiha";
+    const found = VCP_EDGE_VOICES.find(v => v.key === val || v.neural.toLowerCase() === val);
+    return found ? found.key : "thiha";
+}
+
+function populateEdgeVoiceSelects() {
+    ["tts-edge-voice-select", "recap-edge-voice-select"].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const prev = id === "recap-edge-voice-select"
+            ? normalizeEdgeVoiceKey(state.recapEdgeVoice || sel.value || "thiha")
+            : normalizeEdgeVoiceKey(sel.value || "thiha");
+        sel.innerHTML = "";
+        VCP_EDGE_VOICES.forEach(v => {
+            const opt = document.createElement("option");
+            opt.value = v.key;
+            opt.setAttribute("data-i18n", v.i18nKey);
+            opt.textContent = t(v.i18nKey);
+            sel.appendChild(opt);
+        });
+        sel.value = prev;
+    });
+}
+window.populateEdgeVoiceSelects = populateEdgeVoiceSelects;
+
+async function playEdgeVoicePreview(voiceKey, buttonEl) {
+    haptic("light");
+    const key = normalizeEdgeVoiceKey(voiceKey);
+    if (currentVoiceAudio && currentPreviewButton === buttonEl) {
+        stopCurrentVoicePreview();
+        return;
+    }
+    stopCurrentVoicePreview();
+    const seq = ++previewFetchSeq;
+    const audioUrl = `/api/voices/edge-sample/${encodeURIComponent(key)}`;
+    currentPreviewButton = buttonEl;
+    if (buttonEl) {
+        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
+        if (icon) icon.innerText = "⏳";
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
+        if (label) label.innerText = t("preview_loading");
+    }
+    const authUrl = await fetchAuthImageUrl(audioUrl);
+    if (seq !== previewFetchSeq) return;
+    if (!authUrl) {
+        stopCurrentVoicePreview();
+        showStudioToast(t("preview_load_failed"), "error");
+        return;
+    }
+    const audio = new Audio(authUrl);
+    currentVoiceAudio = audio;
+    currentPreviewButton = buttonEl;
+    if (buttonEl) {
+        buttonEl.classList.add("playing");
+        const icon = buttonEl.querySelector(".preview-btn-icon, .preview-icon");
+        if (icon) icon.innerText = "⏸️";
+        const label = buttonEl.querySelector(".preview-btn-label, [data-i18n='btn_preview_voice'], [data-i18n='btn_preview_short']");
+        if (label) label.innerText = t("preview_playing");
+    }
+    audio.play().catch(e => {
+        console.warn("Edge voice preview playback error:", e);
+        stopCurrentVoicePreview();
+    });
+    audio.onended = () => stopCurrentVoicePreview();
+    audio.onerror = () => stopCurrentVoicePreview();
+}
+window.playEdgeVoicePreview = playEdgeVoicePreview;
+
+window.previewSelectedRecapEdgeVoice = function(e) {
+    if (e) e.stopPropagation();
+    const sel = document.getElementById("recap-edge-voice-select");
+    const key = normalizeEdgeVoiceKey((sel && sel.value) || state.recapEdgeVoice || "thiha");
+    const btn = document.getElementById("btn-recap-edge-preview") || (e && e.currentTarget) || null;
+    playEdgeVoicePreview(key, btn);
+};
+
 window.previewSelectedTtsVoice = function(e) {
     if (e) e.stopPropagation();
     const eng = (typeof ttsState !== "undefined" && ttsState.engine) || "gemini";
     if (eng === "edge") {
         const eSel = document.getElementById("tts-edge-voice-select");
-        const eVal = (eSel && eSel.value) || "thiha";
-        const sampleId = eVal === "nilar" ? "mahnin" : "komin";
+        const eVal = normalizeEdgeVoiceKey((eSel && eSel.value) || "thiha");
         const btn = document.getElementById("btn-tts-edge-preview") || (e && e.currentTarget) || null;
-        playVoicePreview(sampleId, btn);
+        playEdgeVoicePreview(eVal, btn);
         return;
     }
     const gSel = document.getElementById("tts-gemini-voice-select");
@@ -4026,7 +4121,7 @@ function setupVoiceStudio() {
     if (textInput && charCount) {
         textInput.addEventListener("input", () => {
             const len = textInput.value.length;
-            const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+            const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 15000) : (state.user?.character_limit_free ?? 3000));
             charCount.innerText = `${len} / ${max} ${t("char_counter_unit")}`;
             charCount.style.color = len > max ? "#ef4444" : "var(--text-muted)";
             updateVoicePreflight();
@@ -4529,7 +4624,7 @@ function paintCachedUserHeader(data) {
     paintVipPlanBalances(data);
     if (typeof paintProfileView === "function") paintProfileView(data);
     if (charCount) {
-        const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 5000) : (data.character_limit_free ?? 1000));
+        const limit = data.character_limit || (data.is_vip ? (data.character_limit_purchased ?? 15000) : (data.character_limit_free ?? 3000));
         charCount.innerText = `0 / ${limit} ${t("char_counter_unit")}`;
     }
     // Logo flags ride the same cached payload (older caches simply
@@ -4633,57 +4728,46 @@ window.refreshRecapQualityLock = refreshRecapQualityLock;
 // Phase 5: FREE users CAN pick the VoxCPM Persona Engine (using the 12 Persona
 // voices when they hold enough Recap Credits AND Voice Clone Minutes).
 // Only "My Own Clone Voice" remains paid/VIP-only — checked via canUseRecapCloneEngine().
+// Round 13 E3: Own Clone Voice is open to ALL authenticated users (VIP gate removed).
 function canUseRecapCloneEngine() {
-    const u = state.user || {};
-    return !!(u.is_admin || u.account_category === "PURCHASED");
+    return true;
 }
 function syncRecapEngineAreas() {
     const eng = state.recapTtsEngine || "voxcpm";
     const gv = document.getElementById("recap-gemini-voice-wrap");
     if (gv) gv.classList.toggle("hidden", eng !== "gemini");
+    const ev = document.getElementById("recap-edge-voice-wrap");
+    if (ev) ev.classList.toggle("hidden", eng !== "edge");
     const pa = document.getElementById("recap-persona-area");
-    if (pa) pa.classList.toggle("hidden", eng === "gemini" || eng === "none");
+    if (pa) pa.classList.toggle("hidden", eng !== "voxcpm");
+    // Voice Clone chooser: show ONE sub-block at a time (Own Voice vs Persona)
+    const ownActive = !!state.recapOwnVoiceSelected;
+    const btnOwn = document.getElementById("btn-recap-clone-own");
+    const btnPersona = document.getElementById("btn-recap-clone-persona");
+    if (btnOwn) btnOwn.classList.toggle("active", ownActive);
+    if (btnPersona) btnPersona.classList.toggle("active", !ownActive);
     const ow = document.getElementById("recap-own-voice-wrap");
-    if (ow) ow.classList.toggle("hidden", eng !== "voxcpm");
-    const note = document.getElementById("recap-persona-engine-note");
-    if (note) note.classList.toggle("hidden", eng !== "edge");
-    const billingHint = document.getElementById("recap-engine-billing-hint");
-    if (billingHint) {
-        const hintKey = eng === "none"
-            ? "recap_engine_hint_none"
-            : (eng === "edge" ? "recap_engine_hint_edge" : (eng === "gemini" ? "recap_engine_hint_gemini" : "recap_engine_hint_voxcpm"));
-        billingHint.setAttribute("data-i18n", hintKey);
-        billingHint.textContent = t(hintKey);
-    }
+    if (ow) ow.classList.toggle("hidden", eng !== "voxcpm" || !ownActive);
+    const personaRow = document.getElementById("recap-persona-select-row");
+    if (personaRow) personaRow.classList.toggle("hidden", eng !== "voxcpm" || ownActive);
 }
+function switchRecapCloneMode(mode) {
+    haptic("selection");
+    const isOwn = mode === "own";
+    state.recapOwnVoiceSelected = isOwn;
+    syncRecapEngineAreas();
+    syncRecapOwnVoiceCard();
+    if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
+}
+window.switchRecapCloneMode = switchRecapCloneMode;
+
 function refreshRecapEngineLock() {
-    const u = state.user;
-    const tierKnown = !!(
-        u && (u.is_admin !== undefined || typeof u.account_category === "string")
-    );
-    const canUse = canUseRecapCloneEngine();
-    // Phase 5: VoxCPM Persona engine is unlocked for ALL tiers (FREE + VIP + Admin).
+    // Round 13 E3: Voice Clone (both Persona & Own Voice) is unlocked for ALL users.
     const engineSel = document.getElementById("recap-engine-picker");
     if (engineSel && ["voxcpm", "gemini", "edge"].includes(state.recapTtsEngine)) {
         engineSel.value = state.recapTtsEngine;
     }
     syncRecapEngineAreas();
-    // Batch BV / Phase 5: Own Clone Voice remains VIP + Admin only, so
-    const owCard = document.getElementById("recap-own-voice-card");
-    if (owCard) {
-        const owLocked = tierKnown && !canUse;
-        owCard.classList.toggle("engine-locked", owLocked);
-        owCard.setAttribute("aria-disabled", owLocked ? "true" : "false");
-        const badge = document.getElementById("recap-own-voice-lock-badge");
-        if (badge) badge.classList.toggle("hidden", !owLocked);
-        const hint = document.getElementById("recap-own-voice-locked-hint");
-        if (hint) hint.classList.toggle("hidden", !owLocked);
-        const vipBtn = document.getElementById("btn-recap-own-voice-vip");
-        if (vipBtn) vipBtn.classList.toggle("hidden", !owLocked);
-        if (owLocked && state.recapOwnVoiceSelected && typeof deselectRecapOwnVoice === "function") {
-            deselectRecapOwnVoice();
-        }
-    }
     if (typeof syncSavedCustomVoiceUi === "function") syncSavedCustomVoiceUi();
 }
 window.refreshRecapEngineLock = refreshRecapEngineLock;
@@ -4723,11 +4807,13 @@ function syncRecapOwnVoiceCard() {
     if (label) {
         label.innerText = hasFile
             ? `🎵 ${state.recapOwnVoiceFileName} (${Math.round(state.recapOwnVoiceFile.size / 1024)} KB)`
-            : t("recap_own_voice_upload_btn");
+            : (state.recapOwnVoiceRefId && state.recapOwnVoiceFileName
+                ? `💾 ${state.recapOwnVoiceFileName}`
+                : t("recap_own_voice_upload_btn"));
     }
-    if (uploadBtn) uploadBtn.classList.toggle("has-file", hasFile);
+    if (uploadBtn) uploadBtn.classList.toggle("has-file", hasFile || !!state.recapOwnVoiceRefId);
     if (playBtn) playBtn.classList.toggle("hidden", !hasFile);
-    if (clearBtn) clearBtn.classList.toggle("hidden", !hasFile);
+    if (clearBtn) clearBtn.classList.toggle("hidden", !hasFile && !state.recapOwnVoiceRefId);
     if (status) {
         let text = "";
         if (state.recapOwnVoiceStatus === "uploading") text = t("recap_own_voice_uploading");
@@ -4739,16 +4825,11 @@ function syncRecapOwnVoiceCard() {
 }
 
 function selectRecapOwnVoice() {
-    if (!canUseRecapCloneEngine() && state.user
-        && (state.user.is_admin !== undefined || typeof state.user.account_category === "string")) {
-        // Locked for this tier: the lock hint is already on the card.
-        haptic("error");
-        return;
-    }
     haptic("selection");
     state.recapOwnVoiceSelected = true;
     document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card")
         .forEach(c => c.classList.remove("active"));
+    syncRecapEngineAreas();
     syncRecapOwnVoiceCard();
     if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
 }
@@ -4756,13 +4837,13 @@ function selectRecapOwnVoice() {
 function deselectRecapOwnVoice() {
     if (!state.recapOwnVoiceSelected) return;
     state.recapOwnVoiceSelected = false;
+    syncRecapEngineAreas();
     syncRecapOwnVoiceCard();
     if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
 }
 
 function clearRecapOwnVoice() {
     stopRecapOwnVoicePreview();
-    state.recapOwnVoiceSelected = false;
     state.recapOwnVoiceRefId = null;
     state.recapOwnVoiceFile = null;
     state.recapOwnVoiceFileName = "";
@@ -4770,6 +4851,7 @@ function clearRecapOwnVoice() {
     const input = document.getElementById("recap-own-voice-input");
     if (input) input.value = "";
     syncRecapOwnVoiceCard();
+    if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
     haptic("light");
 }
 window.clearRecapOwnVoice = clearRecapOwnVoice;
@@ -4857,19 +4939,7 @@ async function fetchLogoState() {
 }
 window.refreshLogoUi = refreshLogoUi;
 
-// R40 deck I4: the plan "how it works" line states both character
-function paintPlanHowText() {
-    const el = document.querySelector('[data-i18n="plan_how_text1"]');
-    if (!el) return;
-    const u = state.user || {};
-    const free = u.character_limit_free ?? 1000;
-    const paid = u.character_limit_purchased ?? 5000;
-    el.innerText = tf("plan_how_text1", {
-        free_chars: Number(free).toLocaleString("en-US"),
-        paid_chars: Number(paid).toLocaleString("en-US"),
-    });
-}
-window.paintPlanHowText = paintPlanHowText;
+// (Removed obsolete paintPlanHowText — Buy tab uses static Terms card)
 
 // Returns true when the cached profile is a known verified member
 function bootFromCachedProfile() {
@@ -4914,7 +4984,7 @@ function updateVoicePreflight() {
     if (!input) return;
     const u = state.user || {};
     const len = input.value.length;
-    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 15000) : (u.character_limit_free ?? 3000));
     let warn = "";
     if (len > max) {
         warn = t("preflight_over_limit").replace(/^\s*•\s*/, "");
@@ -4959,7 +5029,7 @@ async function handleVoiceGenerate() {
         return;
     }
 
-    const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+    const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 15000) : (state.user?.character_limit_free ?? 3000));
     if (text.length > maxChars) {
         studioSubmitFailure("voice");
         showStudioToast(tf("text_too_long", {
@@ -5619,7 +5689,15 @@ function syncRecapStepsWithSource(ready) {
     }
 }
 
-// Step 4 choices line (AX-4): source title · voice name · aspect —
+function _cleanStep4VoiceName(raw) {
+    let s = String(raw || "").trim();
+    if (typeof stripPanelEmoji === "function") s = stripPanelEmoji(s);
+    // Drop trailing parenthetical descriptor or English/gender tag (e.g. "(Ko Min)", "(ကျား)", "(Male)")
+    s = s.replace(/\s*[\(（][^\)）]*[\)）]\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+    return s;
+}
+
+// Step 4 choices rows (Round 13 Part I): plain title · plain voice name · bare ratio (no emojis, no suffixes)
 function refreshRecapStep4Choices() {
     const line = document.getElementById("recap-step4-choices");
     if (!line) return;
@@ -5628,44 +5706,43 @@ function refreshRecapStep4Choices() {
     const title = (info && !info.classList.contains("hidden") && titleEl && titleEl.textContent.trim())
         ? titleEl.textContent.trim() : t("recap_summary_no_source");
     const voiceEl = document.getElementById("recap-step4-choice-voice");
-    const voiceCard = document.querySelector("#recap-persona-area .voice-card.active .v-name")
-        || document.querySelector("#recap-top-voices .voice-card.active .v-name");
     if (voiceEl) {
+        const eng = state.recapTtsEngine || "voxcpm";
         let voiceLine = "";
-        if (state.recapTtsEngine === "none") {
-            voiceLine = t("recap_engine_none");
-        } else if (state.recapTtsEngine === "gemini") {
+        if (eng === "none") {
+            voiceLine = _cleanStep4VoiceName(t("recap_engine_none"));
+        } else if (eng === "gemini") {
             const gKey = typeof resolveGeminiPreviewVoice === "function"
                 ? resolveGeminiPreviewVoice() : (state.recapGeminiVoice || "Charon");
             const gRaw = t("gem_voice_" + String(gKey).toLowerCase());
-            const gName = (gRaw && !gRaw.startsWith("gem_voice_") ? gRaw : String(gKey)).replace(/\s*\([^)]*\)\s*$/, "");
-            voiceLine = "🎙️ Gemini " + gName;
-        } else if (state.recapOwnVoiceSelected && state.recapTtsEngine === "voxcpm") {
-            voiceLine = t("recap_own_voice_display");
+            voiceLine = _cleanStep4VoiceName(gRaw && !gRaw.startsWith("gem_voice_") ? gRaw : String(gKey));
+        } else if (eng === "edge") {
+            const eSel = document.getElementById("recap-edge-voice-select");
+            const eKey = normalizeEdgeVoiceKey((eSel && eSel.value) || state.recapEdgeVoice || "thiha");
+            const eRaw = t("tts_edge_" + eKey);
+            voiceLine = _cleanStep4VoiceName(eRaw && !eRaw.startsWith("tts_edge_") ? eRaw : eKey);
+        } else if (state.recapOwnVoiceSelected) {
+            voiceLine = _cleanStep4VoiceName(t("recap_own_voice_display"));
         } else {
             const selEl = document.getElementById("recap-persona-select");
-            const selLabel = selEl && selEl.selectedOptions && selEl.selectedOptions[0]
+            const slug = (selEl && selEl.value) || state.recapVoice || "komin";
+            const selOpt = selEl && selEl.selectedOptions && selEl.selectedOptions[0]
                 ? selEl.selectedOptions[0].textContent.trim() : "";
-            const picked = voiceCard ? voiceCard.textContent.trim() : (selLabel || state.recapVoice || "komin");
-            voiceLine = "🎙️ " + picked;
-            if (state.recapTtsEngine === "edge") {
-                const activeCard = voiceCard ? voiceCard.closest(".voice-card") : null;
-                const slug = activeCard ? activeCard.getAttribute("data-voice") : "";
-                const cv = (state.curatedVoices || []).find(v => (v.id || v.slug) === slug);
-                const femaleSlugs = ["mahnin", "nilar", "mamay", "manadi", "mayoon", "machaw", "mathiri"];
-                const isFemale = cv ? cv.gender === "female" : femaleSlugs.includes(slug || "");
-                const edgeVoiceName = t(isFemale ? "tts_edge_nilar" : "tts_edge_thiha").replace(/\s*\([^)]*\)\s*$/, "");
-                voiceLine += " " + tf("recap_step4_edge_voice_note", { voice: edgeVoiceName });
-            }
+            const pKey = "persona_opt_" + slug;
+            const pTrans = t(pKey);
+            const rawName = selOpt || (pTrans !== pKey ? pTrans : slug);
+            voiceLine = _cleanStep4VoiceName(rawName);
         }
         voiceEl.textContent = voiceLine;
     }
     const ratioEl = document.getElementById("recap-step4-choice-ratio");
-    const ratioCard = document.querySelector("#recap-preview-ratio-group .ratio-btn.active, #recap-preview-ratio-group .ratio-card.active");
-    if (ratioEl) ratioEl.textContent = ratioCard
-        ? (ratioCard.getAttribute("data-label") || ratioCard.textContent.trim()) : "";
+    if (ratioEl) {
+        const activeBtn = document.querySelector("#recap-preview-ratio-group .ratio-btn.active");
+        const bareRatio = (activeBtn && activeBtn.getAttribute("data-ratio")) || state.recapRatio || "9:16";
+        ratioEl.textContent = bareRatio;
+    }
     const titleSpan = document.getElementById("recap-step4-choice-title");
-    if (titleSpan) titleSpan.textContent = "🎬 " + title;
+    if (titleSpan) titleSpan.textContent = title;
 }
 window.refreshRecapStep4Choices = refreshRecapStep4Choices;
 
@@ -5887,34 +5964,12 @@ function refreshRecapStep4Thumb() {
 }
 window.refreshRecapStep4Thumb = refreshRecapStep4Thumb;
 
-// Output format facts (Round 12 D2): ratio + resolution and duration only.
-function refreshRecapStep4Facts() {
-    const set = (id, text) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.textContent = text || "";
-        const row = el.closest ? el.closest(".recap-format-fact-item") : null;
-        if (row) row.classList.toggle("hidden", !text);
-        else el.classList.toggle("hidden", !text);
-    };
-    const ratio = state.recapRatio || "9:16";
-    const canvasMap = { "9:16": "1080×1920 · 9:16", "16:9": "1920×1080 · 16:9", "1:1": "1080×1080 · 1:1" };
-    const canvas = canvasMap[ratio] ||
-        ((state.recapSourceWidth && state.recapSourceHeight)
-            ? state.recapSourceWidth + "×" + state.recapSourceHeight + " · Original" : "Original");
-    set("recap-fact-canvas", canvas);
-    const dur = state.recapSourceDuration || 0;
-    set("recap-fact-duration", dur > 0 ? formatRecapQuoteDuration(dur) : "");
-}
-window.refreshRecapStep4Facts = refreshRecapStep4Facts;
-
 // Step 4 entry (AX-4R): re-request the composite with the CURRENT
 function refreshRecapStep4Output() {
     if (recapHasSource() && typeof window.refreshRecapCompositePreview === "function") {
         try { window.refreshRecapCompositePreview(); } catch (e) { /* keep the current frame */ }
     }
     refreshRecapStep4Thumb();
-    refreshRecapStep4Facts();
     refreshRecapStep4Choices();
 }
 window.refreshRecapStep4Output = refreshRecapStep4Output;
@@ -7094,10 +7149,20 @@ function setupRecapVisualEditor() {
         });
     }
 
+    function applySubBoxWidth(newW) {
+        const clamped = Math.max(10, Math.min(100, Math.round(Number(newW) || 92)));
+        if (sliderSubW) sliderSubW.value = String(clamped);
+        state.recapSubW = clamped;
+        syncSubBoxVisual();
+        if (typeof updateSubtitleCharsEstimator === "function") updateSubtitleCharsEstimator();
+        if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        return clamped;
+    }
+    window.applySubBoxWidth = applySubBoxWidth;
+
     if (sliderSubW && previewSub && valSubW) {
         sliderSubW.addEventListener("input", () => {
-            syncSubBoxVisual();
-            if (typeof updateSubtitleCharsEstimator === "function") updateSubtitleCharsEstimator();
+            applySubBoxWidth(sliderSubW.value);
         });
     }
 
@@ -7467,6 +7532,125 @@ function setupRecapVisualEditor() {
     }
     attachBlurResizeX(blurResizeLeft, true);
     attachBlurResizeX(blurResizeRight, false);
+
+    // ── Resize Handles for Subtitle Box (Round 13 Part A) ──
+    const subResizeLeft = previewSub ? previewSub.querySelector(".box-resize-handle.left") : null;
+    const subResizeRight = previewSub ? previewSub.querySelector(".box-resize-handle.right") : null;
+    const subResizeTop = previewSub ? previewSub.querySelector(".box-resize-handle.top") : null;
+    const subResizeBottom = previewSub ? previewSub.querySelector(".box-resize-handle.bottom") : null;
+
+    function attachSubResizeX(handle, isLeft) {
+        if (!handle) return;
+        let startX = 0;
+        let startW = 92;
+        let isResizing = false;
+
+        function startResize(x) {
+            isResizing = true;
+            startX = x;
+            startW = sliderSubW ? parseFloat(sliderSubW.value) : (state.recapSubW || 92);
+            if (previewSub) previewSub.classList.add("is-dragging");
+            haptic("light");
+        }
+        function moveResize(x) {
+            if (!isResizing) return;
+            const canvasRect = canvas ? canvas.getBoundingClientRect() : null;
+            const canvasW = (canvasRect && canvasRect.width > 0) ? canvasRect.width : 360;
+            const deltaPx = isLeft ? (startX - x) : (x - startX);
+            const deltaPct = (deltaPx / canvasW) * 100;
+            const r = recapPictureRect();
+            const deltaScale = (r.pw < 1 - 0.002 && r.pw > 0) ? 1 / r.pw : 1;
+            // Center-anchored subtitle box: dragging one edge outward by d expands total width by 2*d.
+            applySubBoxWidth(startW + deltaPct * deltaScale * 2);
+        }
+        function endResize() {
+            isResizing = false;
+            if (previewSub) previewSub.classList.remove("is-dragging");
+        }
+        handle.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+            startResize(e.clientX);
+            const mm = (ev) => { ev.preventDefault(); moveResize(ev.clientX); };
+            const mu = () => { endResize(); window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); };
+            window.addEventListener("mousemove", mm);
+            window.addEventListener("mouseup", mu);
+        });
+        handle.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length > 0) {
+                e.stopPropagation();
+                startResize(e.touches[0].clientX);
+            }
+        }, { passive: true });
+        handle.addEventListener("touchmove", (e) => {
+            if (isResizing && e.touches && e.touches.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                moveResize(e.touches[0].clientX);
+            }
+        }, { passive: false });
+        handle.addEventListener("touchend", endResize);
+        handle.addEventListener("touchcancel", endResize);
+    }
+    function attachSubResizeY(handle) {
+        if (!handle) return;
+        let startY = 0;
+        let startMargin = 5;
+        let isResizing = false;
+        function startResize(y) {
+            isResizing = true;
+            startY = y;
+            startMargin = sliderSubY ? parseFloat(sliderSubY.value) : (state.recapSubMargin ?? 5);
+            if (previewSub) previewSub.classList.add("is-dragging");
+            haptic("light");
+        }
+        function moveResize(y) {
+            if (!isResizing) return;
+            const canvasRect = canvas ? canvas.getBoundingClientRect() : null;
+            const canvasH = (canvasRect && canvasRect.height > 0) ? canvasRect.height : 360;
+            const deltaPct = ((startY - y) / canvasH) * 100;
+            const r = recapPictureRect();
+            const deltaScale = ((r.oy + r.ph) < 1 - 0.002 && r.ph > 0) ? 1 / r.ph : 1;
+            const newM = Math.max(0, Math.min(95, Math.round(startMargin + deltaPct * deltaScale)));
+            if (state.recapSubPosBand !== "bottom") {
+                state.recapSubPosBand = "bottom";
+                if (typeof ddSyncPosBandPills === "function") ddSyncPosBandPills();
+            }
+            if (sliderSubY) sliderSubY.value = String(newM);
+            syncSubBoxVisual();
+        }
+        function endResize() {
+            isResizing = false;
+            if (previewSub) previewSub.classList.remove("is-dragging");
+        }
+        handle.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+            startResize(e.clientY);
+            const mm = (ev) => { ev.preventDefault(); moveResize(ev.clientY); };
+            const mu = () => { endResize(); window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); };
+            window.addEventListener("mousemove", mm);
+            window.addEventListener("mouseup", mu);
+        });
+        handle.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length > 0) {
+                e.stopPropagation();
+                startResize(e.touches[0].clientY);
+            }
+        }, { passive: true });
+        handle.addEventListener("touchmove", (e) => {
+            if (isResizing && e.touches && e.touches.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                moveResize(e.touches[0].clientY);
+            }
+        }, { passive: false });
+        handle.addEventListener("touchend", endResize);
+        handle.addEventListener("touchcancel", endResize);
+    }
+    attachSubResizeX(subResizeLeft, true);
+    attachSubResizeX(subResizeRight, false);
+    attachSubResizeY(subResizeTop);
+    attachSubResizeY(subResizeBottom);
+
     syncBlurBoxVisual();
     syncSubBoxVisual();
 
@@ -7933,74 +8117,12 @@ function setupRecapVisualEditor() {
             speedBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapSpeed = btn.getAttribute("data-speed") || "+12%";
-            moveSpeedPill(document.getElementById("recap-speed-picker"));
-            if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
             if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
         });
     });
 
-    // Batch AH: the Batch K twin-toggle sync is gone — there is
-
-    // 6c. Source language (auto = detect; else a Whisper code).
-    // Batch AZ-11: ONE compact dropdown lists all 18 values — the
-    const langSel = document.getElementById("recap-lang-more");
-    function renderRecapLangSheetGrid() {
-        const grid = document.getElementById("recap-lang-sheet-grid");
-        if (!grid || !langSel) return;
-        const activeCode = state.recapSourceLanguage || "auto";
-        grid.innerHTML = "";
-        Array.from(langSel.options).forEach(opt => {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "vcp-lang-chip" + (opt.value === activeCode ? " active" : "");
-            btn.textContent = opt.textContent || opt.value;
-            btn.addEventListener("click", () => {
-                haptic("selection");
-                setRecapSourceLanguage(opt.value);
-                closeRecapLangSheet();
-            });
-            grid.appendChild(btn);
-        });
-    }
-    window.openRecapLangSheet = function() {
-        renderRecapLangSheetGrid();
-        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
-        if (backdrop) backdrop.classList.remove("hidden");
-    };
-    window.closeRecapLangSheet = function() {
-        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
-        if (backdrop) backdrop.classList.add("hidden");
-    };
-    document.addEventListener("keydown", (ev) => {
-        if (ev.key === "Escape") {
-            const backdrop = document.getElementById("recap-lang-sheet-backdrop");
-            if (backdrop && !backdrop.classList.contains("hidden")) window.closeRecapLangSheet();
-        }
-    });
-    function syncRecapLangViews() {
-        if (langSel) {
-            const has = Array.from(langSel.options).some(o => o.value === state.recapSourceLanguage);
-            langSel.value = has ? state.recapSourceLanguage : "auto";
-        }
-        const backdrop = document.getElementById("recap-lang-sheet-backdrop");
-        if (backdrop && !backdrop.classList.contains("hidden")) {
-            renderRecapLangSheetGrid();
-        }
-    }
-    window.syncRecapLangViews = syncRecapLangViews;
-    function setRecapSourceLanguage(code) {
-        state.recapSourceLanguage = code || "auto";
-        syncRecapLangViews();
-        if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
-    }
-    window.setRecapSourceLanguage = setRecapSourceLanguage;
-    if (langSel) {
-        langSel.addEventListener("change", () => {
-            if (!langSel.value) return;
-            haptic("selection");
-            setRecapSourceLanguage(langSel.value);
-        });
-    }
+    // Round 13 Part H: Source language panel & sheet removed; pipeline stays on Auto.
+    state.recapSourceLanguage = "auto";
 
     // 6d. Render quality pills (standard = the historical default encode)
     const qualityBtns = document.querySelectorAll("#recap-quality-picker .pill-btn");
@@ -8011,7 +8133,6 @@ function setupRecapVisualEditor() {
             qualityBtns.forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             state.recapRenderQuality = btn.getAttribute("data-quality") || "standard";
-            if (typeof window.refreshRecapStep4Facts === "function") window.refreshRecapStep4Facts();
             // Batch BE: the quote depends on the quality (Max carries
             // the +1 surcharge while tiered pricing is armed).
             updateRecapSplitCostHint();
@@ -8019,8 +8140,7 @@ function setupRecapVisualEditor() {
     });
     refreshRecapQualityLock();
 
-    // 6e. Narration engine select (VoxCPM persona / Gemini TTS / Edge
-    // TTS) + Gemini voice select.
+    // 6e. Narration engine select (Voice Clone / Gemini TTS / Edge TTS) + voice selects.
     const engineSel = document.getElementById("recap-engine-picker");
     if (engineSel) {
         engineSel.addEventListener("change", () => {
@@ -8034,31 +8154,43 @@ function setupRecapVisualEditor() {
             state.recapInsufMinutesServer = null;
             syncRecapEngineAreas();
             updateRecapSplitCostHint();
+            if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
         });
     }
     refreshRecapEngineLock();
     initRecapOwnVoice();
+    populateEdgeVoiceSelects();
     const geminiVoiceSel = document.getElementById("recap-gemini-voice-select");
     if (geminiVoiceSel) {
         geminiVoiceSel.addEventListener("change", () => {
             state.recapGeminiVoice = geminiVoiceSel.value || "";
             if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
-            // Stop a Gemini preview still playing the previous pick.
             if (currentPreviewButton && currentPreviewButton.id === "btn-preview-gemini-voice") {
                 stopCurrentVoicePreview();
             }
         });
     }
+    const edgeVoiceSel = document.getElementById("recap-edge-voice-select");
+    if (edgeVoiceSel) {
+        edgeVoiceSel.addEventListener("change", () => {
+            haptic("selection");
+            state.recapEdgeVoice = normalizeEdgeVoiceKey(edgeVoiceSel.value || "thiha");
+            if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
+            if (currentPreviewButton && currentPreviewButton.id === "btn-recap-edge-preview") {
+                stopCurrentVoicePreview();
+            }
+            if (typeof saveRecapSettingsSoon === "function") saveRecapSettingsSoon();
+        });
+    }
 
-    // 7. Narration Story Style Picker (viral, dramatic, funny, pov, standard) — synced across Step 3 & Advanced
+    // 7. Narration Story Style Picker (viral, funny, standard, pov) — 2x2 grid
     const storyPills = document.querySelectorAll("#story-style-picker-quick .style-select-pill");
     storyPills.forEach(pill => {
         pill.addEventListener("click", () => {
             haptic("selection");
-            const chosenStory = pill.getAttribute("data-story") || "viral";
+            const chosenStory = pill.getAttribute("data-story") || "pov";
             state.recapStoryStyle = chosenStory;
             storyPills.forEach(p => p.classList.toggle("active", p.getAttribute("data-story") === chosenStory));
-            moveSegPill(document.getElementById("story-style-picker-quick"));
             if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
         });
     });
@@ -8322,7 +8454,7 @@ function setupRecapVisualEditor() {
         });
     }
 
-    // (1) Accordion header values.
+    // (1) Accordion header values (for any accordion that opts into .dd-acc-val).
     function refreshRecapStep2Summary() {
         const setVal = (id, txt) => {
             const gEl = document.getElementById(id);
@@ -8334,10 +8466,6 @@ function setupRecapVisualEditor() {
         const storyPill = document.querySelector(`#story-style-picker-quick [data-story="${storyKey}"]`);
         setVal("recap-story-style-acc", storyPill ? storyPill.textContent.trim() : storyKey);
         setVal("recap-pace-acc", state.recapSpeed || "+12%");
-        const langOpt = document.querySelector(`#recap-lang-more option[value="${state.recapSourceLanguage || "auto"}"]`);
-        setVal("recap-lang-acc", langOpt ? langOpt.textContent.trim() : (state.recapSourceLanguage || "auto"));
-        const srToggle = document.getElementById("recap-script-review-toggle");
-        setVal("recap-review-acc", (srToggle && srToggle.checked) ? t("toggle_on") : t("toggle_off"));
     }
     window.refreshRecapStep2Summary = refreshRecapStep2Summary;
 
@@ -8347,7 +8475,7 @@ function setupRecapVisualEditor() {
         srBoxEl.addEventListener("change", refreshRecapStep2Summary);
     }
 
-    // (2) Accordion: every .dd-acc-group gets a header (title +
+    // (2) Accordion: every .dd-acc-group gets a header (title + optional .dd-acc-val + chevron)
     function setupRecapAccordion() {
         document.querySelectorAll(".dd-acc-group").forEach(group => {
             if (group.dataset.accReady) return;
@@ -8359,6 +8487,7 @@ function setupRecapVisualEditor() {
             head.className = "dd-acc-head vcp-acc-head";
             head.setAttribute("aria-expanded", "false");
             const inFine = !!(group.closest && group.closest("#recap-fine-body"));
+            const hideVal = inFine || group.getAttribute("data-no-acc-val") === "1";
             const plainTxt = (raw) => (inFine && typeof stripPanelEmoji === "function") ? stripPanelEmoji(raw) : raw;
             const titleSpan = document.createElement("span");
             titleSpan.className = "dd-acc-title";
@@ -8372,7 +8501,7 @@ function setupRecapVisualEditor() {
                 vipSpan.textContent = plainTxt(t(vipKey));
                 head.appendChild(vipSpan);
             }
-            if (!inFine) {
+            if (!hideVal) {
                 const valSpan = document.createElement("span");
                 valSpan.className = "dd-acc-val";
                 head.appendChild(valSpan);
@@ -9225,6 +9354,7 @@ function setupRecapVisualEditor() {
         snap.recapZoom = state.recapZoom;
         snap.recapVoice = state.recapVoice;
         snap.recapGeminiVoice = state.recapGeminiVoice || "";
+        snap.recapEdgeVoice = normalizeEdgeVoiceKey(state.recapEdgeVoice || "thiha");
         snap.recapSplitEnabled = false;
         const by = document.getElementById("slider-blur-y");
         const bh = document.getElementById("slider-blur-h");
@@ -9340,6 +9470,10 @@ function setupRecapVisualEditor() {
         if (Number.isFinite(zoom) && zoom >= 1 && zoom <= 1.2) state.recapZoom = zoom;
         if (typeof saved.recapVoice === "string" && saved.recapVoice) state.recapVoice = saved.recapVoice;
         if (typeof saved.recapGeminiVoice === "string") state.recapGeminiVoice = saved.recapGeminiVoice;
+        if (typeof saved.recapEdgeVoice === "string" && saved.recapEdgeVoice) {
+            state.recapEdgeVoice = normalizeEdgeVoiceKey(saved.recapEdgeVoice);
+        }
+        state.recapSourceLanguage = "auto";
         // Batch DD restores (strings / list / band).
         if (typeof saved.recapTextColor === "string") state.recapTextColor = saved.recapTextColor;
         if (typeof saved.recapOutlineColor === "string") state.recapOutlineColor = saved.recapOutlineColor;
@@ -9367,27 +9501,17 @@ function setupRecapVisualEditor() {
         syncPillGroup("#recap-ratio-picker .ratio-btn", "data-ratio", state.recapRatio);
         if (canvas) canvas.classList.toggle("mirrored", !!state.recapMirror);
         syncPillGroup("#recap-speed-picker .speed-seg", "data-speed", state.recapSpeed);
-        moveSpeedPill(document.getElementById("recap-speed-picker"));
-        // AZ-11: the language pills are retired — the one dropdown
-        // is painted by syncRecapLangViews (called just below).
-        if (window.syncRecapLangViews) syncRecapLangViews();
         refreshRecapQualityLock();
         syncPillGroup("#recap-quality-picker .pill-btn", "data-quality", state.recapRenderQuality);
-        // Batch AW: a saved "voxcpm" resolves to "gemini" for a free
-        // profile BEFORE the engine select paints (the lock re-syncs the
-        // select + the persona/Gemini areas from resolved state).
         refreshRecapEngineLock();
         const engineSelEl = document.getElementById("recap-engine-picker");
         if (engineSelEl) engineSelEl.value = state.recapTtsEngine || "gemini";
-        const gv = document.getElementById("recap-gemini-voice-wrap");
-        if (gv) gv.classList.toggle("hidden", state.recapTtsEngine !== "gemini");
-        const pa = document.getElementById("recap-persona-area");
-        if (pa) pa.classList.toggle("hidden", state.recapTtsEngine === "gemini" || state.recapTtsEngine === "none");
         if (geminiVoiceSel) geminiVoiceSel.value = state.recapGeminiVoice || "";
+        if (edgeVoiceSel) edgeVoiceSel.value = normalizeEdgeVoiceKey(state.recapEdgeVoice || "thiha");
+        syncRecapEngineAreas();
         document.querySelectorAll("#story-style-picker-quick .style-select-pill").forEach(p => {
             p.classList.toggle("active", p.getAttribute("data-story") === state.recapStoryStyle);
         });
-        moveSegPills();
         if (typeof resyncRecapPersonaSelect === "function") resyncRecapPersonaSelect();
         else document.querySelectorAll("#recap-top-voices .voice-card, #recap-all-voices-grid .voice-card").forEach(c => {
             c.classList.toggle("active", c.getAttribute("data-voice") === state.recapVoice);
@@ -9452,7 +9576,7 @@ function setupRecapVisualEditor() {
         if (typeof ddFitPreviewFrame === "function") ddFitPreviewFrame();
         if (typeof refreshRecapStep2Summary === "function") refreshRecapStep2Summary();
         if (typeof refreshRecapStep4Thumb === "function") refreshRecapStep4Thumb();
-        if (typeof refreshRecapStep4Facts === "function") refreshRecapStep4Facts();
+        if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
         if (typeof updateRecapSplitCostHint === "function") updateRecapSplitCostHint();
     }
 
@@ -9647,6 +9771,77 @@ function recapJobIsActive() {
     return !!state.recapPollTimer || !!state.recapScriptReadyJobId;
 }
 
+function buildRecapConfig(url) {
+    const sliderBlurY = document.getElementById("slider-blur-y");
+    const sliderBlurH = document.getElementById("slider-blur-h");
+    const sliderBlurX = document.getElementById("slider-blur-x");
+    const sliderBlurW = document.getElementById("slider-blur-w");
+    const sliderBlurStrength = document.getElementById("slider-blur-strength");
+    const sliderSubY = document.getElementById("slider-sub-y");
+    const sliderSubX = document.getElementById("slider-sub-x");
+    const sliderSubW = document.getElementById("slider-sub-w");
+    const personaSel = document.getElementById("recap-persona-select");
+    const edgeSel = document.getElementById("recap-edge-voice-select");
+    const geminiSel = document.getElementById("recap-gemini-voice-select");
+
+    const lockedCrop = recapLockedCropForRatio(state.recapRatio);
+    const activeEngine = state.recapTtsEngine || "voxcpm";
+    const activePersona = (personaSel && personaSel.value) || state.recapVoice || "komin";
+    const activeGemini = (geminiSel ? geminiSel.value : state.recapGeminiVoice) || "";
+    const activeEdge = normalizeEdgeVoiceKey((edgeSel && edgeSel.value) || state.recapEdgeVoice || "thiha");
+
+    return {
+        url: url,
+        title: state.recapVideoTitle || null,
+        voice_slug: activePersona,
+        story_style: state.recapStoryStyle || "pov",
+        ratio: state.recapRatio || "9:16",
+        ratio_fill: RECAP_LOCKED_FILL,
+        crop_top: lockedCrop.crop_top,
+        crop_bottom: lockedCrop.crop_bottom,
+        crop_left: lockedCrop.crop_left,
+        crop_right: lockedCrop.crop_right,
+        mirror_video: RECAP_LOCKED_MIRROR,
+        zoom_factor: RECAP_LOCKED_ZOOM,
+        voice_speed: state.recapSpeed || "+12%",
+        blur_subtitles: state.recapBlurSubs !== false,
+        blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
+        blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 7,
+        blur_x: sliderBlurX ? parseInt(sliderBlurX.value) : 4,
+        blur_w: sliderBlurW ? parseInt(sliderBlurW.value) : 92,
+        blur_box_explicit: !!state.recapBlurBoxTouched && !(Array.isArray(state.recapBlurBoxes) && state.recapBlurBoxes.length),
+        blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
+        blur_auto_detect: state.recapBlurAutoDetect !== false,
+        burn_subtitles: state.recapBurnSubs !== false,
+        sub_bottom_margin: (state.recapSubPosBand === "top" || state.recapSubPosBand === "center") ? null : (sliderSubY ? parseInt(sliderSubY.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5)),
+        sub_y: (state.recapSubPosBand === "top") ? 15 : (state.recapSubPosBand === "center") ? 50 : undefined,
+        sub_x: sliderSubX ? parseInt(sliderSubX.value) : 50,
+        sub_w: sliderSubW ? parseInt(sliderSubW.value) : 92,
+        sub_style: state.recapSubStyle || "cinematic",
+        sub_font_size: state.recapFontSize || 13,
+        sub_font: state.recapSubFont || "padauk",
+        sub_lines: state.recapLines || 1,
+        include_logo: state.recapLogo !== false,
+        logo_pos: state.recapLogoPos || "top-right",
+        logo_scale: Number(state.recapLogoScale || 0.16),
+        logo_opacity: Number(state.recapLogoOpacity || 0.70),
+        ...ddConfigExtras(),
+        duration_seconds: state.recapSourceDuration || null,
+        script_review: !!((document.getElementById("recap-script-review-toggle") || {}).checked),
+        source_language: "auto",
+        render_quality: canUseRecapRenderQuality() ? (state.recapRenderQuality || "standard") : "standard",
+        tts_engine: activeEngine,
+        gemini_voice: (activeEngine === "gemini" && activeGemini) ? activeGemini : null,
+        edge_voice: activeEngine === "edge" ? activeEdge : null,
+        voice_ref_id: (activeEngine === "voxcpm" && state.recapOwnVoiceSelected && state.recapOwnVoiceStatus === "ready")
+            ? state.recapOwnVoiceRefId
+            : null,
+        split_video: false,
+        split_minutes: 3,
+    };
+}
+if (typeof window !== "undefined") window.buildRecapConfig = buildRecapConfig;
+
 async function handleStartRecap() {
     // Batch AC: a parallel submit is explained IN PLACE (limit text +
     if (recapJobIsActive()) showLiveSubmitLimit("recap");
@@ -9742,82 +9937,7 @@ async function handleStartRecap() {
     }
 
     try {
-        const sliderBlurY = document.getElementById("slider-blur-y");
-        const sliderBlurH = document.getElementById("slider-blur-h");
-        const sliderBlurX = document.getElementById("slider-blur-x");
-        const sliderBlurW = document.getElementById("slider-blur-w");
-        const sliderBlurStrength = document.getElementById("slider-blur-strength");
-        const sliderSubY = document.getElementById("slider-sub-y");
-        const sliderSubX = document.getElementById("slider-sub-x");
-        const sliderSubW = document.getElementById("slider-sub-w");
-
-        const lockedCrop = recapLockedCropForRatio(state.recapRatio);
-        const payload = {
-            url: url,
-            title: state.recapVideoTitle || null,
-            voice_slug: state.recapVoice || "komin",
-            story_style: state.recapStoryStyle || "pov",
-            ratio: state.recapRatio || "9:16",
-            ratio_fill: RECAP_LOCKED_FILL,
-            crop_top: lockedCrop.crop_top,
-            crop_bottom: lockedCrop.crop_bottom,
-            crop_left: lockedCrop.crop_left,
-            crop_right: lockedCrop.crop_right,
-            mirror_video: RECAP_LOCKED_MIRROR,
-            zoom_factor: RECAP_LOCKED_ZOOM,
-            voice_speed: state.recapSpeed || "+12%",
-            blur_subtitles: state.recapBlurSubs !== false,
-            blur_y: sliderBlurY ? parseInt(sliderBlurY.value) : 85,
-            blur_h: sliderBlurH ? parseInt(sliderBlurH.value) : 7,
-            // Batch AG: horizontal blur geometry, percents of the
-            // picture width — the engine converts them through the
-            // same single conversion point as blur_y/blur_h.
-            blur_x: sliderBlurX ? parseInt(sliderBlurX.value) : 4,
-            blur_w: sliderBlurW ? parseInt(sliderBlurW.value) : 92,
-            // Batch AA: the explicit-set marker rides along — the
-            // engine treats a marked box as authoritative. Batch
-            // DD: a blur-box LIST supersedes it (list sent below).
-            blur_box_explicit: !!state.recapBlurBoxTouched && !(Array.isArray(state.recapBlurBoxes) && state.recapBlurBoxes.length),
-            blur_strength: sliderBlurStrength ? parseInt(sliderBlurStrength.value) : 18,
-            blur_auto_detect: state.recapBlurAutoDetect !== false,
-            burn_subtitles: state.recapBurnSubs !== false,
-            // Batch AK: the slider is the bottom-edge margin; sub_y
-            // is no longer sent (the server default stands and the
-            // margin wins in the engine when present).
-            sub_bottom_margin: (state.recapSubPosBand === "top" || state.recapSubPosBand === "center") ? null : (sliderSubY ? parseInt(sliderSubY.value) : (state.recapSubMargin != null ? state.recapSubMargin : 5)),
-            // Batch DD: position band Top/Centre ride sub_y
-            // (undefined = omitted = the Bottom margin path).
-            sub_y: (state.recapSubPosBand === "top") ? 15 : (state.recapSubPosBand === "center") ? 50 : undefined,
-            // Batch AG: subtitle centre X + wrap width (picture
-            // width percents), mirroring sub_y's centre semantics.
-            sub_x: sliderSubX ? parseInt(sliderSubX.value) : 50,
-            sub_w: sliderSubW ? parseInt(sliderSubW.value) : 92,
-            sub_style: state.recapSubStyle || "cinematic",
-            sub_font_size: state.recapFontSize || 13,
-            sub_font: state.recapSubFont || "padauk",
-            sub_lines: state.recapLines || 1,
-            include_logo: state.recapLogo !== false,
-            logo_pos: state.recapLogoPos || "top-right",
-            logo_scale: Number(state.recapLogoScale || 0.16),
-            logo_opacity: Number(state.recapLogoOpacity || 0.70),
-            // Batch DD: protection level, free style controls,
-            // custom font handle and the blur-box list.
-            ...ddConfigExtras(),
-            duration_seconds: state.recapSourceDuration || null,
-            script_review: !!((document.getElementById("recap-script-review-toggle") || {}).checked),
-            source_language: state.recapSourceLanguage || "auto",
-            render_quality: canUseRecapRenderQuality() ? (state.recapRenderQuality || "standard") : "standard",
-            tts_engine: state.recapTtsEngine || "voxcpm",
-            gemini_voice: (state.recapTtsEngine === "gemini" && state.recapGeminiVoice) ? state.recapGeminiVoice : null,
-            // Batch BV: own-voice handle — only on the clone engine
-            // and only once the upload has completed (the submit
-            // guard above blocks an in-flight upload).
-            voice_ref_id: (state.recapTtsEngine === "voxcpm" && state.recapOwnVoiceSelected && state.recapOwnVoiceStatus === "ready")
-                ? state.recapOwnVoiceRefId
-                : null,
-            split_video: false,
-            split_minutes: 3,
-        };
+        const payload = buildRecapConfig(url);
 
         const res = await fetch("/api/recap/generate", {
             method: "POST",
@@ -10979,44 +11099,37 @@ function setupDownloader() {
     }
 }
 
-function switchVipSubView(view) {
-    haptic("selection");
-    const v = view === "wallet" ? "wallet" : "plans";
-    document.getElementById("vip-subbtn-plans")?.classList.toggle("active", v === "plans");
-    document.getElementById("vip-subbtn-wallet")?.classList.toggle("active", v === "wallet");
-    document.getElementById("vip-sub-plans")?.classList.toggle("hidden", v !== "plans");
-    document.getElementById("vip-sub-wallet")?.classList.toggle("hidden", v !== "wallet");
-    if (v === "wallet") loadVipWalletHistory(true);
-}
-window.switchVipSubView = switchVipSubView;
-
-// ── Plan Category Tabs (one category at a time — no long scroll) ──────────
+// ── Plan Category Tabs (Package / Voice / Recap — one category at a time) ─
 function switchPlanCategory(cat) {
     haptic("selection");
-    const target = cat === "combined" ? "combo" : cat;
+    const target = (cat === "combined" || cat === "package") ? "combo" : (["combo", "voice", "recap"].includes(cat) ? cat : "combo");
     document.querySelectorAll(".plan-tab-btn").forEach(btn => {
         btn.classList.toggle("active", btn.getAttribute("data-plan-cat") === target);
     });
-    ["voice", "recap", "combo", "topup"].forEach(name => {
+    ["combo", "voice", "recap"].forEach(name => {
         const panel = document.getElementById(`plan-panel-${name}`);
         if (panel) panel.classList.toggle("hidden", name !== target);
     });
 }
+window.switchPlanCategory = switchPlanCategory;
 
 // ── Payment Drawer & Slip Submission ───────────────────────────────────────
-let activePackageCode = "voice_creator";
-let activeAmount = 10000;
+let activePackageCode = "pkg_starter";
+let activeAmount = 0;
 let planPriceByCode = {};
 let _vipPlansCache = [];
 
 function renderDynamicVipPlans(data) {
     const plans = (data && data.plans) || [];
     _vipPlansCache = plans;
-    const buckets = { voice: [], recap: [], combo: [], topup: [] };
+    const buckets = { combo: [], voice: [], recap: [] };
     plans.forEach(p => {
-        const c = p.is_topup ? "topup" : (p.category === "combined" ? "combo" : (p.category || "voice"));
-        (buckets[c] || buckets.voice).push(p);
+        if (p.is_topup) return;
+        const c = (p.category === "combined" || p.category === "combo") ? "combo" : (p.category === "recap" ? "recap" : "voice");
+        (buckets[c] || buckets.combo).push(p);
     });
+    const buyBtnText = escapeHtml(t("buy_btn_label"));
+    const bonusBadgeText = escapeHtml(t("buy_badge_bonus_200"));
     Object.keys(buckets).forEach(cat => {
         const grid = document.getElementById(`vip-grid-${cat}`);
         if (!grid) return;
@@ -11024,38 +11137,47 @@ function renderDynamicVipPlans(data) {
         if (!list.length) { grid.innerHTML = `<p class="text-muted text-sm">${escapeHtml(t("admin_empty"))}</p>`; return; }
         grid.innerHTML = list.map(p => {
             const code = escapeHtml(p.code || p.id);
-            const name = escapeHtml(p.name || code);
-            const alloc = escapeHtml(p.allocation || "");
+            const mins = Number(p.minutes || 0);
+            const dispMin = (p.display_minutes != null) ? Number(p.display_minutes) : mins;
+            const credits = Number(p.recap_credits || 0);
             const priceMm = Number(p.price_mmk || parseInt(String(p.price || "0").replace(/[^0-9]/g, ""), 10) || 0);
-            const badgeHtml = p.badge
-                ? `<span class="vcp-plan-badge ${p.badge_key === "best_value" ? "vcp-badge-best" : ""}">${escapeHtml(p.badge)}</span>`
+            const vdays = (p.validity_days != null) ? Number(p.validity_days) : 30;
+            const valText = vdays > 0 ? tf("buy_validity_days", { n: vdays }) : t("buy_validity_no_expiry");
+
+            let titleStr = String(p.name || code);
+            let amountHtml = "";
+            if (cat === "combo") {
+                amountHtml = `<div class="plan-allocation">${escapeHtml(tf("buy_pkg_amount", { minutes: mins, credits }))}</div>`;
+            } else if (cat === "voice") {
+                titleStr = tf("buy_voice_title", { minutes: dispMin });
+            } else if (cat === "recap") {
+                titleStr = `${credits} Credits`;
+            }
+
+            const bonusHtml = p.badge_key === "bonus_200"
+                ? `<span class="vcp-plan-bonus-tag">${bonusBadgeText}</span>`
                 : "";
-            const btnCls = (p.badge_key === "popular" || p.badge_key === "best_value")
-                ? "btn gold-gradient-btn vcp-btn vcp-btn--gold mt-3"
-                : "btn secondary-gold-btn vcp-btn mt-3";
-            const valBadge = p.validity_label
-                ? `<div class="vcp-plan-validity">⏳ ${escapeHtml(p.validity_label)}</div>`
-                : "";
+            const safeDrawerTitle = escapeHtml(titleStr).replace(/'/g, "\\'");
             return `
-                <div class="card glass vcp-card pricing-card ${p.badge_key === "best_value" ? "vcp-card--gold" : ""}" id="card-plan-${code}">
-                    ${badgeHtml}
-                    <div class="plan-name">${name}</div>
-                    <div class="plan-allocation">${alloc}</div>
-                    ${valBadge}
+                <div class="card glass vcp-card pricing-card${p.badge_key === "bonus_200" ? " has-bonus-tag" : ""}" id="card-plan-${code}">
+                    ${bonusHtml}
+                    <div class="plan-name">${escapeHtml(titleStr)}</div>
+                    ${amountHtml}
+                    <div class="vcp-plan-validity">${escapeHtml(valText)}</div>
                     <div class="plan-price">
                         <span class="price-val" data-price-for="${code}">${priceMm.toLocaleString("en-US")}</span>
                         <span class="currency">MMK</span>
                     </div>
-                    <button type="button" class="${btnCls}" onclick="openPaymentDrawer('${code}', ${priceMm}, '${escapeHtml(String(p.name || code)).replace(/'/g, "\\'")}')">💳 ${priceMm.toLocaleString("en-US")} MMK</button>
+                    <button type="button" class="btn gold-gradient-btn vcp-btn vcp-btn--gold mt-3" onclick="openPaymentDrawer('${code}', ${priceMm}, '${safeDrawerTitle}')">${buyBtnText}</button>
                 </div>`;
         }).join("");
-        const sharedKey = "vip_shared_benefits_" + cat;
-        const sharedTxt = t(sharedKey);
-        if (sharedTxt && !sharedTxt.startsWith("vip_shared_benefits_")) {
-            grid.innerHTML = `<div class="vip-shared-benefits-bar">${escapeHtml(sharedTxt)}</div>` + grid.innerHTML;
-        }
     });
 }
+window.rerenderVipPlans = function rerenderVipPlans() {
+    if (Array.isArray(_vipPlansCache) && _vipPlansCache.length) {
+        renderDynamicVipPlans({ plans: _vipPlansCache });
+    }
+};
 
 function syncPlanPrices(data) {
     const plans = (data && data.plans) || [];
@@ -11091,7 +11213,8 @@ function renderGrantsRowsHtml(grants) {
         const rem = [];
         if (g.remaining_voice_minutes > 0 || g.initial_voice_minutes > 0) rem.push(`🎙️ ${_fmtCreditNum(g.remaining_voice_minutes)}m`);
         if (g.remaining_recap_credits > 0 || g.initial_recap_credits > 0) rem.push(`🎬 ${_fmtCreditNum(g.remaining_recap_credits)} Cr`);
-        let expTxt = g.never_expires ? t("vip_grant_legacy")
+        let expTxt = g.never_expires
+            ? (g.source_type === "LEGACY_GRANDFATHER" ? t("vip_grant_legacy") : t("vip_grant_no_expiry"))
             : (g.status === "EXPIRED" ? t("vip_grant_expired")
             : `${(g.expires_at || "").slice(0, 10)} (${tf("vip_grant_days_left", { d: g.days_left ?? 0 })})`);
         const cls = g.expiring_soon ? "vcp-grant-exp-soon" : "text-muted";
@@ -11131,7 +11254,7 @@ async function loadVipWalletHistory(force) {
 window.loadVipWalletHistory = loadVipWalletHistory;
 
 async function loadVipWalletTx(kind) {
-    document.querySelectorAll("#vip-sub-wallet [data-tx-kind]").forEach(b => {
+    document.querySelectorAll("#profile-wallet-orders-section [data-tx-kind]").forEach(b => {
         b.classList.toggle("active", b.getAttribute("data-tx-kind") === (kind || ""));
     });
     const txEl = document.getElementById("vip-tx-list");
@@ -11473,7 +11596,7 @@ function paintTtsCostHintTiered(q, profile) {
         ? q.referral_seconds
         : (typeof u.tts_referral_seconds === "number" ? u.tts_referral_seconds : (u.tts_balance_seconds || 0));
     const hasRef = refSec > 0;
-    const maxChars = (u.character_limit || (isAdmin || isVip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000))).toLocaleString();
+    const maxChars = (u.character_limit || (isAdmin || isVip ? (u.character_limit_purchased ?? 15000) : (u.character_limit_free ?? 3000))).toLocaleString();
 
     const shortEl = document.querySelector('#tab-tts [data-i18n="tts_cost_hint"]');
     if (shortEl) {
@@ -11533,7 +11656,7 @@ function updateTtsCharCount() {
         // voice counter uses) — before BW this was hardcoded 5,000 for
         // everyone while the server now enforces per-tier.
         const len = (input.value || "").length;
-        const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+        const max = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 15000) : (state.user?.character_limit_free ?? 3000));
         counter.textContent = `${len} / ${max} ${t("char_counter_unit")}`;
         counter.style.color = len > max ? "#ef4444" : "var(--text-muted)";
         syncTtsExcessAndCost(len, max);
@@ -11586,17 +11709,20 @@ function paintTtsTasteNote(q) {
     if (!note) return;
     const remaining = q ? q.gemini_taste_remaining_seconds : null;
     const u = (typeof state !== "undefined" && state && state.user) ? state.user : null;
-    const isPrivileged = Boolean((q && q.is_admin) || (u && (u.is_admin || u.is_vip)));
-    // Taste lines are FREE-only and pointless once an own key routes
-    if (isPrivileged || remaining === null || remaining === undefined || (q && q.has_own_key)) {
+    const isAdmin = Boolean((q && q.is_admin) || (u && u.is_admin));
+    const isPaid = Boolean((q && q.tier === "PURCHASED") || (u && u.is_vip && !isAdmin));
+    // Admins and own-key users are never limited by pool taste
+    if (isAdmin || remaining === null || remaining === undefined || (q && q.has_own_key)) {
         note.classList.add("hidden");
         note.textContent = "";
         return;
     }
     note.classList.remove("hidden");
+    const remKey = isPaid ? "tts_taste_remaining_paid" : "tts_taste_remaining";
+    const spentKey = isPaid ? "tts_taste_spent_paid" : "tts_taste_spent";
     note.textContent = remaining > 0
-        ? tf("tts_taste_remaining", { min: Math.ceil(remaining / 60) })
-        : t("tts_taste_spent");
+        ? tf(remKey, { min: Math.ceil(remaining / 60) })
+        : t(spentKey);
 }
 
 function _applyGeminiKeyMutationView(data) {
@@ -11670,10 +11796,19 @@ async function _cgTasteBlocked() {
         _cgQuotaCache = q;
         paintTtsGeminiKeyState(q);
         paintTtsTasteNote(q);
-        return !q.is_admin && q.tier === "FREE" && !q.has_own_key
+        const blocked = !q.is_admin && !q.has_own_key
             && q.gemini_taste_remaining_seconds !== null
             && q.gemini_taste_remaining_seconds !== undefined
             && q.gemini_taste_remaining_seconds <= 0;
+        if (blocked) {
+            const modal = document.getElementById("tts-key-prompt-modal");
+            const isPaid = q.tier === "PURCHASED";
+            const h3 = modal ? modal.querySelector("h3") : null;
+            const p = modal ? modal.querySelector("p.modal-desc") : null;
+            if (h3) h3.textContent = t(isPaid ? "tts_key_prompt_title_paid" : "tts_key_prompt_title");
+            if (p) p.textContent = t(isPaid ? "tts_key_prompt_body_paid" : "tts_key_prompt_body");
+        }
+        return blocked;
     } catch (e) {
         return false;
     }
@@ -11754,7 +11889,7 @@ function initTtsTab() {
             moveSpeedPill(document.getElementById("tts-speed-picker"));
             const inp = document.getElementById("tts-text-input");
             if (inp) {
-                const maxC = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+                const maxC = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 15000) : (state.user?.character_limit_free ?? 3000));
                 syncTtsExcessAndCost((inp.value || "").length, maxC);
             }
         });
@@ -11794,7 +11929,7 @@ async function generateTTS() {
         return;
     }
     // Batch BW: client-side tier guard mirroring the voice submit
-    const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 5000) : (state.user?.character_limit_free ?? 1000));
+    const maxChars = state.user?.character_limit || (state.user?.is_vip ? (state.user?.character_limit_purchased ?? 15000) : (state.user?.character_limit_free ?? 3000));
     if (text.length > maxChars) {
         studioSubmitFailure("tts");
         showStudioToast(tf("text_too_long", {
@@ -13172,8 +13307,10 @@ function renderAdminDetailExtras(u) {
     const bb = u.balance_breakdown || {};
     const bd = document.getElementById("adm-detail-breakdown");
     if (bd) bd.innerHTML =
+        row(t("admin_bal_daily"), admFmtSecs(bb.daily_free_seconds)) +
         row(t("admin_bal_monthly"), admFmtSecs(bb.monthly_free_seconds)) +
         row(t("admin_bal_welcome"), admFmtSecs(bb.welcome_seconds)) +
+        row(t("admin_bal_referral_voice"), admFmtSecs(bb.referral_voice_seconds)) +
         row(t("admin_bal_referral"), admFmtSecs(bb.referral_seconds)) +
         row(t("admin_bal_purchased"), admFmtSecs(bb.purchased_seconds)) +
         row(t("admin_bal_consumed"), admFmtSecs(bb.consumed_seconds)) +
@@ -13383,7 +13520,9 @@ async function adminApplyAdjust() {
         if (applyBtn) applyBtn.disabled = true;
         try {
             const vdaysEl = document.getElementById("adm-adj-vdays");
-            const validity_days = vdaysEl ? (parseInt(vdaysEl.value || "30", 10) || 0) : 30;
+            const rawVdays = vdaysEl ? String(vdaysEl.value ?? "").trim() : "";
+            const parsedVdays = rawVdays === "" ? 30 : parseInt(rawVdays, 10);
+            const validity_days = Number.isFinite(parsedVdays) ? parsedVdays : 30;
             const payload = { user_id: uid, add_minutes: minutes, add_seconds: seconds, add_recap_credits: credits, validity_days, reason };
             if (!_admAdjustIdemKey) _admAdjustIdemKey = _newAdjustIdemKey();
             payload.idempotency_key = _admAdjustIdemKey;
@@ -14364,7 +14503,9 @@ async function adminSavePrice(code) {
     const price = parseInt(document.getElementById("adm-price-" + code)?.value || "0", 10) || 0;
     const minutes = parseInt(document.getElementById("adm-min-" + code)?.value || "0", 10) || 0;
     const recap_credits = parseInt(document.getElementById("adm-cr-" + code)?.value || "0", 10) || 0;
-    const validity_days = parseInt(document.getElementById("adm-vdays-" + code)?.value || "30", 10) || 0;
+    const rawVdays = String(document.getElementById("adm-vdays-" + code)?.value ?? "").trim();
+    const parsedVdays = rawVdays === "" ? 30 : parseInt(rawVdays, 10);
+    const validity_days = Number.isFinite(parsedVdays) ? parsedVdays : 30;
     const is_active = !!(document.getElementById("adm-act-" + code)?.checked);
     showStudioConfirm(tf("admin_confirm_price", { code, price: price.toLocaleString() }), async () => {
         haptic("medium");
@@ -14677,12 +14818,15 @@ async function loadAdminSettings() {
         if (s.private_ai_daily_budget != null) _admPaintValue(elPrivateAiDaily, s.private_ai_daily_budget);
         if (s.character_limit_free != null) _admPaintValue(elCharLimitFree, s.character_limit_free);
         if (s.character_limit_purchased != null) _admPaintValue(elCharLimitPurchased, s.character_limit_purchased);
-        if (s.free_monthly_allowance_seconds != null) _admPaintValue(elFreeAllowance, s.free_monthly_allowance_seconds);
+        const _freeDailyVal = s.free_daily_allowance_seconds != null ? s.free_daily_allowance_seconds : s.free_monthly_allowance_seconds;
+        if (_freeDailyVal != null) _admPaintValue(elFreeAllowance, _freeDailyVal);
         if (s.free_daily_job_limit != null) _admPaintValue(elDailyJobLimit, s.free_daily_job_limit);
-        // Batch CG: FREE Gemini taste + global FREE budget fields.
+        // Gemini pool taste (Free + Paid) + global FREE budget fields.
         const elFreeGeminiTaste = document.getElementById("adm-set-free-gemini-taste");
+        const elPaidGeminiTaste = document.getElementById("adm-set-paid-gemini-taste");
         const elFreeGeminiBudget = document.getElementById("adm-set-free-gemini-budget");
         if (s.free_gemini_taste_minutes != null) _admPaintValue(elFreeGeminiTaste, s.free_gemini_taste_minutes);
+        if (s.paid_gemini_taste_minutes != null) _admPaintValue(elPaidGeminiTaste, s.paid_gemini_taste_minutes);
         if (s.free_gemini_daily_budget_requests != null) _admPaintValue(elFreeGeminiBudget, s.free_gemini_daily_budget_requests);
         if (s.recap_free_max_duration_seconds != null) _admPaintValue(elRecapFreeMax, s.recap_free_max_duration_seconds);
         if (s.recap_max_duration_seconds != null) _admPaintValue(elRecapMax, s.recap_max_duration_seconds);
@@ -14919,6 +15063,8 @@ async function saveAdminSettings() {
     const dailyJobLimit = dailyJobLimitRaw === "" || dailyJobLimitRaw == null ? null : parseInt(dailyJobLimitRaw, 10);
     const freeGeminiTasteRaw = document.getElementById("adm-set-free-gemini-taste")?.value?.trim();
     const freeGeminiTaste = freeGeminiTasteRaw === "" || freeGeminiTasteRaw == null ? null : parseInt(freeGeminiTasteRaw, 10);
+    const paidGeminiTasteRaw = document.getElementById("adm-set-paid-gemini-taste")?.value?.trim();
+    const paidGeminiTaste = paidGeminiTasteRaw === "" || paidGeminiTasteRaw == null ? null : parseInt(paidGeminiTasteRaw, 10);
     const freeGeminiBudgetRaw = document.getElementById("adm-set-free-gemini-budget")?.value?.trim();
     const freeGeminiBudget = freeGeminiBudgetRaw === "" || freeGeminiBudgetRaw == null ? null : parseInt(freeGeminiBudgetRaw, 10);
     const recapFreeMaxRaw = document.getElementById("adm-set-recap-free-max")?.value?.trim();
@@ -14995,9 +15141,10 @@ async function saveAdminSettings() {
         ...(Number.isFinite(privateAiDaily) ? { private_ai_daily_budget: privateAiDaily } : {}),
         ...(Number.isFinite(charLimitFree) ? { character_limit_free: charLimitFree } : {}),
         ...(Number.isFinite(charLimitPurchased) ? { character_limit_purchased: charLimitPurchased } : {}),
-        ...(Number.isFinite(freeAllowance) ? { free_monthly_allowance_seconds: freeAllowance } : {}),
+        ...(Number.isFinite(freeAllowance) ? { free_daily_allowance_seconds: freeAllowance, free_monthly_allowance_seconds: freeAllowance } : {}),
         ...(Number.isFinite(dailyJobLimit) ? { free_daily_job_limit: dailyJobLimit } : {}),
         ...(Number.isFinite(freeGeminiTaste) ? { free_gemini_taste_minutes: freeGeminiTaste } : {}),
+        ...(Number.isFinite(paidGeminiTaste) ? { paid_gemini_taste_minutes: paidGeminiTaste } : {}),
         ...(Number.isFinite(freeGeminiBudget) ? { free_gemini_daily_budget_requests: freeGeminiBudget } : {}),
         ...(Number.isFinite(recapFreeMax) ? { recap_free_max_duration_seconds: recapFreeMax } : {}),
         ...(Number.isFinite(recapMax) ? { recap_max_duration_seconds: recapMax } : {}),
@@ -16482,7 +16629,7 @@ function trimVoiceTextToLimit() {
     const input = document.getElementById("voice-text-input");
     if (!input) return;
     const u = state.user || {};
-    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 15000) : (u.character_limit_free ?? 3000));
     if (input.value.length > max) {
         input.value = input.value.slice(0, max);
         input.dispatchEvent(new Event("input"));
@@ -16509,13 +16656,10 @@ window.setCustomCloneStep = setCustomCloneStep;
 function syncSavedCustomVoiceUi() {
     const id = state.savedCustomVoiceId || "";
     const name = state.savedCustomVoiceName || "Custom Voice";
-    const recapAllowed = typeof canUseRecapCloneEngine === "function"
-        ? canUseRecapCloneEngine()
-        : Boolean(state.user && (state.user.is_vip || state.user.is_admin));
-    [["saved-custom-voice-bar", "saved-custom-voice-label", true], ["recap-saved-voice-bar", "recap-saved-voice-label", recapAllowed]].forEach(([bId, lId, allow]) => {
+    [["saved-custom-voice-bar", "saved-custom-voice-label"], ["recap-saved-voice-bar", "recap-saved-voice-label"]].forEach(([bId, lId]) => {
         const bar = document.getElementById(bId);
         const lbl = document.getElementById(lId);
-        if (bar) bar.classList.toggle("hidden", !id || !allow);
+        if (bar) bar.classList.toggle("hidden", !id);
         if (lbl && id) lbl.innerText = tf("saved_custom_voice_use", { name });
     });
 }
@@ -16546,6 +16690,7 @@ function applySavedCustomVoiceToRecap() {
     state.recapOwnVoiceSelected = true;
     const label = document.getElementById("recap-own-voice-file-label");
     if (label) label.innerText = `💾 ${state.recapOwnVoiceFileName}`;
+    syncRecapEngineAreas();
     syncRecapOwnVoiceCard();
     if (typeof refreshRecapStep4Choices === "function") refreshRecapStep4Choices();
     showStudioToast(t("recap_own_voice_saved_toast"), "success");
@@ -16556,14 +16701,6 @@ async function saveCurrentRefAsCustomVoice() {
     haptic("light");
     const file = state.selectedReferenceFile;
     if (!file) return;
-    const allowed = typeof canUseRecapCloneEngine === "function"
-        ? canUseRecapCloneEngine()
-        : Boolean(state.user && (state.user.is_vip || state.user.is_admin));
-    if (!allowed) {
-        showStudioToast(t("recap_own_voice_locked_hint"), "warning");
-        switchTab("tab-vip");
-        return;
-    }
     const saveBtn = document.getElementById("btn-save-custom-voice-from-result");
     if (typeof setVcpButtonLoading === "function") setVcpButtonLoading(saveBtn, true);
     try {
@@ -16626,7 +16763,7 @@ function trimTtsTextToLimit() {
     const input = document.getElementById("tts-text-input");
     if (!input) return;
     const u = state.user || {};
-    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+    const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 15000) : (u.character_limit_free ?? 3000));
     if (input.value.length > max) {
         input.value = input.value.slice(0, max);
         input.dispatchEvent(new Event("input"));
@@ -16873,7 +17010,7 @@ function refreshPhase1to4LanguageSurfaces() {
             tryBtn.textContent = t(playing ? "welcome_try_sample_playing" : "welcome_try_sample_btn");
         }
         const u = (state && state.user) || {};
-        const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 5000) : (u.character_limit_free ?? 1000));
+        const max = u.character_limit || (u.is_vip ? (u.character_limit_purchased ?? 15000) : (u.character_limit_free ?? 3000));
         const vInp = document.getElementById("voice-text-input");
         const vCount = document.getElementById("char-count");
         if (vCount) {

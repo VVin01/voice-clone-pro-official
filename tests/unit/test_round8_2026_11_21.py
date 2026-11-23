@@ -193,14 +193,14 @@ def test_round8_part_b_sample_chips_bottom_spacing_hints_and_edge_labels():
     assert ".content-viewport:has(#tab-tts.active)" in STYLE_CSS
     assert re.search(r"#tab-tts\s*>\s*\.hub-link\s*\{\s*margin-top:\s*0;", STYLE_CSS)
 
-    # B6: exact trimmed tts_cost_hint_more strings in MY and EN
+    # B6: exact trimmed tts_cost_hint_more strings in MY and EN (updated Part I: 3k/15k + Free 2m / VIP 10m)
     expected_my_more = (
-        "တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 1,000 (VIP 5,000) အထိ ရပါတယ်။ "
-        "Gemini အသံ အခမဲ့ မြည်းစမ်းခွင့် တစ်နေ့ 2 မိနစ် (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။"
+        "တစ်နေ့ အခမဲ့ 15 မိနစ် (VIP 60 မိနစ်) · တစ်ကြိမ် စာလုံး 3,000 (VIP 15,000) အထိ ရပါတယ်။ "
+        "Gemini Pool စမ်းသုံးခွင့် — Free 2 မိနစ်/နေ့ · VIP 10 မိနစ်/နေ့ (ကိုယ်ပိုင် Key ထည့်ထားရင် အကန့်အသတ်မရှိ)။"
     )
     expected_en_more = (
-        "Daily free TTS: 15 min (VIP 60 min) · Up to 1,000 characters per generation (VIP 5,000). "
-        "Gemini free taste: 2 min/day (unlimited with your own key)."
+        "Daily free TTS: 15 min (VIP 60 min) · Up to 3,000 characters per generation (VIP 15,000). "
+        "Gemini pool taste: Free 2 min/day · VIP 10 min/day (unlimited with your own key)."
     )
     assert tr["my"]["tts_cost_hint_more"] == expected_my_more
     assert tr["en"]["tts_cost_hint_more"] == expected_en_more

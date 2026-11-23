@@ -143,10 +143,11 @@ class Settings(BaseSettings):
     data_root: Path = ROOT / "data"
 
     # User Account Policies
-    free_monthly_allowance_seconds: int = Field(default=180, alias="FREE_MONTHLY_ALLOWANCE_SECONDS")  # 3 minutes
+    free_daily_allowance_seconds: int = Field(default=180, alias="FREE_DAILY_ALLOWANCE_SECONDS")  # 3 minutes/UTC day, non-accumulating
+    free_monthly_allowance_seconds: int = Field(default=180, alias="FREE_MONTHLY_ALLOWANCE_SECONDS")  # Retired (no longer grants)
     welcome_bonus_seconds: int = Field(default=0, alias="WELCOME_BONUS_SECONDS")  # Retired in V2 (default 0)
-    character_limit_free: int = Field(default=1000, alias="CHARACTER_LIMIT_FREE")  # Free tier: 1000 chars/generation
-    character_limit_purchased: int = Field(default=5000, alias="CHARACTER_LIMIT_PURCHASED")  # VIP: 5000 chars/generation
+    character_limit_free: int = Field(default=3000, alias="CHARACTER_LIMIT_FREE")  # Free tier: 3000 chars/generation
+    character_limit_purchased: int = Field(default=15000, alias="CHARACTER_LIMIT_PURCHASED")  # VIP: 15000 chars/generation
     recap_free_max_duration_seconds: int = Field(default=120, alias="RECAP_FREE_MAX_DURATION_SECONDS")  # Free: 2 mins (120s)
     recap_max_duration_seconds: int = Field(default=600, alias="RECAP_MAX_DURATION_SECONDS")  # VIP: 10 mins (600s)
     # Batch BZ: default 0 — the FREE job-COUNT limit is retired as a
@@ -167,7 +168,7 @@ class Settings(BaseSettings):
     # fact sheet). The monthly 180 s allowance governs FREE; the cap
     # mechanism stays for admins to re-enable. PURCHASED stays 30.
     voice_daily_limit_minutes_free: int = Field(default=0, alias="VOICE_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
-    voice_daily_limit_minutes_paid: int = Field(default=30, alias="VOICE_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
+    voice_daily_limit_minutes_paid: int = Field(default=0, alias="VOICE_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited (abolished 2026-11-23)
     # Batch AW: per-user DAILY TTS-tab minutes cap, split by tier like
     # Batch AN but on its own allowance — the TTS tab never deducts
     # voice minutes or recap credits; referral seconds are spent
@@ -175,13 +176,13 @@ class Settings(BaseSettings):
     # FREE + PURCHASED; admins exempt; 0 = unlimited for that tier.
     tts_daily_limit_minutes_free: int = Field(default=15, alias="TTS_DAILY_LIMIT_MINUTES_FREE")  # 0 = unlimited
     tts_daily_limit_minutes_paid: int = Field(default=60, alias="TTS_DAILY_LIMIT_MINUTES_PAID")  # 0 = unlimited
-    # Batch CG: the FREE Gemini TTS "taste" — how much Gemini audio
-    # per day the SERVICE POOL funds for one FREE user before the
-    # route steps to their own key (if saved) or Edge. Delivered
-    # seconds, UTC day; 0 = no pool taste for FREE at all. PURCHASED
-    # pool use is NOT taste-governed (their 60-min cap above rules);
-    # admins exempt. A user's own key is never limited by this.
+    # Batch CG / 2026-11-23: Gemini TTS pool "taste" — how much Gemini
+    # audio per UTC day the SERVICE POOL funds before the route steps to
+    # the user's own key (if saved, never limited) or Edge.
+    # Free: 2 min/day (plus global free daily request budget below).
+    # Paid: 10 min/day (600 delivered seconds). Admins exempt.
     free_gemini_taste_minutes: int = Field(default=2, alias="FREE_GEMINI_TASTE_MINUTES")
+    paid_gemini_taste_minutes: int = Field(default=10, alias="PAID_GEMINI_TASTE_MINUTES")
     # Batch CG: the global FREE daily budget — total successful
     # pool Gemini TTS requests across ALL FREE users per UTC day.
     # Bounds the pool drain no matter how many FREE accounts show
@@ -241,7 +242,7 @@ class Settings(BaseSettings):
 
     # Infrastructure Safety Limit (independent of user account tiers, protects Edge TTS & VoxCPM memory)
     infrastructure_safety_character_limit: int = Field(
-        default=5000,
+        default=15000,
         alias="INFRASTRUCTURE_SAFETY_CHARACTER_LIMIT",
     )
 

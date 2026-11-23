@@ -833,9 +833,12 @@ async def test_round7_item3_api_rejects_voxcpm_without_preset_or_voice_ref(
 @pytest.mark.asyncio
 async def test_round7_item3_api_allows_valid_preset_voice(db_session):
     """POST /api/voices/generate with a valid curated preset_voice still succeeds."""
+    from app.services.ledger import get_minute_balance
+
     user, _ = await get_or_create_user(db_session, telegram_id=997003)
     user.account_category = AccountCategory.PURCHASED.value
-    user.balance_seconds = 600
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 600
     await db_session.commit()
 
     req = api_mod.VoiceGenerateRequest(
@@ -858,10 +861,13 @@ async def test_round7_item3_api_allows_valid_saved_voice_ref_id(
 ):
     """POST /api/voices/generate with preset_voice=None and a valid resolvable
     voice_ref_id still succeeds and stores source_audio_path."""
+    from app.services.ledger import get_minute_balance
+
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     user, _ = await get_or_create_user(db_session, telegram_id=997004)
     user.account_category = AccountCategory.PURCHASED.value
-    user.balance_seconds = 600
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 600
     await db_session.commit()
 
     ref_dir = tmp_path / "temp" / "voxcpm_refs"
@@ -889,11 +895,14 @@ async def test_round7_item3_api_generate_with_audio_still_succeeds(
     db_session, tmp_path, monkeypatch
 ):
     """POST /api/voices/generate-with-audio with an uploaded sample still works."""
+    from app.services.ledger import get_minute_balance
+
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     monkeypatch.setattr(api_mod, "DISK_HEADROOM_MIN_FREE_BYTES", 0)
     user, _ = await get_or_create_user(db_session, telegram_id=997005)
     user.account_category = AccountCategory.PURCHASED.value
-    user.balance_seconds = 600
+    bal = await get_minute_balance(db_session, user.id)
+    bal.purchased_seconds = 600
     await db_session.commit()
 
     upload = UploadFile(filename="sample.wav", file=io.BytesIO(b"RIFF" + b"\x00" * 512))

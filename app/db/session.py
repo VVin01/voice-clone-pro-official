@@ -210,9 +210,26 @@ async def init_db() -> None:
                     "END IF; END $$;"
                 ))
                 connection.execute(text("UPDATE users SET recap_credit_seconds = CAST(ROUND(COALESCE(recap_credits, 3) * 60) AS BIGINT) WHERE recap_credit_seconds IS NULL"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS daily_free_seconds BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS last_daily_grant_date VARCHAR(10)"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS referral_voice_seconds BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_daily_free_seconds BIGINT DEFAULT 0"))
                 connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_monthly_free_seconds BIGINT DEFAULT 0"))
                 connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_welcome_seconds BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_referral_voice_seconds BIGINT DEFAULT 0"))
                 connection.execute(text("ALTER TABLE minute_balances ADD COLUMN IF NOT EXISTS reserved_purchased_seconds BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE wallet_reservations ADD COLUMN IF NOT EXISTS reserved_voice_daily BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE wallet_reservations ADD COLUMN IF NOT EXISTS reserved_voice_daily_day VARCHAR(10)"))
+                connection.execute(text("ALTER TABLE wallet_reservations ADD COLUMN IF NOT EXISTS reserved_voice_referral BIGINT DEFAULT 0"))
+                connection.execute(text("ALTER TABLE minute_ledger_events DROP CONSTRAINT IF EXISTS chk_ledger_source"))
+                connection.execute(text(
+                    "ALTER TABLE minute_ledger_events ADD CONSTRAINT chk_ledger_source CHECK "
+                    "(source IN ('DAILY_FREE', 'MONTHLY_FREE', 'WELCOME', 'REFERRAL', 'PURCHASE', 'ADJUST', 'CONSUME'))"
+                ))
+                connection.execute(text("ALTER TABLE referral_rewards DROP CONSTRAINT IF EXISTS chk_referral_reward_index_range"))
+                connection.execute(text(
+                    "ALTER TABLE referral_rewards ADD CONSTRAINT chk_referral_reward_index_range CHECK (reward_index >= 1)"
+                ))
                 connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS name VARCHAR(80) DEFAULT ''"))
                 connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS category VARCHAR(20) DEFAULT 'voice'"))
                 connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS sub_type VARCHAR(20) DEFAULT 'voice'"))
@@ -298,9 +315,27 @@ async def init_db() -> None:
 
                 res_mb = connection.execute(text("PRAGMA table_info(minute_balances)"))
                 cols_mb = [row[1] for row in res_mb.fetchall()]
-                for _mb_col in ("reserved_monthly_free_seconds", "reserved_welcome_seconds", "reserved_purchased_seconds"):
+                for _mb_col in (
+                    "daily_free_seconds",
+                    "referral_voice_seconds",
+                    "reserved_daily_free_seconds",
+                    "reserved_monthly_free_seconds",
+                    "reserved_welcome_seconds",
+                    "reserved_referral_voice_seconds",
+                    "reserved_purchased_seconds",
+                ):
                     if _mb_col not in cols_mb:
                         connection.execute(text(f"ALTER TABLE minute_balances ADD COLUMN {_mb_col} BIGINT DEFAULT 0"))
+                if "last_daily_grant_date" not in cols_mb:
+                    connection.execute(text("ALTER TABLE minute_balances ADD COLUMN last_daily_grant_date VARCHAR(10)"))
+
+                res_wr = connection.execute(text("PRAGMA table_info(wallet_reservations)"))
+                cols_wr = [row[1] for row in res_wr.fetchall()]
+                for _wr_col in ("reserved_voice_daily", "reserved_voice_referral"):
+                    if _wr_col not in cols_wr:
+                        connection.execute(text(f"ALTER TABLE wallet_reservations ADD COLUMN {_wr_col} BIGINT DEFAULT 0"))
+                if "reserved_voice_daily_day" not in cols_wr:
+                    connection.execute(text("ALTER TABLE wallet_reservations ADD COLUMN reserved_voice_daily_day VARCHAR(10)"))
 
                 res_pp = connection.execute(text("PRAGMA table_info(pricing_plans)"))
                 cols_pp = [row[1] for row in res_pp.fetchall()]
@@ -456,6 +491,68 @@ async def init_db() -> None:
                             connection.execute(text("DROP TABLE wallet_transactions"))
                             connection.execute(text("ALTER TABLE wallet_transactions__new_chk RENAME TO wallet_transactions"))
                             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_wt_user_created ON wallet_transactions (user_id, created_at)"))
+                        finally:
+                            connection.execute(text("PRAGMA foreign_keys=ON"))
+
+                # Migrate pre-existing SQLite minute_ledger_events CHECK constraint if DAILY_FREE is missing.
+                mle_ddl = connection.execute(
+                    text("SELECT sql FROM sqlite_master WHERE type='table' AND name='minute_ledger_events'")
+                ).scalar_one_or_none()
+                if mle_ddl and "chk_ledger_source" in mle_ddl and "'DAILY_FREE'" not in mle_ddl:
+                    import re as _re3
+                    upgraded_mle = _re3.sub(
+                        r"CONSTRAINT\s+chk_ledger_source\s+CHECK\s*\(\s*source\s+IN\s*\([^)]*\)\s*\)",
+                        "CONSTRAINT chk_ledger_source CHECK (source IN ('DAILY_FREE', 'MONTHLY_FREE', 'WELCOME', 'REFERRAL', 'PURCHASE', 'ADJUST', 'CONSUME'))",
+                        mle_ddl,
+                        flags=_re3.IGNORECASE,
+                    )
+                    if upgraded_mle != mle_ddl:
+                        tmp_mle = _re3.sub(
+                            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[\"`\[]?minute_ledger_events[\"`\]]?)",
+                            "CREATE TABLE minute_ledger_events__new_chk",
+                            upgraded_mle,
+                            count=1,
+                            flags=_re3.IGNORECASE,
+                        )
+                        connection.execute(text("PRAGMA foreign_keys=OFF"))
+                        try:
+                            connection.execute(text("DROP TABLE IF EXISTS minute_ledger_events__new_chk"))
+                            connection.execute(text(tmp_mle))
+                            connection.execute(text("INSERT INTO minute_ledger_events__new_chk SELECT * FROM minute_ledger_events"))
+                            connection.execute(text("DROP TABLE minute_ledger_events"))
+                            connection.execute(text("ALTER TABLE minute_ledger_events__new_chk RENAME TO minute_ledger_events"))
+                            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mle_user_ref_dir ON minute_ledger_events (user_id, reference_id, direction)"))
+                        finally:
+                            connection.execute(text("PRAGMA foreign_keys=ON"))
+
+                # Migrate pre-existing SQLite referral_rewards CHECK constraint to drop the 20-friend ceiling.
+                rr_ddl = connection.execute(
+                    text("SELECT sql FROM sqlite_master WHERE type='table' AND name='referral_rewards'")
+                ).scalar_one_or_none()
+                if rr_ddl and "reward_index <= 20" in rr_ddl:
+                    import re as _re4
+                    upgraded_rr = _re4.sub(
+                        r"CONSTRAINT\s+chk_referral_reward_index_range\s+CHECK\s*\([^)]*\)",
+                        "CONSTRAINT chk_referral_reward_index_range CHECK (reward_index >= 1)",
+                        rr_ddl,
+                        flags=_re4.IGNORECASE,
+                    )
+                    if upgraded_rr != rr_ddl:
+                        tmp_rr = _re4.sub(
+                            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[\"`\[]?referral_rewards[\"`\]]?)",
+                            "CREATE TABLE referral_rewards__new_chk",
+                            upgraded_rr,
+                            count=1,
+                            flags=_re4.IGNORECASE,
+                        )
+                        connection.execute(text("PRAGMA foreign_keys=OFF"))
+                        try:
+                            connection.execute(text("DROP TABLE IF EXISTS referral_rewards__new_chk"))
+                            connection.execute(text(tmp_rr))
+                            connection.execute(text("INSERT INTO referral_rewards__new_chk SELECT * FROM referral_rewards"))
+                            connection.execute(text("DROP TABLE referral_rewards"))
+                            connection.execute(text("ALTER TABLE referral_rewards__new_chk RENAME TO referral_rewards"))
+                            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_referral_rewards_referrer_id ON referral_rewards (referrer_id)"))
                         finally:
                             connection.execute(text("PRAGMA foreign_keys=ON"))
 

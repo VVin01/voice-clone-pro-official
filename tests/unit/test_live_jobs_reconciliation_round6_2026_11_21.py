@@ -122,12 +122,12 @@ def test_round6_item3_step2_title_parenthetical_dropped():
 
 def test_round6_item4_persona_button_simplified():
     tr = _translations()
-    assert tr["my"]["btn_mode_curated"] == "🌟 Persona"
-    assert tr["en"]["btn_mode_curated"] == "🌟 Persona"
-    assert 'data-i18n="btn_mode_curated">🌟 Persona</span>' in INDEX_HTML
-    # Custom voice seg button unchanged.
-    assert tr["my"]["btn_mode_custom"] == "🎙️ ကိုယ်ပိုင်အသံ"
-    assert tr["en"]["btn_mode_custom"] == "🎙️ My Voice"
+    # Round 13 Part J removed emoji prefixes from Voice mode toggle buttons
+    assert tr["my"]["btn_mode_curated"] == "Persona"
+    assert tr["en"]["btn_mode_curated"] == "Persona"
+    assert 'data-i18n="btn_mode_curated">Persona</span>' in INDEX_HTML
+    assert tr["my"]["btn_mode_custom"] == "ကိုယ်ပိုင်အသံ"
+    assert tr["en"]["btn_mode_custom"] == "My Voice"
 
 
 # ── Item 5: Backend live-job reconciliation & self-healing ─────────────

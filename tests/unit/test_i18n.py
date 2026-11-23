@@ -15,14 +15,14 @@ def test_i18n_myanmar_and_english():
     en_btn = t("btn_menu_voice_clone", lang="en")
     assert "Text → Voice → Clone" in en_btn
 
-    # Test formatting with variables
-    formatted_my = t("referral_desc", lang="my", referral_link="https://t.me/bot?start=ref_123", rewarded=5, max_referrals=20, earned_min=2.5, earned_sec=150, remaining_slots=15, remaining_min=7.5, referral_seconds=30, referral_cap_min=10)
+    # Test formatting with variables (Part I: unlimited referrals, no /20 cap)
+    formatted_my = t("referral_desc", lang="my", referral_link="https://t.me/bot?start=ref_123", rewarded=5, earned_min=5.0, earned_sec=300, referral_seconds=60)
     assert "ref_123" in formatted_my
-    assert "5/20" in formatted_my
+    assert "5 ယောက်" in formatted_my
 
-    formatted_en = t("referral_desc", lang="en", referral_link="https://t.me/bot?start=ref_123", rewarded=5, max_referrals=20, earned_min=2.5, earned_sec=150, remaining_slots=15, remaining_min=7.5, referral_seconds=30, referral_cap_min=10)
+    formatted_en = t("referral_desc", lang="en", referral_link="https://t.me/bot?start=ref_123", rewarded=5, earned_min=5.0, earned_sec=300, referral_seconds=60)
     assert "ref_123" in formatted_en
-    assert "5/20" in formatted_en
+    assert "Invited: <b>5</b>" in formatted_en
 
     # Test new Start and Help keys
     assert "Start" in t("btn_menu_start", lang="en")

@@ -26,6 +26,7 @@ from app.models.schema import (
     WalletTransaction,
     utc_now,
 )
+from app.services import ledger as _ledger_mod
 from app.services.ledger import (
     get_minute_balance,
     record_recap_credit_event,
@@ -608,6 +609,8 @@ async def get_wallet_snapshot(session: AsyncSession, user_id: int) -> dict[str, 
         "reserved_recap_credits": round(recap_res_sec / 60.0, 2),
         "available_voice_seconds": voice_avail_sec,
         "available_voice_minutes": round(voice_avail_sec / 60.0, 2),
+        "daily_free_seconds": int(bal.effective_daily_free_seconds) if bal else 0,
+        "referral_voice_seconds": int(getattr(bal, "referral_voice_seconds", 0) or 0) if bal else 0,
         "reserved_voice_seconds": voice_res_sec,
         "reserved_voice_minutes": round(voice_res_sec / 60.0, 2),
         "tts_referral_seconds": int(bal.referral_seconds or 0) if bal else 0,
@@ -1092,9 +1095,13 @@ async def reserve_for_job(
                 get_recap_reserved_seconds(user) + req_recap,
             )
 
-        # Hold voice seconds non-destructively in reserved counters (Monthly Free -> Welcome -> Purchased).
-        # Gross buckets stay intact until final settle_job_reservation so reserved funds are tracked
-        # via clone_spendable_seconds = (monthly + welcome + purchased) - reserved_seconds.
+        # Hold voice seconds non-destructively in reserved counters:
+        # Daily Free (today only) -> Legacy Monthly Free -> Welcome -> Referral Voice -> Purchased.
+        today_day = _ledger_mod.get_current_daily_period()
+        free_daily = max(
+            0,
+            int(bal.effective_daily_free_seconds) - int(bal.effective_reserved_daily_free_seconds),
+        )
         free_monthly = max(
             0,
             int(bal.monthly_free_seconds or 0) - int(bal.reserved_monthly_free_seconds or 0),
@@ -1103,14 +1110,26 @@ async def reserve_for_job(
             0,
             int(bal.welcome_seconds or 0) - int(bal.reserved_welcome_seconds or 0),
         )
+        free_referral = max(
+            0,
+            int(getattr(bal, "referral_voice_seconds", 0) or 0)
+            - int(getattr(bal, "reserved_referral_voice_seconds", 0) or 0),
+        )
         free_purchased = max(
             0,
             int(bal.purchased_seconds or 0) - int(bal.reserved_purchased_seconds or 0),
         )
+        res_daily = 0
         res_monthly = 0
         res_welcome = 0
+        res_referral = 0
         res_purchased = 0
         rem_voice = req_voice
+        if rem_voice > 0 and free_daily > 0:
+            d = min(free_daily, rem_voice)
+            bal.reserved_daily_free_seconds = int(getattr(bal, "reserved_daily_free_seconds", 0) or 0) + d
+            res_daily = d
+            rem_voice -= d
         if rem_voice > 0 and free_monthly > 0:
             d = min(free_monthly, rem_voice)
             bal.reserved_monthly_free_seconds = int(bal.reserved_monthly_free_seconds or 0) + d
@@ -1120,6 +1139,11 @@ async def reserve_for_job(
             d = min(free_welcome, rem_voice)
             bal.reserved_welcome_seconds = int(bal.reserved_welcome_seconds or 0) + d
             res_welcome = d
+            rem_voice -= d
+        if rem_voice > 0 and free_referral > 0:
+            d = min(free_referral, rem_voice)
+            bal.reserved_referral_voice_seconds = int(getattr(bal, "reserved_referral_voice_seconds", 0) or 0) + d
+            res_referral = d
             rem_voice -= d
         if rem_voice > 0 and free_purchased > 0:
             d = min(free_purchased, rem_voice)
@@ -1141,8 +1165,11 @@ async def reserve_for_job(
             res.status = "RESERVED"
             res.reserved_recap_seconds = req_recap
             res.reserved_voice_seconds = req_voice
+            res.reserved_voice_daily = res_daily
+            res.reserved_voice_daily_day = today_day if res_daily > 0 else None
             res.reserved_voice_monthly = res_monthly
             res.reserved_voice_welcome = res_welcome
+            res.reserved_voice_referral = res_referral
             res.reserved_voice_purchased = res_purchased
             res.settled_recap_seconds = 0
             res.settled_voice_seconds = 0
@@ -1161,8 +1188,11 @@ async def reserve_for_job(
                 status="RESERVED",
                 reserved_recap_seconds=req_recap,
                 reserved_voice_seconds=req_voice,
+                reserved_voice_daily=res_daily,
+                reserved_voice_daily_day=today_day if res_daily > 0 else None,
                 reserved_voice_monthly=res_monthly,
                 reserved_voice_welcome=res_welcome,
+                reserved_voice_referral=res_referral,
                 reserved_voice_purchased=res_purchased,
                 note=note or f"Reserved for job {job_id}",
             )
@@ -1199,12 +1229,24 @@ def _clear_reserved_voice_buckets(
     monthly: int,
     welcome: int,
     purchased: int,
+    *,
+    daily: int = 0,
+    daily_day: str | None = None,
+    referral: int = 0,
 ) -> None:
     """Release reserved voice holds cleanly (gross buckets stayed intact during reserve)."""
+    if daily > 0 and (daily_day is None or getattr(bal, "last_daily_grant_date", None) == daily_day):
+        bal.reserved_daily_free_seconds = max(
+            0, int(getattr(bal, "reserved_daily_free_seconds", 0) or 0) - daily
+        )
     if monthly > 0:
         bal.reserved_monthly_free_seconds = max(0, int(bal.reserved_monthly_free_seconds or 0) - monthly)
     if welcome > 0:
         bal.reserved_welcome_seconds = max(0, int(bal.reserved_welcome_seconds or 0) - welcome)
+    if referral > 0:
+        bal.reserved_referral_voice_seconds = max(
+            0, int(getattr(bal, "reserved_referral_voice_seconds", 0) or 0) - referral
+        )
     if purchased > 0:
         bal.reserved_purchased_seconds = max(0, int(bal.reserved_purchased_seconds or 0) - purchased)
 
@@ -1320,15 +1362,27 @@ async def settle_job_reservation(
             )
 
         # ── 2. Settle Voice Clone Minutes (actual synthesized audio seconds) ──
+        r_d = int(getattr(res, "reserved_voice_daily", 0) or 0)
+        r_d_day = getattr(res, "reserved_voice_daily_day", None)
         r_m = int(res.reserved_voice_monthly or 0)
         r_w = int(res.reserved_voice_welcome or 0)
+        r_r = int(getattr(res, "reserved_voice_referral", 0) or 0)
         r_p = int(res.reserved_voice_purchased or 0)
-        reserved_voice = int(res.reserved_voice_seconds or (r_m + r_w + r_p))
+        reserved_voice = int(res.reserved_voice_seconds or (r_d + r_m + r_w + r_r + r_p))
+        today_day = _ledger_mod.get_current_daily_period()
+        daily_same_day = bool(r_d > 0 and getattr(bal, "last_daily_grant_date", None) == (r_d_day or today_day))
 
         if raise_on_voice_shortfall and target_voice > 0:
+            avail_daily_for_job = (
+                max(0, int(bal.daily_free_seconds or 0) - max(0, int(getattr(bal, "reserved_daily_free_seconds", 0) or 0) - r_d))
+                if daily_same_day
+                else (r_d + max(0, int(bal.effective_daily_free_seconds) - int(bal.effective_reserved_daily_free_seconds)))
+            )
             avail_for_job = (
-                max(0, int(bal.monthly_free_seconds or 0) - max(0, int(bal.reserved_monthly_free_seconds or 0) - r_m))
+                avail_daily_for_job
+                + max(0, int(bal.monthly_free_seconds or 0) - max(0, int(bal.reserved_monthly_free_seconds or 0) - r_m))
                 + max(0, int(bal.welcome_seconds or 0) - max(0, int(bal.reserved_welcome_seconds or 0) - r_w))
+                + max(0, int(getattr(bal, "referral_voice_seconds", 0) or 0) - max(0, int(getattr(bal, "reserved_referral_voice_seconds", 0) or 0) - r_r))
                 + max(0, int(bal.purchased_seconds or 0) - max(0, int(bal.reserved_purchased_seconds or 0) - r_p))
             )
             if target_voice > avail_for_job:
@@ -1337,7 +1391,7 @@ async def settle_job_reservation(
                     avail_recap + reserved_recap,
                     max(0, reserved_recap_wallet - reserved_recap),
                 )
-                _clear_reserved_voice_buckets(bal, r_m, r_w, r_p)
+                _clear_reserved_voice_buckets(bal, r_m, r_w, r_p, daily=r_d, daily_day=r_d_day, referral=r_r)
                 res.status = "RELEASED"
                 res.refunded_recap_seconds = reserved_recap
                 res.refunded_voice_seconds = reserved_voice
@@ -1347,33 +1401,56 @@ async def settle_job_reservation(
                     f"Insufficient balance: requested {target_voice}s, available {avail_for_job}s"
                 )
 
-        # Consume order: Monthly Free -> Welcome -> Purchased
+        # Consume order: Daily Free -> Legacy Monthly Free -> Welcome -> Referral Voice -> Purchased
         settled_voice = 0
         rem_use = min(target_voice, reserved_voice)
 
+        use_d = min(r_d, rem_use)
+        rem_use -= use_d
         use_m = min(r_m, rem_use)
         rem_use -= use_m
         use_w = min(r_w, rem_use)
         rem_use -= use_w
+        use_r = min(r_r, rem_use)
+        rem_use -= use_r
         use_p = min(r_p, rem_use)
         rem_use -= use_p
-        settled_voice = use_m + use_w + use_p
+        settled_voice = use_d + use_m + use_w + use_r + use_p
 
+        rel_d = r_d - use_d
         rel_m = r_m - use_m
         rel_w = r_w - use_w
+        rel_r = r_r - use_r
         rel_p = r_p - use_p
-        released_voice = rel_m + rel_w + rel_p
+        released_voice = rel_d + rel_m + rel_w + rel_r + rel_p
 
         # Clear ALL reserved holds for this job (used + unused) from reserved counters first,
         # then deduct ONLY actual used seconds from the underlying buckets (respecting other jobs' holds).
-        _clear_reserved_voice_buckets(bal, r_m, r_w, r_p)
+        _clear_reserved_voice_buckets(bal, r_m, r_w, r_p, daily=r_d, daily_day=r_d_day, referral=r_r)
 
         actual_debited: list[tuple[str, int, str]] = []
         settled_voice = 0
         rem_shortfall = 0
+        if use_d > 0:
+            if daily_same_day:
+                avail_d = int(getattr(bal, "daily_free_seconds", 0) or 0)
+                free_d = max(0, avail_d - int(getattr(bal, "reserved_daily_free_seconds", 0) or 0))
+                d = min(free_d, use_d)
+                rem_shortfall = use_d - d
+                if d > 0:
+                    bal.daily_free_seconds = avail_d - d
+                    settled_voice += d
+                    actual_debited.append((LedgerSource.DAILY_FREE.value, d, "Daily Free"))
+            else:
+                # Day rolled over between reserve and settle: yesterday's daily hold expired,
+                # so honor the reserved daily seconds without deducting from today's fresh daily allowance.
+                settled_voice += use_d
+                actual_debited.append((LedgerSource.DAILY_FREE.value, use_d, "Daily Free (prior day)"))
+
         for src_val, attr, res_attr, want_sec, label in (
             (LedgerSource.MONTHLY_FREE.value, "monthly_free_seconds", "reserved_monthly_free_seconds", use_m, "Monthly Free"),
             (LedgerSource.WELCOME.value, "welcome_seconds", "reserved_welcome_seconds", use_w, "Welcome"),
+            (LedgerSource.REFERRAL.value, "referral_voice_seconds", "reserved_referral_voice_seconds", use_r, "Referral Voice"),
             (LedgerSource.PURCHASE.value, "purchased_seconds", "reserved_purchased_seconds", use_p, "Purchased"),
         ):
             want = want_sec + rem_shortfall
@@ -1394,9 +1471,19 @@ async def settle_job_reservation(
             overrun_v = target_voice - reserved_voice
             extra_v = min(overrun_v, int(bal.clone_spendable_seconds))
             rem_extra = extra_v
+            if rem_extra > 0 and getattr(bal, "last_daily_grant_date", None) == today_day:
+                free_d = max(0, int(bal.daily_free_seconds or 0) - int(getattr(bal, "reserved_daily_free_seconds", 0) or 0))
+                if free_d > 0:
+                    d = min(free_d, rem_extra)
+                    bal.daily_free_seconds = int(bal.daily_free_seconds or 0) - d
+                    rem_extra -= d
+                    settled_voice += d
+                    extra_voice_debited += d
+                    actual_debited.append((LedgerSource.DAILY_FREE.value, d, "Daily Free overrun"))
             for src_val, attr, res_attr, label in (
                 (LedgerSource.MONTHLY_FREE.value, "monthly_free_seconds", "reserved_monthly_free_seconds", "Monthly Free"),
                 (LedgerSource.WELCOME.value, "welcome_seconds", "reserved_welcome_seconds", "Welcome"),
+                (LedgerSource.REFERRAL.value, "referral_voice_seconds", "reserved_referral_voice_seconds", "Referral Voice"),
                 (LedgerSource.PURCHASE.value, "purchased_seconds", "reserved_purchased_seconds", "Purchased"),
             ):
                 free_b = max(0, int(getattr(bal, attr) or 0) - int(getattr(bal, res_attr) or 0))
@@ -1539,10 +1626,13 @@ async def release_job_reservation(
             bal = await get_minute_balance(session, user_id)
 
         rel_recap = int(res.reserved_recap_seconds or 0)
+        rel_d = int(getattr(res, "reserved_voice_daily", 0) or 0)
+        rel_d_day = getattr(res, "reserved_voice_daily_day", None)
         rel_m = int(res.reserved_voice_monthly or 0)
         rel_w = int(res.reserved_voice_welcome or 0)
+        rel_r = int(getattr(res, "reserved_voice_referral", 0) or 0)
         rel_p = int(res.reserved_voice_purchased or 0)
-        rel_voice = int(res.reserved_voice_seconds or (rel_m + rel_w + rel_p))
+        rel_voice = int(res.reserved_voice_seconds or (rel_d + rel_m + rel_w + rel_r + rel_p))
 
         if user is not None:
             sync_user_recap_balance(
@@ -1551,7 +1641,7 @@ async def release_job_reservation(
                 max(0, get_recap_reserved_seconds(user) - rel_recap),
             )
         if bal is not None and rel_voice > 0:
-            _clear_reserved_voice_buckets(bal, rel_m, rel_w, rel_p)
+            _clear_reserved_voice_buckets(bal, rel_m, rel_w, rel_p, daily=rel_d, daily_day=rel_d_day, referral=rel_r)
             bal.updated_at = utc_now()
 
         await _release_or_refund_grant_lots(

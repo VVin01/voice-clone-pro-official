@@ -27,6 +27,7 @@ def _loggable_value(key: str, value) -> str:
 
 
 SETTING_TYPES: dict[str, type] = {
+    "free_daily_allowance_seconds": int,
     "free_monthly_allowance_seconds": int,
     "character_limit_free": int,
     "character_limit_purchased": int,
@@ -38,6 +39,7 @@ SETTING_TYPES: dict[str, type] = {
     "tts_daily_limit_minutes_free": int,
     "tts_daily_limit_minutes_paid": int,
     "free_gemini_taste_minutes": int,
+    "paid_gemini_taste_minutes": int,
     "free_gemini_daily_budget_requests": int,
     "tiered_recap_pricing_enabled": bool,
     "required_channel_id": str,

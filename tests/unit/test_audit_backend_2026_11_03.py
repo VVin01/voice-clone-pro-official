@@ -241,9 +241,9 @@ async def test_worker_failure_stores_curated_not_raw(db_session, tmp_path):
     """End to end: charge-time insufficient balance (the production
     197s case) must land on the job as the curated Burmese message."""
     user, _ = await get_or_create_user(db_session, telegram_id=940004)
-    from app.services.ledger import grant_monthly_free_allowance
+    from app.services.ledger import grant_daily_free_allowance
 
-    await grant_monthly_free_allowance(db_session, user.id)
+    await grant_daily_free_allowance(db_session, user.id)
     bal = await get_minute_balance(db_session, user.id)
     assert bal.total_usable_seconds == 180
 

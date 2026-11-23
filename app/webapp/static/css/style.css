@@ -11191,3 +11191,301 @@ html[data-theme="dark"] #tab-recap #recap-fine-body .vcp-mini-expander {
     background: var(--surface-2);
     border: 1px solid var(--border);
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   2026-11-23 PART II: PRICING V3 BUY TAB (MOCKUP V8) & PROFILE WALLET SECTION
+   ════════════════════════════════════════════════════════════════════════════ */
+#tab-vip .plan-tabs-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    margin-bottom: 12px;
+}
+#tab-vip .plan-tabs-3 .seg-btn {
+    min-height: 40px;
+    padding: 6px 8px;
+    border-radius: var(--vcp-radius-md, 10px);
+}
+#tab-vip .plan-tabs-3 .seg-title {
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+#tab-vip .pricing-card {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+}
+#tab-vip .pricing-card.has-bonus-tag .plan-name {
+    padding-right: 124px;
+}
+#tab-vip .vcp-plan-bonus-tag {
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 5px 12px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    color: #ffffff;
+    background: linear-gradient(135deg, #b45309 0%, #d97706 50%, #f59e0b 100%);
+    border-bottom-left-radius: 12px;
+    box-shadow: 0 4px 12px rgba(217, 119, 6, 0.35);
+    z-index: 2;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+#tab-vip .pricing-card .plan-name {
+    font-size: 19px;
+    font-weight: 800;
+    line-height: 1.3;
+    color: var(--vcp-text-primary, var(--text-1));
+}
+#tab-vip .pricing-card .plan-allocation {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.5;
+}
+#tab-vip .pricing-card .vcp-plan-validity {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 700;
+    line-height: 1.5;
+    padding: 7px 12px;
+    margin: 2px 0 4px;
+    border-radius: 10px;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid rgba(56, 189, 248, 0.30);
+    color: #0369a1;
+}
+html[data-theme="dark"] #tab-vip .pricing-card .vcp-plan-validity {
+    background: rgba(56, 189, 248, 0.16);
+    border-color: rgba(56, 189, 248, 0.36);
+    color: #7dd3fc;
+}
+#tab-vip .pricing-card .plan-price {
+    margin-top: 2px;
+}
+#tab-vip .pricing-card .btn {
+    min-height: 46px;
+    padding: 10px 16px;
+    font-size: 15px;
+    font-weight: 700;
+}
+#tab-vip .buy-terms-card {
+    padding: 12px 14px;
+}
+#tab-vip .buy-terms-card[open] .plan-how-chevron {
+    transform: rotate(180deg);
+}
+#tab-vip .buy-terms-list {
+    margin: 10px 0 0;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--text-2);
+}
+body.lang-my #tab-vip .buy-terms-list {
+    line-height: 1.85;
+}
+#tab-profile .profile-wallet-orders-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+#tab-profile .profile-section-heading {
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--text-1);
+    padding: 4px 2px 0;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   2026-11-23 PART III: ROUND 13 RECAP STEP 2/3/4 & PREVIEW FIXES
+   ════════════════════════════════════════════════════════════════════════════ */
+/* Part A: Subtitle box ALWAYS above Blur box + 4 interactive resize handles */
+#tab-recap #preview-blur-box {
+    z-index: 8;
+}
+#tab-recap #preview-blur-box.label-on {
+    z-index: 9;
+}
+#tab-recap #preview-sub-box {
+    z-index: 12 !important;
+    pointer-events: auto !important;
+}
+#tab-recap #preview-sub-box .sub-grip {
+    z-index: 13;
+    pointer-events: auto;
+}
+#tab-recap #preview-sub-box .box-resize-handle {
+    pointer-events: auto;
+    z-index: 14;
+}
+
+/* Part B: Ratio cards — prevent Original Burmese text overflow at 360px */
+#tab-recap .ratio-pills-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+#tab-recap .ratio-pills-grid .ratio-btn {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+#tab-recap .ratio-btn .ratio-name,
+#tab-recap .ratio-btn .ratio-sub,
+#tab-recap .ratio-btn .ratio-dims {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+/* Part C: Title-only accordion headers keep chevron flush-right when .dd-acc-val is absent */
+#tab-recap .dd-acc-head .dd-acc-chevron {
+    margin-left: auto;
+}
+#tab-recap .dd-acc-head .dd-acc-val + .dd-acc-chevron {
+    margin-left: 0;
+}
+
+/* Part E/F: Edge voice wrapper mirrors Gemini wrapper cleanly */
+#tab-recap .recap-edge-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+#tab-recap .recap-edge-wrap.hidden {
+    display: none !important;
+}
+#tab-recap #recap-clone-mode-picker {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+}
+
+/* Part G: Story style even 2x2 grid with explicit active state */
+#tab-recap #story-style-picker-quick.style-grid-2x2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+#tab-recap #story-style-picker-quick.style-grid-2x2 .style-select-pill {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border-strong, rgba(148, 163, 184, 0.35));
+    background: var(--surface-2);
+    color: var(--text-1);
+    font-size: 13.5px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+#tab-recap #story-style-picker-quick.style-grid-2x2 .style-select-pill.active {
+    background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 100%);
+    border-color: rgba(167, 139, 250, 0.65);
+    color: #ffffff;
+    box-shadow: 0 4px 12px -3px rgba(109, 40, 217, 0.42);
+}
+html[data-theme="dark"] #tab-recap #story-style-picker-quick.style-grid-2x2 .style-select-pill {
+    background: rgba(30, 41, 59, 0.72);
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #e2e8f0;
+}
+html[data-theme="dark"] #tab-recap #story-style-picker-quick.style-grid-2x2 .style-select-pill.active {
+    background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+    border-color: rgba(196, 181, 253, 0.55);
+    color: #ffffff;
+}
+
+/* Part H1: Speed picker even 5-column grid (no broken sliding pill / zero overlap at 360px) */
+#tab-recap #recap-speed-picker.recap-speed-grid {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong, rgba(148, 163, 184, 0.30));
+    overflow: hidden;
+}
+#tab-recap #recap-speed-picker.recap-speed-grid .speed-seg {
+    flex: none !important;
+    min-width: 0;
+    width: 100%;
+    min-height: 38px;
+    padding: 6px 2px;
+    border-radius: 9px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text-2);
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+}
+#tab-recap #recap-speed-picker.recap-speed-grid .speed-seg.active {
+    flex-grow: 0 !important;
+    background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 100%);
+    color: #ffffff !important;
+    box-shadow: 0 3px 10px -2px rgba(109, 40, 217, 0.42);
+}
+#tab-recap #recap-speed-picker.recap-speed-grid .speed-seg.active .seg-short {
+    display: inline !important;
+}
+html[data-theme="dark"] #tab-recap #recap-speed-picker.recap-speed-grid {
+    background: rgba(15, 23, 42, 0.65);
+    border-color: rgba(148, 163, 184, 0.22);
+}
+html[data-theme="dark"] #tab-recap #recap-speed-picker.recap-speed-grid .speed-seg {
+    color: #cbd5e1;
+}
+
+/* Part H3: Script Review standalone switch row */
+#tab-recap #recap-review-switch-row {
+    min-height: 46px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+}
+
+/* Part I1: Step 4 preview output caption styled as a small card */
+#tab-recap .recap-output-caption.recap-output-caption-card {
+    margin: 10px 0 0;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong, rgba(148, 163, 184, 0.28));
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--text-2);
+    text-align: center;
+}
+html[data-theme="dark"] #tab-recap .recap-output-caption.recap-output-caption-card {
+    background: rgba(30, 41, 59, 0.60);
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #cbd5e1;
+}

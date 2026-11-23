@@ -344,7 +344,8 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
             listEl.innerHTML = slips.map(s => {
                 const refLine = s.payment_reference ? `<div class="text-xs" style="color:#38bdf8">🧾 Ref: <code>${esc(s.payment_reference)}</code></div>` : "";
                 const lockLine = s.review_claimed_by ? `<div class="text-xs" style="color:#f59e0b">🔒 Claimed by Admin ${esc(s.review_claimed_by)}</div>` : "";
-                const alloc = [s.minutes > 0 ? `${s.minutes}m Voice` : "", s.recap_credits > 0 ? `${s.recap_credits} Recap` : "", `${s.validity_days || 30}d`].filter(Boolean).join(" · ");
+                const vTxt = (s.validity_days === 0) ? L("သက်တမ်းမကုန်", "No Expiry") : `${s.validity_days ?? 30}d`;
+                const alloc = [s.minutes > 0 ? `${s.minutes}m Voice` : "", s.recap_credits > 0 ? `${s.recap_credits} Recap` : "", vTxt].filter(Boolean).join(" · ");
                 const imgHtml = s.slip_url ? `<img src="${esc(s.slip_url)}" alt="slip" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;flex-shrink:0" onclick="typeof openSlipModal==='function'&&openSlipModal('${esc(s.slip_url)}')">` : "";
                 return `<div class="admp-card-item">
                     <div class="admp-row" style="align-items:flex-start;flex-wrap:nowrap">
@@ -488,13 +489,14 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
                 const refTxt = o.payment_reference ? ` · Ref: <code>${esc(o.payment_reference)}</code>` : "";
                 const rejTxt = o.rejection_reason ? `<div class="text-xs text-danger">❌ ${esc(o.rejection_reason)}</div>` : "";
                 const dt = (o.created_at || "").replace("T", " ").slice(0, 16);
+                const vTxt = (o.validity_days === 0) ? L("သက်တမ်းမကုန်", "No Expiry") : `${o.validity_days ?? 30}d`;
                 return `<div class="admp-card-item">
                     <div class="admp-between">
                         <div><strong class="text-xs">${esc(o.package_name || o.package_code)}</strong> · <b>${Number(o.amount_mmk || 0).toLocaleString()} MMK</b></div>
                         <span class="admp-badge ${bCls}">${esc(o.status)}</span>
                     </div>
                     <div class="admp-between text-xs text-muted mt-1">
-                        <span><a href="javascript:void(0)" onclick="openAdminUserDetail(${Number(o.user_id)})" style="color:#d4af37">${esc(o.user_name)}</a> (${esc(o.user_id)}) · ${o.minutes}m / ${o.recap_credits}c / ${o.validity_days || 30}d${refTxt}</span>
+                        <span><a href="javascript:void(0)" onclick="openAdminUserDetail(${Number(o.user_id)})" style="color:#d4af37">${esc(o.user_name)}</a> (${esc(o.user_id)}) · ${o.minutes}m / ${o.recap_credits}c / ${esc(vTxt)}${refTxt}</span>
                         <div class="admp-row">${slipBtn}<span>${esc(dt)}</span></div>
                     </div>
                     ${rejTxt}
