@@ -15807,20 +15807,45 @@ async function loadAdminGroupAiConsole() {
                     <th>${escapeHtml(t("adm_group_ai_col_action"))}</th>
                     <th>${escapeHtml(t("adm_group_ai_col_time"))}</th>
                 </tr></thead><tbody>`;
+                const _fmtManualDur = (sec) => {
+                    const n = Number(sec);
+                    if (!Number.isFinite(n) || n <= 0) return "";
+                    if (n % 86400 === 0) return `${n / 86400}d`;
+                    if (n % 3600 === 0) return `${n / 3600}h`;
+                    if (n % 60 === 0) {
+                        const h = Math.floor(n / 3600);
+                        const m = Math.floor((n % 3600) / 60);
+                        return h ? `${h}h${m}m` : `${m}m`;
+                    }
+                    return `${n}s`;
+                };
                 for (const act of actions) {
+                    const isManual = act.category === "manual" || String(act.action || "").startsWith("manual_");
+                    const durLabel = _fmtManualDur(act.duration_seconds);
                     const actionBadge = act.action === "warn"
                         ? '<span class="vcp-badge vcp-badge-info">Strike 1 (warn)</span>'
                         : act.action === "mute_1h"
                         ? '<span class="vcp-badge vcp-badge-warning">Strike 2 (mute 1h)</span>'
                         : act.action === "mute_24h"
                         ? '<span class="vcp-badge vcp-badge-danger">Strike 3 (mute 24h)</span>'
+                        : act.action === "manual_mute"
+                        ? `<span class="vcp-badge vcp-badge-warning">Manual Mute${durLabel ? ` (${escapeHtml(durLabel)})` : ""}</span>`
+                        : act.action === "manual_unmute"
+                        ? '<span class="vcp-badge vcp-badge-info">Manual Unmute</span>'
+                        : act.action === "manual_ban"
+                        ? '<span class="vcp-badge vcp-badge-danger">Manual Ban</span>'
+                        : act.action === "manual_unban"
+                        ? '<span class="vcp-badge vcp-badge-info">Manual Unban</span>'
                         : `<span class="vcp-badge">${escapeHtml(act.action)}</span>`;
-                    const banBadge = act.banned ? ' <span class="vcp-badge vcp-badge-danger">BANNED</span>' : "";
+                    const banBadge = (!isManual && act.banned) ? ' <span class="vcp-badge vcp-badge-danger">BANNED</span>' : "";
+                    const actorMeta = (isManual && act.admin_id)
+                        ? ` <span class="text-muted">Admin ${escapeHtml(String(act.admin_id))}</span>`
+                        : "";
                     const timeStr = formatIsoTime(act.created_at);
                     html += `<tr>
                         <td><code>${escapeHtml(String(act.user_id))}</code></td>
                         <td>${escapeHtml(act.category)}</td>
-                        <td>${actionBadge}${banBadge}</td>
+                        <td>${actionBadge}${banBadge}${actorMeta}</td>
                         <td class="text-muted">${escapeHtml(timeStr)}</td>
                     </tr>`;
                 }

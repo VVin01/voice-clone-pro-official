@@ -3185,30 +3185,94 @@ async def record_moderation_strike(
 async def get_recent_moderation_actions(
     session: Any, limit: int = 10
 ) -> list[dict[str, Any]]:
-    """Return the most recent moderation actions for the admin console."""
-    from sqlalchemy import select
-    from app.models.schema import GroupAiModerationStrike
+    """Return the most recent moderation actions for the admin console.
 
-    stmt = (
+    Read-side merge: combines automatic ladder rows from
+    ``GroupAiModerationStrike`` and manual admin actions from ``AuditLog``
+    (``action LIKE 'group_mod.%'``), sorted newest-first, without touching
+    strike storage or strike counting.
+    """
+    import json
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from app.models.schema import AuditLog, GroupAiModerationStrike
+
+    safe_limit = max(1, int(limit or 10))
+    _min_dt = datetime.min.replace(tzinfo=timezone.utc)
+    merged: list[tuple[datetime, int, dict[str, Any]]] = []
+
+    strike_stmt = (
         select(GroupAiModerationStrike)
-        .order_by(GroupAiModerationStrike.created_at.desc())
-        .limit(limit)
+        .order_by(GroupAiModerationStrike.created_at.desc(), GroupAiModerationStrike.id.desc())
+        .limit(safe_limit)
     )
-    result = await session.execute(stmt)
-    strikes = result.scalars().all()
-    actions = []
-    for s in strikes:
-        actions.append(
-            {
-                "id": s.id,
-                "user_id": s.user_id,
-                "category": s.category,
-                "action": s.action,
-                "created_at": s.created_at.isoformat() if s.created_at else "",
-                "banned": bool(s.banned_by or s.banned_at),
-            }
+    strike_res = await session.execute(strike_stmt)
+    for s in strike_res.scalars().all():
+        ts = _as_utc(s.created_at) or _min_dt
+        merged.append(
+            (
+                ts,
+                int(s.id or 0),
+                {
+                    "id": s.id,
+                    "user_id": s.user_id,
+                    "category": s.category,
+                    "action": s.action,
+                    "created_at": s.created_at.isoformat() if s.created_at else "",
+                    "banned": bool(s.banned_by or s.banned_at),
+                    "source": "auto",
+                    "admin_id": s.banned_by,
+                    "duration_seconds": None,
+                },
+            )
         )
-    return actions
+
+    manual_action_map = {
+        "group_mod.mute": "manual_mute",
+        "group_mod.unmute": "manual_unmute",
+        "group_mod.ban": "manual_ban",
+        "group_mod.unban": "manual_unban",
+    }
+    audit_stmt = (
+        select(AuditLog)
+        .where(AuditLog.action.like("group_mod.%"))
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(safe_limit)
+    )
+    audit_res = await session.execute(audit_stmt)
+    for row in audit_res.scalars().all():
+        details: dict[str, Any] = {}
+        if row.details_json:
+            try:
+                parsed = json.loads(row.details_json)
+                if isinstance(parsed, dict):
+                    details = parsed
+            except Exception:
+                details = {}
+        mapped_action = manual_action_map.get(str(row.action or ""), str(row.action or ""))
+        raw_target = str(row.target_id or "").strip()
+        target_uid: int | str = int(raw_target) if raw_target.isdigit() else raw_target
+        ts = _as_utc(row.created_at) or _min_dt
+        merged.append(
+            (
+                ts,
+                int(row.id or 0),
+                {
+                    "id": row.id,
+                    "user_id": target_uid,
+                    "category": "manual",
+                    "action": mapped_action,
+                    "created_at": row.created_at.isoformat() if row.created_at else "",
+                    "banned": mapped_action == "manual_ban",
+                    "source": details.get("source") or "manual",
+                    "admin_id": row.admin_id,
+                    "duration_seconds": details.get("duration_seconds"),
+                },
+            )
+        )
+
+    merged.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [item[2] for item in merged[:safe_limit]]
 
 
 def build_moderation_escalation_dm(

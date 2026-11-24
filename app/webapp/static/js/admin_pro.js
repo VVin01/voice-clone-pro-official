@@ -918,6 +918,7 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
                 <option value="pricing">💰 pricing.*</option>
                 <option value="job">🎬 job.*</option>
                 <option value="broadcast">📢 broadcast.*</option>
+                <option value="group_mod">group_mod.*</option>
             </select>
             <input type="text" id="admp-audit-q" class="studio-input text-xs" style="flex:1;min-width:120px" placeholder="${esc(L("Target / Admin ID / Keyword ရှာရန်…", "Filter target / admin / details…"))}">
             <button type="button" class="mini-chip" id="admp-audit-go">🔎</button>

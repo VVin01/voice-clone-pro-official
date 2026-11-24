@@ -1085,3 +1085,13 @@ async def handle_admin_pay_edit_cancel(
 
 # ---------------------------------------------------------------------------
 # Guide Video Management Handlers
+
+
+# ---------------------------------------------------------------------------
+# Manual Group Moderation sub-router (runs inside admin_router, before group_admin_router)
+# ---------------------------------------------------------------------------
+
+from app.handlers.group_moderation import group_moderation_router as _group_moderation_router
+
+if _group_moderation_router.parent_router is not admin_router:
+    admin_router.include_router(_group_moderation_router)
