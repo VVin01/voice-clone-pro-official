@@ -17,8 +17,11 @@ Key invariants:
 
 from __future__ import annotations
 
+import asyncio
+import html
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
@@ -34,6 +37,28 @@ from app.services import group_moderation as gmod
 logger = logging.getLogger(__name__)
 
 group_moderation_router = Router(name="group_moderation")
+
+# Auto-delete TTL for ephemeral group notices and new-member welcome messages.
+GROUP_NOTICE_TTL_SECONDS = 60
+
+# Strong references to pending scheduled-deletion tasks so GC cannot collect them.
+_pending_delete_tasks: set[asyncio.Task[Any]] = set()
+
+# Owner-approved community group new-member welcome copy (EXACT; {name} is the only slot).
+GROUP_WELCOME_TEXT = (
+    "မင်္ဂလာပါ {name} ရှင်၊ Voice Clone Pro Community မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။\n\n"
+    "ဒီ Community ဟာ Voice Clone နဲ့ Video Recap နည်းပညာကို စိတ်ဝင်စားသူတွေ "
+    "အတွေ့အကြုံ မျှဝေဖို့၊ မေးခွန်းတွေ မေးဖို့နဲ့ အကြံဉာဏ်တွေ ဖလှယ်ဖို့ စုဝေးရာ နေရာ ဖြစ်ပါတယ်ရှင်။\n\n"
+    "<b>စတင် အသုံးပြုရန်</b>\n"
+    "@voiceclonepro_bot မှာ ကိုယ်ပိုင် အသံနဲ့ စကားပြောခိုင်းတာ၊ မြန်မာ စာတန်းထိုး Recap ဖန်တီးတာတွေ "
+    "အခမဲ့ စမ်းသုံးနိုင်ပါတယ်။\n\n"
+    "<b>စည်းကမ်းချက်များ</b>\n"
+    "• Spam နှင့် ကြော်ငြာ မပို့ပါနဲ့\n"
+    "• အဖွဲ့ဝင်အချင်းချင်း လေးစားစွာ ဆက်ဆံပေးပါ\n"
+    "• ကြေညာချက်အသစ်တွေကို Pinned Message မှာ ကြည့်နိုင်ပါတယ်\n\n"
+    "အကူအညီ လိုအပ်ရင် @VoiceCloneProAdmin ကို ဆက်သွယ်နိုင်ပါတယ်ရှင်။ "
+    "ကောင်းသော အတွေ့အကြုံများ ရရှိပါစေရှင်။"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +117,52 @@ async def _best_effort_delete(bot: Any, chat_id: int, message_id: int | None) ->
             message_id,
             exc,
         )
+
+
+def _schedule_message_deletion(
+    bot: Any,
+    chat_id: int,
+    message_id: int | None,
+    delay_seconds: float = GROUP_NOTICE_TTL_SECONDS,
+) -> asyncio.Task[Any] | None:
+    """Schedule best-effort deletion of a group message after ``delay_seconds``.
+
+    Holds a strong task reference in ``_pending_delete_tasks`` until completion
+    so asyncio cannot garbage-collect the pending task. Never raises.
+    """
+    if bot is None or message_id is None:
+        return None
+
+    async def _delayed_delete() -> None:
+        try:
+            if delay_seconds and delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.debug(
+                "group_moderation: scheduled delete_message(%s, %s) failed: %s",
+                chat_id,
+                message_id,
+                exc,
+            )
+
+    task = asyncio.create_task(_delayed_delete())
+    _pending_delete_tasks.add(task)
+    task.add_done_callback(_pending_delete_tasks.discard)
+    return task
+
+
+def _format_welcome_mention(member: Any) -> str:
+    """Render an HTML ``tg://user?id=`` mention with emoji-stripped first name."""
+    raw_name = str(getattr(member, "first_name", "") or "")
+    clean_name = gai.strip_emoji(raw_name).strip()
+    if not clean_name:
+        clean_name = "အဖွဲ့ဝင်"
+    safe_name = html.escape(clean_name)
+    member_id = int(getattr(member, "id"))
+    return f'<a href="tg://user?id={member_id}">{safe_name}</a>'
 
 
 async def _deliver_admin_dm(
@@ -231,12 +302,21 @@ async def _handle_moderation_command(
             await _best_effort_delete(sender, target_chat_id, target.reply_message_id)
 
         # 6. Public group notice (owner decision 1):
-        #    EXACTLY ONE polite Burmese line on successful in-group /mute or /ban only.
+        #    EXACTLY ONE polite Burmese line on successful in-group /mute or /ban only,
+        #    auto-deleted after GROUP_NOTICE_TTL_SECONDS.
         if result.ok and not is_dm and op in ("mute", "ban"):
             notice = gmod.build_group_notice(result)
             if notice:
                 try:
-                    await sender.send_message(target_chat_id, notice, parse_mode=None)
+                    sent_notice = await sender.send_message(target_chat_id, notice, parse_mode=None)
+                    sent_notice_mid = getattr(sent_notice, "message_id", None)
+                    if isinstance(sent_notice_mid, int):
+                        _schedule_message_deletion(
+                            sender,
+                            target_chat_id,
+                            sent_notice_mid,
+                            delay_seconds=GROUP_NOTICE_TTL_SECONDS,
+                        )
                 except Exception as notice_exc:
                     logger.warning(
                         "group_moderation: failed to post group notice in %s: %s",
@@ -390,3 +470,50 @@ async def handle_moderation_undo_callback(
         return
 
     await callback.answer(result.message, show_alert=True)
+
+
+# ---------------------------------------------------------------------------
+# New-member welcome (community group only; independent of AI kill switches)
+# ---------------------------------------------------------------------------
+
+
+@group_moderation_router.message(
+    IsCommunityGroupFilter(),
+    F.new_chat_members,
+)
+async def handle_new_chat_members(
+    message: Message,
+    bot: Bot | None = None,
+) -> None:
+    """Welcome human joiners in the community group and clean up after TTL."""
+    sender = bot or message.bot
+    if sender is None:
+        return
+
+    new_members = getattr(message, "new_chat_members", None) or []
+    humans = [m for m in new_members if not getattr(m, "is_bot", False)]
+    if not humans:
+        return
+
+    chat_id = int(message.chat.id)
+    join_msg_id = getattr(message, "message_id", None)
+    await _best_effort_delete(sender, chat_id, join_msg_id)
+
+    mentions = ", ".join(_format_welcome_mention(m) for m in humans)
+    welcome_text = GROUP_WELCOME_TEXT.format(name=mentions)
+    try:
+        sent = await sender.send_message(chat_id, welcome_text, parse_mode="HTML")
+        sent_mid = getattr(sent, "message_id", None)
+        if isinstance(sent_mid, int):
+            _schedule_message_deletion(
+                sender,
+                chat_id,
+                sent_mid,
+                delay_seconds=GROUP_NOTICE_TTL_SECONDS,
+            )
+    except Exception as exc:
+        logger.warning(
+            "group_moderation: failed to post welcome message in %s: %s",
+            chat_id,
+            exc,
+        )

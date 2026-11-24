@@ -1234,3 +1234,323 @@ def test_admin_console_static_badges_and_audit_filter():
 
     admin_pro_js = (ROOT / "app" / "webapp" / "static" / "js" / "admin_pro.js").read_text(encoding="utf-8")
     assert '<option value="group_mod">group_mod.*</option>' in admin_pro_js
+
+
+# ===========================================================================
+# 6. Addendum Part 1 — Ephemeral Group Notice Auto-Delete (60s TTL)
+# ===========================================================================
+
+
+async def _drain_pending_delete_tasks():
+    from app.handlers import group_moderation as gm_handlers
+
+    tasks = list(gm_handlers._pending_delete_tasks)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def test_group_notice_ttl_constant_is_60s():
+    from app.handlers import group_moderation as gm_handlers
+
+    assert gm_handlers.GROUP_NOTICE_TTL_SECONDS == 60
+
+
+@pytest.mark.asyncio
+async def test_group_notice_scheduled_deletion_on_mute_and_ban(db_session, monkeypatch):
+    """Successful in-group mute/ban schedules exactly one delayed delete for the notice ID
+    and empties _pending_delete_tasks after completion."""
+    from app.handlers import group_moderation as gm_handlers
+
+    monkeypatch.setattr(settings, "admin_ids_raw", str(ADMIN_ID))
+    monkeypatch.setattr(gm_handlers, "GROUP_NOTICE_TTL_SECONDS", 0.01)
+    sm = _mock_session_maker(db_session)
+    monkeypatch.setattr("app.handlers.group_moderation.AsyncSessionLocal", sm)
+
+    dp = Dispatcher(storage=MemoryStorage())
+    setup_handlers(dp, session_factory=sm)
+
+    # 1. In-group mute schedules notice deletion (message_id=9501)
+    bot_m = _make_bot(member=_make_member(user_id=REGULAR_USER_ID, first_name="Kyaw", username="kyaw"))
+    bot_m.send_message = AsyncMock(
+        side_effect=[
+            SimpleNamespace(message_id=9501),  # group notice
+            SimpleNamespace(message_id=9502),  # admin DM
+        ]
+    )
+    reply_m = _make_reply_target_message(user_id=REGULAR_USER_ID, message_id=460)
+    await dp.feed_update(
+        bot_m,
+        _make_group_update(text="/mute 1h", from_user_id=ADMIN_ID, message_id=560, update_id=60, reply_to_message=reply_m),
+    )
+    assert len(gm_handlers._pending_delete_tasks) == 1
+    await _drain_pending_delete_tasks()
+    assert len(gm_handlers._pending_delete_tasks) == 0
+    del_calls = [(c.kwargs["chat_id"], c.kwargs["message_id"]) for c in bot_m.delete_message.await_args_list]
+    assert (GROUP_ID, 9501) in del_calls
+    assert del_calls.count((GROUP_ID, 9501)) == 1
+
+    # 2. In-group ban schedules notice deletion (message_id=9511)
+    bot_b = _make_bot(member=_make_member(user_id=REGULAR_USER_ID, first_name="Su", username=None))
+    bot_b.send_message = AsyncMock(
+        side_effect=[
+            SimpleNamespace(message_id=9511),  # group notice
+            SimpleNamespace(message_id=9512),  # admin DM
+        ]
+    )
+    reply_b = _make_reply_target_message(user_id=REGULAR_USER_ID, message_id=461)
+    await dp.feed_update(
+        bot_b,
+        _make_group_update(text="/ban", from_user_id=ADMIN_ID, message_id=561, update_id=61, reply_to_message=reply_b),
+    )
+    assert len(gm_handlers._pending_delete_tasks) == 1
+    await _drain_pending_delete_tasks()
+    assert len(gm_handlers._pending_delete_tasks) == 0
+    del_calls_b = [(c.kwargs["chat_id"], c.kwargs["message_id"]) for c in bot_b.delete_message.await_args_list]
+    assert del_calls_b.count((GROUP_ID, 9511)) == 1
+
+
+@pytest.mark.asyncio
+async def test_group_notice_scheduled_delete_failure_swallowed_and_no_task_on_non_notice_paths(
+    db_session, monkeypatch
+):
+    """Scheduled delete failure is swallowed without affecting result/DM;
+    DM-invoked actions, unmute/unban, and failures schedule nothing."""
+    from app.handlers import group_moderation as gm_handlers
+
+    monkeypatch.setattr(settings, "admin_ids_raw", str(ADMIN_ID))
+    monkeypatch.setattr(gm_handlers, "GROUP_NOTICE_TTL_SECONDS", 0.01)
+    sm = _mock_session_maker(db_session)
+    monkeypatch.setattr("app.handlers.group_moderation.AsyncSessionLocal", sm)
+
+    dp = Dispatcher(storage=MemoryStorage())
+    setup_handlers(dp, session_factory=sm)
+
+    # 1. Scheduled delete raises TelegramBadRequest -> swallowed, DM + action unaffected, registry empties
+    bot_fail_del = _make_bot()
+    bot_fail_del.send_message = AsyncMock(
+        side_effect=[
+            SimpleNamespace(message_id=9601),  # group notice
+            SimpleNamespace(message_id=9602),  # admin DM
+        ]
+    )
+    bot_fail_del.delete_message = AsyncMock(
+        side_effect=TelegramBadRequest(method=MagicMock(), message="Bad Request: message to delete not found")
+    )
+    reply_msg = _make_reply_target_message(user_id=REGULAR_USER_ID, message_id=470)
+    await dp.feed_update(
+        bot_fail_del,
+        _make_group_update(text="/mute 15m", from_user_id=ADMIN_ID, message_id=570, update_id=70, reply_to_message=reply_msg),
+    )
+    assert len(_send_calls_for_chat(bot_fail_del, ADMIN_ID)) == 1
+    assert len(gm_handlers._pending_delete_tasks) == 1
+    await _drain_pending_delete_tasks()
+    assert len(gm_handlers._pending_delete_tasks) == 0
+
+    # 2. DM-invoked /mute schedules nothing
+    bot_dm = _make_bot()
+    await dp.feed_update(
+        bot_dm,
+        _make_dm_update(text=f"/mute {REGULAR_USER_ID} 1h", from_user_id=ADMIN_ID, update_id=71),
+    )
+    assert len(gm_handlers._pending_delete_tasks) == 0
+
+    # 3. In-group /unmute schedules nothing
+    bot_unmute = _make_bot(member=_make_member(status="restricted"))
+    await dp.feed_update(
+        bot_unmute,
+        _make_group_update(text="/unmute", from_user_id=ADMIN_ID, message_id=572, update_id=72, reply_to_message=reply_msg),
+    )
+    assert len(gm_handlers._pending_delete_tasks) == 0
+
+    # 4. In-group /unban schedules nothing
+    bot_unban = _make_bot(member=_make_member(status="kicked"))
+    await dp.feed_update(
+        bot_unban,
+        _make_group_update(text=f"/unban {REGULAR_USER_ID}", from_user_id=ADMIN_ID, message_id=573, update_id=73),
+    )
+    assert len(gm_handlers._pending_delete_tasks) == 0
+
+    # 5. Guard rejection / Telegram failure schedules nothing
+    bot_err = _make_bot(member=_make_member(user_id=GROUP_ADMIN_ONLY_ID, status="administrator"))
+    reply_ga = _make_reply_target_message(user_id=GROUP_ADMIN_ONLY_ID, message_id=474)
+    await dp.feed_update(
+        bot_err,
+        _make_group_update(text="/ban", from_user_id=ADMIN_ID, message_id=574, update_id=74, reply_to_message=reply_ga),
+    )
+    assert len(gm_handlers._pending_delete_tasks) == 0
+
+
+# ===========================================================================
+# 7. Addendum Part 2 — Community Group New-Member Welcome
+# ===========================================================================
+
+
+def _make_join_update(
+    *,
+    new_members: list[TgUser],
+    from_user: TgUser | None = None,
+    chat_id: int = GROUP_ID,
+    message_id: int = 700,
+    update_id: int = 80,
+) -> Update:
+    chat = Chat(id=chat_id, type=ChatType.SUPERGROUP, title="Voice Clone Pro Community")
+    actor = from_user or new_members[0]
+    msg = TgMessage(
+        message_id=message_id,
+        date=datetime.now(timezone.utc),
+        chat=chat,
+        from_user=actor,
+        new_chat_members=new_members,
+    )
+    return Update(update_id=update_id, message=msg)
+
+
+def test_welcome_copy_constant_matches_owner_approved_text_verbatim():
+    from app.handlers.group_moderation import GROUP_WELCOME_TEXT
+
+    expected = (
+        "မင်္ဂလာပါ {name} ရှင်၊ Voice Clone Pro Community မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။\n\n"
+        "ဒီ Community ဟာ Voice Clone နဲ့ Video Recap နည်းပညာကို စိတ်ဝင်စားသူတွေ "
+        "အတွေ့အကြုံ မျှဝေဖို့၊ မေးခွန်းတွေ မေးဖို့နဲ့ အကြံဉာဏ်တွေ ဖလှယ်ဖို့ စုဝေးရာ နေရာ ဖြစ်ပါတယ်ရှင်။\n\n"
+        "<b>စတင် အသုံးပြုရန်</b>\n"
+        "@voiceclonepro_bot မှာ ကိုယ်ပိုင် အသံနဲ့ စကားပြောခိုင်းတာ၊ မြန်မာ စာတန်းထိုး Recap ဖန်တီးတာတွေ "
+        "အခမဲ့ စမ်းသုံးနိုင်ပါတယ်။\n\n"
+        "<b>စည်းကမ်းချက်များ</b>\n"
+        "• Spam နှင့် ကြော်ငြာ မပို့ပါနဲ့\n"
+        "• အဖွဲ့ဝင်အချင်းချင်း လေးစားစွာ ဆက်ဆံပေးပါ\n"
+        "• ကြေညာချက်အသစ်တွေကို Pinned Message မှာ ကြည့်နိုင်ပါတယ်\n\n"
+        "အကူအညီ လိုအပ်ရင် @VoiceCloneProAdmin ကို ဆက်သွယ်နိုင်ပါတယ်ရှင်။ "
+        "ကောင်းသော အတွေ့အကြုံများ ရရှိပါစေရှင်။"
+    )
+    assert GROUP_WELCOME_TEXT == expected
+
+
+@pytest.mark.asyncio
+async def test_welcome_single_joiner_emoji_strip_delete_service_and_ttl(db_session, monkeypatch):
+    """Join in community group: sends exact welcome HTML with tg://user?id= mention,
+    emoji-strips first name, deletes join service message, schedules welcome deletion at TTL,
+    works with AI kill switches OFF, writes zero AuditLog/Strike rows."""
+    from app.handlers import group_moderation as gm_handlers
+
+    monkeypatch.setattr(settings, "admin_ids_raw", str(ADMIN_ID))
+    monkeypatch.setattr(gm_handlers, "GROUP_NOTICE_TTL_SECONDS", 0.01)
+    db_session.add(BotSetting(key=gai.KILL_SWITCH_KEY, value="false"))
+    db_session.add(BotSetting(key="group_ai_moderation_enabled", value="false"))
+    await db_session.commit()
+
+    sm = _mock_session_maker(db_session)
+    dp = Dispatcher(storage=MemoryStorage())
+    setup_handlers(dp, session_factory=sm)
+
+    # No chat_member subscription added
+    assert "chat_member" not in dp.resolve_used_update_types()
+    assert "edited_message" not in dp.resolve_used_update_types()
+
+    # Joiner with emoji and HTML-special char in first_name
+    joiner = TgUser(id=111222, is_bot=False, first_name="Ko Aung 🔥<Pro>", username="koaung")
+    bot = _make_bot()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=9701))
+
+    await dp.feed_update(bot, _make_join_update(new_members=[joiner], message_id=701, update_id=81))
+
+    # Exactly one welcome sent in HTML with emoji-free escaped mention
+    grp_calls = _send_calls_for_chat(bot, GROUP_ID)
+    assert len(grp_calls) == 1
+    assert grp_calls[0].kwargs.get("parse_mode") == "HTML"
+    expected_mention = '<a href="tg://user?id=111222">Ko Aung &lt;Pro&gt;</a>'
+    assert _call_text(grp_calls[0]) == gm_handlers.GROUP_WELCOME_TEXT.format(name=expected_mention)
+    assert "🔥" not in _call_text(grp_calls[0])
+
+    # Join service message deletion was attempted immediately
+    immediate_dels = [(c.kwargs["chat_id"], c.kwargs["message_id"]) for c in bot.delete_message.await_args_list]
+    assert (GROUP_ID, 701) in immediate_dels
+
+    # Welcome message deletion scheduled at TTL and empties registry after completion
+    assert len(gm_handlers._pending_delete_tasks) == 1
+    await _drain_pending_delete_tasks()
+    assert len(gm_handlers._pending_delete_tasks) == 0
+    all_dels = [(c.kwargs["chat_id"], c.kwargs["message_id"]) for c in bot.delete_message.await_args_list]
+    assert (GROUP_ID, 9701) in all_dels
+
+    # Emoji-only first name falls back to plain Burmese name
+    emoji_only = TgUser(id=111223, is_bot=False, first_name="🔥✨🙂")
+    assert gm_handlers._format_welcome_mention(emoji_only) == '<a href="tg://user?id=111223">အဖွဲ့ဝင်</a>'
+
+    # Zero AuditLog rows and zero Strike rows written by welcome
+    assert (await db_session.execute(select(AuditLog))).scalars().all() == []
+    assert (await db_session.execute(select(GroupAiModerationStrike))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_welcome_multiple_joiners_bot_exclusion_admin_add_and_other_group(db_session, monkeypatch):
+    """Multi-join mentions all humans (skipping bots); bot-only and self-bot joins stay silent;
+    admin-added humans are welcomed; non-community group stays silent; AI prefilter unchanged."""
+    from app.handlers import group_moderation as gm_handlers
+
+    monkeypatch.setattr(settings, "admin_ids_raw", str(ADMIN_ID))
+    monkeypatch.setattr(gm_handlers, "GROUP_NOTICE_TTL_SECONDS", 0.01)
+    sm = _mock_session_maker(db_session)
+    dp = Dispatcher(storage=MemoryStorage())
+    setup_handlers(dp, session_factory=sm)
+
+    # 1. Multiple joiners (2 humans + 1 bot), added by admin -> ONE welcome with both humans only
+    h1 = TgUser(id=2001, is_bot=False, first_name="Su Su")
+    h2 = TgUser(id=2002, is_bot=False, first_name="Min Min")
+    b1 = TgUser(id=2003, is_bot=True, first_name="HelperBot")
+    admin_adder = TgUser(id=ADMIN_ID, is_bot=False, first_name="Admin")
+    bot1 = _make_bot()
+    bot1.send_message = AsyncMock(return_value=SimpleNamespace(message_id=9801))
+    await dp.feed_update(
+        bot1,
+        _make_join_update(new_members=[h1, b1, h2], from_user=admin_adder, message_id=710, update_id=90),
+    )
+    await _drain_pending_delete_tasks()
+    calls1 = _send_calls_for_chat(bot1, GROUP_ID)
+    assert len(calls1) == 1
+    expected_multi = '<a href="tg://user?id=2001">Su Su</a>, <a href="tg://user?id=2002">Min Min</a>'
+    assert _call_text(calls1[0]) == gm_handlers.GROUP_WELCOME_TEXT.format(name=expected_multi)
+    assert "HelperBot" not in _call_text(calls1[0])
+
+    # 2. Bot-only join -> no welcome, no deletion
+    bot2 = _make_bot()
+    await dp.feed_update(
+        bot2,
+        _make_join_update(new_members=[b1], from_user=admin_adder, message_id=711, update_id=91),
+    )
+    bot2.send_message.assert_not_awaited()
+    bot2.delete_message.assert_not_awaited()
+    assert len(gm_handlers._pending_delete_tasks) == 0
+
+    # 3. This bot itself being added -> no welcome
+    self_bot_user = TgUser(id=BOT_ID, is_bot=True, first_name="VoiceClonePro", username=gai.BOT_USERNAME)
+    bot3 = _make_bot()
+    await dp.feed_update(
+        bot3,
+        _make_join_update(new_members=[self_bot_user], from_user=admin_adder, message_id=712, update_id=92),
+    )
+    bot3.send_message.assert_not_awaited()
+    bot3.delete_message.assert_not_awaited()
+
+    # 4. Join in a non-community group -> total silence, nothing deleted
+    bot4 = _make_bot()
+    await dp.feed_update(
+        bot4,
+        _make_join_update(new_members=[h1], chat_id=OTHER_GROUP_ID, message_id=713, update_id=93),
+    )
+    bot4.send_message.assert_not_awaited()
+    bot4.delete_message.assert_not_awaited()
+
+    # 5. Existing AI pre-filter still skips join service messages (text=None -> "no_text")
+    assert (
+        gai.prefilter_reason(
+            chat_id=GROUP_ID,
+            chat_type="supergroup",
+            text=None,
+            from_user_id=h1.id,
+            from_user_is_bot=False,
+            sender_chat_id=None,
+        )
+        == "no_text"
+    )
+    # Existing greeting fast-path WELCOME_TEXT untouched
+    assert "@voiceclonepro_bot" in gai.WELCOME_TEXT
