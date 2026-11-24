@@ -49,6 +49,9 @@ REFERENCE_MAX_SECONDS = 45.0
 MIN_CHUNK_CHARS = 120
 # Soft sentence-packing ceiling for prosodic stability (~4-6 chunks on a 122 s job).
 MAX_CHUNK_CHARS = 425
+# Clone Prosody Phase 2 (Part 5): prefer breaking at a paragraph separator (`\n\n`)
+# once the current packed chunk has reached at least this many characters.
+PARAGRAPH_BREAK_MIN_CHARS = 220
 
 _SENTENCE_ENDINGS = "။?!\n"
 _CLAUSE_MARK = "၊"
@@ -142,23 +145,50 @@ def chunk_char_budget(
     return max(MIN_CHUNK_CHARS, int(allowance / TOKENS_PER_CHAR))
 
 
-def split_sentences(text: str) -> list[str]:
-    """Split text into sentences on Burmese/Latin sentence endings
-    (။ ? ! and line breaks), keeping the ending punctuation attached.
-    Pieces are stripped; empty pieces are dropped."""
-    sentences: list[str] = []
+def _split_sentences_with_para(text: str) -> list[tuple[str, bool]]:
+    """Split text into ``(sentence, starts_new_paragraph)`` pairs.
+
+    ``starts_new_paragraph`` is True when two or more newlines (``\\n\\n``,
+    ignoring spaces/tabs between newlines) preceded the sentence.
+    """
+    items: list[tuple[str, bool]] = []
     buf: list[str] = []
+    nl_streak = 0
+    pending_para = False
     for ch in str(text or ""):
+        if ch == "\r":
+            continue
+        if ch == "\n":
+            piece = "".join(buf).strip()
+            if piece:
+                items.append((piece, pending_para and len(items) > 0))
+                pending_para = False
+            buf = []
+            nl_streak += 1
+            if nl_streak >= 2:
+                pending_para = True
+            continue
+        if ch in (" ", "\t") and not buf and nl_streak > 0:
+            continue
+        nl_streak = 0
         buf.append(ch)
         if ch in _SENTENCE_ENDINGS:
             piece = "".join(buf).strip()
             if piece:
-                sentences.append(piece)
+                items.append((piece, pending_para and len(items) > 0))
+                pending_para = False
             buf = []
     tail = "".join(buf).strip()
     if tail:
-        sentences.append(tail)
-    return sentences
+        items.append((tail, pending_para and len(items) > 0))
+    return items
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split text into sentences on Burmese/Latin sentence endings
+    (။ ? ! and line breaks), keeping the ending punctuation attached.
+    Pieces are stripped; empty pieces are dropped."""
+    return [piece for piece, _is_para in _split_sentences_with_para(text)]
 
 
 def _hard_split(sentence: str, budget_chars: int) -> list[str]:
@@ -243,12 +273,17 @@ def plan_text_chunks(
         reference_seconds=reference_seconds,
     )
     effective_cap = min(budget_chars, max(MIN_CHUNK_CHARS, int(max_chunk_chars)))
-    if len(text) <= effective_cap:
+    norm_check = text.replace("\r\n", "\n").replace("\r", "\n")
+    if len(text) <= effective_cap and "\n\n" not in norm_check:
         return [text]
 
     chunks: list[str] = []
     current = ""
-    for sentence in split_sentences(text):
+    para_break_floor = min(PARAGRAPH_BREAK_MIN_CHARS, max(MIN_CHUNK_CHARS, effective_cap // 2))
+    for sentence, starts_new_para in _split_sentences_with_para(text):
+        if starts_new_para and current and len(current) >= para_break_floor:
+            chunks.append(current)
+            current = ""
         for piece in _hard_split(sentence, effective_cap):
             if not current:
                 current = piece

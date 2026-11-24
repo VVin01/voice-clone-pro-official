@@ -203,10 +203,16 @@ def evaluate_wav_prosody(
         "PDS": round(pds, 3),
         "targets_pass": {
             "iqr_le_1.5": f0_win_iqr_st <= 1.5,
+            "iqr_le_1.35": f0_win_iqr_st <= 1.35,
+            "iqr_ge_0.45_expressive_floor": f0_win_iqr_st >= 0.45,
             "max_jump_le_2.0": f0_win_max_jump_st <= 2.0,
+            "max_jump_le_1.75": f0_win_max_jump_st <= 1.75,
             "outlier_ratio_0": f0_outlier_ratio == 0.0,
             "pace_cv_le_0.10": pace_cv <= 0.10,
+            "pace_cv_le_0.085": pace_cv <= 0.085,
             "pace_max_ratio_le_1.25": pace_max_ratio <= 1.25,
+            "pace_max_ratio_le_1.22": pace_max_ratio <= 1.22,
+            "pds_le_1.20": pds <= 1.20,
         },
         "windows": windows,
     }

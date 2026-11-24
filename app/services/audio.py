@@ -223,13 +223,15 @@ def concat_wav_files(
     output_wav: Path,
     crossfade_sec: float = 0.04,
     boundary_pause_sec: float = 0.0,
+    boundary_pauses_sec: list[float] | tuple[float, ...] | None = None,
 ) -> Path:
-    """Batch CH + Prosody Phase 1: join WAV parts into one file, in order.
+    """Batch CH + Prosody Phase 1 & Phase 2: join WAV parts into one file, in order.
 
-    When ``boundary_pause_sec > 0`` (long-form voice clone sentence boundaries),
-    inserts clean digital silence between parts with a 10 ms anti-click micro-fade.
-    Otherwise joins with a short crossfade (acrossfade) when multiple parts exist,
-    falling back to the concat-demuxer. Keeps MONO and the first part's sample rate.
+    When ``boundary_pauses_sec`` (per-seam pause durations in seconds) or
+    ``boundary_pause_sec > 0`` is supplied, inserts clean digital silence between
+    parts with a 10 ms anti-click micro-fade. Otherwise joins with a short
+    crossfade (acrossfade) when multiple parts exist, falling back to the
+    concat-demuxer. Keeps MONO and the first part's sample rate.
     """
     part_paths = [Path(p) for p in parts]
     if not part_paths:
@@ -246,11 +248,11 @@ def concat_wav_files(
     except Exception:
         pass
 
-    if boundary_pause_sec and float(boundary_pause_sec) > 0.0:
+    has_per_seam_pauses = bool(boundary_pauses_sec) and any(float(x) > 0.0 for x in boundary_pauses_sec)
+    if has_per_seam_pauses or (boundary_pause_sec and float(boundary_pause_sec) > 0.0):
         import numpy as np
 
-        pause_frames = max(1, int(round(rate * float(boundary_pause_sec))))
-        silence = np.zeros(pause_frames, dtype="<i2")
+        default_pause_s = max(0.0, float(boundary_pause_sec or 0.0))
         fade_frames = max(1, int(round(rate * 0.010)))  # 10 ms anti-click fade
         rendered_chunks: list[np.ndarray] = []
 
@@ -303,7 +305,13 @@ def concat_wav_files(
 
             rendered_chunks.append(arr_i16)
             if idx < len(part_paths) - 1:
-                rendered_chunks.append(silence)
+                seam_pause_s = (
+                    float(boundary_pauses_sec[idx])
+                    if (boundary_pauses_sec is not None and idx < len(boundary_pauses_sec))
+                    else default_pause_s
+                )
+                pause_frames = max(1, int(round(rate * max(0.0, seam_pause_s))))
+                rendered_chunks.append(np.zeros(pause_frames, dtype="<i2"))
 
         joined = np.concatenate(rendered_chunks) if rendered_chunks else np.zeros(0, dtype="<i2")
         with wave.open(str(output_wav), "wb") as out_wf:

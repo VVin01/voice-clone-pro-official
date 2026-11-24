@@ -790,14 +790,13 @@ def _synthesize_voxcpm_voice_job(
     logger.info(
         "Voice clone chunked synthesis: job=%s chunks=%d", job_id, len(chunks)
     )
+    from app.services.speed import resolve_speed_tempo
+
     parts: list[Path] = []
+    corr_dir = output_wav.parent / f"{output_wav.stem}_prosody_corr"
     stitched_wav = output_wav.parent / f"{output_wav.stem}.stitched_raw.wav"
     job_prosody_retries = 0
-    corrections_applied = 0
-    accepted_f0s: list[float] = []
-    accepted_rates: list[float] = []
-    chunk_log_f0: list[float | None] = []
-    chunk_log_rate: list[float | None] = []
+    analyses: list[_cp.ChunkProsodyAnalysis] = []
     completed_so_far = 0
 
     try:
@@ -811,21 +810,17 @@ def _synthesize_voxcpm_voice_job(
                 and ckpt_chunk_file.is_file()
                 and ckpt_chunk_file.stat().st_size > 0
             ):
+                # Part 1 (#1 & #3): checkpointed chunks are RAW (pre-rubberband),
+                # so resuming re-derives the post-loop contour pass cleanly with zero double-processing.
                 shutil.copy2(ckpt_chunk_file, part)
-                stats = _cp.measure_prosody(part, text=chunk)
-                if stats.f0_median_hz is not None:
-                    accepted_f0s.append(stats.f0_median_hz)
-                if stats.syllable_rate is not None:
-                    accepted_rates.append(stats.syllable_rate)
-                chunk_log_f0.append(stats.f0_median_hz)
-                chunk_log_rate.append(stats.syllable_rate)
+                analyses.append(_cp.analyze_chunk_prosody(part, text=chunk))
                 parts.append(part)
                 completed_so_far = idx
                 if checkpoint_progress is not None:
                     checkpoint_progress["completed_units"] = idx
                     checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
                 logger.info(
-                    "Reused checkpointed chunk %d/%d for voice job %s without re-synthesis",
+                    "Reused checkpointed raw chunk %d/%d for voice job %s without re-synthesis",
                     idx,
                     len(chunks),
                     job_id,
@@ -870,76 +865,9 @@ def _synthesize_voxcpm_voice_job(
                         e_regen,
                     )
 
-            # Phase 1B: Measure raw chunk prosody, check outlier vs anchor, micro-correct
-            stats = _cp.measure_prosody(part, text=chunk)
-            if is_gender_flip:
-                anchor_f0 = (
-                    float(_statistics.median(accepted_f0s))
-                    if accepted_f0s
-                    else stats.f0_median_hz
-                )
-                anchor_rate = (
-                    float(_statistics.median(accepted_rates))
-                    if accepted_rates
-                    else stats.syllable_rate
-                )
-            else:
-                anchor_f0 = (
-                    ref_prosody.f0_median_hz
-                    if (ref_prosody is not None and ref_prosody.f0_median_hz is not None)
-                    else (float(_statistics.median(accepted_f0s)) if accepted_f0s else None)
-                )
-                anchor_rate = (
-                    ref_prosody.syllable_rate
-                    if (ref_prosody is not None and ref_prosody.syllable_rate is not None)
-                    else (float(_statistics.median(accepted_rates)) if accepted_rates else None)
-                )
-
-            is_outlier, _df0, _rr = _cp.is_prosody_outlier(
-                stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
-            )
-            if is_outlier and job_prosody_retries < _max_prosody_retries:
-                retry_part = output_wav.parent / f"{output_wav.stem}.chunk{idx:02d}.retry.wav"
-                job_prosody_retries += 1
-                try:
-                    retry_kw = dict(chunk_kw, output_wav=retry_part)
-                    engine.synthesize(**retry_kw)
-                    retry_stats = _cp.measure_prosody(retry_part, text=chunk)
-                    d_orig = _cp.prosody_anchor_distance(
-                        stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
-                    )
-                    d_retry = _cp.prosody_anchor_distance(
-                        retry_stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
-                    )
-                    if d_retry < d_orig and retry_part.is_file():
-                        shutil.move(str(retry_part), str(part))
-                        stats = retry_stats
-                except Exception as e_prosody:
-                    logger.warning(
-                        "VoxCPM prosody outlier retry failed on chunk %d (%s); keeping original",
-                        idx,
-                        e_prosody,
-                    )
-                finally:
-                    retry_part.unlink(missing_ok=True)
-
-            if stats.f0_median_hz is not None:
-                accepted_f0s.append(stats.f0_median_hz)
-                if is_gender_flip and len(accepted_f0s) >= 1:
-                    anchor_f0 = float(_statistics.median(accepted_f0s))
-            if stats.syllable_rate is not None:
-                accepted_rates.append(stats.syllable_rate)
-                if (is_gender_flip or anchor_rate is None) and len(accepted_rates) >= 1:
-                    anchor_rate = float(_statistics.median(accepted_rates))
-
-            shift_st, tempo_mult = _cp.compute_rubberband_params(
-                stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
-            )
-            if _cp.apply_rubberband_micro_correction(
-                part, pitch_shift_st=shift_st, tempo_factor=tempo_mult
-            ):
-                corrections_applied += 1
-
+            # Part 1 (#1) + Part 4 (#3): analyze raw chunk ONCE (caching YIN contour) and
+            # persist the RAW chunk in dp_refs before any rubberband pass runs.
+            analyses.append(_cp.analyze_chunk_prosody(part, text=chunk))
             if ckpt_chunk_file is not None and part.is_file():
                 try:
                     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -951,22 +879,122 @@ def _synthesize_voxcpm_voice_job(
             if checkpoint_progress is not None:
                 checkpoint_progress["completed_units"] = idx
                 checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
-
-            chunk_log_f0.append(stats.f0_median_hz)
-            chunk_log_rate.append(stats.syllable_rate)
             parts.append(part)
 
-        # Stitch with 135 ms boundary pauses (graceful 2-arg fallback for test stubs)
+        # Part 6: Re-scored retry pass across raw chunks (<=2/job, <=1/chunk, Normal band >40% only),
+        # ranked worst-scoring first against the global job/reference anchor.
+        if _max_prosody_retries > 0 and parts:
+            init_anchor = _cp.compute_global_prosody_anchor(
+                analyses,
+                ref_prosody=ref_prosody,
+                is_custom_clone=is_custom_clone,
+                is_gender_flip=is_gender_flip,
+                preset_voice=preset_voice,
+            )
+            outlier_ranked: list[tuple[float, int]] = []
+            for c_idx, ana in enumerate(analyses):
+                is_out, _df0, _rr = _cp.is_prosody_outlier(
+                    ana.stats,
+                    anchor_f0_hz=init_anchor.f0_anchor_hz,
+                    anchor_rate=init_anchor.rate_anchor,
+                    internal_span_st=ana.internal_span_st,
+                )
+                if is_out:
+                    sc = _cp.score_prosody_candidate(
+                        ana.stats,
+                        anchor_f0_hz=init_anchor.f0_anchor_hz,
+                        anchor_rate=init_anchor.rate_anchor,
+                        internal_span_st=ana.internal_span_st,
+                    )
+                    outlier_ranked.append((round(sc, 6), c_idx))
+
+            outlier_ranked.sort(key=lambda item: (-item[0], item[1]))
+            for _orig_score, c_idx in outlier_ranked:
+                if job_prosody_retries >= _max_prosody_retries:
+                    break
+                part = parts[c_idx]
+                chunk_text = chunks[c_idx]
+                retry_part = output_wav.parent / f"{output_wav.stem}.chunk{c_idx + 1:02d}.retry.wav"
+                job_prosody_retries += 1
+                try:
+                    retry_kw = {
+                        "text": chunk_text,
+                        "output_wav": retry_part,
+                        "reference_wav": effective_ref_arg,
+                        "control_instruction": control_instruction,
+                        "preset_voice": preset_voice,
+                        "speed": speed,
+                        "progress_cb": progress_cb,
+                        "allow_fallback": False,
+                        "skip_mastering": True,
+                        **extra_prompt_kw,
+                        **({"tier": tier} if (tier != "free" and _accepts_tier) else {}),
+                    }
+                    engine.synthesize(**retry_kw)
+                    if retry_part.is_file():
+                        retry_ana = _cp.analyze_chunk_prosody(retry_part, text=chunk_text)
+                        s_orig = _cp.score_prosody_candidate(
+                            analyses[c_idx].stats,
+                            anchor_f0_hz=init_anchor.f0_anchor_hz,
+                            anchor_rate=init_anchor.rate_anchor,
+                            internal_span_st=analyses[c_idx].internal_span_st,
+                        )
+                        s_retry = _cp.score_prosody_candidate(
+                            retry_ana.stats,
+                            anchor_f0_hz=init_anchor.f0_anchor_hz,
+                            anchor_rate=init_anchor.rate_anchor,
+                            internal_span_st=retry_ana.internal_span_st,
+                        )
+                        if s_retry < s_orig:
+                            shutil.move(str(retry_part), str(part))
+                            retry_ana.wav_path = part
+                            analyses[c_idx] = retry_ana
+                            if checkpoint_dir is not None:
+                                try:
+                                    shutil.copy2(part, checkpoint_dir / f"chunk{c_idx + 1:02d}.wav")
+                                except Exception:
+                                    pass
+                except Exception as e_prosody:
+                    logger.warning(
+                        "VoxCPM prosody outlier retry failed on chunk %d (%s); keeping original",
+                        c_idx + 1,
+                        e_prosody,
+                    )
+                finally:
+                    retry_part.unlink(missing_ok=True)
+
+        # Parts 1-5 & 7: ONE post-loop bilateral seam ramp + 3.5 s envelope tether + tempo pass
+        speed_tempo = resolve_speed_tempo(speed)
+        prosody_res = _cp.run_post_loop_prosody_pass(
+            parts,
+            chunks,
+            full_text=text,
+            out_dir=corr_dir,
+            ref_prosody=ref_prosody,
+            is_custom_clone=is_custom_clone,
+            is_gender_flip=is_gender_flip,
+            preset_voice=preset_voice,
+            speed_tempo=speed_tempo,
+            cached_analyses=analyses,
+        )
+
+        # Stitch corrected chunks with Part 5 boundary-class adaptive pauses
+        # (graceful fallback for legacy 2-arg test stubs)
         try:
             concat_wav_files(
-                parts,
+                prosody_res.corrected_parts,
                 stitched_wav,
                 boundary_pause_sec=_cp.CLONE_BOUNDARY_PAUSE_SEC,
+                boundary_pauses_sec=prosody_res.pauses_sec,
             )
         except TypeError as te:
-            if "boundary_pause_sec" not in str(te) and "unexpected keyword" not in str(te) and "positional" not in str(te):
+            if (
+                "boundary_pause" not in str(te)
+                and "unexpected keyword" not in str(te)
+                and "positional" not in str(te)
+            ):
                 raise
-            concat_wav_files(parts, stitched_wav)
+            concat_wav_files(prosody_res.corrected_parts, stitched_wav)
 
         # Apply ONE post-stitch mastering + speed_preset pass
         master_voxcpm_audio(
@@ -976,17 +1004,27 @@ def _synthesize_voxcpm_voice_job(
             preset_voice=preset_voice,
         )
 
+        post_f0_log = [st.f0_median_hz for st in prosody_res.post_stats]
+        post_rate_log = [st.syllable_rate for st in prosody_res.post_stats]
         logger.info(
-            "clone_prosody_summary job=%s chunks=%d retries_used=%d corrections=%d f0_hz=%s syl_rate=%s",
+            "clone_prosody_summary job=%s chunks=%d retries_used=%d corrections=%d "
+            "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
+            "f0_hz=%s syl_rate=%s boundary_steps=%s",
             job_id,
             len(chunks),
             job_prosody_retries,
-            corrections_applied,
-            chunk_log_f0,
-            chunk_log_rate,
+            prosody_res.corrections_applied,
+            prosody_res.envelope_corrections,
+            prosody_res.edge_fallbacks,
+            prosody_res.anchor.anchor_source,
+            prosody_res.anchor.f0_anchor_hz,
+            post_f0_log,
+            post_rate_log,
+            prosody_res.boundary_steps,
         )
     finally:
         stitched_wav.unlink(missing_ok=True)
+        shutil.rmtree(corr_dir, ignore_errors=True)
         for part in parts:
             try:
                 part.unlink(missing_ok=True)
