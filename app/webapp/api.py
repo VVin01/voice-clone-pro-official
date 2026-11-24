@@ -7878,6 +7878,164 @@ class RecapScriptUpdateRequest(BaseModel):
     segments: list[RecapScriptEditItem] = []
 
 
+def _merge_recap_voice_outcomes(outcomes: list[dict]) -> dict:
+    """Aggregate one or more per-part engine voice outcomes into a single job outcome."""
+    valid = [o for o in outcomes if isinstance(o, dict) and o]
+    if not valid:
+        return {}
+    if len(valid) == 1:
+        item = dict(valid[0])
+        fb_segs = list(item.get("fallback_segments") or [])
+        fb_count = int(item["fallback_count"]) if item.get("fallback_count") is not None else len(fb_segs)
+        return {
+            "actual_tts_provider": str(item.get("actual_tts_provider") or item.get("tts_provider") or "").strip().lower(),
+            "actual_voice": str(item.get("actual_voice") or "").strip(),
+            "uniform_restart": bool(item.get("uniform_restart")),
+            "fallback_used": bool(item.get("fallback_used") or fb_count > 0),
+            "fallback_segments": fb_segs,
+            "fallback_count": fb_count,
+            "total_segments": int(item.get("total_segments") or 0),
+        }
+
+    uniform_restart = any(bool(o.get("uniform_restart")) for o in valid)
+    fb_segs_all: list = []
+    fb_count_total = 0
+    total_segs = 0
+    providers: list[str] = []
+    for o in valid:
+        segs = list(o.get("fallback_segments") or [])
+        fb_segs_all.extend(segs)
+        fb_count_total += int(o["fallback_count"]) if o.get("fallback_count") is not None else len(segs)
+        total_segs += int(o.get("total_segments") or 0)
+        p = str(o.get("actual_tts_provider") or o.get("tts_provider") or "").strip().lower()
+        if p:
+            providers.append(p)
+    fallback_used = any(bool(o.get("fallback_used")) for o in valid) or fb_count_total > 0
+    if uniform_restart or (providers and all(p in ("edge", "edge_tts") for p in providers)):
+        provider = "edge_tts"
+    elif "gemini+persona_fallback" in providers:
+        provider = "gemini+persona_fallback"
+    elif "voxcpm+edge_fallback" in providers:
+        provider = "voxcpm+edge_fallback"
+    else:
+        provider = providers[0] if providers else ""
+    actual_voice = ""
+    for o in valid:
+        p = str(o.get("actual_tts_provider") or o.get("tts_provider") or "").strip().lower()
+        v = str(o.get("actual_voice") or "").strip()
+        if v and (p == provider or not actual_voice):
+            actual_voice = v
+            if p == provider:
+                break
+    return {
+        "actual_tts_provider": provider,
+        "actual_voice": actual_voice,
+        "uniform_restart": uniform_restart,
+        "fallback_used": fallback_used,
+        "fallback_segments": fb_segs_all,
+        "fallback_count": fb_count_total,
+        "total_segments": total_segs,
+    }
+
+
+def _read_recap_voice_outcome(
+    job_dir,
+    *,
+    fallback_outcomes: Optional[list[dict]] = None,
+) -> dict:
+    """Unified reader for actual recap TTS provider/voice execution facts (2B-1).
+
+    Reads ``smart_sync_plan_edge_tts.json`` (also synced in fleet-worker mode)
+    across single-video and segmented multi-part job directories, falling back
+    to any other ``smart_sync_plan*.json`` carrying runtime TTS fields or to
+    in-memory ``fallback_outcomes`` returned by the pipeline.
+    """
+    try:
+        import json as _json
+
+        root = Path(job_dir) if job_dir else None
+        disk_outcomes: list[dict] = []
+        if root is not None and root.is_dir():
+            plan_files = sorted(root.rglob("smart_sync_plan_edge_tts.json"))
+            if not plan_files:
+                plan_files = sorted(root.rglob("smart_sync_plan*.json"))
+            for plan_file in plan_files:
+                try:
+                    data = _json.loads(plan_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                if not any(
+                    k in data
+                    for k in ("tts_provider", "actual_voice", "uniform_restart", "fallback_used")
+                ):
+                    continue
+                segs = list(data.get("fallback_segments") or [])
+                total_segs = int(
+                    data.get("total_segments")
+                    or len(data.get("tts_timing_segments") or [])
+                    or len(data.get("segments") or [])
+                )
+                disk_outcomes.append({
+                    "actual_tts_provider": str(data.get("tts_provider") or "").strip().lower(),
+                    "actual_voice": str(data.get("actual_voice") or "").strip(),
+                    "uniform_restart": bool(data.get("uniform_restart")),
+                    "fallback_used": bool(data.get("fallback_used") or segs),
+                    "fallback_segments": segs,
+                    "fallback_count": len(segs) if segs else (1 if data.get("fallback_used") else 0),
+                    "total_segments": total_segs,
+                })
+        if disk_outcomes:
+            merged = _merge_recap_voice_outcomes(disk_outcomes)
+            if fallback_outcomes:
+                fb_merged = _merge_recap_voice_outcomes(fallback_outcomes)
+                if not merged.get("actual_voice") and fb_merged.get("actual_voice"):
+                    merged["actual_voice"] = fb_merged["actual_voice"]
+                if not merged.get("actual_tts_provider") and fb_merged.get("actual_tts_provider"):
+                    merged["actual_tts_provider"] = fb_merged["actual_tts_provider"]
+                if not merged.get("total_segments") and fb_merged.get("total_segments"):
+                    merged["total_segments"] = fb_merged["total_segments"]
+            return merged
+    except Exception:
+        pass
+    if fallback_outcomes:
+        return _merge_recap_voice_outcomes(fallback_outcomes)
+    return {}
+
+
+def _recap_voice_outcome_from_state(
+    state: Optional[dict],
+    job_dir=None,
+) -> dict:
+    """Resolve persisted actual voice outcome from ``Job.recap_config`` JSON
+    with disk fallback to ``_read_recap_voice_outcome(job_dir)``."""
+    if isinstance(state, dict) and any(
+        state.get(k) is not None
+        for k in ("actual_tts_provider", "actual_voice", "uniform_restart")
+    ):
+        fb_count = int(state.get("fallback_count") or 0)
+        fb_used = bool(state.get("fallback_used") or fb_count > 0)
+        out = {
+            "actual_tts_provider": str(state.get("actual_tts_provider") or "").strip().lower(),
+            "actual_voice": str(state.get("actual_voice") or "").strip(),
+            "uniform_restart": bool(state.get("uniform_restart")),
+            "fallback_used": fb_used,
+            "fallback_count": fb_count,
+            "total_segments": int(state.get("total_segments") or 0),
+        }
+        if job_dir is not None and fb_used:
+            disk_fb, disk_segs = _recap_fallback_info(job_dir)
+            if disk_segs:
+                out["fallback_segments"] = disk_segs
+                if not out["fallback_count"]:
+                    out["fallback_count"] = len(disk_segs)
+        return out
+    if job_dir is not None:
+        return _read_recap_voice_outcome(job_dir)
+    return {}
+
+
 def _recap_fallback_info(job_dir) -> tuple[bool, list]:
     """Read fallback transparency fields written by the recap engine.
 
@@ -8384,6 +8542,10 @@ async def _send_recap_telegram_delivery(
     voice_name: str,
     duration_sec: int,
     job_id: Optional[str] = None,
+    *,
+    voice_note_kind: Optional[str] = None,
+    voice_note_params: Optional[dict] = None,
+    requested_voice: Optional[dict] = None,
 ) -> tuple:
     """Deliver the completed recap VIDEO directly to user's Telegram.
 
@@ -8413,12 +8575,15 @@ async def _send_recap_telegram_delivery(
     # chat_id is the user's Telegram id for direct deliveries; resolve their
     # stored language so delivery buttons/captions are not Myanmar-only.
     lang = "my"
+    _db_job_for_note = None
     try:
         from app.db.session import AsyncSessionLocal
         async with AsyncSessionLocal() as _s:
             _u = await _s.get(User, chat_id)
             if _u and _u.language_code:
                 lang = _u.language_code
+            if job_id and voice_note_kind is None:
+                _db_job_for_note = await _s.get(Job, job_id)
     except Exception:
         lang = "my"
     delivered = False
@@ -8432,22 +8597,58 @@ async def _send_recap_telegram_delivery(
             size_formatted = format_filesize(file_size)
             title = _clean_recap_display_title(title)
 
+            _eff_note_kind = voice_note_kind
+            _eff_note_params = voice_note_params
+            _eff_voice_name = voice_name
+            if _eff_note_kind is None:
+                from app.services.voice_display import resolve_recap_voice_presentation
+
+                _persisted_deliv = _load_persisted_recap_state(_db_job_for_note) if _db_job_for_note is not None else None
+                _cfg_deliv = (_persisted_deliv or {}).get("config") or {}
+                _req_deliv = requested_voice or (
+                    {
+                        "tts_engine": _cfg_deliv.get("tts_engine"),
+                        "gemini_voice": _cfg_deliv.get("gemini_voice"),
+                        "edge_voice": _cfg_deliv.get("edge_voice") or (getattr(_db_job_for_note, "edge_voice", None) if _db_job_for_note is not None else None),
+                        "voice_slug": (getattr(_db_job_for_note, "preset_voice", None) if _db_job_for_note is not None else None) or _cfg_deliv.get("voice_slug"),
+                        "own_voice": bool(
+                            _cfg_deliv.get("voice_ref_path")
+                            or (_db_job_for_note is not None and getattr(_db_job_for_note, "recap_ref_audio_path", None))
+                        ),
+                    }
+                    if (_cfg_deliv or _db_job_for_note is not None)
+                    else None
+                )
+                _job_out_dir = (
+                    settings.storage_root / "recap_output" / job_id
+                    if job_id
+                    else Path(video_path).parent
+                )
+                _disk_out = _recap_voice_outcome_from_state(_persisted_deliv, _job_out_dir)
+                if not _disk_out:
+                    _disk_out = _read_recap_voice_outcome(Path(video_path).parent)
+                if not _disk_out:
+                    _disk_out = _read_recap_voice_outcome(Path(video_path).parent.parent)
+                if _disk_out or _req_deliv:
+                    _deliv_pres = resolve_recap_voice_presentation(
+                        requested=_req_deliv,
+                        actual=_disk_out,
+                    )
+                    if not _eff_voice_name:
+                        _eff_voice_name = _deliv_pres["header_voice"]
+                    _eff_note_kind = _deliv_pres["note_kind"]
+                    _eff_note_params = _deliv_pres["note_params"]
+
             caption = t(
                 "recap_delivery_caption",
                 lang,
                 title=html.escape(title[:60]),
                 style=style,
-                voice_name=voice_name,
+                voice_name=html.escape(str(_eff_voice_name or "")),
                 dur_formatted=dur_formatted,
                 size_formatted=size_formatted,
             )
-            # Fallback transparency (fix 2026-10-29): tell the user when
-            # some narration lines used the backup Edge voice.
-            _fb_used, _fb_segs = _recap_fallback_info(Path(video_path).parent)
-            if not _fb_used:
-                _fb_used, _fb_segs = _recap_fallback_info(Path(video_path).parent.parent)
-            if _fb_used:
-                caption += t("recap_fallback_note", lang, count=len(_fb_segs) or 1)
+            caption += _render_recap_voice_note(lang, _eff_note_kind, _eff_note_params)
 
             parts_available = bool(job_id) and bool(resolve_recap_part_paths(job_id))
             is_segmented = bool(job_id) and bool(
@@ -8598,6 +8799,41 @@ def _format_retention_hours_localized(hours: int, lang: str) -> str:
     return raw
 
 
+def _render_recap_voice_note(
+    lang: str,
+    note_kind: Optional[str],
+    note_params: Optional[dict],
+) -> str:
+    """Render the mutually exclusive recap voice note for *note_kind*."""
+    kind = str(note_kind or "none").strip().lower()
+    params = note_params or {}
+    if kind == "uniform_restart":
+        return t(
+            "recap_uniform_restart_note",
+            lang,
+            provider_name=html.escape(str(params.get("provider_name") or "Edge TTS")),
+            heard_name=html.escape(str(params.get("heard_name") or "")),
+        )
+    if kind == "all_fallback":
+        return t(
+            "recap_fallback_all_note",
+            lang,
+            provider_name=html.escape(str(params.get("provider_name") or "Edge TTS")),
+            heard_name=html.escape(str(params.get("heard_name") or "")),
+        )
+    if kind == "partial_fallback":
+        return t("recap_fallback_note", lang, count=int(params.get("count") or 1))
+    if kind == "gemini_voice_mapped":
+        return t(
+            "recap_voice_name_note",
+            lang,
+            picked_name=html.escape(str(params.get("picked_name") or "")),
+            heard_name=html.escape(str(params.get("heard_name") or "")),
+            engine_name=html.escape(str(params.get("engine_name") or "Gemini")),
+        )
+    return ""
+
+
 def build_recap_completion_message(
     lang: str,
     *,
@@ -8608,11 +8844,13 @@ def build_recap_completion_message(
     retention_hours: int = 24,
     fallback_count: int = 0,
     voice_name_note: Optional[dict] = None,
+    voice_note_kind: Optional[str] = None,
+    voice_note_params: Optional[dict] = None,
     reference_trimmed: bool = False,
     gemini_taste_blocked: bool = False,
     gemini_key_broken: bool = False,
 ) -> str:
-    """Build the compact Recap job-completion bot message (Part F)."""
+    """Build the compact Recap job-completion bot message (Part F + 2B-2)."""
     text = t(
         "recap_notify_text",
         lang,
@@ -8621,7 +8859,19 @@ def build_recap_completion_message(
         duration=_format_delivery_duration(duration_seconds),
         job_id=job_id,
     )
-    if fallback_count > 0:
+    if voice_note_kind == "partial_fallback":
+        fallback_count = int((voice_note_params or {}).get("count") or fallback_count or 1)
+        voice_name_note = None
+    elif voice_note_kind == "gemini_voice_mapped":
+        fallback_count = 0
+        voice_name_note = voice_note_params or voice_name_note
+    elif voice_note_kind in ("uniform_restart", "all_fallback", "none"):
+        fallback_count = 0
+        voice_name_note = None
+
+    if voice_note_kind in ("uniform_restart", "all_fallback"):
+        text += _render_recap_voice_note(lang, voice_note_kind, voice_note_params)
+    elif fallback_count > 0:
         text += t("recap_fallback_note", lang, count=fallback_count)
     elif voice_name_note:
         text += t(
@@ -9376,6 +9626,7 @@ async def _execute_recap_background_job(
         part_urls: list[dict] = []
         first_part_dest: Optional[str] = None
         _cg_outcomes: list[dict] = []
+        _seg_voice_outcomes: list[dict] = []
         _seg_media_records: list[tuple[int, Optional[str], Optional[str], Optional[float]]] = []
         _seg_stage_timings: list[dict] = []
         _seg_api_usage: dict[str, Any] = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "model": ""}
@@ -9415,6 +9666,8 @@ async def _execute_recap_background_job(
                         running_prev_summary = str(seg_res["part_summary"]).strip()
                     if seg_res.get("gemini_route"):
                         _cg_outcomes.append(seg_res["gemini_route"])
+                    if isinstance(seg_res.get("voice_outcome"), dict) and seg_res["voice_outcome"]:
+                        _seg_voice_outcomes.append(seg_res["voice_outcome"])
                     if isinstance(seg_res.get("stage_timings"), dict):
                         _seg_stage_timings.append(seg_res["stage_timings"])
                     _su = seg_res.get("api_usage") or {}
@@ -9480,6 +9733,8 @@ async def _execute_recap_background_job(
             )
             if recap_res.get("gemini_route"):
                 _cg_outcomes.append(recap_res["gemini_route"])
+            if isinstance(recap_res.get("voice_outcome"), dict) and recap_res["voice_outcome"]:
+                _seg_voice_outcomes.append(recap_res["voice_outcome"])
             _su = recap_res.get("api_usage") or {}
             if isinstance(_su, dict):
                 _seg_api_usage["requests"] += int(_su.get("requests") or 0)
@@ -9507,9 +9762,20 @@ async def _execute_recap_background_job(
         ass_path = recap_res.get("subtitles_ass")
         script_path = _build_clean_recap_script_file(job_dir, job_id, req.story_style, srt_path)
 
-        _fb_used, _fb_segs = _recap_fallback_info(job_dir)
+        _voice_outcome = _read_recap_voice_outcome(
+            job_dir, fallback_outcomes=_seg_voice_outcomes
+        )
+        _fb_used = bool(_voice_outcome.get("fallback_used"))
+        _fb_segs = list(_voice_outcome.get("fallback_segments") or [])
+        if not _fb_used and not _voice_outcome:
+            _fb_used, _fb_segs = _recap_fallback_info(job_dir)
         entry["fallback_used"] = _fb_used
         entry["fallback_segments"] = _fb_segs
+        entry["fallback_count"] = int(_voice_outcome.get("fallback_count") or len(_fb_segs))
+        entry["total_segments"] = int(_voice_outcome.get("total_segments") or 0)
+        entry["uniform_restart"] = bool(_voice_outcome.get("uniform_restart"))
+        entry["actual_tts_provider"] = str(_voice_outcome.get("actual_tts_provider") or "")
+        entry["actual_voice"] = str(_voice_outcome.get("actual_voice") or "")
         # Batch BV: the BU auto-trim truth for an own-voice sample,
         # read back from the same plan JSON the fallback fields use.
         entry["reference_trimmed"] = _recap_reference_trimmed(job_dir)
@@ -9786,6 +10052,13 @@ async def _execute_recap_background_job(
                 if "script_ready" in recap_cfg_dict:
                     recap_cfg_dict["script_ready"] = False
                 recap_cfg_dict["partial_delivered"] = bool(_partial_delivered)
+                if _voice_outcome:
+                    recap_cfg_dict["actual_tts_provider"] = str(_voice_outcome.get("actual_tts_provider") or "")
+                    recap_cfg_dict["actual_voice"] = str(_voice_outcome.get("actual_voice") or "")
+                    recap_cfg_dict["uniform_restart"] = bool(_voice_outcome.get("uniform_restart"))
+                    recap_cfg_dict["fallback_used"] = bool(_voice_outcome.get("fallback_used"))
+                    recap_cfg_dict["fallback_count"] = int(_voice_outcome.get("fallback_count") or 0)
+                    recap_cfg_dict["total_segments"] = int(_voice_outcome.get("total_segments") or 0)
 
                 _succ_values = {
                     "result_path": db_video_path,
@@ -9874,7 +10147,23 @@ async def _execute_recap_background_job(
                             input_tokens=_seg_api_usage["input_tokens"],
                             output_tokens=_seg_api_usage["output_tokens"],
                         )
-                    if tts_engine == "gemini":
+                    _tel_provider = str(
+                        _voice_outcome.get("actual_tts_provider") or tts_engine or ""
+                    ).strip().lower()
+                    _tel_all_fb = bool(
+                        _voice_outcome.get("fallback_used")
+                        and int(_voice_outcome.get("total_segments") or 0) > 0
+                        and int(_voice_outcome.get("fallback_count") or 0) >= int(_voice_outcome.get("total_segments") or 0)
+                    )
+                    if _tel_provider == "subtitle_only":
+                        pass
+                    elif _tel_provider in ("gemini", "gemini+persona_fallback") and not _tel_all_fb:
+                        from app.services.recap_engine.gemini_tts_engine import (
+                            TTS_MODELS as _GEM_TTS_MODELS,
+                            _effective_tts_models as _eff_gem_tts_models,
+                        )
+
+                        _gem_tts_model = (_eff_gem_tts_models() or _GEM_TTS_MODELS)[0]
                         _pool_tts_reqs = sum(int(o.get("pool_requests") or 0) for o in _cg_outcomes)
                         _own_only = bool(_cg_outcomes and _pool_tts_reqs == 0 and not entry.get("gemini_taste_blocked"))
                         await record_cost_telemetry(
@@ -9882,13 +10171,13 @@ async def _execute_recap_background_job(
                             job_id=job_id,
                             user_id=user_id,
                             provider="gemini_tts",
-                            model_name="gemini-2.5-flash-preview-tts",
+                            model_name=_gem_tts_model,
                             is_own_key=_own_only,
                             requests_count=max(1, len(_seg_media_records)),
                             audio_seconds=float(_real_seconds or 0.0),
                             runtime_seconds=float(_total_tts_runtime),
                         )
-                    elif tts_engine == "voxcpm" and not _fb_used and _actual_voice_seconds > 0:
+                    elif _tel_provider in ("voxcpm", "voxcpm+edge_fallback") and not _tel_all_fb and _actual_voice_seconds > 0:
                         await record_cost_telemetry(
                             session,
                             job_id=job_id,
@@ -9899,7 +10188,7 @@ async def _execute_recap_background_job(
                             audio_seconds=float(_actual_voice_seconds),
                             runtime_seconds=float(_total_tts_runtime),
                         )
-                    elif tts_engine in ("edge", "gemini") or _fb_used:
+                    elif _tel_provider in ("edge", "edge_tts", "gemini+persona_fallback", "voxcpm+edge_fallback") or _fb_used:
                         await record_cost_telemetry(
                             session,
                             job_id=job_id,
@@ -9958,10 +10247,7 @@ async def _execute_recap_background_job(
                 from aiogram import Bot
                 from aiogram.client.default import DefaultBotProperties
                 from aiogram.enums import ParseMode
-                from app.services.voice_display import (
-                    recap_voice_display_name,
-                    recap_voice_name_note_params,
-                )
+                from app.services.voice_display import resolve_recap_voice_presentation
 
                 app_url = settings.mini_app_url
                 clean_title = _clean_recap_display_title(entry.get("title"), req.url)
@@ -9991,22 +10277,17 @@ async def _execute_recap_background_job(
                     has_srt=has_srt,
                     has_script=has_script,
                 )
-                heard_voice = recap_voice_display_name(
-                    tts_engine,
-                    gemini_voice,
-                    req.voice_slug,
-                    own_voice=bool(getattr(req, "voice_ref_path", None)),
+                _voice_pres = resolve_recap_voice_presentation(
+                    requested={
+                        "tts_engine": tts_engine,
+                        "gemini_voice": req.gemini_voice,
+                        "edge_voice": getattr(req, "edge_voice", None),
+                        "voice_slug": req.voice_slug,
+                        "own_voice": bool(getattr(req, "voice_ref_path", None)),
+                    },
+                    actual=_voice_outcome,
                 )
-                fb_count = (
-                    (len(entry.get("fallback_segments") or []) or 1)
-                    if entry.get("fallback_used")
-                    else 0
-                )
-                v_note = (
-                    None
-                    if fb_count > 0
-                    else recap_voice_name_note_params(tts_engine, gemini_voice, req.voice_slug)
-                )
+                heard_voice = _voice_pres["header_voice"]
                 notify_dur = _real_seconds if _real_seconds and _real_seconds > 0 else req.duration_seconds
                 notify_text = build_recap_completion_message(
                     _recap_notify_lang,
@@ -10015,8 +10296,8 @@ async def _execute_recap_background_job(
                     duration_seconds=notify_dur,
                     job_id=job_id,
                     retention_hours=_media_retention_days() * 24,
-                    fallback_count=fb_count,
-                    voice_name_note=v_note,
+                    voice_note_kind=_voice_pres["note_kind"],
+                    voice_note_params=_voice_pres["note_params"],
                     reference_trimmed=bool(entry.get("reference_trimmed")),
                     gemini_taste_blocked=bool(entry.get("gemini_taste_blocked")),
                     gemini_key_broken=bool(entry.get("gemini_key_broken")),
@@ -12110,20 +12391,28 @@ async def send_recap_to_telegram(
     # A Gemini-engine job is voiced by its Gemini voice, not by the
     # persona slug stored on the row — the engine/voice live in the
     # persisted recap_config on the same row.
-    from app.services.voice_display import recap_voice_display_name
+    from app.services.voice_display import resolve_recap_voice_presentation
 
-    _cfg = (_load_persisted_recap_state(db_job) or {}).get("config", {}) if db_job else {}
-    voice_label = recap_voice_display_name(
-        _cfg.get("tts_engine"),
-        _cfg.get("gemini_voice"),
-        db_job.preset_voice if db_job else None,
-        # Batch BV: the persisted config's resolved ref marks an
-        # own-voice job (the row column carries the same truth).
-        own_voice=bool(
+    _persisted_state = _load_persisted_recap_state(db_job) or {} if db_job else {}
+    _cfg = _persisted_state.get("config") or {}
+    _actual_outcome = _recap_voice_outcome_from_state(
+        _persisted_state, settings.storage_root / "recap_output" / job_id
+    )
+    _req_voice = {
+        "tts_engine": _cfg.get("tts_engine"),
+        "gemini_voice": _cfg.get("gemini_voice"),
+        "edge_voice": _cfg.get("edge_voice") or (getattr(db_job, "edge_voice", None) if db_job else None),
+        "voice_slug": db_job.preset_voice if db_job else _cfg.get("voice_slug"),
+        "own_voice": bool(
             _cfg.get("voice_ref_path")
             or (db_job is not None and getattr(db_job, "recap_ref_audio_path", None))
         ),
-    ) or "Smart Sync AI"
+    }
+    _voice_pres = resolve_recap_voice_presentation(
+        requested=_req_voice,
+        actual=_actual_outcome,
+    )
+    voice_label = _voice_pres["header_voice"] or "Smart Sync AI"
 
     delivered, fail_reason = await _send_recap_telegram_delivery(
         chat_id=user.id,
@@ -12550,17 +12839,24 @@ def check_job_file_exists(job_id: str, is_recap: bool, result_path: Optional[str
         return False
 
 
-def _job_display_names(job, *, is_recap: bool, is_tts: bool):
-    """(voice_display, engine_display) for the job serializers (Batch BX).
+def _job_display_names(
+    job,
+    *,
+    is_recap: bool,
+    is_tts: bool,
+    voice_outcome: Optional[dict] = None,
+):
+    """(voice_display, engine_display) for the job serializers (Batch BX + 2B-2).
 
     Additive display fields — the raw ``preset_voice`` stays untouched:
     * TTS rows get the friendly voice + engine names (the raw values
       are engine ids users should never see: "Charon",
       "my-MM-ThihaNeural").
-    * Own-voice recap rows (Batch BV: ``recap_ref_audio_path`` set)
-      get the own-voice label in BOTH the admin queue and user
-      History — before BX these rows fell back to the job's default
-      persona slug ("komin") in the admin list.
+    * Recap rows carrying a persisted ``recap_config`` or actual ``voice_outcome``
+      resolve through :func:`resolve_recap_voice_presentation` so History and
+      admin views display the ACTUAL provider + voice heard (covering uniform
+      restarts, 100% fallbacks, and all 8 Round-13 Edge voices).
+    * Own-voice recap rows without a persisted config keep the own-voice label.
     Everything else returns (None, None) and the client keeps its
     existing rendering.
     """
@@ -12575,10 +12871,31 @@ def _job_display_names(job, *, is_recap: bool, is_tts: bool):
             tts_voice_display_name(engine, job.preset_voice) or None,
             tts_engine_display_name(engine) or None,
         )
-    if is_recap and getattr(job, "recap_ref_audio_path", None):
-        from app.services.voice_display import own_voice_display_name
+    if is_recap:
+        _persisted = _load_persisted_recap_state(job) if getattr(job, "recap_config", None) else None
+        _cfg = (_persisted or {}).get("config") or {}
+        _act = voice_outcome if voice_outcome is not None else _recap_voice_outcome_from_state(_persisted)
+        if _act or _cfg:
+            from app.services.voice_display import resolve_recap_voice_presentation
 
-        return own_voice_display_name(), None
+            _pres = resolve_recap_voice_presentation(
+                requested={
+                    "tts_engine": _cfg.get("tts_engine"),
+                    "gemini_voice": _cfg.get("gemini_voice"),
+                    "edge_voice": _cfg.get("edge_voice") or getattr(job, "edge_voice", None),
+                    "voice_slug": getattr(job, "preset_voice", None) or _cfg.get("voice_slug"),
+                    "own_voice": bool(
+                        _cfg.get("voice_ref_path")
+                        or getattr(job, "recap_ref_audio_path", None)
+                    ),
+                },
+                actual=_act,
+            )
+            return (_pres["header_voice"] or None, _pres["provider_label"] or None)
+        if getattr(job, "recap_ref_audio_path", None):
+            from app.services.voice_display import own_voice_display_name
+
+            return own_voice_display_name(), None
     return None, None
 
 
@@ -12693,21 +13010,22 @@ async def get_user_history(
         _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None
         _hist_parts = ((_hist_entry or {}).get("parts") or []) if is_recap else []
         _ref_trimmed = False  # Batch BU: set for voice jobs in the else-branch below
+        # Batch K: the persisted recap state is also the cold-path
+        # source for the receipt fields and actual voice outcome.
+        _hist_state = _load_persisted_recap_state(j) if is_recap else None
+        _hist_outcome: dict = {}
+        _hist_voice_pres: Optional[dict] = None
         if is_recap:
-            # Recap fallback truth lives in the engine's plan JSON on
-            # disk — the same source the recap status endpoint reads.
-            # The Job row's engine column only records the VOICE
-            # fallback, so deriving recap fallback_used from it claimed
-            # False for jobs whose completion toast had disclosed Edge
-            # segments (round-3 U4). Only completed jobs have a final
-            # plan; anything else honestly reports no fallback yet.
             if j.status == JobStatus.SUCCESS.value:
-                _fb_used, _fb_segs = _recap_fallback_info(
-                    settings.storage_root / "recap_output" / j.id
+                _hist_outcome = _recap_voice_outcome_from_state(
+                    _hist_state, settings.storage_root / "recap_output" / j.id
                 )
-                # Batch BV: for recap jobs the BU trim truth lives
-                # in the plan JSON (the row's reference_trimmed
-                # column is a voice-job flag).
+                _fb_used = bool(_hist_outcome.get("fallback_used"))
+                _fb_segs = list(_hist_outcome.get("fallback_segments") or [])
+                if not _fb_used and not _hist_outcome:
+                    _fb_used, _fb_segs = _recap_fallback_info(
+                        settings.storage_root / "recap_output" / j.id
+                    )
                 _ref_trimmed = _recap_reference_trimmed(
                     settings.storage_root / "recap_output" / j.id
                 )
@@ -12720,14 +13038,8 @@ async def get_user_history(
             _ref_trimmed = bool(getattr(j, "reference_trimmed", False))
         # R40 item 13: surface the persisted recap settings so the
         # history detail can show WHAT the job was made with (engine,
-        # Gemini voice, subtitle position/style) — previously a user
-        # (or support) could not tell why a render looked the way it
-        # did (see the 2026-11-02 complaint diagnosis).
+        # Gemini voice, subtitle position/style).
         _recap_settings = None
-        # Batch K: the persisted recap state is also the cold-path
-        # source for the receipt fields below (charged credits +
-        # refund state); the live registry entry wins while hot.
-        _hist_state = _load_persisted_recap_state(j) if is_recap else None
         if is_recap:
             try:
                 _cfg = (_hist_state or {}).get("config") or {}
@@ -12735,6 +13047,7 @@ async def get_user_history(
                     _recap_settings = {
                         "engine": _cfg.get("tts_engine"),
                         "gemini_voice": _cfg.get("gemini_voice"),
+                        "edge_voice": _cfg.get("edge_voice"),
                         "voice": _cfg.get("voice_slug"),
                         "story_style": _cfg.get("story_style"),
                         "sub_y": _cfg.get("sub_y"),
@@ -12743,6 +13056,22 @@ async def get_user_history(
                         "sub_style": _cfg.get("sub_style"),
                         "sub_font": _cfg.get("sub_font"),
                     }
+                if _hist_outcome or _cfg:
+                    from app.services.voice_display import resolve_recap_voice_presentation
+
+                    _hist_voice_pres = resolve_recap_voice_presentation(
+                        requested={
+                            "tts_engine": _cfg.get("tts_engine"),
+                            "gemini_voice": _cfg.get("gemini_voice"),
+                            "edge_voice": _cfg.get("edge_voice") or getattr(j, "edge_voice", None),
+                            "voice_slug": getattr(j, "preset_voice", None) or _cfg.get("voice_slug"),
+                            "own_voice": bool(
+                                _cfg.get("voice_ref_path")
+                                or getattr(j, "recap_ref_audio_path", None)
+                            ),
+                        },
+                        actual=_hist_outcome,
+                    )
             except Exception:
                 _recap_settings = None
         # Batch L: the full rebuildable config rides along so the
@@ -12828,6 +13157,11 @@ async def get_user_history(
             ) if is_recap else None,
             "fallback_used": _fb_used,
             "fallback_segments": _fb_segs,
+            "uniform_restart": bool(_hist_outcome.get("uniform_restart")) if is_recap else False,
+            "actual_tts_provider": (_hist_voice_pres or {}).get("actual_provider") if is_recap else None,
+            "actual_voice": (_hist_voice_pres or {}).get("actual_voice") if is_recap else None,
+            "voice_note_kind": (_hist_voice_pres or {}).get("note_kind") if is_recap else None,
+            "voice_note_params": (_hist_voice_pres or {}).get("note_params") if is_recap else None,
             "reference_trimmed": _ref_trimmed,
             # Batch BV: the job narrated from the user's own uploaded
             # sample (row column; the live registry entry covers a
@@ -12840,10 +13174,10 @@ async def get_user_history(
                 )
             ),
             "preset_voice": j.preset_voice or ("Thiha" if is_recap else "Standard"),
-            # Batch BX: friendly display names beside the raw value
-            # (TTS engine/voice; own-voice recap label).
-            "voice_display": _job_display_names(j, is_recap=is_recap, is_tts=is_tts)[0],
-            "engine_display": _job_display_names(j, is_recap=is_recap, is_tts=is_tts)[1],
+            # Batch BX + 2B-2: friendly display names beside the raw value
+            # (TTS engine/voice; recap actual provider/voice via canonical resolver).
+            "voice_display": _job_display_names(j, is_recap=is_recap, is_tts=is_tts, voice_outcome=_hist_outcome if is_recap else None)[0],
+            "engine_display": _job_display_names(j, is_recap=is_recap, is_tts=is_tts, voice_outcome=_hist_outcome if is_recap else None)[1],
             "status": j.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
             "created_at": _cat.isoformat() if _cat else None,

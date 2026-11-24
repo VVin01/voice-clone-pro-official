@@ -432,12 +432,11 @@ def test_completion_name_edge_and_voxcpm_unchanged():
 
 
 def test_completion_notify_uses_heard_voice_resolver():
-    # Batch BV deliberate pin update: the notify still resolves
-    # through the heard-voice resolver with the same first three
-    # arguments; BV adds the own_voice flag as a fourth (the call is
-    # formatted one-argument-per-line).
-    assert "recap_voice_display_name(" in API_SRC
-    assert 'own_voice=bool(getattr(req, "voice_ref_path", None))' in API_SRC
+    # Design 2B-2 pin update: delivery surfaces now resolve actual heard voice
+    # + note through the single canonical resolve_recap_voice_presentation(),
+    # passing the own_voice flag in requested={...}.
+    assert "resolve_recap_voice_presentation(" in API_SRC
+    assert '"own_voice": bool(getattr(req, "voice_ref_path", None))' in API_SRC
     # The picked-name completion resolver is no longer referenced by
     # the webapp API at all (Batch BK reversal).
     assert "recap_completion_voice_display_name" not in API_SRC

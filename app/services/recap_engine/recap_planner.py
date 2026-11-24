@@ -90,6 +90,17 @@ except Exception:  # pragma: no cover - standalone load without SQLAlchemy/FastA
 MEASURED_CHARS_PER_SECOND: float = float(_MEASURED_CPS)
 DEFAULT_SPEED: str = str(getattr(_speed_mod, "DEFAULT_SPEED", "+12%") or "+12%")
 DEFAULT_MAX_VIDEO_SLOW: float = 1.20
+# Matches trim_edge_silence retained breath (keep_lead=0.08 + keep_tail=0.22 in core.py).
+RETAINED_BREATH_SECONDS: float = 0.30
+# Hard post-tempo ceiling (est_raw / tempo <= window * 1.35): segments between
+# DEFAULT_MAX_VIDEO_SLOW (1.20) and this ceiling may ship; above it fails loudly.
+HARD_MAX_VIDEO_SLOW_CEILING: float = 1.35
+
+
+class DurationBudgetExceededError(RuntimeError):
+    """Raised when one or more segments still exceed HARD_MAX_VIDEO_SLOW_CEILING
+    after all duration-budget compression rounds, so the job fails and refunds
+    instead of shipping an un-fittable plan."""
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int, str], None]
@@ -1355,6 +1366,28 @@ def _source_lines(items: list[dict[str, Any]]) -> str:
     )
 
 
+def _source_lines_with_budget(
+    items: list[dict[str, Any]],
+    *,
+    voice_speed: str | float | None = DEFAULT_SPEED,
+    max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
+) -> str:
+    lines: list[str] = []
+    for x in items:
+        raw_budget = segment_raw_duration_budget(
+            x, voice_speed=voice_speed, max_video_slow=max_video_slow
+        )
+        if raw_budget is not None and raw_budget > 0.0:
+            max_chars = max(1, int(math.floor(raw_budget * MEASURED_CHARS_PER_SECOND)))
+            lines.append(
+                f"[ID {int(x['id']):05d}] [{x['timestamp']}] [MAX_SPOKEN_CHARS={max_chars}] "
+                f"{_clean(x['source_text'])}"
+            )
+        else:
+            lines.append(f"[ID {int(x['id']):05d}] [{x['timestamp']}] {_clean(x['source_text'])}")
+    return "\n".join(lines)
+
+
 def _translation_lines(items: list[dict[str, Any]]) -> str:
     return "\n".join(
         f"[ID {int(x['id']):05d}] [{x['timestamp']}] SOURCE: {_clean(x['source_text'])}\n"
@@ -1918,6 +1951,8 @@ def translate_batch(
     part_index: int = 1,
     total_parts: int = 1,
     prev_part_summary: str = "",
+    voice_speed: str | float | None = DEFAULT_SPEED,
+    max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
 ) -> list[dict[str, Any]]:
     v2 = _is_v2_prompts()
     style = str(narrative_style or "viral").lower().strip()
@@ -2037,12 +2072,23 @@ def translate_batch(
 - Use fluent colloquial spoken Burmese (စကားပြောဟန်) popular on top movie recap channels.{style_addon}
 - STRICTLY PROHIBITED: Bookish SENTENCE ENDINGS. NEVER end sentences with formal bookish particles like 'သည်'၊ 'သဖြင့်'၊ 'ပေသည်'၊ 'ခဲ့ပေသည်'၊ 'လျက်ရှိသည်'။ ALWAYS use natural conversational endings like 'တယ်'၊ 'ခဲ့တယ်'၊ 'နေတာ'၊ 'သွားတယ်'၊ 'လိုက်ပါတယ်'။"""
 
+    eff_speed = DEFAULT_SPEED if voice_speed is None else voice_speed
+    eff_slow = DEFAULT_MAX_VIDEO_SLOW if max_video_slow is None else max(1.0, float(max_video_slow))
+    eff_tempo = _resolve_tempo(eff_speed)
+    budget_note = (
+        f"\n   HARD PER-SEGMENT CHAR CAP (@ tempo {eff_tempo:.2f}x, slow_cap {eff_slow:.2f}x): "
+        "Each CURRENT item carries `[MAX_SPOKEN_CHARS=N]`. Keep EVERY item's spoken Burmese "
+        "length strictly <= its own `MAX_SPOKEN_CHARS` on the first pass so the narration stays "
+        "in sync with its visual window without dragging the scene."
+    )
     density_rule = (
         "4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 12.5 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!\n"
         "   DENSITY TARGET (EVERY STYLE): Write cleanly inside that band (~11 to 12.5 Burmese syllables per second of window) so the delivered narration runs ≈16–18.5 characters per second (aligned with natural 17.6 chars/s speech) with no dead air and zero rushing. Reach that density with real story content only — repeating an already-narrated fact as filler is FORBIDDEN — and never go past the top of the band: the spoken-duration budget always wins over density."
+        f"{budget_note}"
         if v2
         else "4. TIMING & LENGTH BALANCE: Look at each item's `[start --> end]` duration window. Write a concise, natural spoken Burmese sentence that fits comfortably within that duration (~10 to 14 Burmese syllables per second of window duration) so the TTS voice speaks at a natural, crisp pace without rushing or dragging the scene!\n"
         "   DENSITY TARGET (EVERY STYLE): Write to the TOP of that band (~14 syllables per second of window) so the delivered narration runs ≈19–22 characters per second with no dead air. Reach that density with real story content only — repeating an already-narrated fact as filler is FORBIDDEN — and never go past the top of the band: the spoken-duration budget always wins over density."
+        f"{budget_note}"
     )
 
     task_rules = f"""
@@ -2142,8 +2188,8 @@ STORY CONTEXT MEMORY:
 {prev_header}
 {prev_block}
 
-CURRENT ITEMS — CONVERT ALL OF THESE, ONE-FOR-ONE:
-{_source_lines(current)}
+CURRENT ITEMS — CONVERT ALL OF THESE, ONE-FOR-ONE (keep each translation <= its MAX_SPOKEN_CHARS):
+{_source_lines_with_budget(current, voice_speed=eff_speed, max_video_slow=eff_slow)}
 
 NEXT CONTEXT (READ-ONLY LOOK-AHEAD):
 {_source_lines(next_context) if next_context else '(none)'}
@@ -2258,6 +2304,8 @@ CRITICAL OUTPUT ID PROTOCOL:
             narrative_style=narrative_style,
             is_female=is_female,
             _split_depth=_split_depth + 1,
+            voice_speed=eff_speed,
+            max_video_slow=eff_slow,
             **_split_part_kw,
         )
         right_prev = (list(previous_context or []) + translated_left)[-context_limit:]
@@ -2272,6 +2320,8 @@ CRITICAL OUTPUT ID PROTOCOL:
             narrative_style=narrative_style,
             is_female=is_female,
             _split_depth=_split_depth + 1,
+            voice_speed=eff_speed,
+            max_video_slow=eff_slow,
             **_split_part_kw,
         )
         combined = translated_left + translated_right
@@ -2354,14 +2404,23 @@ def segment_raw_duration_budget(
     *,
     voice_speed: str | float | None = DEFAULT_SPEED,
     max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
+    retained_breath_seconds: float = RETAINED_BREATH_SECONDS,
 ) -> float | None:
-    """Max raw (pre-tempo) TTS seconds allowed so post-tempo <= window * max_video_slow."""
+    """Max raw (pre-tempo) TTS seconds allowed so post-tempo + retained breath <= window * max_video_slow.
+
+    Subtracts ``retained_breath_seconds`` (default 0.30s, matching ``trim_edge_silence``
+    keep_lead=0.08 + keep_tail=0.22 in core.py) floored safely at 50% of the visual
+    cap so ultra-short windows never go negative.
+    """
     window = segment_window_seconds(row)
     if window is None or window <= 0.0:
         return None
     slow_cap = max(1.0, float(max_video_slow))
     tempo = _resolve_tempo(voice_speed)
-    return window * slow_cap * tempo
+    breath = max(0.0, float(retained_breath_seconds or 0.0))
+    delivered_cap = window * slow_cap
+    speech_delivered_budget = max(delivered_cap * 0.5, delivered_cap - breath)
+    return speech_delivered_budget * tempo
 
 
 def _overbudget_rows(
@@ -2459,6 +2518,13 @@ def _build_compression_prompt(
     if str(style or "").strip().lower() == "pov":
         pov_pron = "ကျွန်မ" if is_female else "ကျွန်တော်"
         gender_rule += f" POV style: strictly maintain first-person pronoun '{pov_pron}' and never switch to opposite-gender or third-person framing."
+    strict_final_rule = (
+        "\n- FINAL STRICT COMPRESSION ROUND: These stubborn IDs are still over budget after earlier rounds. "
+        "Cut aggressively — drop secondary adjectives, filler connectives, and subordinate padding — keeping ONLY "
+        "the essential plot action/subject so EVERY item is strictly <= MAX_SPOKEN_CHARS, otherwise this job will abort."
+        if round_idx >= 3
+        else ""
+    )
     return f"""You are an EXPERT BURMESE MOVIE RECAP EDITOR (Compression Round {round_idx}).
 Compress ONLY the listed over-budget CURRENT IDs into concise spoken Burmese ({style.upper()} style) so each segment fits its spoken-duration budget.
 
@@ -2467,7 +2533,7 @@ STRICT RULES:
 - Copy each ID in exact sequence: {exact_ids_json}. NEVER drop, merge, skip, or renumber any ID.
 - EVERY item MUST satisfy len(translation) <= MAX_SPOKEN_CHARS (strictly shorter than CURRENT).
 - Preserve the core meaning, character names, numbers, and key plot/action facts of each segment.
-- Cut redundant connectives, repetitive modifiers, and conversational padding — write crisp, vivid spoken Burmese (no bookish 'သည်'/'သဖြင့်', no English/Latin words, Burmese numerals only, standard 'အဲဒီ', never '-တကြီး').
+- Cut redundant connectives, repetitive modifiers, and conversational padding — write crisp, vivid spoken Burmese (no bookish 'သည်'/'သဖြင့်', no English/Latin words, Burmese numerals only, standard 'အဲဒီ', never '-တကြီး').{strict_final_rule}
 - {gender_rule}
 
 STORY CONTEXT:
@@ -2545,7 +2611,8 @@ def _compress_overbudget_rows(
     is_female: bool = False,
     voice_speed: str | float | None = DEFAULT_SPEED,
     max_video_slow: float = DEFAULT_MAX_VIDEO_SLOW,
-    max_rounds: int = 2,
+    max_rounds: int = 3,
+    hard_max_video_slow: float = HARD_MAX_VIDEO_SLOW_CEILING,
 ) -> list[dict[str, Any]]:
     """Compress over-budget rows before synthesis while keeping within-budget rows byte-identical."""
     initial_over = _overbudget_rows(
@@ -2607,6 +2674,32 @@ def _compress_overbudget_rows(
 
     _assert_speakable_translation_items(working)
     remaining = _overbudget_rows(working, voice_speed=voice_speed, max_video_slow=slow_cap)
+    hard_ceiling = max(slow_cap, float(hard_max_video_slow))
+    hard_over: list[dict[str, Any]] = []
+    for row in working:
+        window = segment_window_seconds(row)
+        if window is None or window <= 0.0:
+            continue
+        est_post = estimate_raw_speech_seconds(row.get("translation", "")) / tempo
+        if est_post > window * hard_ceiling + 1e-6:
+            hard_over.append({
+                "id": int(row["id"]),
+                "window_seconds": window,
+                "est_post_seconds": est_post,
+                "ceiling_seconds": window * hard_ceiling,
+                "ratio": est_post / window,
+            })
+    if hard_over:
+        hard_desc = ", ".join(
+            f"ID {x['id']}({x['est_post_seconds']:.2f}s>{x['ceiling_seconds']:.2f}s [{x['ratio']:.2f}x])"
+            for x in hard_over[:5]
+        )
+        msg = (
+            f"Duration budget exceeded hard ceiling ({hard_ceiling:.2f}x @ tempo {tempo:.2f}x) "
+            f"after {max_rounds} compression round(s) for {len(hard_over)} segment(s): {hard_desc}"
+        )
+        log(f"❌ {msg}")
+        raise DurationBudgetExceededError(msg)
     if compressed_ids and not remaining:
         log(
             f"✂️ Duration budget compressed {len(compressed_ids)} segment(s) within cap "
@@ -2618,8 +2711,9 @@ def _compress_overbudget_rows(
             for x in remaining[:5]
         )
         log(
-            f"⚠️ Duration budget: {len(remaining)} segment(s) remain over raw budget "
-            f"after {max_rounds} compression round(s): {over_desc}"
+            f"⚠️ Duration budget: {len(remaining)} segment(s) remain between {slow_cap:.2f}x target "
+            f"and {hard_ceiling:.2f}x hard ceiling after {max_rounds} round(s) — shipping within "
+            f"renderer absorption bound: {over_desc}"
         )
     return working
 
@@ -3169,6 +3263,14 @@ def translate_batches_in_parallel(
         if (int(total_parts or 1) > 1 or int(part_index or 1) > 1 or bool(prev_part_summary))
         else {}
     )
+    _budget_kw = (
+        {
+            "voice_speed": DEFAULT_SPEED if voice_speed is None else voice_speed,
+            "max_video_slow": DEFAULT_MAX_VIDEO_SLOW if max_video_slow is None else max(1.0, float(max_video_slow)),
+        }
+        if (voice_speed is not None or max_video_slow is not None)
+        else {}
+    )
 
     def _task(pos: int, bi: int) -> None:
         batch = batches[bi]
@@ -3193,6 +3295,7 @@ def translate_batches_in_parallel(
                 narrative_style=narrative_style,
                 is_female=is_female,
                 previous_context_is_source=prev_is_source,
+                **_budget_kw,
                 **_part_kw,
             )
         except BaseException as exc:
@@ -3339,6 +3442,8 @@ class RecapPlanBuilder:
             f"tempo:{_resolve_tempo(self.voice_speed):.4f}"
             f"|slow:{self.max_video_slow:.4f}"
             f"|cps:{MEASURED_CHARS_PER_SECOND:.2f}"
+            f"|breath:{RETAINED_BREATH_SECONDS:.2f}"
+            f"|hard:{HARD_MAX_VIDEO_SLOW_CEILING:.2f}"
         )
 
     def _validate_runtime(self) -> None:
@@ -3789,6 +3894,8 @@ class RecapPlanBuilder:
                             log=self.log,
                             narrative_style=self.narrative_style,
                             is_female=self.is_female,
+                            voice_speed=self.voice_speed,
+                            max_video_slow=self.max_video_slow,
                             **part_kw,
                         )
                     except GeminiKeyPoolExhaustedError as exc:

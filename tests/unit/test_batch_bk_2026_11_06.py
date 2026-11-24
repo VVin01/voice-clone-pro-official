@@ -136,5 +136,6 @@ def test_notify_wiring_fallback_note_excludes_name_note():
     elif_branch = span.index("elif voice_name_note:", fallback_note)
     name_note = span.index('"recap_voice_name_note"')
     assert fallback_if < fallback_note < elif_branch < name_note
-    # Call site computes voice_name_note via recap_voice_name_note_params.
-    assert "recap_voice_name_note_params(" in API_SRC
+    # Call site routes voice display + note state through the canonical resolver
+    # (Design 2B-2), which delegates to recap_voice_name_note_params inside voice_display.py.
+    assert "resolve_recap_voice_presentation(" in API_SRC

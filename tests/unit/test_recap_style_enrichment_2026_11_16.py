@@ -58,7 +58,9 @@ def _prompt(monkeypatch, style, *, is_female=False, part_index=1, total_parts=1)
 def _audit_prompt(monkeypatch, style):
     captured = {}
     rows = [
-        {"id": r["id"], "timestamp": r["timestamp"], "source_text": r["source_text"], "translation": SENTENCES[i]}
+        {"id": r["id"], "timestamp": r["timestamp"],
+         "video_start": i * 4.0, "video_end": (i + 1) * 4.0,
+         "source_text": r["source_text"], "translation": SENTENCES[i]}
         for i, r in enumerate(CURRENT)
     ]
 

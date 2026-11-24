@@ -47,9 +47,10 @@ def test_segment_window_and_raw_budget_math():
     assert planner.segment_window_seconds(row_speech) == pytest.approx(5.0)
     assert planner.segment_window_seconds(row_ts) == pytest.approx(5.5)
 
-    # At +20% (tempo 1.20) with max_video_slow 1.20: raw budget = 31 * 1.20 * 1.20 = 44.64 s
+    # At +20% (tempo 1.20) with max_video_slow 1.20 and 0.30s retained breath (1B-3):
+    # raw budget = (31 * 1.20 - 0.30) * 1.20 = 44.28 s
     raw_budget = planner.segment_raw_duration_budget(row_video, voice_speed="+20%", max_video_slow=1.20)
-    assert raw_budget == pytest.approx(44.64)
+    assert raw_budget == pytest.approx(44.28)
 
 
 def test_real_incident_31s_overbudget_is_compressed_and_rechecked(monkeypatch):

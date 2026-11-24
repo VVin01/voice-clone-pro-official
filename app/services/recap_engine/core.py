@@ -95,6 +95,16 @@ class RecapParkRequested(Exception):
     its charge held — never a failure, never a refund trigger."""
 
 
+SYNC_DRIFT_TOLERANCE_SECONDS: float = 0.30
+
+
+class SyncDriftError(RuntimeError):
+    """Raised when concatenated or final muxed video drifts from narration
+    beyond SYNC_DRIFT_TOLERANCE_SECONDS, or video part assembly violates
+    the 1-to-1 segment invariant. Fails loudly so the job refunds instead
+    of shipping mismatched scenes or silently truncating footage."""
+
+
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -8384,30 +8394,43 @@ class EdgeSmartSync:
                 pass
         return {"version": 1, "audio": {}, "video": {}}
 
-    def _log_sync_check(self, paths: "PipelinePaths", segments: list[dict[str, Any]], checkpoint: dict[str, Any]) -> None:
-        """Automatic, language-independent sync report written to the run log.
+    def _log_sync_check(
+        self,
+        paths: "PipelinePaths",
+        segments: list[dict[str, Any]],
+        checkpoint: dict[str, Any],
+        *,
+        tolerance: float = SYNC_DRIFT_TOLERANCE_SECONDS,
+    ) -> tuple[float, float, float]:
+        """Hard post-concat sync-invariant gate written to the run log.
 
         Narration is the clock; every video part is frame-locked to it. So if the
-        concatenated picture and the narration track have the same length, every
-        segment starts on its own narration line. Speed-capped/trimmed segments are
-        listed only for information: trimming shortens footage, not the timeline.
+        concatenated picture and the narration track have the same length (within
+        ``tolerance``), every segment starts on its own narration line. Drift beyond
+        ``tolerance`` raises ``SyncDriftError`` BEFORE overlays or ``-shortest`` mux
+        so mismatched footage is never silently truncated and shipped.
         """
-        try:
-            video_len = probe_duration(self.ffprobe, paths.synced_video_noaudio)
-            audio_len = probe_duration(self.ffprobe, paths.voice)
-            diff = video_len - audio_len
-            trimmed = 0
-            for seg in segments:
-                sync = ((checkpoint.get("video") or {}).get(segment_basename(seg)) or {}).get("sync") or {}
-                if float(sync.get("applied_factor", 0.0) or 0.0) > float(sync.get("desired_factor", 0.0) or 0.0) + 1e-6:
-                    trimmed += 1
-            status = "✅ SYNC OK" if abs(diff) <= 0.1 else "⚠️ SYNC DRIFT"
-            self.log(
-                f"{status}: picture={video_len:.2f}s · narration={audio_len:.2f}s · diff={diff:+.3f}s "
-                f"| {len(segments)} segments, {trimmed} speed-capped ({self.max_video_speed:g}x) + footage trimmed"
+        video_len = probe_duration(self.ffprobe, paths.synced_video_noaudio)
+        audio_len = probe_duration(self.ffprobe, paths.voice)
+        diff = video_len - audio_len
+        trimmed = 0
+        for seg in segments:
+            sync = ((checkpoint.get("video") or {}).get(segment_basename(seg)) or {}).get("sync") or {}
+            if float(sync.get("applied_factor", 0.0) or 0.0) > float(sync.get("desired_factor", 0.0) or 0.0) + 1e-6:
+                trimmed += 1
+        max_tol = max(0.05, float(tolerance))
+        status = "✅ SYNC OK" if abs(diff) <= max_tol else "❌ SYNC DRIFT"
+        self.log(
+            f"{status}: picture={video_len:.2f}s · narration={audio_len:.2f}s · diff={diff:+.3f}s "
+            f"| {len(segments)} segments, {trimmed} speed-capped ({self.max_video_speed:g}x) + footage trimmed"
+        )
+        if abs(diff) > max_tol:
+            raise SyncDriftError(
+                f"Smart Sync drift exceeded tolerance ({max_tol:.2f}s): "
+                f"picture={video_len:.3f}s vs narration={audio_len:.3f}s (diff={diff:+.3f}s, "
+                f"segments={len(segments)})"
             )
-        except Exception as exc:
-            self.log(f"⚠️ Sync check skipped: {exc}")
+        return video_len, audio_len, diff
 
     def _vox_synthesize_with_retry(
         self,
@@ -9348,6 +9371,10 @@ class EdgeSmartSync:
                 _sync_acc["parts_sec"] = 0.0
                 audio_cursor = 0.0
                 frames_done = 0
+                # Clear Pass 0's accumulated part paths so Pass 2 starts
+                # from a clean slate (prevents duplicate prefix concat and
+                # restores Pass 2's NVENC first-part fallback check).
+                video_parts.clear()
                 # Fresh error state for pass 2 (Batch DB): an error
                 # the old thread stored while it was being stopped
                 # must not poison the fresh pass's final raise.
@@ -9358,6 +9385,15 @@ class EdgeSmartSync:
                         _part.unlink()
                     except OSError:
                         pass
+                # Also drop Pass 0's silence-trimmed WAV cache so Pass 2
+                # can never hit a stale trimmed clip on same-second mtime.
+                _short_dir = paths.tts_parts.parent / "tts_parts_short"
+                if _short_dir.is_dir():
+                    for _short_wav in _short_dir.glob("*.wav"):
+                        try:
+                            _short_wav.unlink()
+                        except OSError:
+                            pass
                 _reset_prewarm_packer()
 
             if not restart_uniform:
@@ -9467,9 +9503,48 @@ class EdgeSmartSync:
             }
             for item in timing
         ]
+        _actual_edge_voice = str(base_edge_voice or "my-MM-ThihaNeural")
+        if _global_preset_v:
+            try:
+                from app.services.curated_voices import get_curated_voice as _get_cv_actual
+
+                _cv_actual = _get_cv_actual(_global_preset_v)
+                if _cv_actual and _cv_actual.get("edge_voice"):
+                    _actual_edge_voice = str(_cv_actual["edge_voice"])
+            except Exception:
+                pass
+        _actual_tts_provider = str(checkpoint.get("tts_provider") or "edge_tts")
+        _all_segments_fell_back = bool(segments) and len(fallback_segments) >= len(segments)
+        if _actual_tts_provider == "subtitle_only":
+            _actual_voice = ""
+        elif _actual_tts_provider == "gemini":
+            _actual_voice = str(gemini_voice_name or "")
+        elif _actual_tts_provider == "gemini+persona_fallback":
+            _actual_voice = _actual_edge_voice if _all_segments_fell_back else str(gemini_voice_name or "")
+        elif _actual_tts_provider == "voxcpm":
+            _actual_voice = str(self.voice)
+        elif _actual_tts_provider == "voxcpm+edge_fallback":
+            _actual_voice = _actual_edge_voice if _all_segments_fell_back else str(self.voice)
+        else:
+            _actual_voice = _actual_edge_voice
+        _voice_outcome: dict[str, Any] = {
+            "actual_tts_provider": _actual_tts_provider,
+            "actual_voice": _actual_voice,
+            "uniform_restart": bool(checkpoint.get("uniform_restart")),
+            "fallback_used": bool(fallback_segments),
+            "fallback_segments": list(fallback_segments),
+            "fallback_count": len(fallback_segments),
+            "total_segments": len(segments),
+            "tts_voice": str(self.voice),
+        }
+        checkpoint["actual_voice"] = _actual_voice
+        checkpoint["total_segments"] = len(segments)
+
         out_plan = dict(plan)
         out_plan["segments"] = [dict(seg) for seg in plan.get("segments", [])]
-        out_plan["tts_provider"] = checkpoint.get("tts_provider", "edge_tts")
+        out_plan["tts_provider"] = _actual_tts_provider
+        out_plan["actual_voice"] = _actual_voice
+        out_plan["total_segments"] = len(segments)
         out_plan["uniform_restart"] = bool(checkpoint.get("uniform_restart"))
         out_plan["fallback_used"] = bool(fallback_segments)
         out_plan["fallback_segments"] = list(fallback_segments)
@@ -9590,6 +9665,7 @@ class EdgeSmartSync:
                 "subtitles_ass": str(ass_file) if ass_file.is_file() else None,
                 "segments": len(timing),
                 "stage_timings": dict(_stage_timings),
+                "voice_outcome": dict(_voice_outcome),
             }
 
         self.log("🎬 Smart Sync video parts render စမယ်...")
@@ -9608,6 +9684,26 @@ class EdgeSmartSync:
             _serial_q.put(None)
             _render_parts_from_queue(_serial_q)
 
+        # 1B-1 + 1B-2: Build the concat input list deterministically from
+        # ``segments`` and enforce the 1-to-1 part count/identity invariant
+        # before concatenating so stale/duplicated in-memory paths can never
+        # slip into video_parts.txt.
+        expected_video_parts = [paths.video_parts / f"{segment_basename(seg)}.mp4" for seg in segments]
+        if len(video_parts) != len(expected_video_parts) or [
+            p.resolve() for p in video_parts
+        ] != [p.resolve() for p in expected_video_parts]:
+            raise SyncDriftError(
+                f"Smart Sync video part mismatch before concat: rendered {len(video_parts)} part(s) "
+                f"for {len(expected_video_parts)} segment(s)"
+            )
+        missing_parts = [
+            p.name for p in expected_video_parts if not p.is_file() or p.stat().st_size <= 0
+        ]
+        if missing_parts:
+            raise SyncDriftError(
+                f"Smart Sync video part(s) missing before concat: {', '.join(missing_parts[:5])}"
+            )
+
         # Late stages (concat -> overlay -> mux) are checkpointed by
         # input fingerprint (audit fix 2026-11-03): a resumed run whose
         # parts, overlays and voice are unchanged skips straight to the
@@ -9620,22 +9716,44 @@ class EdgeSmartSync:
             (checkpoint.get("video") or {}).get(segment_basename(seg), {}).get("fingerprint")
             for seg in segments
         ]
-        concat_fp = _stage_fingerprint("concat", {"parts": part_fps, "encoder": encoder})
+        expected_concat_duration = round(float(audio_cursor), 3)
+        concat_fp = _stage_fingerprint("concat", {
+            "parts": part_fps,
+            "part_count": len(expected_video_parts),
+            "expected_duration": expected_concat_duration,
+            "encoder": encoder,
+        })
         synced = paths.synced_video_noaudio
+        _reuse_concat = False
         if late.get("concat") == concat_fp and synced.is_file() and synced.stat().st_size > 5000:
+            try:
+                _cached_vid_dur = probe_duration(self.ffprobe, synced)
+                _expected_aud_dur = probe_duration(self.ffprobe, paths.voice)
+                if abs(_cached_vid_dur - _expected_aud_dur) <= SYNC_DRIFT_TOLERANCE_SECONDS:
+                    _reuse_concat = True
+                else:
+                    self.log(
+                        f"⚠️ Cached concat rejected (picture={_cached_vid_dur:.2f}s vs "
+                        f"narration={_expected_aud_dur:.2f}s) — rebuilding concat"
+                    )
+            except Exception as _cache_probe_exc:
+                self.log(f"⚠️ Cached concat probe failed ({_cache_probe_exc}) — rebuilding concat")
+        if _reuse_concat:
             self.log("♻️ Smart Sync concat reuse (inputs unchanged)")
             _stage_timings["sync"] = round(max(0.0, _sync_acc["parts_sec"]), 3)
+            self._log_sync_check(paths, segments, checkpoint)
         else:
             self._check_run_deadline("concat")
             self.log("🔗 Smart Sync video parts concat...")
             _t_concat0 = time.monotonic()
-            concat_video_parts(self.ffmpeg, video_parts, synced, paths.work, total_duration=audio_cursor, faststart=not _overlays_will_reencode)
+            concat_video_parts(self.ffmpeg, expected_video_parts, synced, paths.work, total_duration=audio_cursor, faststart=not _overlays_will_reencode)
             _concat_sec = max(0.0, time.monotonic() - _t_concat0)
+            # Gate BEFORE persisting late["concat"] so a drifted concat is never cached.
+            self._log_sync_check(paths, segments, checkpoint)
             late["concat"] = concat_fp
             _stage_timings["sync"] = round(max(0.0, _sync_acc["parts_sec"] + _concat_sec), 3)
             checkpoint["stage_timings"] = dict(_stage_timings)
             atomic_write_json(paths.checkpoint, checkpoint)
-        self._log_sync_check(paths, segments, checkpoint)
         _prewarm_wait_sec = _shutdown_prewarm(wait=True)
         video_for_mux = paths.synced_video_noaudio
         overlays_active = bool(
@@ -9757,6 +9875,20 @@ class EdgeSmartSync:
         atomic_write_json(paths.checkpoint, checkpoint)
         atomic_write_json(paths.plan, out_plan)
         final_duration = probe_duration(self.ffprobe, paths.final)
+        _expected_narration_dur = (
+            float(cursor) if subtitle_only_mode else float(final_audio_duration)
+        )
+        if _expected_narration_dur > 0.05 and abs(final_duration - _expected_narration_dur) > SYNC_DRIFT_TOLERANCE_SECONDS:
+            _mux_diff = final_duration - _expected_narration_dur
+            self.log(
+                f"❌ SYNC DRIFT (post-mux): final={final_duration:.2f}s · "
+                f"narration={_expected_narration_dur:.2f}s · diff={_mux_diff:+.3f}s"
+            )
+            raise SyncDriftError(
+                f"Post-mux duration mismatch exceeded tolerance ({SYNC_DRIFT_TOLERANCE_SECONDS:.2f}s): "
+                f"final={final_duration:.3f}s vs narration={_expected_narration_dur:.3f}s "
+                f"(diff={_mux_diff:+.3f}s)"
+            )
 
         # Copy synced SRT and ASS next to final video
         final_srt = paths.final.with_suffix(".srt")
@@ -9813,6 +9945,7 @@ class EdgeSmartSync:
             "tts_runtime_seconds": float(_stage_timings.get("tts") or 0.0),
             # Batch CG: BYOK route outcome (None for non-routed runs).
             "gemini_route": self._gemini_outcome,
+            "voice_outcome": dict(_voice_outcome),
             "stage_timings": dict(_stage_timings),
             "protection_strong_baked": bool(overlays_active and self.overlays.get("protection_strong")),
         }

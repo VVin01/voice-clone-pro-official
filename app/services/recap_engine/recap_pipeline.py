@@ -826,6 +826,7 @@ def run_recap_pipeline(
         "warnings": _job_warnings,
         # Batch CG: BYOK route outcome for the runner's accounting.
         "gemini_route": result.get("gemini_route"),
+        "voice_outcome": result.get("voice_outcome"),
         "part_summary": plan.get("part_summary", ""),
         "stage_timings": result.get("stage_timings") or plan.get("stage_timings") or {},
     }

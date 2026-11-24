@@ -152,8 +152,9 @@ def test_bv_sweep_scan_includes_recap_ref_column():
 def test_bv_display_helper_wiring():
     assert "def own_voice_display_name() -> str:" in VOICE_DISPLAY_PY
     assert "own_voice: bool = False" in VOICE_DISPLAY_PY
-    # The completion notify + on-demand caption pass the flag.
-    assert API_PY.count("own_voice=bool(") >= 2
+    # Design 2B-2: completion notify, on-demand delivery, and history pass
+    # "own_voice": bool(...) into resolve_recap_voice_presentation().
+    assert API_PY.count('"own_voice": bool(') >= 2
 
 
 # ── BV-2: honesty strings, both languages, every surface ──────────

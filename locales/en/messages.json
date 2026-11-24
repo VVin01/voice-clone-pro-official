@@ -369,6 +369,8 @@
     "recap_over_app_caption": "🎬 <b>Pro Movie Recap:</b> <code>#{jid}</code>\n📁 <b>File size:</b> <code>{size_formatted}</code> (larger than Telegram's 50 MB limit)\n\n💡 <i>The file is too large to send directly via Telegram. Please open it in the Mini App below to watch or download it.</i>",
     "recap_notify_text": "🎉 <b>Your Recap is ready!</b>\n🎬 {clean_title}\n🎙️ Voice: {voice_name}\n⏱ {duration} · MP4 (Myanmar narration + subtitles)\n🆔 Task: <code>#{job_id}</code>",
     "recap_fallback_note": "\n\n⚠️ <i>(Note: {count} narration line(s) were voiced with the backup voice instead of the main engine, so those parts may sound slightly different.)</i>",
+    "recap_fallback_all_note": "\n\n📝 <i>Note — the primary voice engine was temporarily unavailable, so all narration lines were voiced with {provider_name}'s '{heard_name}' voice.</i>",
+    "recap_uniform_restart_note": "\n\n📝 <i>Note — Gemini TTS hit temporary capacity mid-job, so narration was restarted uniformly with {provider_name}'s '{heard_name}' voice to keep one consistent voice.</i>",
     "recap_voice_name_note": "\n\n📝 <i>Note — instead of the '{picked_name}' voice you picked, this Recap was narrated with {engine_name}'s '{heard_name}' voice.</i>",
     "recap_retention_note": "\n\nFiles are kept for {retention_hours} hours — please download in time.",
     "recap_failure_notify_text": "❌ <b>Your Recap could not be created</b>\n🎬 {clean_title}\n🆔 Task: <code>#{job_id}</code>\n⚠️ Reason: {reason}",

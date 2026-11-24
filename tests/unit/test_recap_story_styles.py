@@ -99,6 +99,7 @@ def _capture_audit_prompt(monkeypatch, style: str) -> str:
     captured = {}
     rows = [
         {"id": row["id"], "timestamp": row["timestamp"],
+         "video_start": i * 4.0, "video_end": (i + 1) * 4.0,
          "source_text": row["source_text"], "translation": SENTENCES[i]}
         for i, row in enumerate(CURRENT)
     ]

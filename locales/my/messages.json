@@ -369,6 +369,8 @@
     "recap_over_app_caption": "🎬 <b>Pro Movie Recap:</b> <code>#{jid}</code>\n📁 <b>ဖိုင်ဆိုဒ်:</b> <code>{size_formatted}</code> (Telegram ကန့်သတ်ချက် 50 MB ထက် ကြီးပါတယ်)\n\n💡 <i>ဖိုင်ဆိုဒ်ကြီးတာကြောင့် Telegram ကနေ တိုက်ရိုက်မပို့နိုင်ပါ။ အောက်ပါ Mini App ခလုတ်ကနေ ဖွင့်ပြီး ကြည့်ရှု/ဒေါင်းလုဒ် ယူနိုင်ပါတယ်။</i>",
     "recap_notify_text": "🎉 <b>Recap ပြီးပါပြီ!</b>\n🎬 {clean_title}\n🎙️ အသံ: {voice_name}\n⏱ {duration} · MP4 (မြန်မာ အသံ + စာတန်းထိုး)\n🆔 Task: <code>#{job_id}</code>",
     "recap_fallback_note": "\n\n⚠️ <i>(မှတ်ချက်: စာကြောင်း {count} ကြောင်းကို မူရင်း အသံအစား အရန် အသံဖြင့် ထုတ်ပေးထားပါသည် — အဲဒီ အပိုင်းများတွင် အသံ အနည်းငယ် ကွာခြားနိုင်ပါသည်။)</i>",
+    "recap_fallback_all_note": "\n\n📝 <i>မှတ်ချက် — မူရင်းအသံစနစ် ခေတ္တမရနိုင်တာကြောင့် စာကြောင်းအားလုံးကို {provider_name} ရဲ့ '{heard_name}' အသံဖြင့် ထုတ်ပေးထားပါတယ်။</i>",
+    "recap_uniform_restart_note": "\n\n📝 <i>မှတ်ချက် — Gemini အသံစနစ် ခေတ္တပြည့်နေတာကြောင့် အသံတစ်မျိုးတည်း ညီညာနေစေရန် အစအဆုံးကို {provider_name} ရဲ့ '{heard_name}' အသံဖြင့် ပြန်ဖတ်ထားပါတယ်။</i>",
     "recap_voice_name_note": "\n\n📝 <i>မှတ်ချက် — ရွေးထားတဲ့ '{picked_name}' အသံအစား ဒီ Recap ကို {engine_name} ရဲ့ '{heard_name}' အသံဖြင့် ဖတ်ထားတာ ဖြစ်ပါတယ်။</i>",
     "recap_retention_note": "\n\nဖိုင်များကို {retention_hours} နာရီ သိမ်းထားပေးပါတယ် — အချိန်မီ Download ရယူထားပါ။",
     "recap_failure_notify_text": "❌ <b>Recap ဖန်တီးမှု မအောင်မြင်ပါ</b>\n🎬 {clean_title}\n🆔 Task: <code>#{job_id}</code>\n⚠️ အကြောင်းရင်း: {reason}",
