@@ -188,10 +188,10 @@ def test_rejected_attempt_still_records_usage(tmp_path, monkeypatch):
     eng._ask(HOOK, "Charon")
     health = key_rotation.health_for("gemini_tts")
     (key1, model1), (key2, model2) = recorder.calls
-    # Quality Pass §2C item 3: stop calling mark_success/record_usage before
-    # DQ passes — rejected attempt increments dq_reject without charging usage;
-    # the verified second attempt increments accept and charges remaining quota.
-    assert health.remaining(key1, model1) == 10
+    # Phase 1 leak hardening (2026-11-24, B1): Google bills HTTP 200 rejected
+    # responses against daily RPD, so pool engines charge remaining quota on
+    # leak-rejects while keeping accept vs dq_reject quality counters separate.
+    assert health.remaining(key1, model1) == 9
     assert health.tts_model_stats(model1)["dq_reject"] == 1
     assert health.remaining(key2, model2) == 9
     assert health.tts_model_stats(model2)["accept"] == 1

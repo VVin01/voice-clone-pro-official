@@ -219,15 +219,17 @@ def is_wav_edge_clipped(
 
 
 def concat_wav_files(
-    parts: list[Path], output_wav: Path, crossfade_sec: float = 0.04
+    parts: list[Path],
+    output_wav: Path,
+    crossfade_sec: float = 0.04,
+    boundary_pause_sec: float = 0.0,
 ) -> Path:
-    """Batch CH: join WAV parts into one file, in order.
+    """Batch CH + Prosody Phase 1: join WAV parts into one file, in order.
 
-    Joins with a short crossfade (acrossfade) when multiple parts exist,
-    preventing edge seam clicks/glitches, and falls back to the concat-demuxer.
-    Keeps MONO and the first part's sample rate, so a chunked voice job's
-    output format matches what a single-call job from the same Space would have produced.
-    Synchronous: callers run it inside an executor.
+    When ``boundary_pause_sec > 0`` (long-form voice clone sentence boundaries),
+    inserts clean digital silence between parts with a 10 ms anti-click micro-fade.
+    Otherwise joins with a short crossfade (acrossfade) when multiple parts exist,
+    falling back to the concat-demuxer. Keeps MONO and the first part's sample rate.
     """
     part_paths = [Path(p) for p in parts]
     if not part_paths:
@@ -243,6 +245,73 @@ def concat_wav_files(
             rate = wf.getframerate() or 48000
     except Exception:
         pass
+
+    if boundary_pause_sec and float(boundary_pause_sec) > 0.0:
+        import numpy as np
+
+        pause_frames = max(1, int(round(rate * float(boundary_pause_sec))))
+        silence = np.zeros(pause_frames, dtype="<i2")
+        fade_frames = max(1, int(round(rate * 0.010)))  # 10 ms anti-click fade
+        rendered_chunks: list[np.ndarray] = []
+
+        for idx, p in enumerate(part_paths):
+            arr_i16: np.ndarray | None = None
+            try:
+                with wave.open(str(p), "rb") as wf:
+                    ch = wf.getnchannels()
+                    sw = wf.getsampwidth()
+                    sr = wf.getframerate() or rate
+                    raw = wf.readframes(wf.getnframes())
+                if sw == 2 and ch >= 1 and len(raw) >= 2 * ch:
+                    s = np.frombuffer(raw, dtype="<i2").astype(np.float32)
+                    if ch > 1:
+                        s = s[: (s.size // ch) * ch].reshape(-1, ch).mean(axis=1)
+                    if sr != rate and s.size > 1:
+                        t_len = max(1, int(round(s.size * (float(rate) / float(sr)))))
+                        s = np.interp(
+                            np.linspace(0.0, float(s.size - 1), num=t_len),
+                            np.arange(s.size, dtype=np.float64),
+                            s,
+                        ).astype(np.float32)
+                    arr_i16 = np.clip(s, -32768.0, 32767.0).astype("<i2")
+            except Exception:
+                arr_i16 = None
+
+            if arr_i16 is None:
+                proc = subprocess.run(
+                    [
+                        "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+                        "-hide_banner", "-loglevel", "error",
+                        "-i", str(p.resolve()), "-ar", str(rate), "-ac", "1", "-f", "s16le", "pipe:1",
+                    ],
+                    capture_output=True,
+                    timeout=NORMALIZE_TIMEOUT_SECONDS,
+                    check=False,
+                )
+                if proc.returncode != 0 or not proc.stdout:
+                    raise RuntimeError(f"WAV pause-concat failed reading part {p}")
+                arr_i16 = np.frombuffer(proc.stdout, dtype="<i2").copy()
+            else:
+                arr_i16 = arr_i16.copy()
+
+            if arr_i16.size > 2 * fade_frames:
+                ramp = np.linspace(0.0, 1.0, fade_frames, dtype=np.float32)
+                if idx > 0:
+                    arr_i16[:fade_frames] = (arr_i16[:fade_frames].astype(np.float32) * ramp).astype("<i2")
+                if idx < len(part_paths) - 1:
+                    arr_i16[-fade_frames:] = (arr_i16[-fade_frames:].astype(np.float32) * ramp[::-1]).astype("<i2")
+
+            rendered_chunks.append(arr_i16)
+            if idx < len(part_paths) - 1:
+                rendered_chunks.append(silence)
+
+        joined = np.concatenate(rendered_chunks) if rendered_chunks else np.zeros(0, dtype="<i2")
+        with wave.open(str(output_wav), "wb") as out_wf:
+            out_wf.setnchannels(1)
+            out_wf.setsampwidth(2)
+            out_wf.setframerate(rate)
+            out_wf.writeframes(joined.tobytes())
+        return output_wav
 
     min_dur = 9999.0
     for p in part_paths:

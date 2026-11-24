@@ -590,7 +590,7 @@ async def test_private_ai_failure_is_silence(db_session, monkeypatch):
     monkeypatch.setattr(pai, "ask_private_ai", ai)
     msg = _fake_private_message("Voice Clone ဆိုတာ ဘာလဲ")
     await handle_private_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
-    msg.reply.assert_not_called()
+    msg.reply.assert_awaited_once_with(gai.HOLDING_REPLY_AI_FAILED)
 
 
 @pytest.mark.asyncio

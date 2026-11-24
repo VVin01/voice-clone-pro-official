@@ -40,15 +40,27 @@ except Exception:  # pragma: no cover - standalone module load fallback
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOXCPM_SPACES = [
-    # GPU spaces first (fix 2026-10-29): the official demo below is
-    # CPU-basic and almost always timed out, burning the whole attempt
-    # budget before a GPU space was ever reached.
+    # GPU VoxCPM2 spaces first (fix 2026-10-29 + Prosody Phase 1: v1 yeyee2609/voxcpm
+    # removed so v2 jobs never mix v1 and v2 acoustic models mid-narration).
     "yeyee2609/voxcpm2",
     "soemintheinsmt6/myanmar-voxcpm2",
-    "yeyee2609/voxcpm",
     # CPU demo kept only as the last resort.
     "openbmb/VoxCPM-Demo",
 ]
+
+# Prosody Phase 1 (1A-2 #3): v1 spaces must never enter a VoxCPM2 failover chain.
+_V1_SPACE_NAMES = frozenset({"yeyee2609/voxcpm"})
+
+
+def is_voxcpm_v1_space(space_name: str) -> bool:
+    """True when ``space_name`` identifies a legacy VoxCPM v1 Space (e.g. yeyee2609/voxcpm)."""
+    norm = str(space_name or "").strip().lower().rstrip("/")
+    if not norm:
+        return False
+    if norm in _V1_SPACE_NAMES:
+        return True
+    # Catch full Hugging Face URLs pointing at yeyee2609/voxcpm (without matching voxcpm2)
+    return bool(re.search(r"(?:^|/|-)yeyee2609[-/]voxcpm$", norm))
 
 # Per-space capability map (fix 2026-10-29): a request that carries a
 # reference clip is a CLONE request and may only be routed to a space
@@ -443,6 +455,93 @@ def get_available_hf_tokens() -> List[str]:
     return tokens
 
 
+def master_voxcpm_audio(
+    input_wav: Path | str,
+    output_wav: Path | str,
+    *,
+    speed: float | str | None = DEFAULT_SPEED,
+    preset_voice: Optional[str] = None,
+    ffmpeg_bin: Optional[str] = None,
+) -> Path:
+    """Studio Broadcast Audio Mastering via FFmpeg (44.1 kHz mono PCM 16-bit WAV).
+
+    Applies ``atempo`` from ``speed`` plus the broadcast mastering chain once
+    (per-chunk in non-chunked mode, or once post-stitch in multi-chunk clone mode).
+    """
+    src_path = Path(input_wav)
+    out_path = Path(output_wav).resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tempo_val = resolve_speed_tempo(speed)
+
+    converted_cleanly = False
+    ff = ffmpeg_bin or shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+    if ff and src_path.is_file() and src_path.stat().st_size > 1000:
+        import subprocess
+
+        # Safe temporary target when mastering in-place (src_path == out_path)
+        same_file = src_path.resolve() == out_path
+        target_out = out_path.with_name(f"{out_path.stem}.master_tmp.wav") if same_file else out_path
+
+        atempo_prefix = f"atempo={tempo_val:.3f}," if abs(tempo_val - 1.0) > 0.01 else ""
+        af_master_primary = (
+            f"{atempo_prefix}"
+            "highpass=f=75,"
+            "afftdn=nr=10:nf=-50:tn=1,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,"
+            "loudnorm=I=-15:TP=-1.0:LRA=7"
+        )
+        af_master_fallback = (
+            f"{atempo_prefix}"
+            "highpass=f=75,"
+            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
+            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
+            "lowpass=f=9500,"
+            "acompressor=threshold=-18dB:ratio=2.2:attack=20:release=120:makeup=1.2,"
+            "alimiter=limit=0.92"
+        )
+        af_candidates = [af_master_primary, af_master_fallback]
+        if preset_voice:
+            try:
+                from app.services.curated_voices import persona_mastering_filter
+
+                _persona_chain = persona_mastering_filter(preset_voice)
+            except Exception:
+                _persona_chain = None
+            if _persona_chain:
+                af_candidates.insert(
+                    0,
+                    f"aresample=44100,{atempo_prefix}{_persona_chain}",
+                )
+        try:
+            for af_candidate in af_candidates:
+                try:
+                    cmd = [
+                        ff, "-y", "-hide_banner", "-loglevel", "error",
+                        "-protocol_whitelist", "file,pipe",
+                        "-i", str(src_path),
+                        "-af", af_candidate,
+                        "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
+                        str(target_out),
+                    ]
+                    subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+                    if target_out.is_file() and target_out.stat().st_size > 1000:
+                        if same_file:
+                            shutil.move(str(target_out), str(out_path))
+                        converted_cleanly = True
+                        break
+                except Exception as e_ffmpeg:
+                    logger.debug("FFmpeg mastering attempt failed: %s", e_ffmpeg)
+        finally:
+            if same_file:
+                target_out.unlink(missing_ok=True)
+
+    if not converted_cleanly and src_path.resolve() != out_path:
+        shutil.copy2(src_path, out_path)
+    return out_path
+
+
 def get_configured_spaces() -> List[str]:
     """Get list of candidate Hugging Face spaces for load balancing and redundancy."""
     spaces: List[str] = []
@@ -450,15 +549,15 @@ def get_configured_spaces() -> List[str]:
     if custom_spaces:
         for part in re.split(r"[,;\s\n]+", custom_spaces):
             sp = part.strip().strip("'\"")
-            if sp and sp not in spaces:
+            if sp and not is_voxcpm_v1_space(sp) and sp not in spaces:
                 spaces.append(sp)
 
     single_url = os.getenv("VOXCPM_SPACE_URL", "").strip() or os.getenv("VOXCPM_API_URL", "").strip()
-    if single_url and single_url not in spaces:
+    if single_url and not is_voxcpm_v1_space(single_url) and single_url not in spaces:
         spaces.insert(0, single_url)
 
     for sp in DEFAULT_VOXCPM_SPACES:
-        if sp not in spaces:
+        if sp not in spaces and not is_voxcpm_v1_space(sp):
             spaces.append(sp)
 
     return spaces
@@ -651,11 +750,12 @@ class VoxCPMEngine:
         log_fn: Optional[Callable[[str], None]] = None,
         job_memory: Optional[JobQuotaMemory] = None,
         token_bind_index: Optional[int] = None,
+        pin_space: Optional[bool] = None,
     ):
-        self.spaces = get_configured_spaces()
-        if space_name and space_name not in self.spaces:
+        self.spaces = [sp for sp in get_configured_spaces() if not is_voxcpm_v1_space(sp)]
+        if space_name and not is_voxcpm_v1_space(space_name) and space_name not in self.spaces:
             self.spaces.insert(0, space_name)
-        self.primary_space = self.spaces[0]
+        self.primary_space = self.spaces[0] if self.spaces else DEFAULT_VOXCPM_SPACES[0]
         self.hf_tokens = get_available_hf_tokens()
         self.work_dir = Path(work_dir) if work_dir else Path(os.environ.get("TEMP", ".")) / "voxcpm_cache"
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -666,6 +766,14 @@ class VoxCPMEngine:
         # Batch AL: parallel-pool workers bind to a starting token so
         # concurrent syntheses do not all queue on the same account.
         self.token_bind_index = token_bind_index
+        # Prosody Phase 1 (1A-2 #3): per-job space pinning (on by default for standalone
+        # voice-clone jobs; off for Recap bound worker slots unless explicitly requested).
+        self.pin_space_enabled: bool = (token_bind_index is None) if pin_space is None else bool(pin_space)
+        self.pinned_space: Optional[str] = None
+
+    def reset_pinned_space(self) -> None:
+        """Clear per-job pinned Space state between jobs."""
+        self.pinned_space = None
 
     def _log(self, msg: str) -> None:
         logger.info(msg)
@@ -771,6 +879,7 @@ class VoxCPMEngine:
         allow_fallback: bool = True,
         fallback_cb: Optional[Callable[[str], None]] = None,
         tier: str = "free",
+        skip_mastering: bool = False,
         **kwargs: Any,
     ) -> Path:
         """
@@ -818,10 +927,10 @@ class VoxCPMEngine:
                         is_persona_ref = True
                 self._log(f"🎭 Applied Curated Persona [{preset_voice}] for VoxCPM 2 (tempo={tempo_val:.2f}x)")
 
-        # Check local cache for identical text + voice configuration
+        # Check local cache for identical text + voice configuration (mastered outputs only)
         cache_key = None
         cached_file = None
-        if not reference_wav or is_persona_ref:
+        if not skip_mastering and (not reference_wav or is_persona_ref):
             cache_key = hashlib.sha256(
                 f"{clean_text}_{control_instruction}_{prompt_text}_{cfg_value:.2f}_{preset_voice}_{tempo_val:.3f}".encode("utf-8")
             ).hexdigest()[:16]
@@ -865,7 +974,8 @@ class VoxCPMEngine:
             return 2 if self._token_cooldowns.get(t, 0) > now else 0
 
         tokens_pool = sorted(raw_tokens, key=_token_sort_key)
-        candidate_spaces = self.spaces.copy()
+        # Prosody Phase 1 (1A-2 #3): v2 failover chains never include legacy v1 spaces.
+        candidate_spaces = [sp for sp in self.spaces if not is_voxcpm_v1_space(sp)]
         if ref_file is not None:
             # Clone request: only clone-capable spaces may serve it. A
             # prompt-only space would ignore the reference clip and
@@ -875,6 +985,10 @@ class VoxCPMEngine:
             for sp in skipped:
                 self._log(f"ℹ️ Space '{sp}' has no reference-clone endpoint; skipping it for this clone request")
             candidate_spaces = capable
+        is_pinned_walk = False
+        if self.pin_space_enabled and self.pinned_space and self.pinned_space in candidate_spaces:
+            candidate_spaces = [self.pinned_space]
+            is_pinned_walk = True
 
         # Rotate healthy tokens across requests (starting offset only;
         # the pair ORDER itself is built round-robin below).
@@ -991,7 +1105,7 @@ class VoxCPMEngine:
                 # Ruled out by an earlier failure in THIS walk (e.g. the
                 # token died on another space a moment ago).
                 continue
-            if space_attempts.get(space_name, 0) >= MAX_ATTEMPTS_PER_SPACE:
+            if not is_pinned_walk and space_attempts.get(space_name, 0) >= MAX_ATTEMPTS_PER_SPACE:
                 # Batch AT (AT-2): this space has had its share of
                 # this call — move on even if tokens remain on it, so
                 # the global budget is spread across spaces.
@@ -1130,77 +1244,24 @@ class VoxCPMEngine:
                 result_path_str = _resolve_result_path(raw_result)
 
                 if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
-                    # Studio Broadcast Audio Mastering via FFmpeg (44.1kHz mono PCM 16-bit WAV)
-                    # Eliminates harsh sibilance ("စီး" / "ဆူးဆူးအသံ") and normalizes broadcast loudness.
-                    converted_cleanly = False
-                    ffmpeg_bin = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
-                    if ffmpeg_bin:
-                        import subprocess
-                        atempo_prefix = f"atempo={tempo_val:.3f}," if abs(tempo_val - 1.0) > 0.01 else ""
-                        af_master_primary = (
-                            f"{atempo_prefix}"
-                            "highpass=f=75,"
-                            "afftdn=nr=10:nf=-50:tn=1,"
-                            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-                            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
-                            "lowpass=f=9500,"
-                            "loudnorm=I=-15:TP=-1.0:LRA=7"
-                        )
-                        af_master_fallback = (
-                            f"{atempo_prefix}"
-                            "highpass=f=75,"
-                            "deesser=i=0.5:m=0.5:f=0.5:s=o,"
-                            "equalizer=f=7200:width_type=q:w=2:g=-3.5,"
-                            "lowpass=f=9500,"
-                            "acompressor=threshold=-18dB:ratio=2.2:attack=20:release=120:makeup=1.2,"
-                            "alimiter=limit=0.92"
-                        )
-                        af_candidates = [af_master_primary, af_master_fallback]
-                        # Studio-spec persona mastering (2026-10-30): a
-                        # non-flagship curated persona gets the full
-                        # komin/mahnin pipeline chain (formant + deesser
-                        # + body/presence EQ + loudnorm) instead of the
-                        # generic chain, so job audio matches the
-                        # regenerated previews. Flagships return None
-                        # here and keep the generic chain, exactly as
-                        # before. The 44100 Hz resample stays first.
-                        if preset_voice:
-                            try:
-                                from app.services.curated_voices import persona_mastering_filter
+                    if self.pin_space_enabled and self.pinned_space is None:
+                        self.pinned_space = space_name
+                        self._log(f"📌 VoxCPM 2 Space pinned for job: '{space_name}'")
 
-                                _persona_chain = persona_mastering_filter(preset_voice)
-                            except Exception:
-                                _persona_chain = None
-                            if _persona_chain:
-                                af_candidates.insert(
-                                    0,
-                                    f"aresample=44100,{atempo_prefix}{_persona_chain}",
-                                )
-                        for af_candidate in af_candidates:
-                            try:
-                                cmd = [
-                                    ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-                                    "-protocol_whitelist", "file,pipe",
-                                    "-i", str(result_path_str),
-                                    "-af", af_candidate,
-                                    "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
-                                    str(out_path)
-                                ]
-                                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-                                if out_path.is_file() and out_path.stat().st_size > 1000:
-                                    converted_cleanly = True
-                                    break
-                            except Exception as e_ffmpeg:
-                                logger.debug("FFmpeg mastering attempt failed: %s", e_ffmpeg)
-
-                    if not converted_cleanly:
+                    if skip_mastering:
                         shutil.copy2(result_path_str, out_path)
-
-                    if cached_file and (not ref_file or is_persona_ref):
-                        try:
-                            shutil.copy2(out_path, cached_file)
-                        except Exception:
-                            pass
+                    else:
+                        master_voxcpm_audio(
+                            result_path_str,
+                            out_path,
+                            speed=speed,
+                            preset_voice=preset_voice,
+                        )
+                        if cached_file and (not ref_file or is_persona_ref):
+                            try:
+                                shutil.copy2(out_path, cached_file)
+                            except Exception:
+                                pass
 
                     # Batch DI: the success proves this token covered
                     # the space's admission price — update its
@@ -1332,4 +1393,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "get_available_hf_tokens", "space_supports_clone", "space_api_endpoints", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "VoxCPMQuotaExhaustedError"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "master_voxcpm_audio", "space_api_endpoints", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "VoxCPMQuotaExhaustedError"]

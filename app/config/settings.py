@@ -358,6 +358,7 @@ class Settings(BaseSettings):
     gemini_tts_fallback_1: str = Field(default="", alias="GEMINI_TTS_FALLBACK_1")
     gemini_tts_lite_model: str = Field(default="gemini-3.8-flash-lite-tts", alias="GEMINI_TTS_LITE_MODEL")
     gemini_tts_fallback_2: str = Field(default="", alias="GEMINI_TTS_FALLBACK_2")
+    gemini_tts_leak_gate_mode: str = Field(default="shadow", alias="GEMINI_TTS_LEAK_GATE_MODE")
 
     # Versioned AI Prompt Registry profile ("v2" upgraded default, "v1" instant rollback)
     ai_prompt_profile: str = Field(default="v2", alias="AI_PROMPT_PROFILE")

@@ -221,82 +221,107 @@ def build_private_prompt(
     author_name: str,
     history: list[tuple[str, str]] | None = None,
     reply_to_text: str | None = None,
+    fact_sheet: str | None = None,
+    minimal_tier: bool = False,
 ) -> str:
     """Assemble the full model prompt for one private-chat question.
 
     Supports ``v2`` XML delimiter hardening, conversation history memory
-    (last exchanges), replied-to quote context, and Supreme Override
-    guardrails while allowing instant ``v1`` rollback via
-    ``AI_PROMPT_PROFILE=v1``.
+    (last exchanges), replied-to quote context, Supreme Override
+    guardrails, and shared 7,500-token prompt budgeting via
+    ``gai.fit_prompt_to_budget``.
     """
-    fact_sheet = gai.get_effective_fact_sheet()
-    if not is_v2_prompts():
-        parts = [
-            PRIVATE_SYSTEM_INSTRUCTIONS,
-            "",
-            "═══ KNOWLEDGE SHEET ═══",
-            fact_sheet,
-            "",
-            "═══ အသုံးပြုသူရဲ့ စာ ═══",
-            f"မေးသူ: {author_name}".strip(),
-            f"မေးခွန်း: {text}",
-        ]
-        return "\n".join(parts)
+    if fact_sheet is not None:
+        effective_sheet = fact_sheet
+        sheet_source = "override"
+    else:
+        effective_sheet, sheet_source = gai.get_effective_fact_sheet_with_meta()
 
-    safe_author = sanitize_xml_tag_content(
-        author_name or "User", "user_message", "conversation_history", "replied_to_message"
+    logger.info(
+        "private_ai: prompt_sheet source=%s chars=%d minimal=%s",
+        sheet_source,
+        len(effective_sheet),
+        minimal_tier,
     )
-    safe_text = sanitize_xml_tag_content(
-        text, "user_message", "conversation_history", "replied_to_message"
-    )
-    parts = [
-        PRIVATE_SYSTEM_INSTRUCTIONS,
-        PRIVATE_SYSTEM_INSTRUCTIONS_V2_GUARDRAILS,
-        "",
-        "═══ KNOWLEDGE SHEET ═══",
-        fact_sheet,
-    ]
-    if history:
-        hist_lines: list[str] = []
+
+    v2 = is_v2_prompts()
+    _tags = ("user_message", "conversation_history", "replied_to_message")
+
+    hist_lines: list[str] = []
+    if v2 and history:
         for role_label, msg_body in list(history)[-6:]:
             clean_body = sanitize_xml_tag_content(
                 str(msg_body or "").strip()[:280],
-                "user_message",
-                "conversation_history",
-                "replied_to_message",
+                *_tags,
             )
             if clean_body:
                 prefix = "User" if str(role_label).lower() == "user" else "Assistant"
                 hist_lines.append(f"- {prefix}: {clean_body}")
-        if hist_lines:
+
+    clipped_reply = str(reply_to_text).strip()[:400] if (v2 and reply_to_text) else None
+
+    def _assemble(
+        sheet_str: str,
+        kept_hist: list[str],
+        reply_q: str | None,
+        msg_str: str,
+    ) -> str:
+        if not v2:
+            parts = [
+                PRIVATE_SYSTEM_INSTRUCTIONS,
+                "",
+                "═══ KNOWLEDGE SHEET ═══",
+                sheet_str,
+                "",
+                "═══ အသုံးပြုသူရဲ့ စာ ═══",
+                f"မေးသူ: {author_name}".strip(),
+                f"မေးခွန်း: {msg_str}",
+            ]
+            return "\n".join(parts)
+
+        safe_author = sanitize_xml_tag_content(author_name or "User", *_tags)
+        safe_text = sanitize_xml_tag_content(msg_str, *_tags)
+        parts = [
+            PRIVATE_SYSTEM_INSTRUCTIONS,
+            PRIVATE_SYSTEM_INSTRUCTIONS_V2_GUARDRAILS,
+            "",
+            "═══ KNOWLEDGE SHEET ═══",
+            sheet_str,
+        ]
+        if kept_hist:
             parts.extend([
                 "",
                 "<conversation_history>",
-                *hist_lines,
+                *kept_hist,
                 "</conversation_history>",
             ])
-    if reply_to_text:
-        safe_reply = sanitize_xml_tag_content(
-            str(reply_to_text).strip()[:400],
-            "user_message",
-            "conversation_history",
-            "replied_to_message",
-        )
-        if safe_reply:
-            parts.extend([
-                "",
-                "<replied_to_message>",
-                safe_reply,
-                "</replied_to_message>",
-            ])
-    parts.extend([
-        "",
-        "<user_message>",
-        f"မေးသူ: {safe_author}".strip(),
-        f"မေးခွန်း: {safe_text}",
-        "</user_message>",
-    ])
-    return "\n".join(parts)
+        if reply_q:
+            safe_reply = sanitize_xml_tag_content(reply_q, *_tags)
+            if safe_reply:
+                parts.extend([
+                    "",
+                    "<replied_to_message>",
+                    safe_reply,
+                    "</replied_to_message>",
+                ])
+        parts.extend([
+            "",
+            "<user_message>",
+            f"မေးသူ: {safe_author}".strip(),
+            f"မေးခွန်း: {safe_text}",
+            "</user_message>",
+        ])
+        return "\n".join(parts)
+
+    return gai.fit_prompt_to_budget(
+        sheet=effective_sheet,
+        history_lines=hist_lines,
+        replied_to_text=clipped_reply,
+        message_text=text,
+        assemble_fn=_assemble,
+        budget_tokens=gai.PROMPT_TOKEN_BUDGET,
+        minimal_tier=minimal_tier,
+    )
 
 
 async def ask_private_ai(
@@ -305,27 +330,40 @@ async def ask_private_ai(
     author_name: str,
     history: list[tuple[str, str]] | None = None,
     reply_to_text: str | None = None,
+    client_factory: Any = None,
+    groq_requester: Any = None,
 ) -> tuple[str, str | None]:
-    """Ask Gemini about one private-chat question.
-
-    Identical contract to ``gai.ask_group_admin_ai`` — DECISION_REPLY
-    (with text) / DECISION_NO_REPLY / DECISION_ESCALATE /
-    DECISION_AI_FAILED — via the same synchronous call path and
-    timeout, so the handler can mirror the group flow step for step.
-    """
+    """Ask Groq/Gemini about one private-chat question with shared budget & 413 self-heal."""
     prompt = build_private_prompt(
         text=text,
         author_name=author_name,
         history=history,
         reply_to_text=reply_to_text,
     )
+
+    def _build_minimal() -> str:
+        return build_private_prompt(
+            text=text,
+            author_name=author_name,
+            history=None,
+            reply_to_text=None,
+            minimal_tier=True,
+        )
+
     try:
         raw = await asyncio.wait_for(
-            asyncio.to_thread(gai._ask_ai_sync, prompt),
+            asyncio.to_thread(
+                gai._call_compat_kwargs,
+                gai._ask_ai_sync,
+                prompt,
+                client_factory=client_factory,
+                groq_requester=groq_requester,
+                minimal_prompt_fn=_build_minimal,
+            ),
             timeout=gai.AI_TIMEOUT_SECONDS,
         )
     except Exception as exc:
-        logger.warning("private_ai: AI call failed: %s", exc)
+        logger.warning("private_ai: AI call failed (%s): %s", type(exc).__name__, exc)
         return gai.DECISION_AI_FAILED, None
     if not raw or not str(raw).strip():
         logger.warning("private_ai: AI returned an empty response")

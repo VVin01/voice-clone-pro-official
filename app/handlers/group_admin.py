@@ -319,6 +319,43 @@ def _log_decision(message: Message, user_id: int | None, decision: str, reason: 
     )
 
 
+async def _deliver_ai_failed_holding(
+    message: Message,
+    bot: Bot | None,
+    *,
+    limiter: gai.GroupReplyRateLimiter,
+    text: str,
+    is_group: bool,
+) -> bool:
+    """Post ONE holding reply + ONE lightweight no-draft Admin DM when cooldowns allow."""
+    user = message.from_user
+    if user is None or not limiter.can_post_holding_reply(user.id, is_group=is_group):
+        return False
+    limiter.record_holding_reply(user.id, is_group=is_group)
+    try:
+        await message.reply(gai.HOLDING_REPLY_AI_FAILED, **_plain_send_kw(message))
+    except Exception as exc:
+        logger.debug("group_ai_admin: holding reply post failed: %s", exc)
+
+    dm_text = gai.build_ai_failed_dm(
+        author_name=user.first_name or "",
+        author_username=user.username,
+        author_id=user.id,
+        text=text,
+        chat_id=message.chat.id,
+        message_id=message.message_id,
+        failure_stage=gai.get_last_failure_stage(),
+        is_group=is_group,
+    )
+    sender = bot or message.bot
+    for admin_id in settings.admin_ids:
+        try:
+            await sender.send_message(admin_id, dm_text, parse_mode="HTML")
+        except Exception as exc:
+            logger.warning("group_ai_admin: ai_failed DM to %s failed: %s", admin_id, exc)
+    return True
+
+
 async def _execute_moderation(
     message: Message,
     bot: Bot | None,
@@ -605,6 +642,7 @@ async def handle_group_message(
             fast_path_text = gai.build_maintenance_reply()
             fast_path_kind = "maintenance"
         if fast_path_text is not None:
+            gai.rate_limiter.reset_ai_failures(user.id)
             gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
             await message.reply(fast_path_text, **_plain_send_kw(message))
             gai.rate_limiter.record_reply(user.id, message.message_id)
@@ -624,6 +662,7 @@ async def handle_group_message(
                 faq_id, faq_answer = faq_hit
                 answer_text = gai.strip_emoji(faq_answer)
                 if answer_text:
+                    gai.rate_limiter.reset_ai_failures(user.id)
                     gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
                     await message.reply(answer_text, **_plain_send_kw(message))
                     gai.rate_limiter.record_reply(user.id, message.message_id)
@@ -669,11 +708,29 @@ async def handle_group_message(
                     _log_decision(message, user.id, "moderation_ignored", f"{ai_category}:{ai_conf:.2f}_below_threshold")
                     return
 
-        gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
-
         if decision == gai.DECISION_AI_FAILED:
+            consec_fails = gai.rate_limiter.record_ai_failure(user.id)
+            if consec_fails >= 2:
+                gai.rate_limiter.undo_last_ai_call()
+            gai.context_buffer.push_dedup(message.chat.id, user.first_name or "", message_text or "")
+            if gai.is_high_intent_group_message(
+                message_text,
+                bot_mentioned=bot_mentioned,
+                is_reply_to_bot=is_reply_to_bot,
+                consecutive_ai_failures=consec_fails,
+            ):
+                await _deliver_ai_failed_holding(
+                    message,
+                    bot,
+                    limiter=gai.rate_limiter,
+                    text=message_text or "",
+                    is_group=True,
+                )
             _log_decision(message, user.id, "ai_failed", "ai_call")
             return
+
+        gai.rate_limiter.reset_ai_failures(user.id)
+        gai.context_buffer.push(message.chat.id, user.first_name or "", message_text or "")
         if decision == gai.DECISION_ESCALATE:
             _log_decision(message, user.id, "escalate", "ai_escalate")
             await _escalate(
@@ -1096,10 +1153,20 @@ async def handle_private_message(
         decision, reply_text = await ask_fn(**ask_kwargs)
 
         if decision == gai.DECISION_AI_FAILED:
-            # The call failed — silence for the user, logged AS a
-            # failure (Batch AQ standard), never a canned fallback.
+            consec_fails = pai.private_rate_limiter.record_ai_failure(user.id)
+            if consec_fails >= 2:
+                pai.private_rate_limiter.undo_last_ai_call()
+            await _deliver_ai_failed_holding(
+                message,
+                bot,
+                limiter=pai.private_rate_limiter,
+                text=message.text or "",
+                is_group=False,
+            )
             _log_private_decision(message, user.id, "ai_failed", "ai_call")
             return
+
+        pai.private_rate_limiter.reset_ai_failures(user.id)
         if decision == gai.DECISION_ESCALATE:
             _log_private_decision(message, user.id, "escalate", "ai_escalate")
             deferral_text = _bot_t("private_ai_deferral_unsure", lang)

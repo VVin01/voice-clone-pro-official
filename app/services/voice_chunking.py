@@ -39,6 +39,7 @@ import unicodedata
 INPUT_TOKEN_BUDGET = 1700
 MODEL_TOKEN_CAP = 2096
 TOKENS_PER_CHAR = 2.2
+CONTROL_TOKENS_PER_CHAR = 0.4
 REF_AUDIO_TOKENS_PER_SECOND = 25.0
 # The engine trims clone references to their first 45 s (Batch BU), so
 # longer uploads cannot add more reference overhead than this.
@@ -46,6 +47,8 @@ REFERENCE_MAX_SECONDS = 45.0
 # Never plan a chunk smaller than this, even when the reference
 # overhead alone nearly exhausts the budget.
 MIN_CHUNK_CHARS = 120
+# Soft sentence-packing ceiling for prosodic stability (~4-6 chunks on a 122 s job).
+MAX_CHUNK_CHARS = 425
 
 _SENTENCE_ENDINGS = "။?!\n"
 _CLAUSE_MARK = "၊"
@@ -74,6 +77,17 @@ def estimate_tokens(text: str | None) -> int:
     return int(math.ceil(round(len(str(text)) * TOKENS_PER_CHAR, 9)))
 
 
+def estimate_control_tokens(text: str | None) -> int:
+    """Estimated model tokens for control_instruction (~0.4 tok/char for English/ASCII)."""
+    if not text:
+        return 0
+    s = str(text)
+    ascii_chars = sum(1 for ch in s if ord(ch) < 128)
+    non_ascii = len(s) - ascii_chars
+    raw = ascii_chars * CONTROL_TOKENS_PER_CHAR + non_ascii * TOKENS_PER_CHAR
+    return int(math.ceil(round(raw, 9)))
+
+
 def input_overhead_tokens(
     *,
     reference_transcript: str = "",
@@ -87,7 +101,7 @@ def input_overhead_tokens(
     )
     return (
         estimate_tokens(reference_transcript)
-        + estimate_tokens(control_instruction)
+        + estimate_control_tokens(control_instruction)
         + int(math.ceil(ref_seconds * REF_AUDIO_TOKENS_PER_SECOND))
     )
 
@@ -210,14 +224,15 @@ def plan_text_chunks(
     reference_transcript: str = "",
     control_instruction: str = "",
     reference_seconds: float = 0.0,
+    max_chunk_chars: int = MAX_CHUNK_CHARS,
 ) -> list[str]:
     """Plan synthesis chunks for a voice-clone job's target text.
 
     Returns [text] unchanged when the whole text fits in one call
     (the common case — no behaviour change). Otherwise returns >= 2
     chunks, each within the character budget derived from the token
-    budget minus the reference/control overhead, packed from whole
-    sentences wherever possible.
+    budget minus the reference/control overhead (soft-capped at
+    ``max_chunk_chars``), packed from whole sentences wherever possible.
     """
     text = str(text or "")
     if not text.strip():
@@ -227,16 +242,17 @@ def plan_text_chunks(
         control_instruction=control_instruction,
         reference_seconds=reference_seconds,
     )
-    if len(text) <= budget_chars:
+    effective_cap = min(budget_chars, max(MIN_CHUNK_CHARS, int(max_chunk_chars)))
+    if len(text) <= effective_cap:
         return [text]
 
     chunks: list[str] = []
     current = ""
     for sentence in split_sentences(text):
-        for piece in _hard_split(sentence, budget_chars):
+        for piece in _hard_split(sentence, effective_cap):
             if not current:
                 current = piece
-            elif len(current) + 1 + len(piece) <= budget_chars:
+            elif len(current) + 1 + len(piece) <= effective_cap:
                 current = f"{current} {piece}"
             else:
                 chunks.append(current)
@@ -250,10 +266,13 @@ __all__ = [
     "INPUT_TOKEN_BUDGET",
     "MODEL_TOKEN_CAP",
     "TOKENS_PER_CHAR",
+    "CONTROL_TOKENS_PER_CHAR",
     "REF_AUDIO_TOKENS_PER_SECOND",
     "REFERENCE_MAX_SECONDS",
     "MIN_CHUNK_CHARS",
+    "MAX_CHUNK_CHARS",
     "estimate_tokens",
+    "estimate_control_tokens",
     "input_overhead_tokens",
     "estimated_input_tokens",
     "chunk_char_budget",

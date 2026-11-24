@@ -460,7 +460,8 @@ async def test_bot_buy_menu_is_two_columns_mmk_and_invoice_shows_validity(db_ses
 def test_group_ai_tokens_and_webapp_audit_fixes():
     import re
     gai = (REPO_ROOT / "app" / "services" / "group_ai_admin.py").read_text(encoding="utf-8")
-    assert '"max_output_tokens": 4096' in gai
+    assert "GEMINI_AI_MAX_OUTPUT_TOKENS = 1024" in gai
+    assert '"max_output_tokens": GEMINI_AI_MAX_OUTPUT_TOKENS' in gai
     assert '"max_output_tokens": 2048' in gai
 
     api_src = (REPO_ROOT / "app" / "webapp" / "api.py").read_text(encoding="utf-8")

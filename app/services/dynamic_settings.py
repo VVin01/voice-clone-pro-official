@@ -135,6 +135,7 @@ SETTING_TYPES: dict[str, type] = {
     "gemini_tts_fallback_1": str,
     "gemini_tts_lite_model": str,
     "gemini_tts_fallback_2": str,
+    "gemini_tts_leak_gate_mode": str,
     "ai_prompt_profile": str,
     "voxcpm_timeout": int,
     "groq_whisper_model": str,

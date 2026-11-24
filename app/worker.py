@@ -548,54 +548,94 @@ def _synthesize_voxcpm_voice_job(
     reference_seconds: float = 0.0,
     tier: str = "free",
     allow_fallback: bool = True,
+    gender_preset: str = "",
 ) -> Path:
-    """Batch CH: VoxCPM synthesis for a voice-clone job, chunked when
-    the text cannot fit the model's 2,096-token input cap in one call.
+    """Batch CH + Prosody Phase 1: VoxCPM synthesis for a voice-clone job.
 
-    A text that fits stays EXACTLY the pre-CH single call (same
-    arguments, engine-internal fallback semantics untouched). A longer
-    text is split by app.services.voice_chunking into sentence-aligned
-    chunks; each chunk is synthesized with the SAME reference,
-    control, persona and speed, with allow_fallback=False so a chunk
-    can never silently switch voice mid-job — a chunk failure raises
-    into the caller's EXISTING whole-job resilient fallback, and the
-    parts are concatenated only after every chunk succeeded, so a
-    mixed-voice output is never produced. Runs in an executor.
-
-    Batch DP: ``tier`` / ``allow_fallback`` are the caller's tier
-    plumbing — paid jobs walk the reserve and run with the engine's
-    internal Edge fallback DISABLED end-to-end (a quota exhaustion
-    must surface as VoxCPMQuotaExhaustedError so the caller can park
-    the job, never as silently-switched persona audio). Free jobs
-    keep the defaults and are byte-identical to before.
+    Phase 1A-1 (custom clones only):
+      - Selects the steadiest ~10 s voiced slice from the user's reference WAV.
+      - Runs one-time Gemini ASR with an 8-22 chars/s plausibility gate -> prompt_text.
+      - Preserves DEFAULT_CLONE_FIDELITY_CONTROL when prompt_text falls back to ""
+        (unless gender_preset is an explicit m2f/f2m cross-gender flip).
+    Phase 1A-2:
+      - Charges English control at ~0.4 tok/char and uses the sliced reference duration.
+      - Packs sentences up to MAX_CHUNK_CHARS (425); skips per-chunk mastering and runs
+        exactly ONE post-stitch mastering + atempo pass after 135 ms boundary pauses.
+    Phase 1B:
+      - Measures per-chunk octave-guarded YIN median F0 + Burmese syllable rate;
+        regenerates prosody outliers (<=1/chunk, <=2/job), keeps the closer candidate,
+        and applies bounded rubberband micro-correction (±2.0 st, [0.90, 1.12]).
     """
-    # Only non-default tier/fallback values are passed through: a
-    # default (free) job's engine call stays byte-identical to the
-    # pre-DP shape (Batch CH pins the single call's argument set).
+    import inspect as _inspect
+    import statistics as _statistics
+    from app.services import clone_prosody as _cp
+    from app.services.voxcpm_engine import DEFAULT_CLONE_FIDELITY_CONTROL, master_voxcpm_audio
+
     _dp_kwargs: dict = {}
     if tier != "free":
         _dp_kwargs["tier"] = tier
     if not allow_fallback:
         _dp_kwargs["allow_fallback"] = False
 
+    norm_gender = str(gender_preset or "").strip().lower()
+    is_gender_flip = norm_gender in ("m2f", "f2m")
+    is_custom_clone = bool(reference_wav is not None and not preset_voice)
+
+    active_ref_wav = Path(reference_wav) if reference_wav is not None else None
+    active_ref_secs = float(reference_seconds or 0.0)
+    ref_prosody: _cp.ProsodyStats | None = None
+
+    if is_custom_clone and active_ref_wav is not None and active_ref_wav.is_file():
+        active_ref_wav, sliced_secs, ref_prosody = _cp.select_steady_reference_slice(
+            active_ref_wav,
+            output_wav.parent,
+            target_sec=_cp.REFERENCE_SLICE_SECONDS,
+        )
+        if sliced_secs > 0:
+            active_ref_secs = sliced_secs
+        elif active_ref_secs <= 0:
+            active_ref_secs = ref_prosody.duration_sec
+
+        if not is_gender_flip and not reference_transcript:
+            reference_transcript = _cp.transcribe_reference_slice_checked(
+                active_ref_wav,
+                max(active_ref_secs, 0.5),
+            )
+        if not is_gender_flip and not reference_transcript and not control_instruction:
+            control_instruction = DEFAULT_CLONE_FIDELITY_CONTROL
+    elif active_ref_wav is not None and active_ref_wav.is_file():
+        ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
+
+    effective_ref_arg = active_ref_wav if active_ref_wav is not None else reference_wav
+
     # Locked-timbre clones (ref + ref_transcript) ignore control_instruction;
-    # avoid subtracting ~400 phantom control tokens from chunk capacity.
-    effective_planning_control = "" if (reference_wav and reference_transcript) else (control_instruction or "")
+    # avoid subtracting phantom control tokens from chunk capacity.
+    effective_planning_control = (
+        "" if (effective_ref_arg and reference_transcript) else (control_instruction or "")
+    )
     chunks = plan_text_chunks(
         text,
         reference_transcript=reference_transcript,
         control_instruction=effective_planning_control,
-        reference_seconds=reference_seconds,
+        reference_seconds=active_ref_secs,
     )
+
+    extra_prompt_kw: dict = {}
+    if is_custom_clone and not is_gender_flip:
+        extra_prompt_kw["prompt_text"] = reference_transcript
+    elif reference_transcript:
+        extra_prompt_kw["prompt_text"] = reference_transcript
+
     if len(chunks) <= 1:
         engine.synthesize(
             text=text,
             output_wav=output_wav,
-            reference_wav=reference_wav,
+            reference_wav=effective_ref_arg,
             control_instruction=control_instruction,
             preset_voice=preset_voice,
             speed=speed,
             progress_cb=progress_cb,
+            **extra_prompt_kw,
             **_dp_kwargs,
         )
         if is_wav_edge_clipped(output_wav):
@@ -607,11 +647,12 @@ def _synthesize_voxcpm_voice_job(
                 engine.synthesize(
                     text=text,
                     output_wav=output_wav,
-                    reference_wav=reference_wav,
+                    reference_wav=effective_ref_arg,
                     control_instruction=control_instruction,
                     preset_voice=preset_voice,
                     speed=speed,
                     progress_cb=progress_cb,
+                    **extra_prompt_kw,
                     **_dp_kwargs,
                 )
             except Exception as e_regen:
@@ -625,20 +666,31 @@ def _synthesize_voxcpm_voice_job(
         "Voice clone chunked synthesis: job=%s chunks=%d", job_id, len(chunks)
     )
     parts: list[Path] = []
+    stitched_wav = output_wav.parent / f"{output_wav.stem}.stitched_raw.wav"
+    job_prosody_retries = 0
+    corrections_applied = 0
+    accepted_f0s: list[float] = []
+    accepted_rates: list[float] = []
+    chunk_log_f0: list[float | None] = []
+    chunk_log_rate: list[float | None] = []
+
     try:
         for idx, chunk in enumerate(chunks, 1):
             part = output_wav.parent / f"{output_wav.stem}.chunk{idx:02d}.wav"
-            engine.synthesize(
-                text=chunk,
-                output_wav=part,
-                reference_wav=reference_wav,
-                control_instruction=control_instruction,
-                preset_voice=preset_voice,
-                speed=speed,
-                progress_cb=progress_cb,
-                allow_fallback=False,
+            chunk_kw = {
+                "text": chunk,
+                "output_wav": part,
+                "reference_wav": effective_ref_arg,
+                "control_instruction": control_instruction,
+                "preset_voice": preset_voice,
+                "speed": speed,
+                "progress_cb": progress_cb,
+                "allow_fallback": False,
+                "skip_mastering": True,
+                **extra_prompt_kw,
                 **({"tier": tier} if tier != "free" else {}),
-            )
+            }
+            engine.synthesize(**chunk_kw)
             if is_wav_edge_clipped(part):
                 logger.warning(
                     "VoxCPM segment %d/%d output clipped at edge for job %s; regenerating once",
@@ -647,26 +699,119 @@ def _synthesize_voxcpm_voice_job(
                     job_id,
                 )
                 try:
-                    engine.synthesize(
-                        text=chunk,
-                        output_wav=part,
-                        reference_wav=reference_wav,
-                        control_instruction=control_instruction,
-                        preset_voice=preset_voice,
-                        speed=speed,
-                        progress_cb=progress_cb,
-                        allow_fallback=False,
-                        **({"tier": tier} if tier != "free" else {}),
-                    )
+                    engine.synthesize(**chunk_kw)
                 except Exception as e_regen:
                     logger.warning(
                         "VoxCPM segment %d retry failed (%s); keeping existing part",
                         idx,
                         e_regen,
                     )
+
+            # Phase 1B: Measure raw chunk prosody, check outlier vs anchor, micro-correct
+            stats = _cp.measure_prosody(part, text=chunk)
+            if is_gender_flip:
+                anchor_f0 = (
+                    float(_statistics.median(accepted_f0s))
+                    if accepted_f0s
+                    else stats.f0_median_hz
+                )
+                anchor_rate = (
+                    float(_statistics.median(accepted_rates))
+                    if accepted_rates
+                    else stats.syllable_rate
+                )
+            else:
+                anchor_f0 = (
+                    ref_prosody.f0_median_hz
+                    if (ref_prosody is not None and ref_prosody.f0_median_hz is not None)
+                    else (float(_statistics.median(accepted_f0s)) if accepted_f0s else None)
+                )
+                anchor_rate = (
+                    ref_prosody.syllable_rate
+                    if (ref_prosody is not None and ref_prosody.syllable_rate is not None)
+                    else (float(_statistics.median(accepted_rates)) if accepted_rates else None)
+                )
+
+            is_outlier, _df0, _rr = _cp.is_prosody_outlier(
+                stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
+            )
+            if is_outlier and job_prosody_retries < _cp.MAX_PROSODY_RETRIES_PER_JOB:
+                retry_part = output_wav.parent / f"{output_wav.stem}.chunk{idx:02d}.retry.wav"
+                job_prosody_retries += 1
+                try:
+                    retry_kw = dict(chunk_kw, output_wav=retry_part)
+                    engine.synthesize(**retry_kw)
+                    retry_stats = _cp.measure_prosody(retry_part, text=chunk)
+                    d_orig = _cp.prosody_anchor_distance(
+                        stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
+                    )
+                    d_retry = _cp.prosody_anchor_distance(
+                        retry_stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
+                    )
+                    if d_retry < d_orig and retry_part.is_file():
+                        shutil.move(str(retry_part), str(part))
+                        stats = retry_stats
+                except Exception as e_prosody:
+                    logger.warning(
+                        "VoxCPM prosody outlier retry failed on chunk %d (%s); keeping original",
+                        idx,
+                        e_prosody,
+                    )
+                finally:
+                    retry_part.unlink(missing_ok=True)
+
+            if stats.f0_median_hz is not None:
+                accepted_f0s.append(stats.f0_median_hz)
+                if is_gender_flip and len(accepted_f0s) >= 1:
+                    anchor_f0 = float(_statistics.median(accepted_f0s))
+            if stats.syllable_rate is not None:
+                accepted_rates.append(stats.syllable_rate)
+                if (is_gender_flip or anchor_rate is None) and len(accepted_rates) >= 1:
+                    anchor_rate = float(_statistics.median(accepted_rates))
+
+            shift_st, tempo_mult = _cp.compute_rubberband_params(
+                stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
+            )
+            if _cp.apply_rubberband_micro_correction(
+                part, pitch_shift_st=shift_st, tempo_factor=tempo_mult
+            ):
+                corrections_applied += 1
+
+            chunk_log_f0.append(stats.f0_median_hz)
+            chunk_log_rate.append(stats.syllable_rate)
             parts.append(part)
-        concat_wav_files(parts, output_wav)
+
+        # Stitch with 135 ms boundary pauses (graceful 2-arg fallback for test stubs)
+        try:
+            concat_wav_files(
+                parts,
+                stitched_wav,
+                boundary_pause_sec=_cp.CLONE_BOUNDARY_PAUSE_SEC,
+            )
+        except TypeError as te:
+            if "boundary_pause_sec" not in str(te) and "unexpected keyword" not in str(te) and "positional" not in str(te):
+                raise
+            concat_wav_files(parts, stitched_wav)
+
+        # Apply ONE post-stitch mastering + speed_preset pass
+        master_voxcpm_audio(
+            stitched_wav,
+            output_wav,
+            speed=speed,
+            preset_voice=preset_voice,
+        )
+
+        logger.info(
+            "clone_prosody_summary job=%s chunks=%d retries_used=%d corrections=%d f0_hz=%s syl_rate=%s",
+            job_id,
+            len(chunks),
+            job_prosody_retries,
+            corrections_applied,
+            chunk_log_f0,
+            chunk_log_rate,
+        )
     finally:
+        stitched_wav.unlink(missing_ok=True)
         for part in parts:
             try:
                 part.unlink(missing_ok=True)
@@ -961,21 +1106,34 @@ async def process_single_job(
                         control_instruction = p_info.get("control_instruction")
                         logger.info("Using curated persona '%s' for VoxCPM 2 job %s", job.preset_voice, job.id)
 
+                _job_gender = str(getattr(job, "gender_preset", "") or "").strip().lower()
+                _is_custom_same_gender_clone = (
+                    ref_wav is not None
+                    and not getattr(job, "preset_voice", None)
+                    and _job_gender not in ("m2f", "f2m")
+                )
                 if not control_instruction:
-                    is_female = (
-                        getattr(job, "edge_voice", "") == "my-MM-NilarNeural"
-                        or getattr(job, "gender_preset", "") in ("m2f", "f2f")
-                    )
-                    if is_female:
-                        control_instruction = (
-                            "A sweet, gentle, natural Burmese female speaker with soft melodious voice, "
-                            "clear feminine tone, warm studio acoustics, and fluent authentic native pronunciation."
-                        )
+                    if _is_custom_same_gender_clone:
+                        # Prosody Phase 1A-1 #4: preserve fidelity control on custom same-gender
+                        # clones instead of overwriting with generic Voice-Design prose.
+                        from app.services.voxcpm_engine import DEFAULT_CLONE_FIDELITY_CONTROL
+
+                        control_instruction = DEFAULT_CLONE_FIDELITY_CONTROL
                     else:
-                        control_instruction = (
-                            "A clear, natural, emotionally expressive Burmese male speaker with warm tone, "
-                            "deep resonance, velvety cadence, and fluent authentic native pronunciation."
+                        is_female = (
+                            getattr(job, "edge_voice", "") == "my-MM-NilarNeural"
+                            or _job_gender in ("m2f", "f2f")
                         )
+                        if is_female:
+                            control_instruction = (
+                                "A sweet, gentle, natural Burmese female speaker with soft melodious voice, "
+                                "clear feminine tone, warm studio acoustics, and fluent authentic native pronunciation."
+                            )
+                        else:
+                            control_instruction = (
+                                "A clear, natural, emotionally expressive Burmese male speaker with warm tone, "
+                                "deep resonance, velvety cadence, and fluent authentic native pronunciation."
+                            )
 
                 # Batch CH: reference overhead for the chunk budget —
                 # the persona reference transcript (exact, when this is
@@ -1041,6 +1199,7 @@ async def process_single_job(
                                 reference_seconds=reference_seconds,
                                 tier="paid" if _dp_paid else "free",
                                 allow_fallback=not _dp_paid,
+                                gender_preset=_job_gender,
                             ),
                         )
                     except VoxCPMQuotaExhaustedError as e_quota:

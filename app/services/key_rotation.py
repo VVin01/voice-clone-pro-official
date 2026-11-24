@@ -338,6 +338,9 @@ class KeyHealth:
         # Part 2 (§2C Item 3): per-model TTS accept / DQ-reject counters
         # keyed by model -> [pacific_day, accept, dq_reject] in aj_kh:gemini_tts.
         self._tts_stats: dict[str, list] = {}
+        # Phase 1 leak gate (2026-11-24): separate per-model ASR leak-reject counter
+        # so accept / dq_reject meanings stay untouched.
+        self._tts_asr_stats: dict[str, list] = {}
         # Batch AJ (M12) persistence backstop — off for direct instances.
         self._persist_provider: str | None = None
         self._persist_loaded = False
@@ -614,6 +617,30 @@ class KeyHealth:
     def record_tts_dq_reject(self, model: str) -> None:
         self.record_tts_outcome(model, accepted=False)
 
+    def record_tts_asr_reject(self, model: str) -> None:
+        """Increment today's ASR leak-reject counter for `model` (separate from dq_reject)."""
+        self._maybe_load()
+        model_norm = str(model or "").strip()
+        if not model_norm:
+            return
+        with self._lock:
+            day = self._pacific_day()
+            entry = self._tts_asr_stats.get(model_norm)
+            if entry is None or entry[0] != day:
+                entry = [day, 0]
+                self._tts_asr_stats[model_norm] = entry
+            entry[1] = int(entry[1]) + 1
+        self._schedule_persist()
+
+    def tts_asr_reject_count(self, model: str) -> int:
+        self._maybe_load()
+        with self._lock:
+            day = self._pacific_day()
+            entry = self._tts_asr_stats.get(str(model or "").strip())
+            if not entry or entry[0] != day:
+                return 0
+            return int(entry[1])
+
     def tts_model_stats(self, model: str | None = None) -> dict:
         """Return today's per-model `{accept, dq_reject, total, dq_reject_rate}` counters."""
         self._maybe_load()
@@ -800,6 +827,7 @@ class KeyHealth:
             self._strikes.clear()
             self._usage.clear()
             self._tts_stats.clear()
+            self._tts_asr_stats.clear()
             self._cursor = 0
         if timer is not None:
             timer.cancel()
@@ -993,6 +1021,7 @@ def ask_groq_text_sync(
     max_attempts: int | None = None,
     json_mode: bool = False,
     max_prompt_tokens: int | None = None,
+    deadline_monotonic: float | None = None,
     requester: Callable[..., object] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> str:
@@ -1035,11 +1064,19 @@ def ask_groq_text_sync(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
+    est_prompt_tok = estimate_prompt_tokens(prompt)
     last_exc: Exception | None = None
     attempts = 0
     for label, key in candidate_pool:
         if max_attempts is not None and attempts >= int(max_attempts):
             break
+        req_timeout = float(timeout_seconds)
+        if deadline_monotonic is not None:
+            remaining = float(deadline_monotonic) - time.monotonic()
+            if remaining <= 0.05:
+                last_exc = TimeoutError("groq_text: stage deadline exhausted before attempt")
+                break
+            req_timeout = min(req_timeout, max(0.5, remaining))
         attempts += 1
         try:
             resp = post_fn(
@@ -1050,7 +1087,7 @@ def ask_groq_text_sync(
                     "User-Agent": _GROQ_TEXT_USER_AGENT,
                 },
                 json=payload,
-                timeout=timeout_seconds,
+                timeout=req_timeout,
             )
             status_code = int(getattr(resp, "status_code", 0) or 0)
             if status_code == 200:
@@ -1064,15 +1101,33 @@ def ask_groq_text_sync(
                 if content:
                     health.mark_success(key)
                     health.record_usage(key, model)
+                    usage = body.get("usage") if isinstance(body, dict) else None
+                    real_ptok = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+                    comp_tok = usage.get("completion_tokens") if isinstance(usage, dict) else None
+                    logger.info(
+                        "groq_text: usage model=%s real_prompt_tokens=%s est_prompt_tokens=%d completion_tokens=%s",
+                        model,
+                        real_ptok,
+                        est_prompt_tok,
+                        comp_tok,
+                    )
                     return content
                 last_exc = RuntimeError(f"groq_text: empty response from {model} ({label})")
                 continue
 
-            body_text = str(getattr(resp, "text", "") or "")[:300]
-            if _is_groq_oversize_error(status_code, body_text):
-                raise GroqPromptTooLargeError(
-                    f"groq_text: prompt rejected as oversize (HTTP {status_code}) on {model}"
+            full_body_text = str(getattr(resp, "text", "") or "")
+            if _is_groq_oversize_error(status_code, full_body_text):
+                logger.warning(
+                    "groq_text: prompt oversize HTTP %s on %s (est_prompt_tokens=%d): %s",
+                    status_code,
+                    model,
+                    est_prompt_tok,
+                    full_body_text,
                 )
+                raise GroqPromptTooLargeError(
+                    f"groq_text: prompt rejected as oversize (HTTP {status_code}) on {model}: {full_body_text}"
+                )
+            body_text = full_body_text[:300]
             if status_code in (401, 403):
                 health.mark_failure(key)
                 last_exc = RuntimeError(f"groq_text: auth failure HTTP {status_code} ({label})")

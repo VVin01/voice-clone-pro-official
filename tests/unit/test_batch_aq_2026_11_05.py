@@ -457,7 +457,7 @@ async def test_log_ai_failed_not_no_reply(db_session, monkeypatch, caplog):
     msg = _fake_message("Recap က ဘယ်လို လုပ်ရတာလဲ", message_id=55)
     with caplog.at_level(logging.INFO):
         await handle_group_message(msg, state=_fake_state(), session=db_session, bot=msg.bot)
-    msg.reply.assert_not_called()  # member still gets silence
+    msg.reply.assert_called_once_with(gai.HOLDING_REPLY_AI_FAILED)
     assert "decision=ai_failed" in caplog.text
     assert "decision=no_reply" not in caplog.text
     assert "RuntimeError" in caplog.text  # the service warning names the type

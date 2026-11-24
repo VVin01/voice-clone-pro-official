@@ -82,6 +82,11 @@ try:
 except Exception:  # pragma: no cover - standalone load
     _key_rotation = None  # type: ignore[assignment]
 
+try:
+    from app.services import tts_leak_gate as _tts_leak_gate
+except Exception:  # pragma: no cover - standalone load
+    _tts_leak_gate = None  # type: ignore[assignment]
+
 VOICES = [("Charon", "male"), ("Algenib", "male"), ("Orus", "male"), ("Iapetus", "male"), ("Puck", "male"),
           ("Gacrux", "female"), ("Sulafat", "female"), ("Kore", "female"), ("Achernar", "female"), ("Leda", "female")]
 GEMINI_VOICE_NAMES: tuple[str, ...] = tuple(name for name, _ in VOICES)
@@ -287,6 +292,8 @@ BUSY_ROUNDS, BUSY_WAIT_SECONDS = 2, 10
 # and this cap bounds whatever mix remains.
 GEMINI_TTS_MAX_ATTEMPTS_PER_CALL = 12
 GEMINI_TTS_TIMEOUT_MS = 45_000
+MAX_LEAK_REJECTS_PER_MODEL = 2
+MAX_LEAK_RETRIES_PER_CALL = 4
 BYOK_SINGLE_KEY_MAX_WORKERS = 2
 BYOK_SINGLE_KEY_STAGGER_SECONDS = 1.5
 
@@ -395,6 +402,10 @@ LogFn = Callable[[str], None]
 
 class GeminiTTSError(RuntimeError):
     pass
+
+
+class GeminiTTSLeakExhaustedError(GeminiTTSError):
+    """Raised when a single chunk exhausts its leak-retry budget without quota/auth exhaustion."""
 
 
 def default_voice_for_gender(is_female: bool) -> str:
@@ -667,9 +678,15 @@ class GeminiTTSEngine:
         # Batch DQ: the output-duration gate's yardstick — the
         # CLEANED transcript length, computed once per call (the
         # prompts are built from this same cleaned text).
-        cleaned_chars = len(_clean_tts_text(text))
+        cleaned_text = _clean_tts_text(text)
+        cleaned_chars = len(cleaned_text)
         last = ""
         attempts = 0
+        leak_retries_used = 0
+        strip_prompt_for_chunk = False
+        had_any_leak_reject = False
+        had_non_leak_failure = False
+        is_byok_single_key = (not self._record_usage) and len(self.keys) == 1
         gate = self._byok_sem if self._byok_sem is not None else contextlib.nullcontext()
         with gate:
             for _round_no in range(BUSY_ROUNDS):
@@ -677,14 +694,17 @@ class GeminiTTSEngine:
                 for model in models:
                     if _is_model_retired(model):
                         continue
-                    # Batch DO: per-model prompt shape — the 3.8 family
-                    # must never receive the full AUDIO-PROFILE text (it
-                    # reads it aloud); previews keep the full profile.
-                    prompt = _prompt_for_model(model, text, voice_name, self.direction)
+                    model_leak_rejects = 0
                     # Batch DN: per-model quota-aware key order (richest
                     # key first for THIS model) — see _key_order_for_model.
                     order = self._key_order_for_model(model, tts_health)
-                    for i in order:
+                    # BYOK 1-key engines get the same 2-per-model leak retries on their single key.
+                    key_slots = (
+                        order * MAX_LEAK_REJECTS_PER_MODEL
+                        if (is_byok_single_key and len(order) == 1)
+                        else order
+                    )
+                    for i in key_slots:
                         if _is_model_retired(model):
                             break
                         with self._lock:
@@ -695,6 +715,12 @@ class GeminiTTSEngine:
                         # request so no error mix can exceed it.
                         attempts += 1
                         if attempts > GEMINI_TTS_MAX_ATTEMPTS_PER_CALL:
+                            if had_any_leak_reject and not had_non_leak_failure:
+                                raise GeminiTTSLeakExhaustedError(
+                                    "Gemini TTS: chunk leak budget exhausted "
+                                    f"({GEMINI_TTS_MAX_ATTEMPTS_PER_CALL} attempts) — "
+                                    f"this line will use the persona engine instead. ({last})"
+                                )
                             with self._lock:
                                 self.exhausted = True
                             raise GeminiTTSError(
@@ -703,6 +729,12 @@ class GeminiTTSEngine:
                                 f"line) — remaining lines will use the persona engine "
                                 f"instead. ({last})"
                             )
+                        # Phase 1 B2: attempt 1 uses configured prompt; after any leak reject
+                        # on this chunk, stay stripped to bare cleaned transcript only.
+                        if strip_prompt_for_chunk:
+                            prompt = cleaned_text
+                        else:
+                            prompt = _prompt_for_model(model, text, voice_name, self.direction)
                         try:
                             self._wait_byok_stagger()
                             client = _client(self.keys[i])  # kept in a variable: a dropped genai Client closes itself
@@ -717,30 +749,135 @@ class GeminiTTSEngine:
                                     except GeminiTTSError as wav_err:
                                         last = f"{model}: {wav_err}"
                                         had_invalid_audio = True
+                                        had_non_leak_failure = True
                                         break
                                     if not pcm:
                                         last = f"{model}: empty audio in the answer"
                                         had_invalid_audio = True
+                                        had_non_leak_failure = True
                                         break
-                                    # Quality Pass §2C item 3: verify the DQ output-duration gate
-                                    # BEFORE recording success/quota usage so leaked reads never
-                                    # burn pool credit as healthy accepts; track accept vs dq_reject.
                                     secs = _pcm_seconds(
                                         pcm,
                                         channels=channels,
                                         sampwidth=sampwidth,
                                         framerate=framerate,
                                     )
+                                    gate_mode = (
+                                        _tts_leak_gate.get_leak_gate_mode()
+                                        if _tts_leak_gate is not None
+                                        else "off"
+                                    )
                                     if cleaned_chars >= 1 and secs > _max_plausible_seconds(cleaned_chars):
                                         if tts_health is not None and self._record_usage:
+                                            try:
+                                                tts_health.record_usage(self.keys[i], model)
+                                            except Exception:
+                                                pass
                                             try:
                                                 tts_health.record_tts_dq_reject(model)
                                             except Exception:
                                                 pass
+                                        if _tts_leak_gate is not None:
+                                            _tts_leak_gate.log_tts_telemetry(
+                                                model=model,
+                                                voice=voice_name,
+                                                cleaned_text=cleaned_text,
+                                                pcm_secs=secs,
+                                                gate_mode=gate_mode,
+                                                verdict="dq_reject",
+                                                reason="duration_guard",
+                                            )
+                                            _tts_leak_gate.record_leak_sample(
+                                                pcm,
+                                                model=model,
+                                                voice=voice_name,
+                                                cleaned_text=cleaned_text,
+                                                pcm_secs=secs,
+                                                reason="duration_guard",
+                                                channels=channels,
+                                                sampwidth=sampwidth,
+                                                framerate=framerate,
+                                            )
                                         self.log(f"🛡️ Gemini TTS output rejected — {secs:.1f}s for {cleaned_chars} chars on {model} (possible prompt leak); retrying")
                                         last = f"{model}: output too long ({secs:.1f}s for {cleaned_chars} chars) — rejected as a possible prompt leak"
                                         rejected = True
                                         break
+
+                                    # Phase 1 B3: Head ASR content gate (after duration guard, before accept/usage).
+                                    telemetry_logged = False
+                                    if (
+                                        _tts_leak_gate is not None
+                                        and cleaned_chars >= 1
+                                        and gate_mode in ("shadow", "enforce")
+                                        and _tts_leak_gate.should_verify_chunk(cleaned_chars, secs)
+                                    ):
+                                        gate_res = _tts_leak_gate.verify_tts_pcm_head(
+                                            pcm,
+                                            cleaned_text=cleaned_text,
+                                            channels=channels,
+                                            sampwidth=sampwidth,
+                                            framerate=framerate,
+                                        )
+                                        if gate_res.verdict == "leak":
+                                            _tts_leak_gate.record_leak_sample(
+                                                pcm,
+                                                model=model,
+                                                voice=voice_name,
+                                                cleaned_text=cleaned_text,
+                                                pcm_secs=secs,
+                                                reason=gate_res.reason,
+                                                channels=channels,
+                                                sampwidth=sampwidth,
+                                                framerate=framerate,
+                                            )
+                                            if gate_mode == "enforce":
+                                                if tts_health is not None and self._record_usage:
+                                                    try:
+                                                        tts_health.record_usage(self.keys[i], model)
+                                                    except Exception:
+                                                        pass
+                                                    if hasattr(tts_health, "record_tts_asr_reject"):
+                                                        try:
+                                                            tts_health.record_tts_asr_reject(model)
+                                                        except Exception:
+                                                            pass
+                                                _tts_leak_gate.log_tts_telemetry(
+                                                    model=model,
+                                                    voice=voice_name,
+                                                    cleaned_text=cleaned_text,
+                                                    pcm_secs=secs,
+                                                    gate_mode=gate_mode,
+                                                    verdict="asr_leak_reject",
+                                                    reason=gate_res.reason,
+                                                )
+                                                self.log(
+                                                    f"🛡️ Gemini TTS output rejected by ASR gate — {secs:.1f}s for {cleaned_chars} chars on {model} ({gate_res.reason}); retrying"
+                                                )
+                                                last = f"{model}: ASR leak gate rejected output ({gate_res.reason})"
+                                                rejected = True
+                                                break
+                                            else:
+                                                _tts_leak_gate.log_tts_telemetry(
+                                                    model=model,
+                                                    voice=voice_name,
+                                                    cleaned_text=cleaned_text,
+                                                    pcm_secs=secs,
+                                                    gate_mode=gate_mode,
+                                                    verdict="shadow_leak",
+                                                    reason=gate_res.reason,
+                                                )
+                                                telemetry_logged = True
+
+                                    if _tts_leak_gate is not None and not telemetry_logged:
+                                        _tts_leak_gate.log_tts_telemetry(
+                                            model=model,
+                                            voice=voice_name,
+                                            cleaned_text=cleaned_text,
+                                            pcm_secs=secs,
+                                            gate_mode=gate_mode,
+                                            verdict="accept",
+                                            reason="clean",
+                                        )
                                     with self._lock:
                                         self._last_key = i
                                     if tts_health is not None:
@@ -764,9 +901,28 @@ class GeminiTTSEngine:
                                     if hasattr(self, "_tls"):
                                         self._tls.pcm_spec = (channels, sampwidth, framerate)
                                     return pcm
+                            if rejected:
+                                had_any_leak_reject = True
+                                strip_prompt_for_chunk = True
+                                model_leak_rejects += 1
+                                if leak_retries_used >= MAX_LEAK_RETRIES_PER_CALL:
+                                    raise GeminiTTSLeakExhaustedError(
+                                        f"Gemini TTS: leak retry budget ({MAX_LEAK_RETRIES_PER_CALL}) exhausted for chunk ({last})"
+                                    )
+                                leak_retries_used += 1
+                                if model_leak_rejects >= MAX_LEAK_REJECTS_PER_MODEL:
+                                    self.log(
+                                        f"🔀 Gemini TTS escalating from {model} after {model_leak_rejects} leak rejects"
+                                    )
+                                    break
+                                continue
                             if not rejected and not had_invalid_audio:
                                 last = f"{model}: no audio in the answer"
+                                had_non_leak_failure = True
+                        except GeminiTTSLeakExhaustedError:
+                            raise
                         except Exception as exc:  # noqa: BLE001
+                            had_non_leak_failure = True
                             code = _code(exc)
                             with self._lock:
                                 self.key_error_codes[i] = code
@@ -832,6 +988,11 @@ class GeminiTTSEngine:
                 if _round_no < BUSY_ROUNDS - 1:
                     self.log(f"⏳ Gemini TTS busy — waiting {BUSY_WAIT_SECONDS} s")
                     time.sleep(BUSY_WAIT_SECONDS)
+        if had_any_leak_reject and not had_non_leak_failure:
+            raise GeminiTTSLeakExhaustedError(
+                "Gemini TTS: chunk rejected by prompt-leak guard on all candidate attempts — "
+                f"this line will use the persona engine instead. ({last})"
+            )
         with self._lock:
             self.exhausted = True
         raise GeminiTTSError(
@@ -971,6 +1132,11 @@ class RoutedGeminiEngine:
                     self.own_requests += 1
                     self.own_seconds += wav_duration_seconds(out)
                 return out
+            except GeminiTTSLeakExhaustedError as leak_exc:
+                # Phase 1 B1: per-chunk leak exhaustion steps ONLY this chunk to pool
+                # without permanently benching the user's own key (_own_spent stays False).
+                own_exc = leak_exc
+                self.log("🛡️ Own Gemini key chunk leak-exhausted — stepping this chunk only to pool")
             except GeminiTTSError as exc:
                 own_exc = exc
                 cls = classify_gemini_key_failure(self.own_engine, exc)
@@ -985,7 +1151,8 @@ class RoutedGeminiEngine:
                 self.pool_requests += 1
                 self.pool_seconds += wav_duration_seconds(out)
             return out
-        self.exhausted = True
+        if not isinstance(own_exc, GeminiTTSLeakExhaustedError):
+            self.exhausted = True
         if own_exc is not None:
             raise own_exc
         raise GeminiTTSError("Gemini TTS: no Gemini route available for this call.")
