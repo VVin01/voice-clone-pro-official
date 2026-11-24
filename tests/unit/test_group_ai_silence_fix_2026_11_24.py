@@ -562,3 +562,36 @@ def test_dedupe_rule_inventory_and_static_baseline_under_9500():
     ]
     for phrase in required_rule_phrases:
         assert phrase in instr, f"Missing load-bearing rule phrase in SYSTEM_INSTRUCTIONS: {phrase!r}"
+
+
+def test_fact_sheet_clone_sample_duration_guidance_pin():
+    """Addendum pin: built-in FACT_SHEET Voice Studio section carries verbatim clone sample duration guidance."""
+    expected_bullet = (
+        "• နမူနာ အသံ (Clone အတွက် တင်ရတဲ့ အသံ) ရဲ့ ကြာချိန်: ၁၀–၃၀ စက္ကန့် အကောင်းဆုံး၊ အများဆုံး ၅၀ စက္ကန့်။ "
+        "၅၀ စက္ကန့်ထက် ရှည်တဲ့ ဖိုင် တင်မိရင် ပထမ ၄၅ စက္ကန့်ကိုပဲ ဖြတ်ပြီး Clone လုပ်ပါတယ် (ကျန်တဲ့ အပိုင်း လုံးဝ မသုံးပါ)။ "
+        "50 MB ဆိုတာ ဖိုင်ဆိုဒ် (အရွယ်အစား) ကန့်သတ်ချက်သာ ဖြစ်ပြီး ကြာချိန် ကန့်သတ်ချက် မဟုတ်ပါ — မိနစ် ၂၀ စာ လို အရှည်ကြီး တင်ရင် ပထမ ၄၅ စက္ကန့်ပဲ သုံးမှာ ဖြစ်လို့၊ အစပိုင်းမှာ စကားပြော မပါရင် Clone အရည်အသွေး ကျပါမယ်။ "
+        "စကားပြော ရှင်းရှင်းလင်းလင်း ပါတဲ့ ၁၀–၃၀ စက္ကန့် အပိုင်းကို ရွေးတင်ပါ။ "
+        "Recap မှာ ကိုယ်ပိုင်အသံ သုံးရင်လည်း ဒီ စည်းကမ်း အတိုင်းပါပဲ။"
+    )
+    sheet = gai.build_fact_sheet()
+    lines = sheet.splitlines()
+
+    upload_idx = next(
+        i for i, line in enumerate(lines) if "အသံဖိုင် 50 MB အထိ တိုက်ရိုက် Upload" in line
+    )
+    duration_bullet = lines[upload_idx + 1]
+    assert duration_bullet == expected_bullet
+    assert "၅၀ စက္ကန့်" in duration_bullet
+    assert "၄၅ စက္ကန့်" in duration_bullet
+    assert "ဖိုင်ဆိုဒ်" in duration_bullet and "မဟုတ်ပါ" in duration_bullet
+
+    # Verify static baseline (< 9,500) and fitted prompt (<= 7,500) gates stay green
+    assert kr.estimate_prompt_tokens(f"{gai.SYSTEM_INSTRUCTIONS}\n\n{sheet}") < 9500
+    assembled = gai.build_prompt(
+        author_name="Member",
+        text="Clone လုပ်မယ့် အသံဖိုင် ဘယ်လောက် ရှည်ရမလဲ?",
+        bot_mentioned=True,
+        is_reply_to_bot=False,
+    )
+    assert expected_bullet in assembled
+    assert kr.estimate_prompt_tokens(assembled) <= 7500
