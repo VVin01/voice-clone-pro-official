@@ -236,11 +236,13 @@ def test_fast_space_plain_tts_uses_generate_style(tmp_path, monkeypatch):
 
 
 def test_unmapped_space_still_uses_generate(tmp_path, monkeypatch):
+    # HF Pool Phase 1 Part 4 (#4, 2026-11-24): openbmb/VoxCPM-Demo is CPU-basic and
+    # excluded from automated failover; test unmapped `/generate` on a non-demo space.
     result = _write_wav(tmp_path / "ok.wav")
     record: list = []
     submits: list = []
-    engine = _vox_engine(tmp_path, monkeypatch, tokens=[], spaces=("openbmb/VoxCPM-Demo",))
-    _patch_vox_clients(monkeypatch, {("openbmb/VoxCPM-Demo", None): "ok"}, result, record, submits)
+    engine = _vox_engine(tmp_path, monkeypatch, tokens=[], spaces=("someone/voxcpm2-custom",))
+    _patch_vox_clients(monkeypatch, {("someone/voxcpm2-custom", None): "ok"}, result, record, submits)
 
     out = engine.synthesize(text="demo line", output_wav=tmp_path / "o.wav", allow_fallback=False)
     assert out.is_file()

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import json
 import logging
 import math
+import time
 import uuid
+from datetime import timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.enums import AccountCategory, JobStatus, JobType
 from app.models.schema import Job, User, VoiceModel, utc_now
+from app.services import hf_pool_ledger as _hf_ledger
+from app.services import voice_choice as _vc
 from app.services.billing import (
     BILLING_MODE_ADMIN_FREE,
     BILLING_MODE_VOICE_ONLY,
@@ -48,6 +53,18 @@ logger = logging.getLogger(__name__)
 # remains the billing source of truth.
 MEASURED_CHARS_PER_SECOND = 17.6
 PRE_CHECK_SAFETY_MARGIN = 1.15
+
+# HF Pool Phase 1 (Part 6 #4): global VoxCPM concurrency cap, 2:1 Paid/Free
+# fairness interleaving, and 15-minute anti-starvation ceiling.
+MAX_CONCURRENT_VOXCPM_JOBS = 2
+ANTI_STARVATION_SECONDS = 900.0
+_paid_dispatch_streak: int = 0
+
+
+def reset_fairness_for_tests() -> None:
+    """Reset the 2:1 Paid/Free interleaving streak counter between unit tests."""
+    global _paid_dispatch_streak
+    _paid_dispatch_streak = 0
 
 
 def speed_preset_factor(speed_preset) -> float:
@@ -337,6 +354,34 @@ async def create_voice_clone_job(
         if not edge_voice:
             edge_voice = "my-MM-NilarNeural" if gender_preset in ("m2f", "f2f") else "my-MM-ThihaNeural"
 
+    is_paid_tier = bool(
+        is_admin or user.account_category == AccountCategory.PURCHASED.value
+    )
+    est_audio_float = float(
+        estimated_seconds or estimate_voice_job_seconds(valid_text or "", speed_preset)
+    )
+    est_units, _gate_s, needed_gpu_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+        kind="clone",
+        text=valid_text or text or "",
+    )
+    admission = _hf_ledger.evaluate_voxcpm_admission(
+        kind="clone",
+        is_paid=is_paid_tier,
+        units=est_units,
+        est_audio_seconds=est_audio_float,
+    )
+    if not admission.admitted and not is_paid_tier:
+        # Part 6 (#3): Free submit when pool cannot finish -> 0 deducted, no failed Job row!
+        logger.info(
+            "Free voice clone job rejected at pre-job gate for user %s (reason=%s, band=%s, needed=%.1fs, avail=%.1fs)",
+            user_id,
+            admission.reason,
+            admission.band,
+            admission.needed_gpu_s,
+            admission.available_gpu_s,
+        )
+        return None, "VOXCPM_POOL_EXHAUSTED"
+
     job_id = str(uuid.uuid4())
     try:
         await reserve_for_job(
@@ -353,12 +398,28 @@ async def create_voice_clone_job(
         logger.info("Voice job reserve rejected for user %s: %s", user_id, exc)
         return None, "INSUFFICIENT_BALANCE"
 
+    initial_status = JobStatus.QUEUED.value
+    initial_choice_state: str | None = None
+    if not admission.admitted and is_paid_tier:
+        # Part 6 (#3) & Part 7: Paid submit when pool cannot finish -> park immediately
+        # in WAITING_CHOICE (reservation held, 0 settled, live refill ETA).
+        initial_status = JobStatus.WAITING_CHOICE.value
+        initial_choice_state = _vc.dump_choice_state(
+            _vc.new_choice_state(
+                _vc.KIND_CLONE,
+                completed_units=0,
+                total_units=est_units,
+                needed_gpu_s=needed_gpu_s,
+                worker_host=_vc.current_worker_host(),
+            )
+        )
+
     job = Job(
         id=job_id,
         user_id=user_id,
         chat_id=chat_id or user_id,
         status_message_id=status_message_id,
-        status=JobStatus.QUEUED.value,
+        status=initial_status,
         job_type=JobType.VOICE_CLONE.value,
         engine=actual_engine,
         preset_voice=preset_voice,
@@ -369,12 +430,180 @@ async def create_voice_clone_job(
         gender_preset=gender_preset,
         speed_preset=speed_preset,
         seconds_estimated=estimated_seconds,
+        voice_choice_state=initial_choice_state,
     )
     session.add(job)
     await session.flush()
 
-    logger.info("Created voice clone job %s for user %s (engine=%s, model=%s, est=%ss, source_audio=%s)", job.id, user_id, actual_engine, model.name, estimated_seconds, bool(source_audio_path))
-    return job, "QUEUED"
+    logger.info(
+        "Created voice clone job %s for user %s (status=%s, engine=%s, model=%s, est=%ss, source_audio=%s)",
+        job.id,
+        user_id,
+        initial_status,
+        actual_engine,
+        getattr(model, "name", "voxcpm-cloud-ai"),
+        estimated_seconds,
+        bool(source_audio_path),
+    )
+    return job, initial_status
+
+
+def _is_recap_row(job: Job) -> bool:
+    return bool(
+        job.job_type == JobType.RECAP.value
+        or job.engine == "recap"
+        or str(job.id).startswith("rc_")
+    )
+
+
+def _recap_uses_voxcpm(job: Job) -> tuple[bool, bool, dict]:
+    """Return `(uses_voxcpm, is_script_ready_parked, parsed_recap_state)`."""
+    vc_state = _vc.parse_choice_state(getattr(job, "voice_choice_state", None))
+    if _vc.choice_mode(vc_state) == _vc.CHOICE_EDGE_ALL:
+        return False, False, {}
+    raw = getattr(job, "recap_state_json", None)
+    parsed: dict = {}
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except Exception:
+            parsed = {}
+    if parsed.get("script_ready"):
+        return False, True, parsed
+    cfg = parsed.get("cfg") if isinstance(parsed.get("cfg"), dict) else {}
+    tts_eng = str(parsed.get("tts_engine") or cfg.get("tts_engine") or "").strip().lower()
+    if tts_eng in ("gemini", "edge", "edge_tts", "none", "subtitle_only", "no_voice"):
+        return False, False, parsed
+    if tts_eng == "voxcpm":
+        return True, False, parsed
+    voice_str = str(parsed.get("voice") or cfg.get("voice") or "").strip().lower()
+    if voice_str.startswith("voxcpm") or bool(getattr(job, "recap_ref_audio_path", None)):
+        return True, False, parsed
+    return False, False, parsed
+
+
+def is_job_voxcpm_bound(job: Job) -> bool:
+    """True when `job` actively consumes VoxCPM ZeroGPU slots if RUNNING."""
+    if _is_recap_row(job):
+        uses_vox, script_ready, _ = _recap_uses_voxcpm(job)
+        return bool(uses_vox and not script_ready)
+    return bool(job.engine == "voxcpm" or job.job_type == JobType.VOICE_CLONE.value)
+
+
+async def count_active_voxcpm_jobs(session: AsyncSession) -> int:
+    """Count currently `RUNNING` VoxCPM jobs across standalone clone and recap."""
+    running_rows = (
+        await session.execute(select(Job).where(Job.status == JobStatus.RUNNING.value))
+    ).scalars().all()
+    return sum(1 for row in running_rows if is_job_voxcpm_bound(row))
+
+
+def _estimate_job_voxcpm_budget(job: Job) -> tuple[int, float, float]:
+    """Return `(units, needed_gpu_s, est_audio_seconds)` for queue admission & sorting."""
+    vc_state = _vc.parse_choice_state(getattr(job, "voice_choice_state", None))
+    if vc_state and float(vc_state.get("needed_gpu_s") or 0.0) > 0:
+        tot = max(1, int(vc_state.get("total_units") or 1))
+        done = max(0, int(vc_state.get("completed_units") or 0))
+        rem_u = max(1, tot - done)
+        return (
+            rem_u,
+            float(vc_state["needed_gpu_s"]),
+            float(job.seconds_estimated or 0.0),
+        )
+    if _is_recap_row(job):
+        _uses, _sr, parsed = _recap_uses_voxcpm(job)
+        cfg = parsed.get("cfg") if isinstance(parsed.get("cfg"), dict) else {}
+        segs = parsed.get("segments_count") or cfg.get("segments_count")
+        dur = float(
+            parsed.get("duration_seconds")
+            or cfg.get("duration_seconds")
+            or job.seconds_estimated
+            or 60.0
+        )
+        u, _g, needed = _hf_ledger.estimate_voxcpm_units_and_budget(
+            kind="recap",
+            planned_segments=int(segs) if segs else None,
+            duration_seconds=dur,
+        )
+        return u, needed, dur
+    est_s = float(
+        job.seconds_estimated
+        or estimate_voice_job_seconds(job.input_text or "", job.speed_preset or DEFAULT_SPEED)
+    )
+    u, _g, needed = _hf_ledger.estimate_voxcpm_units_and_budget(
+        kind="clone",
+        text=job.input_text or "",
+    )
+    return u, needed, est_s
+
+
+def _job_created_epoch(job: Job, fallback_now: float) -> float:
+    dt = getattr(job, "created_at", None)
+    if dt is None:
+        return fallback_now
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def order_voxcpm_fair_queue(
+    candidates: list[Job],
+    is_paid_by_job_id: dict[str, bool],
+    gpu_s_by_job_id: dict[str, float],
+    *,
+    paid_streak: int | None = None,
+    now_ts: float | None = None,
+) -> list[Job]:
+    """Order queued VoxCPM jobs per Part 6 (#4):
+    1. Anti-starvation ceiling first (`wait >= 15 min`, oldest first).
+    2. Shortest-remaining-GPU-first within each tier, interleaved 2 Paid : 1 Free.
+    """
+    now = time.time() if now_ts is None else float(now_ts)
+    streak = _paid_dispatch_streak if paid_streak is None else max(0, int(paid_streak))
+
+    starved: list[Job] = []
+    paid_norm: list[Job] = []
+    free_norm: list[Job] = []
+
+    for j in candidates:
+        c_ts = _job_created_epoch(j, now)
+        if (now - c_ts) >= ANTI_STARVATION_SECONDS:
+            starved.append(j)
+        elif is_paid_by_job_id.get(str(j.id), False):
+            paid_norm.append(j)
+        else:
+            free_norm.append(j)
+
+    starved.sort(key=lambda j: _job_created_epoch(j, now))
+    paid_norm.sort(
+        key=lambda j: (
+            round(float(gpu_s_by_job_id.get(str(j.id), 0.0)), 2),
+            _job_created_epoch(j, now),
+        )
+    )
+    free_norm.sort(
+        key=lambda j: (
+            round(float(gpu_s_by_job_id.get(str(j.id), 0.0)), 2),
+            _job_created_epoch(j, now),
+        )
+    )
+
+    ordered: list[Job] = list(starved)
+    p_idx = 0
+    f_idx = 0
+    cur_streak = streak
+    while p_idx < len(paid_norm) or f_idx < len(free_norm):
+        if p_idx < len(paid_norm) and (cur_streak < 2 or f_idx >= len(free_norm)):
+            ordered.append(paid_norm[p_idx])
+            p_idx += 1
+            cur_streak += 1
+        elif f_idx < len(free_norm):
+            ordered.append(free_norm[f_idx])
+            f_idx += 1
+            cur_streak = 0
+        else:
+            break
+    return ordered
 
 
 async def claim_job_for_running(session: AsyncSession, job_id: str) -> bool:
@@ -401,29 +630,24 @@ async def claim_next_queued_job(
     skip_local_source: bool | None = None,
     allow_recap: bool | None = None,
 ) -> Job | None:
-    """Find the oldest QUEUED job matching engine_filter and atomically transition it to RUNNING.
+    """Find the next eligible QUEUED job and atomically transition it to RUNNING.
 
-    Guarantees exactly ONE competing worker claims and executes the job.
-
-    When ``skip_local_source`` is True (or unset and settings.worker_claim_local_files
-    is False, e.g. WORKER_CLAIM_LOCAL_FILES=0 on a VPS second worker), jobs
-    whose ``source_audio_path`` is a local filesystem path (or recap jobs with
-    local source / own-voice reference audio) are skipped so the primary instance
-    claims them. URL-sourced recaps using persona narration and portable voice jobs
-    are claimable by any worker.
+    Enforces (HF Pool Phase 1):
+    - Global VoxCPM concurrency cap (`MAX_CONCURRENT_VOXCPM_JOBS = 2`).
+    - 15-minute worker host affinity for resumed parked jobs (`Part 3 #3`).
+    - Shortest-remaining-GPU-first with 2:1 Paid/Free interleaving and 15-minute
+      anti-starvation ceiling (`Part 6 #4`).
+    - Pre-execution ledger admission check (`QUEUED -> RUNNING` only when
+      `effective_usable_gpu_s - in_flight_gpu_s >= needed_gpu_s` and `solvent_slots >= units`).
     """
+    global _paid_dispatch_streak
+
     if skip_local_source is None:
         skip_local_source = not getattr(settings, "worker_claim_local_files", True)
     if allow_recap is None:
         allow_recap = getattr(settings, "recap_on_queue", False)
 
-    query = select(
-        Job.id,
-        Job.source_audio_path,
-        Job.job_type,
-        Job.engine,
-        Job.recap_ref_audio_path,
-    ).where(
+    query = select(Job).where(
         Job.status == JobStatus.QUEUED.value,
         # Batch AW: TTS jobs execute in the webapp process (their own
         # background runner), never in the voice-clone worker — keep
@@ -455,36 +679,152 @@ async def claim_next_queued_job(
             | (Job.source_audio_path.startswith("https://"))
         )
 
-    candidate_stmt = query.order_by(Job.created_at).limit(10)
-    rows = (await session.execute(candidate_stmt)).all()
-    if not rows:
+    candidate_stmt = query.order_by(Job.created_at).limit(25)
+    candidates = list((await session.execute(candidate_stmt)).scalars().all())
+    if not candidates:
         return None
 
-    for row in rows:
-        candidate_id, src_path, j_type, eng, ref_path = row[0], row[1], row[2], row[3], row[4]
-        is_recap = (
-            j_type == JobType.RECAP.value
-            or eng == "recap"
-            or str(candidate_id).startswith("rc_")
-        )
+    active_voxcpm = await count_active_voxcpm_jobs(session)
+
+    user_ids = {int(c.user_id) for c in candidates if c.user_id is not None}
+    paid_users: set[int] = set()
+    if user_ids:
+        u_rows = (
+            await session.execute(
+                select(User.id, User.account_category).where(User.id.in_(user_ids))
+            )
+        ).all()
+        for uid, cat in u_rows:
+            if settings.is_admin(uid) or cat == AccountCategory.PURCHASED.value:
+                paid_users.add(int(uid))
+        for uid in user_ids:
+            if settings.is_admin(uid):
+                paid_users.add(int(uid))
+
+    is_paid_map: dict[str, bool] = {}
+    gpu_s_map: dict[str, float] = {}
+    units_map: dict[str, int] = {}
+    est_sec_map: dict[str, float] = {}
+    vox_candidates: list[Job] = []
+    non_vox_candidates: list[Job] = []
+
+    for cand in candidates:
+        jid = str(cand.id)
+        is_recap_c = _is_recap_row(cand)
+        if _vc.is_host_affinity_blocked(getattr(cand, "voice_choice_state", None)):
+            logger.debug(
+                "Skipping job %s: worker host affinity active for another host",
+                jid,
+            )
+            continue
+        if is_recap_c:
+            if skip_local_source and not _is_recap_portable(
+                cand.source_audio_path, cand.recap_ref_audio_path
+            ):
+                logger.debug(
+                    "Skipping recap job %s: not portable for clean-disk worker",
+                    jid,
+                )
+                continue
+        else:
+            if skip_local_source and _is_local_source(cand.source_audio_path):
+                logger.debug(
+                    "Skipping job %s: source_audio_path is a local file "
+                    "and this instance has skip_local_source=True",
+                    jid,
+                )
+                continue
+
+        is_paid_map[jid] = int(cand.user_id) in paid_users
+        if is_job_voxcpm_bound(cand):
+            u, needed_s, est_s = _estimate_job_voxcpm_budget(cand)
+            units_map[jid] = u
+            gpu_s_map[jid] = needed_s
+            est_sec_map[jid] = est_s
+            vox_candidates.append(cand)
+        else:
+            non_vox_candidates.append(cand)
+
+    ordered_vox = order_voxcpm_fair_queue(
+        vox_candidates, is_paid_map, gpu_s_map
+    )
+    # Non-VoxCPM jobs (e.g. Gemini/Edge recaps) keep their exact FIFO slot positions;
+    # VoxCPM slots are filled in `ordered_vox` order (or omitted when VoxCPM cap is full).
+    if active_voxcpm >= MAX_CONCURRENT_VOXCPM_JOBS:
+        ordered_all = non_vox_candidates
+    else:
+        vox_ids = {str(c.id) for c in vox_candidates}
+        vox_iter = iter(ordered_vox)
+        ordered_all = []
+        for cand in candidates:
+            cid = str(cand.id)
+            if cid in vox_ids:
+                nxt = next(vox_iter, None)
+                if nxt is not None:
+                    ordered_all.append(nxt)
+            elif any(str(nv.id) == cid for nv in non_vox_candidates):
+                ordered_all.append(cand)
+
+    for cand in ordered_all:
+        candidate_id = str(cand.id)
+        is_recap = _is_recap_row(cand)
+        is_vox = is_job_voxcpm_bound(cand)
+
+        if is_vox and active_voxcpm >= MAX_CONCURRENT_VOXCPM_JOBS:
+            continue
+
+        # Part 3 (#3): prefer the checkpoint owner host for 15 minutes after resume/park.
+        if _vc.is_host_affinity_blocked(getattr(cand, "voice_choice_state", None)):
+            logger.debug(
+                "Skipping job %s: worker host affinity active for another host",
+                candidate_id,
+            )
+            continue
+
         if is_recap:
-            if skip_local_source and not _is_recap_portable(src_path, ref_path):
+            if skip_local_source and not _is_recap_portable(
+                cand.source_audio_path, cand.recap_ref_audio_path
+            ):
                 logger.debug(
                     "Skipping recap job %s: not portable for clean-disk worker",
                     candidate_id,
                 )
                 continue
         else:
-            if skip_local_source and _is_local_source(src_path):
+            if skip_local_source and _is_local_source(cand.source_audio_path):
                 logger.debug(
                     "Skipping job %s: source_audio_path is a local file "
                     "and this instance has skip_local_source=True",
                     candidate_id,
                 )
                 continue
+
+        if is_vox:
+            adm = _hf_ledger.evaluate_voxcpm_admission(
+                kind="recap" if is_recap else "clone",
+                is_paid=is_paid_map.get(candidate_id, False),
+                units=units_map.get(candidate_id, 1),
+                est_audio_seconds=est_sec_map.get(candidate_id, 0.0),
+            )
+            if not adm.admitted:
+                logger.debug(
+                    "Holding queued VoxCPM job %s at claim gate (reason=%s, band=%s, needed=%.1fs, avail=%.1fs)",
+                    candidate_id,
+                    adm.reason,
+                    adm.band,
+                    adm.needed_gpu_s,
+                    adm.available_gpu_s,
+                )
+                continue
+
         claimed = await claim_job_for_running(session, candidate_id)
         if not claimed:
             continue
+        if is_vox:
+            if is_paid_map.get(candidate_id, False):
+                _paid_dispatch_streak += 1
+            else:
+                _paid_dispatch_streak = 0
         return await session.get(Job, candidate_id)
 
     return None

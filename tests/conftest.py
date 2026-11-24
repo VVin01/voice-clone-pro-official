@@ -94,6 +94,18 @@ def restore_settings():
     settings.voice_daily_limit_minutes_paid = 0
     settings.recap_on_queue = False
     settings.ai_prompt_profile = "v2"
+    try:
+        from app.services.hf_pool_ledger import reset_ledger_for_tests
+        from app.services.queue import reset_fairness_for_tests
+        from app.services.voxcpm_engine import VoxCPMEngine
+
+        reset_ledger_for_tests()
+        reset_fairness_for_tests()
+        VoxCPMEngine._token_cooldowns.clear()
+        VoxCPMEngine._token_balances.clear()
+        VoxCPMEngine._space_admission_prices.clear()
+    except Exception:
+        pass
     yield
     settings.admin_ids_raw = orig_admin_ids
     settings.bot_token = orig_bot_token
@@ -113,6 +125,18 @@ def restore_settings():
     settings.telegram_webhook_secret = orig_webhook_secret
     settings.bot_webhook_path = orig_webhook_path
     settings.public_base_url = orig_public_base_url
+    try:
+        from app.services.hf_pool_ledger import reset_ledger_for_tests
+        from app.services.queue import reset_fairness_for_tests
+        from app.services.voxcpm_engine import VoxCPMEngine
+
+        reset_ledger_for_tests()
+        reset_fairness_for_tests()
+        VoxCPMEngine._token_cooldowns.clear()
+        VoxCPMEngine._token_balances.clear()
+        VoxCPMEngine._space_admission_prices.clear()
+    except Exception:
+        pass
     try:
         from app.webapp.telegram_webhook import attach_bot, recent_update_ids
         attach_bot(None, None)

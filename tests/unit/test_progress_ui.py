@@ -252,7 +252,10 @@ async def test_worker_execution_primary_failure_falls_back_and_succeeds(db_sessi
     def mock_voxcpm_fail(*args, **kwargs):
         raise RuntimeError("VoxCPM2 inference GPU/CPU out of memory")
 
+    persona_calls: list = []
+
     def mock_persona_ok(text, persona_id, output_wav, **kwargs):
+        persona_calls.append(persona_id)
         out = Path(output_wav)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"fake_fallback_wav")
@@ -265,12 +268,14 @@ async def test_worker_execution_primary_failure_falls_back_and_succeeds(db_sessi
         patch("app.services.curated_voices.synthesize_curated_persona", side_effect=mock_persona_ok),
         patch("app.worker.get_wav_duration_seconds", return_value=10),
     ):
+        # SUPERSEDED by HF Pool Phase 1 Part 2 (#1, 2026-11-24): VoxCPM clone jobs
+        # forbid Edge/persona fallback; failure cleans up progress and marks FAILED with 0 charge.
         success = await process_single_job(session=db_session, job=job, bot=mock_bot)
-        assert success is True
+        assert success is False
 
-    assert job.status == JobStatus.SUCCESS.value
-    # Fallback use is recorded on the job (transparency fix 2026-10-29).
-    assert job.engine == "edge_fallback"
+    assert job.status == JobStatus.FAILED.value
+    assert persona_calls == []
+    assert job.seconds_consumed in (0, None)
 
 
 @pytest.mark.asyncio

@@ -346,9 +346,9 @@ async def test_ch_worker_multi_chunk_success(db_session, tmp_path, caplog):
 async def test_ch_worker_chunk_failure_whole_job_fallback_no_charge(
     db_session, tmp_path
 ):
-    """Chunk 2 of a multi-chunk job raises -> NO partial concat is
-    delivered; the worker's existing whole-job Edge fallback produces
-    the audio, and the fallback delivery deducts NOTHING."""
+    """SUPERSEDED by HF Pool Phase 1 Part 2 (#1 & #4, 2026-11-24):
+    Chunk 2 of a multi-chunk job raises -> NO partial concat is delivered,
+    Edge/persona fallback is NEVER called, and the job fails with 0 charge."""
     text = (_SENT * 17).strip()
     user, job, source = await _make_user_model_job(
         db_session, tmp_path, telegram_id=7202, text=text
@@ -356,6 +356,7 @@ async def test_ch_worker_chunk_failure_whole_job_fallback_no_charge(
     before_total = _clone_balance_total(await get_minute_balance(db_session, user.id))
     _FakeEngine.fail_on_call = 2
     concat_calls: list = []
+    persona_calls: list = []
 
     mock_bot = AsyncMock()
     with (
@@ -366,7 +367,7 @@ async def test_ch_worker_chunk_failure_whole_job_fallback_no_charge(
         ),
         patch(
             "app.services.curated_voices.synthesize_curated_persona",
-            side_effect=_persona_ok,
+            side_effect=lambda *a, **kw: persona_calls.append(a),
         ),
         patch(
             "app.worker.get_wav_duration_seconds",
@@ -375,12 +376,11 @@ async def test_ch_worker_chunk_failure_whole_job_fallback_no_charge(
     ):
         success = await process_single_job(session=db_session, job=job, bot=mock_bot)
 
-    assert success is True
-    assert job.status == JobStatus.SUCCESS.value
-    assert job.engine == "edge_fallback"
+    assert success is False
+    assert job.status == JobStatus.FAILED.value
+    assert persona_calls == []
     assert concat_calls == [], "a failed chunk must never reach concat"
-    # Item 2: no deduction, no cap consumption recorded.
-    assert job.seconds_consumed == 0
+    assert job.seconds_consumed in (0, None)
     bal = await get_minute_balance(db_session, user.id)
     assert _clone_balance_total(bal) == before_total
     debits = (
@@ -397,9 +397,8 @@ async def test_ch_worker_chunk_failure_whole_job_fallback_no_charge(
 
 @pytest.mark.asyncio
 async def test_ch_worker_short_text_single_call_unchanged(db_session, tmp_path):
-    """Regression pin: a short text stays ONE engine call with the
-    exact pre-CH argument shape (no allow_fallback kwarg) and normal
-    billing."""
+    """Regression pin (updated for HF Pool Phase 1 Part 2 #1, 2026-11-24):
+    a short text stays ONE engine call with `allow_fallback=False` and normal billing."""
     user, job, source = await _make_user_model_job(
         db_session, tmp_path, telegram_id=7203, text="မင်္ဂလာပါ၊ စမ်းသပ်မှု တစ်ခုပါ။"
     )
@@ -417,7 +416,7 @@ async def test_ch_worker_short_text_single_call_unchanged(db_session, tmp_path):
     assert success is True
     engine = _FakeEngine.instances[-1]
     assert len(engine.calls) == 1
-    assert "allow_fallback" not in engine.calls[0]
+    assert engine.calls[0].get("allow_fallback") is False
     assert job.seconds_consumed == 10
     bal = await get_minute_balance(db_session, user.id)
     assert _clone_balance_total(bal) == before_total - 10

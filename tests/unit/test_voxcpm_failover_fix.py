@@ -86,10 +86,11 @@ def _patch_edge(monkeypatch, record: list):
 # --- space order & capabilities -------------------------------------
 
 def test_default_space_order_gpu_first_cpu_demo_last():
+    # SUPERSEDED by HF Pool Phase 1 Addendum (2026-11-24): third-party 120s-gate
+    # spaces (yeyee2609/voxcpm2, soemintheinsmt6/myanmar-voxcpm2) were removed
+    # from DEFAULT_VOXCPM_SPACES; production spaces come from VOXCPM_SPACES env.
     spaces = vx.DEFAULT_VOXCPM_SPACES
-    assert spaces[0] == "yeyee2609/voxcpm2"
-    assert spaces[-1] == "openbmb/VoxCPM-Demo"
-    assert spaces.index("soemintheinsmt6/myanmar-voxcpm2") < spaces.index("openbmb/VoxCPM-Demo")
+    assert spaces == ["openbmb/VoxCPM-Demo"]
 
 
 def test_configured_spaces_env_override_comes_first(monkeypatch):
@@ -98,11 +99,14 @@ def test_configured_spaces_env_override_comes_first(monkeypatch):
     monkeypatch.delenv("VOXCPM_API_URL", raising=False)
     spaces = vx.get_configured_spaces()
     assert spaces[:2] == ["custom/aaa", "custom/bbb"]
-    assert spaces.index("custom/bbb") < spaces.index("yeyee2609/voxcpm2")
+    assert spaces.index("custom/bbb") < spaces.index("openbmb/VoxCPM-Demo")
 
 
 def test_space_supports_clone():
-    assert vx.space_supports_clone("soemintheinsmt6/myanmar-voxcpm2") is False
+    # SUPERSEDED by HF Pool Phase 1 Addendum (2026-11-24): dead soemintheinsmt6
+    # clone-incapable marker was neutralised when third-party spaces were dropped.
+    assert vx._CLONE_INCAPABLE_SPACE_MARKERS == ()
+    assert vx.space_supports_clone("awints001/voxcpm2-a") is True
     assert vx.space_supports_clone("yeyee2609/voxcpm2") is True
     assert vx.space_supports_clone("openbmb/VoxCPM-Demo") is True
 
@@ -179,12 +183,14 @@ def test_no_fallback_mode_raises_instead_of_edge(tmp_path, monkeypatch):
 # --- clone routing -----------------------------------------------------
 
 def test_clone_request_never_routed_to_prompt_only_space(tmp_path, monkeypatch):
+    # SUPERSEDED by HF Pool Phase 1 Addendum (2026-11-24): dead soemintheinsmt6
+    # special-case was removed; verify clone routing across own / yeyee spaces.
     ref = _write_wav(tmp_path / "ref.wav")
     ok_wav = _write_wav(tmp_path / "ok.wav")
-    soemin_record: list = []
+    own_record: list = []
     yeyee_record: list = []
     clients = {
-        "soemintheinsmt6/myanmar-voxcpm2": _FakeClient("ok", ok_wav, soemin_record),
+        "awints001/voxcpm2-a": _FakeClient("ok", ok_wav, own_record),
         "yeyee2609/voxcpm2": _FakeClient("ok", ok_wav, yeyee_record),
     }
     engine = _make_engine(tmp_path, monkeypatch, list(clients))
@@ -201,20 +207,22 @@ def test_clone_request_never_routed_to_prompt_only_space(tmp_path, monkeypatch):
         total_timeout=30,
     )
     assert Path(out).is_file()
-    assert soemin_record == []  # prompt-only space never sees a clone request
-    assert yeyee_record == ["/generate_clone"]
+    assert own_record == ["/generate"]
+    assert yeyee_record == []
 
 
 def test_plain_tts_may_use_prompt_only_space(tmp_path, monkeypatch):
+    # SUPERSEDED by HF Pool Phase 1 Addendum (2026-11-24): standard openbmb-family
+    # spaces use `/generate` for plain TTS after soemintheinsmt6 `/tts` removal.
     ok_wav = _write_wav(tmp_path / "ok.wav")
     record: list = []
-    clients = {"soemintheinsmt6/myanmar-voxcpm2": _FakeClient("ok", ok_wav, record)}
+    clients = {"awints001/voxcpm2-a": _FakeClient("ok", ok_wav, record)}
     engine = _make_engine(tmp_path, monkeypatch, list(clients))
     _patch_clients(monkeypatch, clients)
 
     out = engine.synthesize(text="plain tts request", output_wav=tmp_path / "out.wav", timeout=5, total_timeout=30)
     assert Path(out).is_file()
-    assert record == ["/tts"]
+    assert record == ["/generate"]
 
 
 # --- recap per-segment policy ------------------------------------------

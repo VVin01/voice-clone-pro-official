@@ -255,9 +255,18 @@ async def _dispatch_oldest_queued_recap() -> bool:
     from sqlalchemy import select
 
     from app.db.session import AsyncSessionLocal
-    from app.models.enums import JobStatus, JobType
+    from app.models.enums import AccountCategory, JobStatus, JobType
     from app.models.schema import Job, User
-    from app.services.queue import claim_job_for_running
+    from app.services import hf_pool_ledger as _hf_ledger
+    from app.services import voice_choice as _vc
+    from app.services.queue import (
+        MAX_CONCURRENT_VOXCPM_JOBS,
+        _estimate_job_voxcpm_budget,
+        claim_job_for_running,
+        count_active_voxcpm_jobs,
+        is_job_voxcpm_bound,
+        order_voxcpm_fair_queue,
+    )
     from app.webapp.api import (
         RECAP_JOBS_REGISTRY,
         _load_persisted_recap_state,
@@ -275,77 +284,110 @@ async def _dispatch_oldest_queued_recap() -> bool:
                 (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap"),
             )
             .order_by(Job.created_at)
-            .limit(1)
+            .limit(15)
         )
-        res = await session.execute(stmt)
-        queued_recap = res.scalar_one_or_none()
-        if not queued_recap:
+        candidates = list((await session.execute(stmt)).scalars().all())
+        if not candidates:
             return False
-        jid = str(queued_recap.id)
-        mem_entry = RECAP_JOBS_REGISTRY.get(jid)
-        if mem_entry and mem_entry.get("status") in ("RUNNING", "QUEUED"):
-            # Already dispatched in this process; the registry guard is
-            # per-process, so the DB claim below remains the real
-            # cross-instance guard during deploy overlaps.
-            return False
-        user = await session.get(User, queued_recap.user_id)
-        # SCRIPT_READY restore: a job that parked for script review
-        # before a restart must come back as a parked registry entry,
-        # not be re-run from the script phase — re-running would
-        # re-transcribe and re-translate and overwrite the plan file
-        # holding the user's edits. The claim still applies (it is
-        # the cross-instance guard); only the background run is skipped.
-        _persisted_state = _load_persisted_recap_state(queued_recap)
-        if _persisted_state is not None and _persisted_state.get("script_ready"):
-            restored_entry = _restore_script_ready_from_db(queued_recap)
-            if restored_entry is not None:
-                if not await claim_job_for_running(session, jid):
-                    return False
-                RECAP_JOBS_REGISTRY[jid] = restored_entry
-                _log.info(f"Restored parked SCRIPT_READY recap job {jid} (no re-run).")
-                return True
-        # Restore the job's persisted submit-time config + credit state
-        # (jobs.recap_config); legacy rows fall back to reconstruction.
-        # This used to rebuild a DEFAULT config here, silently changing
-        # the user's video and corrupting its credit accounting on
-        # every restart/deploy -- and it ran AFTER the claim.
-        try:
-            plan = _recap_redispatch_plan(queued_recap, user)
-        except Exception:
-            _log.warning(
-                f"Could not build re-dispatch plan for recap job {jid}; "
-                "leaving it QUEUED for the next poll.",
-                exc_info=True,
-            )
-            return False
-        # DB-level claim (hunt F10): the registry guard above is
-        # per-process, so during a deploy overlap (old + new instance
-        # both polling) both workers could dispatch the same QUEUED
-        # job -- double render, double per-part top-up. The atomic
-        # QUEUED->RUNNING flip lets exactly one instance win; the loser
-        # skips this cycle. Startup resets orphaned RUNNING rows back
-        # to QUEUED before this loop starts, so legitimately reset
-        # jobs claim cleanly.
-        if not await claim_job_for_running(session, jid):
-            return False
-        _log.info(f"Auto-dispatching queued recap job {jid}...")
-        RECAP_JOBS_REGISTRY[jid] = plan["entry"]
-        asyncio.create_task(
-            _run_recap_background_job(
-                jid,
-                plan["cfg"],
-                queued_recap.user_id,
-                queued_recap.chat_id or queued_recap.user_id,
-                is_vip=plan["is_vip"],
-                credit_deducted=plan["credit_deducted"],
-                phase=plan["phase"],
-                # Batch DP: a re-dispatched parked job carries its
-                # owner's voice choice + the deadline exemption.
-                voice_choice_mode=plan.get("voice_choice_mode"),
-                dp_resume=bool(plan.get("dp_resume")),
-            )
+
+        active_vox = await count_active_voxcpm_jobs(session)
+        uids = {int(c.user_id) for c in candidates if c.user_id is not None}
+        paid_uids: set[int] = set()
+        if uids:
+            u_rows = (
+                await session.execute(
+                    select(User.id, User.account_category).where(User.id.in_(uids))
+                )
+            ).all()
+            for uid, cat in u_rows:
+                if settings.is_admin(uid) or cat == AccountCategory.PURCHASED.value:
+                    paid_uids.add(int(uid))
+            for uid in uids:
+                if settings.is_admin(uid):
+                    paid_uids.add(int(uid))
+
+        is_paid_map: dict[str, bool] = {}
+        gpu_map: dict[str, float] = {}
+        units_map: dict[str, int] = {}
+        est_sec_map: dict[str, float] = {}
+        vox_cands: list[Job] = []
+        other_cands: list[Job] = []
+        for c in candidates:
+            cjid = str(c.id)
+            is_paid_map[cjid] = int(c.user_id) in paid_uids
+            if is_job_voxcpm_bound(c):
+                u, needed_s, est_s = _estimate_job_voxcpm_budget(c)
+                units_map[cjid] = u
+                gpu_map[cjid] = needed_s
+                est_sec_map[cjid] = est_s
+                vox_cands.append(c)
+            else:
+                other_cands.append(c)
+
+        ordered = (
+            order_voxcpm_fair_queue(vox_cands, is_paid_map, gpu_map) + other_cands
+            if active_vox < MAX_CONCURRENT_VOXCPM_JOBS
+            else other_cands
         )
-        return True
+
+        for queued_recap in ordered:
+            jid = str(queued_recap.id)
+            mem_entry = RECAP_JOBS_REGISTRY.get(jid)
+            if mem_entry and mem_entry.get("status") in ("RUNNING", "QUEUED"):
+                continue
+            if _vc.is_host_affinity_blocked(getattr(queued_recap, "voice_choice_state", None)):
+                continue
+            is_vox = is_job_voxcpm_bound(queued_recap)
+            if is_vox and active_vox >= MAX_CONCURRENT_VOXCPM_JOBS:
+                continue
+            if is_vox:
+                adm = _hf_ledger.evaluate_voxcpm_admission(
+                    kind="recap",
+                    is_paid=is_paid_map.get(jid, False),
+                    units=units_map.get(jid, 1),
+                    est_audio_seconds=est_sec_map.get(jid, 60.0),
+                )
+                if not adm.admitted:
+                    continue
+
+            user = await session.get(User, queued_recap.user_id)
+            _persisted_state = _load_persisted_recap_state(queued_recap)
+            if _persisted_state is not None and _persisted_state.get("script_ready"):
+                restored_entry = _restore_script_ready_from_db(queued_recap)
+                if restored_entry is not None:
+                    if not await claim_job_for_running(session, jid):
+                        continue
+                    RECAP_JOBS_REGISTRY[jid] = restored_entry
+                    _log.info(f"Restored parked SCRIPT_READY recap job {jid} (no re-run).")
+                    return True
+            try:
+                plan = _recap_redispatch_plan(queued_recap, user)
+            except Exception:
+                _log.warning(
+                    f"Could not build re-dispatch plan for recap job {jid}; "
+                    "leaving it QUEUED for the next poll.",
+                    exc_info=True,
+                )
+                continue
+            if not await claim_job_for_running(session, jid):
+                continue
+            _log.info(f"Auto-dispatching queued recap job {jid}...")
+            RECAP_JOBS_REGISTRY[jid] = plan["entry"]
+            asyncio.create_task(
+                _run_recap_background_job(
+                    jid,
+                    plan["cfg"],
+                    queued_recap.user_id,
+                    queued_recap.chat_id or queued_recap.user_id,
+                    is_vip=plan["is_vip"],
+                    credit_deducted=plan["credit_deducted"],
+                    phase=plan["phase"],
+                    voice_choice_mode=plan.get("voice_choice_mode"),
+                    dp_resume=bool(plan.get("dp_resume")),
+                )
+            )
+            return True
+        return False
 
 
 @asynccontextmanager
@@ -637,9 +679,39 @@ async def lifespan(app: FastAPI):
                 _log.warning("Voice-choice resumer cycle failed", exc_info=True)
             await asyncio.sleep(_vc.RESUMER_INTERVAL_SECONDS)
 
+    # Part 5 (#2): seed `aj_hf:pool_state` on boot / HF env hash change and
+    # reconcile exact `remaining_s` / `resets_at` every 15 minutes (0 GPU cost).
+    async def _hf_pool_reconciler():
+        import logging
+
+        from app.config import settings as _hf_settings
+        from app.services import hf_pool_ledger as _hf_ledger
+        from app.services.key_health import get_key_health
+        from app.services.voxcpm_engine import get_available_hf_tokens
+
+        _log = logging.getLogger("HfPoolReconciler")
+        if not getattr(_hf_settings, "instance_primary", True):
+            return
+        db_url = str(getattr(_hf_settings, "database_url", "") or "").lower()
+        if not db_url or "sqlite" in db_url:
+            return
+        try:
+            toks = get_available_hf_tokens()
+            if toks:
+                await asyncio.to_thread(_hf_ledger.reconcile_if_env_changed, toks)
+        except Exception:
+            _log.debug("Initial HF pool seed skipped", exc_info=True)
+        while True:
+            await asyncio.sleep(900)  # 15 minutes
+            try:
+                await asyncio.to_thread(get_key_health, True)
+            except Exception:
+                _log.debug("Periodic HF pool reconciliation skipped", exc_info=True)
+
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     recap_worker_task = asyncio.create_task(_recap_queue_worker())
     voice_choice_task = asyncio.create_task(_voice_choice_resumer())
+    hf_reconciler_task = asyncio.create_task(_hf_pool_reconciler())
 
     # Telegram webhook registration when in webhook mode and bot attached
     try:
@@ -672,6 +744,7 @@ async def lifespan(app: FastAPI):
     cleanup_task.cancel()
     recap_worker_task.cancel()
     voice_choice_task.cancel()
+    hf_reconciler_task.cancel()
 
     try:
         from app.services.key_rotation import flush_all_persistence

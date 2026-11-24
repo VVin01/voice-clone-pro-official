@@ -67,11 +67,8 @@ def _release_file_send(user_id: int, job_id: str, kind: str) -> None:
 
 @clone_router.callback_query(F.data.startswith("dp:"))
 async def handle_voice_choice_callback(callback: CallbackQuery):
-    """Batch DP: the parked-job choice buttons (dp:wait:<job_id> /
-    dp:edgeall:<job_id> / dp:edgemix:<job_id>). Owner-only — enforced
-    in voice_choice.apply_user_choice, never trusted from the tap
-    alone. "wait" keeps the job parked with its buttons live; an Edge
-    choice re-queues the job immediately."""
+    """Parked-job choice buttons (`dp:wait:<job_id>`, `dp:edgeall:<job_id>`,
+    `dp:cancel:<job_id>`). Owner-only; `dp:edgemix` is retired (Part 2 #2)."""
     from app.services import voice_choice as _vc
 
     parts = (callback.data or "").split(":", 2)
@@ -80,7 +77,7 @@ async def handle_voice_choice_callback(callback: CallbackQuery):
     choice = {
         "wait": _vc.CHOICE_WAIT,
         "edgeall": _vc.CHOICE_EDGE_ALL,
-        "edgemix": _vc.CHOICE_EDGE_MIX,
+        "cancel": _vc.CHOICE_CANCEL,
     }.get(action, "")
     try:
         async with AsyncSessionLocal() as _s:
@@ -99,10 +96,10 @@ async def handle_voice_choice_callback(callback: CallbackQuery):
         except Exception:
             logger.warning("DP choice callback failed for job %s", job_id, exc_info=True)
             outcome = "not_parked"
-    if outcome == "ok_resume" and getattr(callback, "message", None) is not None:
-        # Edge choice: the job resumes NOW — retire the prompt's
-        # buttons (a "wait" answer deliberately keeps them live so
-        # the owner can still switch to Edge later).
+    elif action and job_id:
+        outcome = "bad_choice"
+    if outcome in ("ok_resume", "ok_cancel") and getattr(callback, "message", None) is not None:
+        # Resume or cancel settles the parked prompt — retire its inline buttons.
         try:
             await callback.bot.edit_message_reply_markup(
                 chat_id=callback.message.chat.id,
@@ -114,6 +111,7 @@ async def handle_voice_choice_callback(callback: CallbackQuery):
     answer_key = {
         "ok_wait": "dp_choice_wait_answer",
         "ok_resume": "dp_choice_resume_answer",
+        "ok_cancel": "dp_choice_cancel_answer",
         "not_owner": "dp_choice_not_owner",
     }.get(outcome, "dp_choice_not_parked")
     try:

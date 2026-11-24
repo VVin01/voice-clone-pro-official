@@ -326,6 +326,26 @@ def run_key_health_check(history=None) -> dict:
                 row["remaining_s"], row["base_s"], now_ts)
         accounts.append(row)
 
+    # Phase 1 Part 5: reconcile the shared rolling-seconds ledger
+    # (`aj_hf:pool_state`) from this probe pass and surface quarantined
+    # `auth_dead` entries in Admin Key Health without exposing raw tokens.
+    auth_dead_count = 0
+    try:
+        from app.services import hf_pool_ledger as _hf_ledger
+
+        reconciled = _hf_ledger.reconcile_from_probe_rows(hf_tokens, accounts, now_ts=now_ts)
+        for i, tok in enumerate(hf_tokens):
+            _d, lrow = _hf_ledger.lookup_token_entry(reconciled, tok)
+            if lrow and lrow.get("status") == "auth_dead":
+                accounts[i]["quarantined"] = True
+                accounts[i]["quarantined_until"] = lrow.get("cooldown_until") or None
+                auth_dead_count += 1
+            else:
+                accounts[i]["quarantined"] = False
+                accounts[i]["quarantined_until"] = None
+    except Exception:
+        logger.debug("key_health: ledger reconciliation skipped", exc_info=True)
+
     def _key_row(raw, label):
         if raw and raw.get("status") in ("ok", "limit", "dead"):
             return {"label": raw.get("label") or label, "status": raw["status"]}
@@ -355,6 +375,7 @@ def run_key_health_check(history=None) -> dict:
             "hf": {
                 "total": len(accounts),
                 **hf_counts,
+                "auth_dead": auth_dead_count,
                 "quota_remaining_s": round(
                     sum(r["remaining_s"] for r in accounts if r["remaining_s"] is not None), 1),
                 "quota_total_s": round(

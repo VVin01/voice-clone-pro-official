@@ -1690,7 +1690,13 @@ function liveJobsSheetRowHtml(job) {
     const elapsed = (typeof job.elapsed_seconds === "number")
         ? tf("live_job_elapsed", { sec: job.elapsed_seconds }) : "";
     let action = "";
-    if (liveJobsIsActive(job.status)) {
+    if (isWaiting) {
+        action = `<button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','wait')">${t("dp_btn_wait")}</button>`;
+        if (isRecap) {
+            action += ` <button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','edge_all')">${t("dp_btn_edge_all")}</button>`;
+        }
+        action += ` <button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','cancel')">${t("dp_btn_cancel")}</button>`;
+    } else if (liveJobsIsActive(job.status)) {
         action = `<button type="button" class="mini-chip" onclick="liveJobOpen('${job.id}','${job.kind}')">${t("studio_inline_view")}</button>`
             + ` <button type="button" class="mini-chip" onclick="liveJobCancel('${job.id}','${job.kind}')">${t("btn_cancel_job")}</button>`;
     } else if (liveJobsIsTerminal(job.status)) {
@@ -1721,6 +1727,29 @@ function liveJobsSheetRowHtml(job) {
         ${action ? `<div class="live-job-row-actions vcp-job-footer-row">${action}</div>` : ""}
     </div>`;
 }
+async function submitLiveJobVoiceChoice(jobId, choice) {
+    if (!jobId || !choice) return;
+    haptic("selection");
+    try {
+        const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/voice-choice`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ choice }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            showStudioToast(data.detail || t("dp_choice_not_parked"), "error", 4500);
+            return;
+        }
+        showStudioToast(data.message || t("dp_choice_wait_answer"), "info", 4000);
+        if (typeof loadUserProfile === "function") loadUserProfile();
+        LiveJobs.fetchNow();
+    } catch (e) {
+        showStudioToast(t("dp_choice_not_parked"), "error", 4000);
+    }
+}
+window.submitLiveJobVoiceChoice = submitLiveJobVoiceChoice;
+
 function renderLiveJobsSheet() {
     const list = document.getElementById("live-jobs-sheet-list");
     if (!list) return;
@@ -5211,6 +5240,33 @@ window.refreshRecapQualityLock = refreshRecapQualityLock;
 function canUseRecapCloneEngine() {
     return true;
 }
+let _lastPoolHintFetchAt = 0;
+let _lastPoolHighDemand = false;
+async function refreshVoxcpmPoolDemandHint(force = false) {
+    const hintEl = document.getElementById("recap-clone-demand-hint");
+    const eng = state.recapTtsEngine || "voxcpm";
+    if (!hintEl) return;
+    if (eng !== "voxcpm") {
+        hintEl.classList.add("hidden");
+        return;
+    }
+    const now = Date.now();
+    if (!force && _lastPoolHintFetchAt && (now - _lastPoolHintFetchAt) < 20000) {
+        hintEl.classList.toggle("hidden", !_lastPoolHighDemand);
+        return;
+    }
+    _lastPoolHintFetchAt = now;
+    try {
+        const res = await fetch("/api/voxcpm/pool-status", { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        _lastPoolHighDemand = !!(data && data.high_demand);
+        if (data && data.hint_text) hintEl.textContent = data.hint_text;
+        hintEl.classList.toggle("hidden", !(_lastPoolHighDemand && (state.recapTtsEngine || "voxcpm") === "voxcpm"));
+    } catch (_e) {}
+}
+window.refreshVoxcpmPoolDemandHint = refreshVoxcpmPoolDemandHint;
+
 function syncRecapEngineAreas() {
     const eng = state.recapTtsEngine || "voxcpm";
     const gv = document.getElementById("recap-gemini-voice-wrap");
@@ -5219,6 +5275,11 @@ function syncRecapEngineAreas() {
     if (ev) ev.classList.toggle("hidden", eng !== "edge");
     const pa = document.getElementById("recap-persona-area");
     if (pa) pa.classList.toggle("hidden", eng !== "voxcpm");
+    const dh = document.getElementById("recap-clone-demand-hint");
+    if (dh) dh.classList.toggle("hidden", !(eng === "voxcpm" && _lastPoolHighDemand));
+    if (eng === "voxcpm" && typeof fetch === "function") {
+        refreshVoxcpmPoolDemandHint(false);
+    }
     // Voice Clone chooser: show ONE sub-block at a time (Own Voice vs Persona)
     const ownActive = !!state.recapOwnVoiceSelected;
     const btnOwn = document.getElementById("btn-recap-clone-own");
@@ -10510,6 +10571,21 @@ async function handleStartRecap() {
                 if (insufEl) insufEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
                 return;
             }
+            if (data && data.code === "VOXCPM_GEMINI_SWITCH_REQUIRED") {
+                studioSubmitFailure("recap");
+                if (progressBox) progressBox.classList.add("hidden");
+                if (btn) btn.disabled = false;
+                _lastPoolHighDemand = true;
+                syncRecapEngineAreas();
+                showStudioToast(data.detail || t("recap_clone_high_demand_hint"), "warning", 7500);
+                if (typeof switchRecapTtsEngine === "function") {
+                    switchRecapTtsEngine("gemini");
+                } else {
+                    state.recapTtsEngine = "gemini";
+                    syncRecapEngineAreas();
+                }
+                return;
+            }
             throw new Error(data.detail || "Recap creation failed");
         }
 
@@ -10518,13 +10594,8 @@ async function handleStartRecap() {
         try { localStorage.setItem("vcp_active_recap_job_id", data.recap_id); } catch (e) {}
         loadUserProfile();
         startRecapJobPolling(data.recap_id);
-        // Batch AC: Start is free again immediately — the workspace
-        // survives, the pill tracks this job, and a parallel submit
-        // is explained in place (server concurrency rule unchanged).
-        // The button stays in its disabled "already creating" state
-        // for THIS configuration (guard) — it is NOT re-enabled here.
         studioSubmitSuccess("recap");
-        LiveJobs.track({ id: data.recap_id, kind: "recap", status: "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 4, title: state.recapVideoTitle || "" });
+        LiveJobs.track({ id: data.recap_id, kind: "recap", status: data.status || "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 4, title: state.recapVideoTitle || "" });
         // Batch AO: while tiered pricing is armed, the response's
         // credits_total (the band total the job will be charged) is
         // the quoted cost. The key is absent in the legacy world,

@@ -344,22 +344,26 @@ def test_dp_choice_state_roundtrip_and_modes():
     assert vc.choice_mode(parsed) is None  # wait resumes the clone path
     parsed["choice"] = "edge_all"
     assert vc.choice_mode(parsed) == "edge_all"
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#2, 2026-11-24): retired `edge_mix`
+    # degrades cleanly to the Wait default (`None`).
     parsed["choice"] = "edge_mix"
-    assert vc.choice_mode(parsed) == "edge_mix"
+    assert vc.choice_mode(parsed) is None
     assert vc.parse_choice_state(None) is None
     assert vc.parse_choice_state("not json") is None
     assert vc.parse_choice_state('{"no_kind": 1}') is None
 
 
 def test_dp_keyboards_shapes():
+    # SUPERSEDED by HF Pool Phase 1 Part 3 (#7, 2026-11-24): `dp:edgemix` retired,
+    # `dp:cancel` added to both kinds, and `dp:edgeall` is Recap-only.
     kb = vc.build_choice_keyboard("rc_123", "recap", "my")
     datas = [row[0].callback_data for row in kb.inline_keyboard]
-    assert datas == ["dp:wait:rc_123", "dp:edgeall:rc_123", "dp:edgemix:rc_123"]
+    assert datas == ["dp:wait:rc_123", "dp:edgeall:rc_123", "dp:cancel:rc_123"]
     kb2 = vc.build_choice_keyboard("job-uuid-36-chars-0000000000ab", "clone", "en")
     datas2 = [row[0].callback_data for row in kb2.inline_keyboard]
     assert datas2 == [
         "dp:wait:job-uuid-36-chars-0000000000ab",
-        "dp:edgeall:job-uuid-36-chars-0000000000ab",
+        "dp:cancel:job-uuid-36-chars-0000000000ab",
     ]
     assert all(len(d.encode("utf-8")) <= 64 for d in datas + datas2)
 
@@ -374,6 +378,8 @@ def test_dp_prompt_is_estimate_in_both_locales():
 
 
 def test_dp_i18n_keys_both_locales():
+    # SUPERSEDED by HF Pool Phase 1 Part 3 (#8, 2026-11-24): owner-mandated copy
+    # uses `{done}`, `{total}`, `{eta}` and replaces `dp_btn_edge_mix` with `dp_btn_cancel`.
     my = json.loads((REPO / "locales/my/messages.json").read_text(encoding="utf-8"))
     en = json.loads((REPO / "locales/en/messages.json").read_text(encoding="utf-8"))
     dp_keys = {k for k in my if k.startswith("dp_")}
@@ -381,12 +387,12 @@ def test_dp_i18n_keys_both_locales():
     assert dp_keys == {k for k in en if k.startswith("dp_")}
     for key in dp_keys:
         assert my[key].strip() and en[key].strip()
-    assert "{reset_time}" in my["dp_park_prompt_recap"]
-    assert "{reset_time}" in en["dp_park_prompt_clone"]
-    # The owner's exact button wording (spec Item 3).
-    assert my["dp_btn_wait"] == "Clone အသံ ရတဲ့ထိ စောင့်မယ်"
-    assert my["dp_btn_edge_all"] == "Edge သီးသန့် (အကုန် Edge နဲ့)"
-    assert my["dp_btn_edge_mix"] == "ထိတဲ့ အပိုင်းပဲ Edge အစားထိုး"
+    assert "{eta}" in my["dp_park_prompt_recap"]
+    assert "{eta}" in en["dp_park_prompt_clone"]
+    assert my["dp_btn_wait"] == "⏳ Clone အသံနဲ့ပဲ စောင့်မယ်"
+    assert my["dp_btn_edge_all"] == "🎙️ Gemini / Studio အသံနဲ့ အစက ပြန်လုပ်မယ် (Clone မိနစ် ပြန်အမ်းမယ်)"
+    assert my["dp_btn_cancel"] == "❌ ရပ်ပြီး အပြည့် ပြန်အမ်းမယ်"
+    assert "dp_btn_edge_mix" not in my and "dp_btn_edge_mix" not in en
 
 
 def test_dp_miniapp_status_label():
@@ -580,8 +586,12 @@ def _sweep_env(db_session, _session_factory, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dp_sweep_resumes_edge_choice(_sweep_env):
+    # SUPERSEDED by HF Pool Phase 1 Part 3 (#7, 2026-11-24): `edge_all` is Recap-only.
     user = await _mk_user(_sweep_env, 62001)
-    job = await _mk_job(_sweep_env, user.id, state=_state("clone", choice="edge_all"))
+    job = await _mk_job(
+        _sweep_env, user.id, kind="recap", job_id="rc_dp_edge_1",
+        state=_state("recap", choice="edge_all"),
+    )
     counts = await vc.sweep_parked_jobs()
     assert counts["resumed"] == 1
     assert (await _fresh_job(_sweep_env, job.id)).status == "QUEUED"
@@ -644,28 +654,41 @@ async def test_dp_sweep_expires_recap_via_existing_failure_path(_sweep_env, monk
 
 
 def test_dp_capacity_probe_signals(monkeypatch):
-    monkeypatch.setattr(vx, "get_available_hf_tokens", lambda: ["hf_a", "hf_b"])
-    monkeypatch.setattr(
-        VoxCPMEngine, "_ensure_cooldowns_restored",
-        classmethod(lambda cls, tokens=None: None),
-    )
+    # SUPERSEDED by HF Pool Phase 1 Part 3 (#4, 2026-11-24): resumer reads the shared
+    # `aj_hf:pool_state` ledger and requires `effective_usable_gpu_s >= needed * 1.25`.
+    from app.services import hf_pool_ledger as hfl
+
     now = time.time()
-    # All cooling → no capacity.
-    monkeypatch.setattr(
-        VoxCPMEngine, "_token_cooldowns", {"hf_a": now + 600, "hf_b": now + 600}
-    )
-    assert vc.voxcpm_capacity_available() is False
-    # One healthy token, balance unknown → capacity.
-    monkeypatch.setattr(VoxCPMEngine, "_token_cooldowns", {"hf_a": now + 600})
-    monkeypatch.setattr(VoxCPMEngine, "_token_balances", {})
-    monkeypatch.setattr(VoxCPMEngine, "_last_admission_price", 94.0)
-    assert vc.voxcpm_capacity_available() is True
-    # Healthy but known balance below the admission price → no.
-    monkeypatch.setattr(VoxCPMEngine, "_token_balances", {"hf_b": 10.0})
-    assert vc.voxcpm_capacity_available() is False
-    # Healthy with enough known balance → yes.
-    monkeypatch.setattr(VoxCPMEngine, "_token_balances", {"hf_b": 2400.0})
-    assert vc.voxcpm_capacity_available() is True
+    d_a = hfl.token_digest("hf_a")
+    d_b = hfl.token_digest("hf_b")
+    # Unseeded / all cooling -> no capacity.
+    hfl.save_pool_state({
+        "tokens": {
+            d_a: {"status": "ok", "remaining_s": 0.0, "base_s": 300.0, "resets_at": "", "cooldown_until": str(now + 600), "updated_at": ""},
+            d_b: {"status": "ok", "remaining_s": 0.0, "base_s": 300.0, "resets_at": "", "cooldown_until": str(now + 600), "updated_at": ""},
+        },
+        "space_gates": {"spaceA": 94},
+        "in_flight_gpu_s": 0,
+    }, now_ts=now)
+    assert vc.voxcpm_capacity_available(94.0) is False
+    # Healthy but below 94 * 1.25 = 117.5s -> no.
+    hfl.save_pool_state({
+        "tokens": {
+            d_b: {"status": "ok", "remaining_s": 100.0, "base_s": 300.0, "resets_at": "", "cooldown_until": "", "updated_at": ""},
+        },
+        "space_gates": {"spaceA": 94},
+        "in_flight_gpu_s": 0,
+    }, now_ts=now)
+    assert vc.voxcpm_capacity_available(94.0) is False
+    # Healthy with >= 117.5s usable -> yes.
+    hfl.save_pool_state({
+        "tokens": {
+            d_b: {"status": "ok", "remaining_s": 300.0, "base_s": 300.0, "resets_at": "", "cooldown_until": "", "updated_at": ""},
+        },
+        "space_gates": {"spaceA": 94},
+        "in_flight_gpu_s": 0,
+    }, now_ts=now)
+    assert vc.voxcpm_capacity_available(94.0) is True
 
 
 # ── Item 3/5: recap core park + resume modes ────────────────────────
@@ -741,43 +764,33 @@ def test_dp_core_paid_quota_parks(tmp_path):
 
 
 def test_dp_core_free_quota_falls_back_per_segment(tmp_path):
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#1 & #4, 2026-11-24): Free quota
+    # exhaustion raises `RecapFreeQuotaExhaustedError` with ZERO Edge fallback calls.
     vox = _VoxFake(VoxCPMQuotaExhaustedError("pool dead"))
     edge = _EdgeFake(_write_wav(tmp_path / "edge.wav", seconds=1.0))
     runner = _runner(paid=False)
-    result = _produce(runner, _seg(), tmp_path, {"audio": {}}, vox, edge)
-    assert result["fell_back"] is True
-    assert result["record"]["provider"] == "edge_fallback"
-    assert edge.calls == 1  # today's free behaviour: persona serves
+    with pytest.raises(core.RecapFreeQuotaExhaustedError):
+        _produce(runner, _seg(), tmp_path, {"audio": {}}, vox, edge)
+    assert edge.calls == 0
 
 
 def test_dp_core_paid_nonquota_falls_back(tmp_path):
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#1 & #4, 2026-11-24): deterministic
+    # non-quota error raises `RecapCloneSynthesisError` with ZERO Edge fallback calls.
     vox = _VoxFake(RuntimeError("space exploded"))
     edge = _EdgeFake(_write_wav(tmp_path / "edge.wav", seconds=1.0))
     runner = _runner(paid=True)
-    result = _produce(runner, _seg(), tmp_path, {"audio": {}}, vox, edge)
-    assert result["fell_back"] is True  # parking is quota-only
+    with pytest.raises(core.RecapCloneSynthesisError):
+        _produce(runner, _seg(), tmp_path, {"audio": {}}, vox, edge)
+    assert edge.calls == 0
 
 
 def test_dp_core_edge_mix_keeps_produced_persona_rest(tmp_path):
-    seg1, seg2 = _seg(1, 0.0, 3.0), _seg(2, 3.0, 6.0)
-    parts = tmp_path / "parts"
-    parts.mkdir(parents=True, exist_ok=True)
-    dst1 = parts / f"{core.segment_basename(seg1)}.wav"
-    _write_wav(dst1, seconds=1.0)
-    checkpoint = {"audio": {
-        core.segment_basename(seg1): {
-            "fingerprint": core.segment_fingerprint(seg1, "voxcpm_komin"),
-        },
-    }}
-    vox = _VoxFake(AssertionError("VoxCPM must not be attempted in edge_mix"))
-    edge = _EdgeFake(_write_wav(tmp_path / "edge.wav", seconds=1.0))
-    runner = _runner(paid=True, mode="edge_mix")
-    kept = _produce(runner, seg1, tmp_path, checkpoint, vox, edge)
-    assert kept["record"] is None and edge.calls == 0  # clone segment kept
-    rest = _produce(runner, seg2, tmp_path, checkpoint, vox, edge)
-    assert rest["record"]["provider"] == "edge_fallback"
-    assert rest["fell_back"] is True and edge.calls == 1
-    assert vox.calls == []
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#2, 2026-11-24): `edge_mix` is retired;
+    # legacy parked state with `choice="edge_mix"` degrades to `None` (Wait).
+    state = vc.new_choice_state("recap")
+    state["choice"] = "edge_mix"
+    assert vc.choice_mode(state) is None
 
 
 def test_dp_core_edge_all_redoes_produced(tmp_path):
@@ -960,6 +973,9 @@ async def test_dp_clone_paid_quota_parks(db_session, tmp_path):
 
 @pytest.mark.asyncio
 async def test_dp_clone_free_quota_uses_resilient_fallback(db_session):
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#1 & #4, 2026-11-24): Free standalone
+    # clone fails-fast on quota exhaustion (0 s deducted, no parking, ZERO Edge calls,
+    # localized `worker_error_quota_exhausted`).
     from app.services.queue import create_voice_clone_job
     from app.worker import process_single_job
 
@@ -973,8 +989,10 @@ async def test_dp_clone_free_quota_uses_resilient_fallback(db_session):
     await db_session.commit()
 
     record: dict = {}
+    persona_calls: list = []
 
     def _fake_persona(text, persona_id, output_wav, speed=None, **kw):
+        persona_calls.append(persona_id)
         _write_wav(Path(output_wav), seconds=1.0)
 
     bot = _WorkerBot()
@@ -987,31 +1005,26 @@ async def test_dp_clone_free_quota_uses_resilient_fallback(db_session):
             "app.services.curated_voices.synthesize_curated_persona",
             side_effect=_fake_persona,
         ),
-        patch("app.worker.get_wav_duration_seconds", return_value=15),
     ):
         result = await process_single_job(session=db_session, job=job, bot=bot)
-    # Item 5: free behaviour is EXACTLY today's — fallback delivery,
-    # no charge for the fallback, no parking, no prompt.
-    assert result is True
-    assert job.status == "SUCCESS"
-    assert job.engine == "edge_fallback"
-    assert job.seconds_consumed == 0
+    assert result is False
+    assert job.status == "FAILED"
+    assert persona_calls == []
+    assert job.seconds_consumed in (0, None)
     assert job.voice_choice_state is None
-    # The engine call itself is byte-identical to pre-DP: neither DP
-    # kwarg is passed, so the engine defaults (tier="free",
-    # allow_fallback=True) govern — Batch CH's pinned call shape.
-    assert "tier" not in record
-    assert "allow_fallback" not in record
+    assert "မိနစ် လုံးဝ မဖြတ်ထားပါ" in (job.error_message or "")
+    assert record.get("allow_fallback") is False
 
 
 @pytest.mark.asyncio
 async def test_dp_clone_paid_edge_all_resume_skips_primary(db_session):
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#1) & Part 3 (#7, 2026-11-24):
+    # `edge_all` is Recap-only (standalone clone rejects `edge_all` and supports
+    # `wait` + `cancel` with 100% immediate refund).
     from app.services.queue import create_voice_clone_job
-    from app.worker import process_single_job
 
     user = await _mk_user(db_session, 64003, category="PURCHASED")
     await _mk_cloud_model(db_session)
-    # Limits round (2026-11-23): PURCHASED users don't auto-receive daily free, so seed purchased seconds.
     bal = await get_minute_balance(db_session, user.id)
     bal.purchased_seconds = 600
     await db_session.commit()
@@ -1020,32 +1033,16 @@ async def test_dp_clone_paid_edge_all_resume_skips_primary(db_session):
         text="စမ်းသပ် စာသား တစ်ခု", chat_id=user.id,
     )
     assert status == "QUEUED"
-    job.voice_choice_state = _state("clone", choice="edge_all")
-    job.status = "QUEUED"
+    job.voice_choice_state = _state("clone", choice=None)
+    job.status = "WAITING_CHOICE"
     await db_session.commit()
 
-    def _must_not_run(**kwargs):
-        raise AssertionError("primary synthesis must be skipped on edge_all")
-
-    def _fake_persona(text, persona_id, output_wav, speed=None, **kw):
-        _write_wav(Path(output_wav), seconds=1.0)
-
-    bot = _WorkerBot()
-    with (
-        patch(
-            "app.services.voxcpm_engine.VoxCPMEngine.synthesize",
-            side_effect=_must_not_run,
-        ),
-        patch(
-            "app.services.curated_voices.synthesize_curated_persona",
-            side_effect=_fake_persona,
-        ),
-        patch("app.worker.get_wav_duration_seconds", return_value=15),
-    ):
-        result = await process_single_job(session=db_session, job=job, bot=bot)
-    assert result is True
-    assert job.status == "SUCCESS"
-    assert job.engine == "edge_fallback"  # the consented Edge delivery
+    assert await vc.apply_user_choice(db_session, job, "edge_all", user.id) == "bad_choice"
+    assert await vc.apply_user_choice(db_session, job, "cancel", user.id) == "ok_cancel"
+    fresh = await _fresh_job(db_session, job.id)
+    assert fresh.status == "CANCELLED"
+    bal_after = await get_minute_balance(db_session, user.id)
+    assert bal_after.purchased_seconds == 600
 
 
 # ── Status surface ──────────────────────────────────────────────────

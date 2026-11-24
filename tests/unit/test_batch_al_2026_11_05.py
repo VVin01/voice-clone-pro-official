@@ -471,20 +471,23 @@ def test_parallel_tts_sync_integrity_matches_serial(tmp_path, monkeypatch):
 
 @pytestmark_ffmpeg
 def test_parallel_tts_fallback_segments_stay_ordered(tmp_path, monkeypatch):
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#1, 2026-11-24): VoxCPM clone recaps
+    # forbid Edge/persona fallback on every segment; a failing segment raises
+    # `RecapFreeQuotaExhaustedError` with ZERO persona fallback calls.
+    import app.services.curated_voices as cv
+
     _patch_pool(monkeypatch)
-    _PoolFakeVox.fail_ordinals = {_ORDINALS[2]}  # segment 3 falls back
+    persona_calls: list = []
+    monkeypatch.setattr(
+        cv,
+        "synthesize_curated_persona",
+        lambda *a, **kw: persona_calls.append(a),
+    )
+    _PoolFakeVox.fail_ordinals = {_ORDINALS[2]}
     job = _setup_pool_job(tmp_path / "fb")
-    _run_pool_job(job, workers=4)
-    plan = _plan_of(job)
-    ckpt = _checkpoint_of(job)
-    assert plan["fallback_segments"] == [3]
-    assert ckpt["fallback_segments"] == [3]
-    assert len(plan["tts_timing_segments"]) == 6
-    starts = [t["audio_start"] for t in plan["tts_timing_segments"]]
-    assert starts == sorted(starts)
-    providers = [ckpt["audio"][k]["provider"] for k in sorted(ckpt["audio"])]
-    assert providers[2] == "edge_fallback"
-    assert providers[0] == "voxcpm"
+    with pytest.raises(core.RecapFreeQuotaExhaustedError):
+        _run_pool_job(job, workers=4)
+    assert persona_calls == []
 
 
 @pytestmark_ffmpeg

@@ -47,6 +47,7 @@ from app.services.models import get_authorized_model, get_available_models_for_u
 from app.services.myanmar_text import convert_zawgyi_to_unicode
 from app.services.download_names import branded_download_filename
 from app.services.curated_voices import list_curated_voices, get_curated_voice
+from app.services import hf_pool_ledger as _hf_ledger
 from app.services import recap_eta
 from app.services import voice_choice as _voice_choice
 from app.services.speed import (
@@ -3488,18 +3489,62 @@ async def _cancel_recap_job_core(
     return refund_info
 
 
+def _format_voice_bal_short(seconds: int) -> str:
+    sec = max(0, int(seconds or 0))
+    if sec >= 60 and sec % 60 == 0:
+        return f"{sec // 60}m"
+    if sec >= 60:
+        return f"{sec // 60}m {sec % 60}s"
+    return f"{sec}s"
+
+
+def _serialize_voice_choice_meta(raw_state: Any, lang: str = "my") -> Optional[dict]:
+    st = _voice_choice.parse_choice_state(raw_state)
+    if not st:
+        return None
+    kind = str(st.get("kind") or _voice_choice.KIND_CLONE)
+    eta = _voice_choice.quota_reset_estimate_label(
+        needed_gpu_s=float(st.get("needed_gpu_s") or 0.0)
+    )
+    return {
+        "kind": kind,
+        "choice": st.get("choice"),
+        "completed_units": int(st.get("completed_units") or 0),
+        "total_units": max(1, int(st.get("total_units") or 1)),
+        "needed_gpu_s": float(st.get("needed_gpu_s") or 0.0),
+        "eta": eta,
+        "prompt_text": _voice_choice.choice_prompt_text(kind, lang, eta=eta, state=st),
+        "can_edge_all": kind == _voice_choice.KIND_RECAP,
+    }
+
+
 def _voice_job_error_status(reason: str) -> int:
     return {
         "MODEL_NOT_AUTHORIZED": 404,
-    "LEGACY_MODEL_ENGINE_REMOVED": 400,
+        "LEGACY_MODEL_ENGINE_REMOVED": 400,
         "CONCURRENT_JOB_LIMIT_EXCEEDED": 429,
         "DAILY_JOB_LIMIT_EXCEEDED": 429,
         "DAILY_MINUTE_LIMIT_EXCEEDED": 429,
         "INSUFFICIENT_BALANCE": 403,
+        "VOXCPM_POOL_EXHAUSTED": 503,
     }.get(reason, 400)
 
 
-def _voice_job_error_detail(reason: str, user: User | None = None) -> str:
+def _voice_job_error_detail(
+    reason: str,
+    user: User | None = None,
+    *,
+    free_balance_seconds: int | None = None,
+) -> str:
+    if reason == "VOXCPM_POOL_EXHAUSTED":
+        lang = (getattr(user, "language_code", None) or "my") if user is not None else "my"
+        eta = _voice_choice.quota_reset_estimate_label()
+        bal_label = (
+            _format_voice_bal_short(free_balance_seconds)
+            if free_balance_seconds is not None
+            else "—"
+        )
+        return t("worker_error_quota_exhausted", lang, eta=eta, bal=bal_label)
     if reason == "DAILY_MINUTE_LIMIT_EXCEEDED":
         # Batch AN: name the caller's OWN tier limit (the endpoints
         # pass their authenticated user; without one, quote the FREE
@@ -4571,24 +4616,65 @@ async def create_voice_job(
         # the endpoint pre-check above raises.
         raise HTTPException(status_code=400, detail=_INVALID_PRESET_VOICE_DETAIL)
     if not job:
+        _free_bal_s = None
+        if _reason == "VOXCPM_POOL_EXHAUSTED":
+            from app.services.ledger import get_minute_balance as _get_mb
+
+            _mb = await _get_mb(db, user.id)
+            _free_bal_s = int(_mb.clone_spendable_seconds)
         raise HTTPException(
             status_code=_voice_job_error_status(_reason),
-            detail=_voice_job_error_detail(_reason, user),
+            detail=_voice_job_error_detail(_reason, user, free_balance_seconds=_free_bal_s),
         )
     await db.commit()
     await db.refresh(job)
     if job.model_id and job.model_id != model.id:
         model = await db.get(VoiceModel, job.model_id) or model
 
+    _vc_meta = None
+    if job.status == JobStatus.WAITING_CHOICE.value:
+        _vc_meta = _serialize_voice_choice_meta(job.voice_choice_state, user.language_code or "my")
+        if settings.bot_token:
+            try:
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+
+                _p_bot = create_telegram_bot(
+                    token=settings.bot_token,
+                    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+                )
+                try:
+                    _st_obj = _voice_choice.parse_choice_state(job.voice_choice_state)
+                    _mid = await _voice_choice.send_choice_prompt(
+                        _p_bot,
+                        chat_id=job.chat_id or user.id,
+                        job_id=str(job.id),
+                        kind=_voice_choice.KIND_CLONE,
+                        lang=user.language_code or "my",
+                        state=_st_obj,
+                    )
+                    if _mid and _st_obj is not None:
+                        _st_obj["prompt_chat_id"] = job.chat_id or user.id
+                        _st_obj["prompt_message_id"] = _mid
+                        job.voice_choice_state = _voice_choice.dump_choice_state(_st_obj)
+                        await db.commit()
+                finally:
+                    await _p_bot.session.close()
+            except Exception:
+                pass
+
     return {
         "success": True,
         "job_id": job.id,
-        "status": "QUEUED",
+        "status": job.status,
         "engine": actual_engine,
         "model_name": model.name,
         "is_voxcpm": is_vox,
         "preset_voice": req.preset_voice,
-        "message": "အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ",
+        "voice_choice": _vc_meta,
+        "message": (
+            (_vc_meta["prompt_text"] if _vc_meta else "အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ")
+        ),
     }
 
 
@@ -4744,25 +4830,77 @@ async def create_voice_job_with_audio(
                 Path(ref_audio_path).unlink()
             except OSError:
                 pass
+        _free_bal_s = None
+        if _reason == "VOXCPM_POOL_EXHAUSTED":
+            from app.services.ledger import get_minute_balance as _get_mb
+
+            _mb = await _get_mb(db, user.id)
+            _free_bal_s = int(_mb.clone_spendable_seconds)
         raise HTTPException(
             status_code=_voice_job_error_status(_reason),
-            detail=_voice_job_error_detail(_reason, user),
+            detail=_voice_job_error_detail(_reason, user, free_balance_seconds=_free_bal_s),
         )
+    if job.status == JobStatus.WAITING_CHOICE.value and ref_audio_path and Path(ref_audio_path).is_file():
+        # Move temp uploaded reference into durable dp_refs so park window survives temp sweeps.
+        try:
+            _dp_ref_dir = settings.storage_root / "dp_refs"
+            _dp_ref_dir.mkdir(parents=True, exist_ok=True)
+            _dp_ref_copy = _dp_ref_dir / f"{job.id}{Path(ref_audio_path).suffix or '.wav'}"
+            shutil.copy2(ref_audio_path, _dp_ref_copy)
+            Path(ref_audio_path).unlink(missing_ok=True)
+            job.source_audio_path = str(_dp_ref_copy)
+        except Exception:
+            pass
     await db.commit()
     await db.refresh(job)
     if job.model_id and job.model_id != model.id:
         model = await db.get(VoiceModel, job.model_id) or model
 
+    _vc_meta = None
+    if job.status == JobStatus.WAITING_CHOICE.value:
+        _vc_meta = _serialize_voice_choice_meta(job.voice_choice_state, user.language_code or "my")
+        if settings.bot_token:
+            try:
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+
+                _p_bot = create_telegram_bot(
+                    token=settings.bot_token,
+                    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+                )
+                try:
+                    _st_obj = _voice_choice.parse_choice_state(job.voice_choice_state)
+                    _mid = await _voice_choice.send_choice_prompt(
+                        _p_bot,
+                        chat_id=job.chat_id or user.id,
+                        job_id=str(job.id),
+                        kind=_voice_choice.KIND_CLONE,
+                        lang=user.language_code or "my",
+                        state=_st_obj,
+                    )
+                    if _mid and _st_obj is not None:
+                        _st_obj["prompt_chat_id"] = job.chat_id or user.id
+                        _st_obj["prompt_message_id"] = _mid
+                        job.voice_choice_state = _voice_choice.dump_choice_state(_st_obj)
+                        await db.commit()
+                finally:
+                    await _p_bot.session.close()
+            except Exception:
+                pass
+
     return {
         "success": True,
         "job_id": job.id,
-        "status": "QUEUED",
+        "status": job.status,
         "engine": actual_engine,
         "model_name": model.name,
         "has_reference_audio": bool(ref_audio_path),
         "is_voxcpm": is_vox,
         "preset_voice": preset_voice,
-        "message": "အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ",
+        "voice_choice": _vc_meta,
+        "message": (
+            (_vc_meta["prompt_text"] if _vc_meta else "အသံထုတ်ယူခြင်း စတင်လုပ်ဆောင်နေပါပြီခင်ဗျာ")
+        ),
     }
 
 
@@ -4803,6 +4941,14 @@ async def get_job_status(
             _make_stream_token(job.id, user.id, "audio"),
         )
 
+    _vc_meta = (
+        _serialize_voice_choice_meta(
+            getattr(job, "voice_choice_state", None), user.language_code or "my"
+        )
+        if job.status == JobStatus.WAITING_CHOICE.value
+        else None
+    )
+
     return {
         "id": job.id,
         "status": job.status,
@@ -4819,6 +4965,94 @@ async def get_job_status(
         "output_audio_url": _output_audio_url,
         "output_size_bytes": _voice_size,
         "telegram_sendable": _voice_sendable,
+        "voice_choice": _vc_meta,
+    }
+
+
+class VoiceChoiceActionRequest(BaseModel):
+    choice: str = Field(..., pattern="^(wait|edge_all|cancel)$")
+
+
+@api_router.get("/voxcpm/pool-status")
+async def get_voxcpm_pool_status(
+    user: User = Depends(get_current_user),
+):
+    """Return read-only VoxCPM pool watermark status for Mini App Recap Step 3 (Part 7).
+    Never exposes raw tokens or token digests."""
+    lang = user.language_code or "my"
+    metrics = _hf_ledger.compute_pool_metrics()
+    eta = _hf_ledger.estimate_refill_eta_label() if metrics.seeded else ""
+    return {
+        "seeded": metrics.seeded,
+        "band": metrics.band,
+        "usable_fraction": round(metrics.usable_fraction, 4),
+        "available_gpu_s": metrics.available_gpu_s,
+        "solvent_slots": metrics.solvent_slots,
+        "high_demand": bool(metrics.high_demand_hint),
+        "eta": eta,
+        "hint_text": t("recap_clone_high_demand_hint", lang) if metrics.high_demand_hint else "",
+    }
+
+
+@api_router.post("/jobs/{job_id}/voice-choice")
+async def post_job_voice_choice(
+    job_id: str,
+    req: VoiceChoiceActionRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Mini App action buttons for `WAITING_CHOICE` jobs (`wait` / `edge_all` / `cancel`)."""
+    job = await db.get(Job, str(job_id))
+    outcome = await _voice_choice.apply_user_choice(db, job, req.choice, user.id)
+    if outcome == "not_found" or outcome == "not_owner":
+        raise HTTPException(status_code=404, detail="Job not found")
+    if outcome == "bad_choice":
+        raise HTTPException(status_code=400, detail="Unsupported choice for this job")
+    if outcome == "not_parked":
+        raise HTTPException(status_code=409, detail=t("dp_choice_not_parked", user.language_code or "my"))
+
+    await db.refresh(job)
+    if outcome in ("ok_resume", "ok_cancel") and settings.bot_token:
+        try:
+            from aiogram.client.default import DefaultBotProperties
+            from aiogram.enums import ParseMode
+
+            _c_bot = create_telegram_bot(
+                token=settings.bot_token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+            try:
+                await _voice_choice.clear_prompt_for_job(_c_bot, job)
+            finally:
+                await _c_bot.session.close()
+        except Exception:
+            pass
+
+    if outcome == "ok_resume" and (
+        job.job_type == JobType.RECAP.value
+        or job.engine == "recap"
+        or str(job.id).startswith("rc_")
+    ):
+        # Leave RECAP_JOBS_REGISTRY[job.id]["status"] as "WAITING_CHOICE" until
+        # `_dispatch_oldest_queued_recap` claims the DB row and spawns the task.
+        if not getattr(settings, "recap_on_queue", False):
+            try:
+                from app.webapp.server import _dispatch_oldest_queued_recap
+
+                asyncio.create_task(_dispatch_oldest_queued_recap())
+            except Exception:
+                pass
+
+    msg_key = {
+        "ok_wait": "dp_choice_wait_answer",
+        "ok_resume": "dp_choice_resume_answer",
+        "ok_cancel": "dp_choice_cancel_answer",
+    }.get(outcome, "dp_choice_wait_answer")
+    return {
+        "success": True,
+        "outcome": outcome,
+        "status": job.status,
+        "message": t(msg_key, user.language_code or "my"),
     }
 
 
@@ -9130,9 +9364,13 @@ async def _execute_recap_background_job(
     voice_choice_mode: Optional[str] = None,
     dp_resume: bool = False,
 ):
-    # Batch DP: the park signal raised by the recap engine's TTS stage
-    # when a paid job's VoxCPM walk exhausts the pool.
-    from app.services.recap_engine.core import RecapParkRequested
+    # Part 1 (#1): canonical single-identity Recap exceptions shared across
+    # `core` and `app.services.recap_engine.core` import paths.
+    from app.services.recap_engine.exceptions import (
+        RecapCloneSynthesisError,
+        RecapFreeQuotaExhaustedError,
+        RecapParkRequested,
+    )
     entry = RECAP_JOBS_REGISTRY.get(job_id)
     if not entry:
         return
@@ -9195,6 +9433,13 @@ async def _execute_recap_background_job(
     _recap_set_entry_label(entry, "📥 Downloading source video from URL...", stage="download")
 
     job_dir = settings.storage_root / "recap_output" / job_id
+    if phase in ("full", "render") and str(getattr(req, "tts_engine", "")).lower() == "voxcpm" and voice_choice_mode is None:
+        _est_u, _est_g, _est_gpu_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+            kind="recap",
+            planned_segments=entry.get("segments_count"),
+            duration_seconds=float(entry.get("source_duration_seconds") or req.duration_seconds or 60.0),
+        )
+        _hf_ledger.acquire_in_flight_gpu(job_id, _est_gpu_s)
     try:
         from app.services.downloader import MediaDownloader
         from app.db.session import AsyncSessionLocal
@@ -9648,6 +9893,32 @@ async def _execute_recap_background_job(
             for seg in segment_files:
                 if await _recap_job_marked_cancelled(job_id, entry):
                     raise asyncio.CancelledError()
+                _existing_dest = parts_dir / f"recap_part_{seg['n']:02d}.mp4"
+                if (
+                    dp_resume
+                    and voice_choice_mode != "edge_all"
+                    and _existing_dest.is_file()
+                    and _existing_dest.stat().st_size > 1000
+                ):
+                    _seg_audio_cand = job_dir / f"seg{seg['n']:02d}" / "edge_tts_smart_sync" / "voice_track.wav"
+                    _seg_media_records.append(
+                        (
+                            int(seg["n"]),
+                            str(_seg_audio_cand) if _seg_audio_cand.is_file() else None,
+                            str(_existing_dest),
+                            None,
+                        )
+                    )
+                    entry[f"part{seg['n']}_path"] = str(_existing_dest)
+                    part_urls.append({
+                        "n": seg["n"],
+                        "label": part_label(DEFAULT_LABEL_TEMPLATE, seg["n"], total_segs),
+                        "url": f"/api/recap/download/{job_id}/part{seg['n']}",
+                    })
+                    if recap_res is None:
+                        recap_res = {"final_video": str(_existing_dest)}
+                        first_part_dest = str(_existing_dest)
+                    continue
                 try:
                     _recap_set_entry_label(
                         entry, f"🎬 အပိုင်း {seg['n']}/{total_segs} လုပ်နေပါတယ်..."
@@ -9708,7 +9979,14 @@ async def _execute_recap_background_job(
                     if recap_res is None:
                         recap_res = seg_res
                         first_part_dest = str(dest)
-                except asyncio.CancelledError:
+                except (
+                    asyncio.CancelledError,
+                    RecapParkRequested,
+                    RecapFreeQuotaExhaustedError,
+                    RecapCloneSynthesisError,
+                ):
+                    # Part 1 (#2) & Part 2: NEVER swallow park or clone-quota/synthesis
+                    # errors into a partial-video delivery on part 2+!
                     raise
                 except Exception as _seg_err:
                     if len(part_urls) >= 1:
@@ -10019,7 +10297,10 @@ async def _execute_recap_background_job(
             if entry.get("billing_mode") == _RECAP_BILLING_CREDIT_PLUS_VOICE:
                 _fb_set = {int(x) for x in (_fb_segs or []) if str(x).isdigit()}
                 _total_recs = len(_seg_media_records)
-                _dp_switched_away = bool(dp_resume and tts_engine != "voxcpm")
+                _dp_switched_away = bool(
+                    (dp_resume and tts_engine != "voxcpm")
+                    or voice_choice_mode == "edge_all"
+                )
                 if not (_dp_switched_away or (_fb_used and (_total_recs <= 1 or len(_fb_set) >= _total_recs))):
                     _vox_recs = [
                         rec for rec in _seg_media_records if not _fb_used or int(rec[0]) not in _fb_set
@@ -10341,15 +10622,42 @@ async def _execute_recap_background_job(
 
         logger.info(f"Recap job {job_id} successfully finished.")
 
-    except RecapParkRequested:
-        # Batch DP (Item 3): a PAID job hit VoxCPM quota exhaustion.
-        # PARK — never fail: the charge stays held (NO refund fires),
-        # the segments already produced stay in the job dir for the
-        # resume, and the owner is asked how to continue. The guarded
-        # status write means a cancel that raced the park (its path
-        # already settled billing) wins silently instead.
-        logger.info(f"Recap job {job_id} parking (WAITING_CHOICE): VoxCPM quota exhausted")
-        _dp_state = _voice_choice.new_choice_state(_voice_choice.KIND_RECAP)
+    except RecapParkRequested as park_req:
+        # Part 1 & Part 3: PAID job hit VoxCPM quota/congestion exhaustion.
+        # PARK (`WAITING_CHOICE`) — reservation held, 0 settled, completed
+        # segments preserved in workspace checkpoint, owner prompted with
+        # Wait / Redo in Gemini-Studio / Cancel & Instant Full Refund.
+        _hf_ledger.release_in_flight_gpu(job_id)
+        _done_u = int(getattr(park_req, "completed_units", 0) or 0)
+        _tot_u = max(
+            1,
+            int(
+                getattr(park_req, "total_units", 0)
+                or entry.get("segments_count")
+                or (len(part_urls) + 1 if "part_urls" in locals() and part_urls else 1)
+            ),
+        )
+        _pinned_sp = getattr(park_req, "pinned_space", None)
+        _gate_s = _hf_ledger.get_space_gate(_pinned_sp)
+        _rem_gpu_s = round(
+            max(1, _tot_u - _done_u) * _gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER, 2
+        )
+        logger.info(
+            "Recap job %s parking (WAITING_CHOICE) at %d/%d (needed=%.1fs): %s",
+            job_id,
+            _done_u,
+            _tot_u,
+            _rem_gpu_s,
+            park_req,
+        )
+        _dp_state = _voice_choice.new_choice_state(
+            _voice_choice.KIND_RECAP,
+            completed_units=_done_u,
+            total_units=_tot_u,
+            needed_gpu_s=_rem_gpu_s,
+            pinned_space=_pinned_sp,
+            worker_host=_voice_choice.current_worker_host(),
+        )
         _dp_repark = False
         _dp_lang = "my"
         _dp_parked = False
@@ -10364,13 +10672,14 @@ async def _execute_recap_background_job(
                     else None
                 )
                 if _dp_existing and _dp_existing.get("prompt_message_id"):
-                    # Re-park (spec Item 3): the job resumed on a
-                    # wait/no-choice and exhausted again — keep the
-                    # recorded state and the SAME prompt message
-                    # (refreshed in place below, never re-sent).
-                    _dp_state = _dp_existing
+                    _dp_state = dict(_dp_existing)
                     _dp_state["parked_at"] = time.time()
                     _dp_state.pop("resumed_at", None)
+                    _dp_state["completed_units"] = _done_u
+                    _dp_state["total_units"] = _tot_u
+                    _dp_state["needed_gpu_s"] = _rem_gpu_s
+                    _dp_state["pinned_space"] = str(_pinned_sp) if _pinned_sp else None
+                    _dp_state["worker_host"] = _voice_choice.current_worker_host()
                     _dp_repark = True
                 _dp_res = await session.execute(
                     update(Job)
@@ -10391,11 +10700,8 @@ async def _execute_recap_background_job(
         if _dp_parked:
             entry["status"] = "WAITING_CHOICE"
             entry["progress_label"] = t("dp_parked_label", _dp_lang)
-            # Persist the held charge state so a later re-dispatch
-            # restores it verbatim (the refund guards read it too).
+            entry["voice_choice"] = _serialize_voice_choice_meta(_dp_state, _dp_lang)
             await _persist_recap_credits_charged(entry)
-            # Ask the owner (best-effort: a prompt-less park still
-            # resumes on capacity via the periodic resumer).
             try:
                 from aiogram import Bot
                 from aiogram.client.default import DefaultBotProperties
@@ -10411,6 +10717,7 @@ async def _execute_recap_background_job(
                             job_id=job_id,
                             kind=_voice_choice.KIND_RECAP,
                             lang=_dp_lang,
+                            state=_dp_state,
                         )
                     else:
                         _dp_msg_id = await _voice_choice.send_choice_prompt(
@@ -10419,10 +10726,12 @@ async def _execute_recap_background_job(
                             job_id=job_id,
                             kind=_voice_choice.KIND_RECAP,
                             lang=_dp_lang,
+                            state=_dp_state,
                         )
                         if _dp_msg_id:
                             _dp_state["prompt_chat_id"] = chat_id or user_id
                             _dp_state["prompt_message_id"] = _dp_msg_id
+                            entry["voice_choice"] = _serialize_voice_choice_meta(_dp_state, _dp_lang)
                             async with AsyncSessionLocal() as session:
                                 await session.execute(
                                     update(Job)
@@ -10468,26 +10777,68 @@ async def _execute_recap_background_job(
             logger.warning(f"Recap job {job_id}: cancelled-job media strip failed: {strip_err}")
         raise
     except Exception as e:
+        _hf_ledger.release_in_flight_gpu(job_id)
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
         entry["status"] = "FAILED"
-        # Journey audit 2026-11-02: the raw exception was stored
-        # verbatim AND quoted to the user in the failure notice below —
-        # a yt-dlp "Failed to extract any player response; please
-        # report this issue on https://github.com/yt-dlp/…" string
-        # reached a user raw. Classify source errors to the curated
-        # Burmese copy before storing/sending; the raw text stays in
-        # the log line above.
-        # Audit fix 2026-11-03: the fallback is now default-deny —
-        # an UNclassified error no longer falls back to str(e) (raw
-        # ffmpeg stderr, local paths and library internals reached
-        # users that way); it becomes the generic technical-problem
-        # message below. The refund wording/flow is unchanged.
+
+        _err_lang = "my"
+        try:
+            from app.db.session import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as _l_session:
+                _err_u = await _l_session.get(User, user_id)
+                if _err_u and getattr(_err_u, "language_code", None):
+                    _err_lang = _err_u.language_code
+        except Exception:
+            _err_lang = "my"
+
+        # Refund FIRST for Free quota fail-fast & deterministic non-quota errors
+        # so `{bal}` in `worker_error_quota_exhausted` reflects the 100% restored balance.
+        if (
+            (credit_deducted and not entry.get("credit_refunded"))
+            or (
+                entry.get("billing_mode") == _RECAP_BILLING_CREDIT_PLUS_VOICE
+                and not entry.get("voice_refunded")
+            )
+        ):
+            await _refund_recap_job_charge(user_id, entry)
+
         from app.services.downloader import classify_source_error
 
-        display_err = classify_source_error(str(e), req.url) or (
-            "⚠️ နည်းပညာဆိုင်ရာ အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့ပါသည်။ "
-            "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
-        )
+        if isinstance(e, RecapFreeQuotaExhaustedError):
+            _bal_str = "—"
+            try:
+                from app.db.session import AsyncSessionLocal
+                from app.services.ledger import get_minute_balance as _get_mb_rec
+
+                async with AsyncSessionLocal() as _b_session:
+                    _mb_rec = await _get_mb_rec(_b_session, user_id)
+                    _bal_str = _format_voice_bal_short(int(_mb_rec.clone_spendable_seconds))
+            except Exception:
+                pass
+            _eta_str = _voice_choice.quota_reset_estimate_label()
+            display_err = t(
+                "worker_error_quota_exhausted",
+                _err_lang,
+                eta=_eta_str,
+                bal=_bal_str,
+            )
+        elif isinstance(e, RecapCloneSynthesisError):
+            _low_ce = str(e).lower()
+            if (
+                isinstance(getattr(e, "__cause__", None), FileNotFoundError)
+                or "reference" in _low_ce
+                or "corrupt" in _low_ce
+                or "unreadable" in _low_ce
+            ):
+                display_err = t("worker_error_clone_corrupt_ref", _err_lang)
+            else:
+                display_err = t("worker_error_clone_server_5xx", _err_lang)
+        else:
+            display_err = classify_source_error(str(e), req.url) or (
+                "⚠️ နည်းပညာဆိုင်ရာ အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့ပါသည်။ "
+                "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
+            )
         entry["error_message"] = display_err
         try:
             from app.db.session import AsyncSessionLocal
@@ -10504,20 +10855,8 @@ async def _execute_recap_background_job(
             logger.warning(f"Recap job status update failed: {ref_err}")
         # Batch AB: terminal state clears the stranded-reset count.
         await _clear_recap_stranded_reset_count(job_id)
-        # Refund in its own commit, after the status update, so a
-        # status-write failure cannot swallow the refund. The registry
-        # flag makes a second failure handler for the same job a no-op.
-        # The amount is whatever this job was actually charged: 1
-        # credit for a normal job, N for a segmented one.
-        if credit_deducted and not entry.get("credit_refunded"):
-            await _refund_recap_job_charge(user_id, entry)
 
         # --- Send Telegram DM about Failure (batch K) ---
-        # Shared with the SCRIPT_READY expiry sweep so every
-        # terminal failure surface carries the same locale copy:
-        # job title, the curated display_err (never raw engine
-        # text) and a refund line only when a refund was issued.
-        # The helper's failure_notified flag keeps it once-only.
         try:
             await _send_recap_failure_dm(
                 job_id=job_id,
@@ -10537,21 +10876,13 @@ async def _execute_recap_background_job(
         except Exception as dm_err:
             logger.warning(f"Could not send DM for failed job {job_id}: {dm_err}")
 
-        # Batch W (2026-11-04): strip the failed job's media bulk now.
-        # A failed job's downloaded source, split segments and render
-        # intermediates are pure waste — user retry creates a NEW job
-        # and admin retry re-dispatches without resume_source (it
-        # re-downloads and re-renders) — but they used to sit on the
-        # persistent disk for the full retention window, which
-        # is how the disk filled and every new job started dying on
-        # "[Errno 28] No space left on device". The small JSON state
-        # (plans, checkpoints, fallback markers) stays for inspection;
-        # the record sweep removes the rest with the row at the window.
         try:
             if "job_dir" in locals() and job_dir and job_dir.exists():
                 _strip_failed_recap_job_media(job_dir)
         except Exception as strip_err:
             logger.warning(f"Recap job {job_id}: failed-job media strip failed: {strip_err}")
+    finally:
+        _hf_ledger.release_in_flight_gpu(job_id)
 
 
 def _sweep_expired_download_dirs(cutoff: datetime) -> int:
@@ -11381,6 +11712,42 @@ async def create_recap_job(
     job_id = f"rc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     remaining_voice_seconds: Optional[int] = None
 
+    _recap_submit_park = False
+    _recap_submit_dp_state: Optional[dict] = None
+    if req.tts_engine == "voxcpm" and not req.script_review:
+        _est_vox_units, _est_vox_gate, _est_vox_needed_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+            kind="recap",
+            duration_seconds=float(checked_duration or req.duration_seconds or 60.0),
+        )
+        _recap_adm = _hf_ledger.evaluate_voxcpm_admission(
+            kind="recap",
+            is_paid=bool(is_vip or is_admin_user),
+            units=_est_vox_units,
+            est_audio_seconds=float(estimated_voice_seconds or checked_duration or 60.0),
+        )
+        if not _recap_adm.admitted:
+            if not (is_vip or is_admin_user):
+                # Part 6 (#3) & Part 7: Free recap submit when pool cannot finish / paused by watermark
+                # -> 0 credits & 0 minutes deducted, NO failed Job row created, Gemini nudge returned!
+                _lang_nudge = user.language_code or "my"
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "code": "VOXCPM_GEMINI_SWITCH_REQUIRED",
+                        "band": _recap_adm.band,
+                        "eta": _recap_adm.eta_label,
+                        "detail": t("recap_free_clone_gemini_nudge", _lang_nudge, eta=_recap_adm.eta_label),
+                    },
+                )
+            _recap_submit_park = True
+            _recap_submit_dp_state = _voice_choice.new_choice_state(
+                _voice_choice.KIND_RECAP,
+                completed_units=0,
+                total_units=_est_vox_units,
+                needed_gpu_s=_est_vox_needed_s,
+                worker_host=_voice_choice.current_worker_host(),
+            )
+
     _submit_locked = not settings.is_admin(user.id)
     if _submit_locked:
         locked_user = (
@@ -11431,15 +11798,28 @@ async def create_recap_job(
         _snap_tmp = await get_wallet_snapshot(db, user.id)
         remaining_voice_seconds = int(_snap_tmp["available_voice_seconds"])
 
+    _initial_recap_status = (
+        JobStatus.WAITING_CHOICE.value if _recap_submit_park else JobStatus.QUEUED.value
+    )
+    _initial_vc_meta = (
+        _serialize_voice_choice_meta(_recap_submit_dp_state, user.language_code or "my")
+        if _recap_submit_dp_state is not None
+        else None
+    )
     clean_display_title = _clean_recap_display_title(req.title, req.url)
     RECAP_JOBS_REGISTRY[job_id] = {
         "id": job_id,
         "user_id": user.id,
         "title": clean_display_title,
-        "status": "QUEUED",
+        "status": _initial_recap_status,
         "progress_percent": 0,
         "progress_step": "0/4",
-        "progress_label": t("recap_progress_preparing", user.language_code or "my"),
+        "progress_label": (
+            t("dp_parked_label", user.language_code or "my")
+            if _recap_submit_park
+            else t("recap_progress_preparing", user.language_code or "my")
+        ),
+        "voice_choice": _initial_vc_meta,
         "created_at": time.time(),
         "video_path": None,
         "audio_path": None,
@@ -11448,7 +11828,7 @@ async def create_recap_job(
         "download_urls": {},
         "error_message": None,
         "script_review": bool(req.script_review),
-        "segments_count": None,
+        "segments_count": _recap_submit_dp_state["total_units"] if _recap_submit_dp_state else None,
         "tts_engine": req.tts_engine,
         "render_quality": req.render_quality,
         "voice_ref_used": bool(req.voice_ref_path),
@@ -11478,7 +11858,7 @@ async def create_recap_job(
         id=job_id,
         user_id=user.id,
         chat_id=user.id,
-        status=JobStatus.QUEUED.value,
+        status=_initial_recap_status,
         job_type=JobType.RECAP.value,
         engine="recap",
         preset_voice=req.voice_slug,
@@ -11486,6 +11866,11 @@ async def create_recap_job(
         input_text=clean_display_title,
         source_audio_path=req.url,
         recap_ref_audio_path=req.voice_ref_path,
+        voice_choice_state=(
+            _voice_choice.dump_choice_state(_recap_submit_dp_state)
+            if _recap_submit_dp_state is not None
+            else None
+        ),
         seconds_estimated=(
             int(estimated_recap_seconds)
             if estimated_recap_seconds
@@ -11522,7 +11907,35 @@ async def create_recap_job(
         except Exception as err_db:
             logger.warning(f"Could not persist recap Job record in DB: {err_db}")
 
-    if not getattr(settings, "recap_on_queue", False):
+    if _recap_submit_park and _recap_submit_dp_state is not None:
+        if settings.bot_token:
+            try:
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+
+                _park_bot = create_telegram_bot(
+                    token=settings.bot_token,
+                    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+                )
+                try:
+                    _pmid = await _voice_choice.send_choice_prompt(
+                        _park_bot,
+                        chat_id=user.id,
+                        job_id=job_id,
+                        kind=_voice_choice.KIND_RECAP,
+                        lang=user.language_code or "my",
+                        state=_recap_submit_dp_state,
+                    )
+                    if _pmid:
+                        _recap_submit_dp_state["prompt_chat_id"] = user.id
+                        _recap_submit_dp_state["prompt_message_id"] = _pmid
+                        db_job.voice_choice_state = _voice_choice.dump_choice_state(_recap_submit_dp_state)
+                        await db.commit()
+                finally:
+                    await _park_bot.session.close()
+            except Exception as _pm_err:
+                logger.warning(f"Submit-time park prompt failed for {job_id}: {_pm_err}")
+    elif not getattr(settings, "recap_on_queue", False):
         try:
             asyncio.create_task(_run_recap_background_job(
                 job_id, req, user.id, user.id,
@@ -11558,9 +11971,10 @@ async def create_recap_job(
     response = {
         "success": True,
         "recap_id": job_id,
-        "status": "QUEUED",
+        "status": _initial_recap_status,
         "story_style": req.story_style,
         "ratio": req.ratio,
+        "voice_choice": _initial_vc_meta,
         "remaining_credits": _snap_final["available_recap_credits"],
         "remaining_recap_seconds": _snap_final["available_recap_seconds"],
         "reserved_recap_credits": _snap_final["reserved_recap_credits"],
@@ -11745,6 +12159,11 @@ async def get_recap_status(
             "voice_refunded": bool(entry.get("voice_refunded")),
             "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
             "stage_timings": entry.get("stage_timings") or {},
+            "voice_choice": (
+                entry.get("voice_choice")
+                if entry.get("status") == "WAITING_CHOICE"
+                else None
+            ),
         }
 
     # Cold path (registry miss or reconciled DB terminal row): open the one DB
@@ -11870,6 +12289,13 @@ async def get_recap_status(
         "voice_seconds_refunded": int(_db_state.get("voice_seconds_refunded") or 0),
         "is_expired": is_expired,
         "stage_timings": (_db_state.get("stage_timings") or {}),
+        "voice_choice": (
+            _serialize_voice_choice_meta(
+                getattr(job, "voice_choice_state", None), user.language_code or "my"
+            )
+            if is_waiting_choice
+            else None
+        ),
         "download_urls": _with_stream_url({
             "video": f"/api/recap/download/{job_id}/video" if media_available else None,
             "audio": f"/api/recap/download/{job_id}/audio" if media_available else None,
@@ -11983,6 +12409,82 @@ async def render_recap_job(
 
     req = RecapConfigRequest(**snapshot)
     _clamp_recap_render_quality(req, user=user, user_id=user.id)
+
+    if str(getattr(req, "tts_engine", "")).lower() == "voxcpm":
+        _exact_segs = int(entry.get("segments_count") or 0)
+        if _exact_segs <= 0:
+            try:
+                _, _plan_obj = _load_recap_script_plan(job_id)
+                _exact_segs = len((_plan_obj or {}).get("segments") or [])
+            except Exception:
+                _exact_segs = 0
+        _u_est, _g_est, _need_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+            kind="recap",
+            planned_segments=_exact_segs if _exact_segs > 0 else None,
+            duration_seconds=float(entry.get("source_duration_seconds") or req.duration_seconds or 60.0),
+        )
+        _is_paid_render = bool(
+            entry.get("is_vip")
+            or user.account_category == AccountCategory.PURCHASED.value
+            or settings.is_admin(user.id)
+        )
+        _render_adm = _hf_ledger.evaluate_voxcpm_admission(
+            kind="recap",
+            is_paid=_is_paid_render,
+            units=_u_est,
+            est_audio_seconds=float(entry.get("voice_seconds_held") or 60.0),
+        )
+        if not _render_adm.admitted:
+            if not _is_paid_render:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "code": "VOXCPM_GEMINI_SWITCH_REQUIRED",
+                        "band": _render_adm.band,
+                        "eta": _render_adm.eta_label,
+                        "detail": t(
+                            "recap_free_clone_gemini_nudge",
+                            user.language_code or "my",
+                            eta=_render_adm.eta_label,
+                        ),
+                    },
+                )
+            _dp_render_state = _voice_choice.new_choice_state(
+                _voice_choice.KIND_RECAP,
+                completed_units=0,
+                total_units=_u_est,
+                needed_gpu_s=_need_s,
+                worker_host=_voice_choice.current_worker_host(),
+            )
+            entry["render_quality"] = req.render_quality
+            entry["script_ready"] = False
+            entry["status"] = "WAITING_CHOICE"
+            entry["progress_label"] = t("dp_parked_label", user.language_code or "my")
+            entry["voice_choice"] = _serialize_voice_choice_meta(
+                _dp_render_state, user.language_code or "my"
+            )
+            try:
+                from app.db.session import AsyncSessionLocal
+
+                async with AsyncSessionLocal() as _sr_db:
+                    _sr_job = await _sr_db.get(Job, job_id)
+                    if _sr_job is not None:
+                        _sr_state = _load_persisted_recap_state(_sr_job) or {}
+                        _sr_state["script_ready"] = False
+                        _sr_state["phase"] = "render"
+                        _sr_job.recap_config = json.dumps(_sr_state, ensure_ascii=False)
+                        _sr_job.status = JobStatus.WAITING_CHOICE.value
+                        _sr_job.voice_choice_state = _voice_choice.dump_choice_state(_dp_render_state)
+                        await _sr_db.commit()
+            except Exception as _sr_exc:
+                logger.warning(f"Could not park render_recap_job {job_id}: {_sr_exc}")
+            return {
+                "success": True,
+                "status": "WAITING_CHOICE",
+                "eta": _render_adm.eta_label,
+                "voice_choice": entry.get("voice_choice"),
+            }
+
     entry["render_quality"] = req.render_quality
     entry["script_ready"] = False
     entry["status"] = "RUNNING"
@@ -12170,6 +12672,11 @@ async def cancel_recap_job(
             "voice_refunded": bool(entry.get("voice_refunded")),
             "voice_seconds_refunded": int(entry.get("voice_seconds_refunded") or 0),
             "stage_timings": entry.get("stage_timings") or {},
+            "voice_choice": (
+                entry.get("voice_choice")
+                if entry.get("status") == "WAITING_CHOICE"
+                else None
+            ),
         }
 
     return {

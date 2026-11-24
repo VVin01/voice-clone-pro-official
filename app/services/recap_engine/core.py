@@ -50,12 +50,39 @@ except ImportError:  # core.py loaded standalone (recap_engine dir on sys.path)
 
 try:
     from app.services.voxcpm_engine import (
+        DEFAULT_CLONE_FIDELITY_CONTROL as _DEFAULT_CLONE_FIDELITY_CONTROL,
         JobQuotaMemory as _JobQuotaMemory,
+        JobSpacePin as _JobSpacePin,
+        SEGMENT_BUDGET_FREE_SECONDS as _VOX_SEG_CAP_FREE_S,
+        SEGMENT_BUDGET_PAID_SECONDS as _VOX_SEG_CAP_PAID_S,
+        TRANSIENT_RETRY_BACKOFF_SECONDS as _VOX_TRANSIENT_BACKOFF_S,
         VoxCPMQuotaExhaustedError as _VoxCPMQuotaExhaustedError,
+        has_solvent_voxcpm_tokens as _has_solvent_voxcpm_tokens,
+        is_voxcpm_capacity_or_congestion_error as _is_voxcpm_capacity_or_congestion_error,
     )
 except Exception:  # pragma: no cover - standalone load without the app package
+    _DEFAULT_CLONE_FIDELITY_CONTROL = ""  # type: ignore[assignment]
     _JobQuotaMemory = None  # type: ignore[assignment]
+    _JobSpacePin = None  # type: ignore[assignment]
+    _VOX_SEG_CAP_FREE_S = 120.0
+    _VOX_SEG_CAP_PAID_S = 180.0
+    _VOX_TRANSIENT_BACKOFF_S = 5.0
     _VoxCPMQuotaExhaustedError = None  # type: ignore[assignment]
+    _has_solvent_voxcpm_tokens = lambda _eng: True  # noqa: E731
+    _is_voxcpm_capacity_or_congestion_error = lambda _exc: False  # noqa: E731
+
+try:
+    from app.services.recap_engine.exceptions import (
+        RecapCloneSynthesisError,
+        RecapFreeQuotaExhaustedError,
+        RecapParkRequested,
+    )
+except ImportError:  # pragma: no cover - standalone load fallback
+    from exceptions import (  # type: ignore[no-redef]
+        RecapCloneSynthesisError,
+        RecapFreeQuotaExhaustedError,
+        RecapParkRequested,
+    )
 
 
 LogFn = Callable[[str], None]
@@ -87,12 +114,8 @@ def _emit_progress_stage(progress_fn: Any, label: str) -> None:
         pass
 
 
-class RecapParkRequested(Exception):
-    """Batch DP (Item 3): a PAID recap job hit VoxCPM quota exhaustion
-    with no owner choice in force. Raised out of the TTS stage instead
-    of silently degrading the segment to the persona/Edge engine; the
-    webapp driver catches it and parks the job (WAITING_CHOICE) with
-    its charge held — never a failure, never a refund trigger."""
+# RecapParkRequested lives in app.services.recap_engine.exceptions (re-exported above)
+# so `core.RecapParkRequested is app.services.recap_engine.core.RecapParkRequested`.
 
 
 SYNC_DRIFT_TOLERANCE_SECONDS: float = 0.30
@@ -235,6 +258,8 @@ def recap_job_timeout(source_duration: float | None) -> int:
 # 4 Space queues, not by this box's CPU — synthesis is network-bound).
 # RECAP_TTS_WORKERS=1 restores the exact pre-AL serial stage.
 DEFAULT_TTS_WORKERS = 6
+# HF Pool Phase 1 (Part 4 #2): VoxCPM recap TTS workers capped at 2 (Edge/Gemini keep 6).
+VOXCPM_TTS_WORKERS = 2
 
 
 # Batch CY: per-segment VoxCPM failover budget constants. The Batch
@@ -8089,10 +8114,12 @@ class EdgeSmartSync:
         # resumed choice ("edge_all" / "edge_mix") or None; run()
         # also adopts a mode persisted in the checkpoint when the
         # caller passes none, so a resumed run can never drift back.
+        # Batch DP + HF Pool Phase 1 (Part 2 #2): `edge_mix` is retired; any legacy
+        # `edge_mix` state degrades cleanly to `None` (Wait / Clone default).
         self.paid_tier = bool(paid_tier)
         self.voice_choice_mode = (
             voice_choice_mode
-            if voice_choice_mode in ("edge_all", "edge_mix")
+            if voice_choice_mode in ("edge_all",)
             else None
         )
         # Short pauses: see trim_edge_silence. Trims excessive TTS dead air while keeping natural breath.
@@ -8234,12 +8261,28 @@ class EdgeSmartSync:
             # (voice starts with "voxcpm"), and without this gate
             # VoxCPM would overwrite the Gemini segment produced
             # above and misreport the provider.
-            if use_voxcpm and vox_engine and not use_gemini and self.voice_choice_mode is None:
+            # 1. VoxCPM 2 Clone Narration (HF Pool Phase 1 Part 2: unconditional
+            # NO-FALLBACK invariant — Edge/persona fallback is forbidden on every
+            # segment, every tier, and every error type).
+            if use_voxcpm and not use_gemini and self.voice_choice_mode is None:
+                if vox_engine is None:
+                    raise RecapCloneSynthesisError(
+                        f"VoxCPM clone engine unavailable at segment {idx}"
+                    )
                 self.progress(idx - 1, total_segments, f"VoxCPM 2 {idx}/{total_segments}")
                 self.log(f"🎙️ [{idx}/{total_segments}] {base} generate via VoxCPM 2 Cloud AI")
                 ctrl_prompt = (
                     self.overlays.get("voxcpm_control")
-                    or "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
+                    or (
+                        _DEFAULT_CLONE_FIDELITY_CONTROL
+                        if (persona_ref_wav and not persona_ref_text and _DEFAULT_CLONE_FIDELITY_CONTROL)
+                        else "A clear, natural, emotionally expressive Burmese movie recap narrator with warm tone and fluent pronunciation"
+                    )
+                )
+                _seg_cap_s = _VOX_SEG_CAP_PAID_S if self.paid_tier else _VOX_SEG_CAP_FREE_S
+                _raw_budget = vox_failover_budget(
+                    float(seg["video_end"]) - float(seg["video_start"]), len(speak),
+                    paid=self.paid_tier,
                 )
                 produced, vox_err = self._vox_synthesize_with_retry(
                     vox_engine,
@@ -8250,46 +8293,35 @@ class EdgeSmartSync:
                     persona_ref_text=persona_ref_text,
                     preset_v=preset_v,
                     speed_float=voxcpm_speed_float,
-                    budget_seconds=vox_failover_budget(
-                        float(seg["video_end"]) - float(seg["video_start"]), len(speak),
-                        paid=self.paid_tier,
-                    ),
+                    budget_seconds=min(_raw_budget, _seg_cap_s),
                 )
                 if vox_err is not None:
-                    # Batch DP (Item 3): a PAID job never silently
-                    # degrades — quota exhaustion parks the whole job
-                    # and asks its owner (the driver turns this into
-                    # WAITING_CHOICE with the charge held). A resumed
-                    # edge_* run never reaches this step (the VoxCPM
-                    # step is gated off above), and free jobs keep the
-                    # per-segment fallback below, unchanged.
-                    if (
-                        self.paid_tier
-                        and _VoxCPMQuotaExhaustedError is not None
-                        and isinstance(vox_err, _VoxCPMQuotaExhaustedError)
-                    ):
+                    _done_units = len(checkpoint.get("audio") or {})
+                    _pinned_sp = getattr(vox_engine, "pinned_space", None)
+                    _is_cap_err = (
+                        (_VoxCPMQuotaExhaustedError is not None and isinstance(vox_err, _VoxCPMQuotaExhaustedError))
+                        or _is_voxcpm_capacity_or_congestion_error(vox_err)
+                    )
+                    if self.paid_tier and _is_cap_err:
                         raise RecapParkRequested(
                             f"VoxCPM quota exhausted at segment {idx}; "
-                            "parking the paid job for its owner's choice"
+                            "parking the paid job for its owner's choice",
+                            completed_units=_done_units,
+                            total_units=total_segments,
+                            pinned_space=_pinned_sp,
                         )
-                    self.log(
-                        f"⚠️ EDGE_FALLBACK_SEGMENT: line {idx} fell back to Studio Persona (Edge TTS) "
-                        f"after retries ({vox_err}); other lines keep VoxCPM 2"
-                    )
-                    fell_back = True
-                    seg_provider = "edge_fallback"
-                else:
-                    seg_provider = "voxcpm"
+                    if (not self.paid_tier) and _is_cap_err:
+                        raise RecapFreeQuotaExhaustedError(
+                            f"VoxCPM free quota/congestion exhausted at segment {idx}: {vox_err}"
+                        ) from vox_err
+                    raise RecapCloneSynthesisError(
+                        f"VoxCPM clone synthesis failed at segment {idx}: {vox_err}"
+                    ) from vox_err
+                seg_provider = "voxcpm"
 
-            # 2. Studio Persona TTS (consistent fallback preserving persona timbre & pitch)
+            # 2. Studio Persona TTS (only for Edge engine, Gemini fallback, or explicit owner `edge_all` choice)
             if not produced or not Path(produced).is_file():
-                # Batch DP: on an edge_all / edge_mix resume the
-                # persona step is the owner's CHOSEN voice for this
-                # segment — recorded with the existing fallback
-                # bookkeeping so the completion transparency fields
-                # (fallback_used / fallback_segments) name exactly
-                # the segments that are not clone-voiced.
-                if self.voice_choice_mode in ("edge_all", "edge_mix"):
+                if self.voice_choice_mode == "edge_all":
                     fell_back = True
                     seg_provider = "edge_fallback"
                 curr_persona = preset_v or (str(self.voice).replace("voxcpm_", "") if str(self.voice).startswith("voxcpm_") else str(self.voice))
@@ -8468,6 +8500,11 @@ class EdgeSmartSync:
         # segment fingerprint/cache stay keyed on the raw narration.
         speak = normalize_numbers_for_speech(speak)
         last_err: Exception | None = None
+        seg_cap = _VOX_SEG_CAP_PAID_S if getattr(self, "paid_tier", False) else _VOX_SEG_CAP_FREE_S
+        eff_attempt_budget = (
+            min(float(budget_seconds), seg_cap) if budget_seconds is not None else None
+        )
+        seg_deadline = time.monotonic() + seg_cap
         for attempt in range(attempts):
             try:
                 produced = vox_engine.synthesize(
@@ -8481,7 +8518,7 @@ class EdgeSmartSync:
                     timeout=75,
                     retries=2,
                     allow_fallback=False,
-                    total_timeout=budget_seconds,
+                    total_timeout=eff_attempt_budget,
                     tier="paid" if self.paid_tier else "free",
                 )
                 return produced, None
@@ -8492,11 +8529,20 @@ class EdgeSmartSync:
                     and isinstance(exc, _VoxCPMQuotaExhaustedError)
                 ):
                     self.log(
-                        "🚫 VoxCPM 2 quota exhausted for this job — segment falls "
-                        "back without a second failover walk"
+                        "🚫 VoxCPM 2 quota exhausted for this job — 0 extra walks"
                     )
                     break
                 self.log(f"⚠️ VoxCPM 2 segment attempt {attempt + 1}/{attempts} failed ({exc})")
+                # Part 2 (#3c): at most 1 retry after 5 s backoff only on transient
+                # transport/5xx errors while solvent tokens remain and budget allows.
+                if attempt + 1 < attempts:
+                    if not _has_solvent_voxcpm_tokens(vox_engine):
+                        self.log("🚫 No solvent VoxCPM tokens remain — skipping segment retry")
+                        break
+                    if budget_seconds is not None and (seg_deadline - time.monotonic()) <= _VOX_TRANSIENT_BACKOFF_S:
+                        break
+                    if _VOX_TRANSIENT_BACKOFF_S > 0:
+                        time.sleep(_VOX_TRANSIENT_BACKOFF_S)
         return None, last_err
 
     def run(self) -> dict[str, Any]:
@@ -8532,7 +8578,7 @@ class EdgeSmartSync:
         # is the in-job guard against a drifted re-entry).
         if self.voice_choice_mode is None:
             _saved_mode = checkpoint.get("voice_choice_mode")
-            if _saved_mode in ("edge_all", "edge_mix"):
+            if _saved_mode in ("edge_all",):
                 self.voice_choice_mode = _saved_mode
         if self.voice_choice_mode is not None:
             checkpoint["voice_choice_mode"] = self.voice_choice_mode
@@ -8584,12 +8630,16 @@ class EdgeSmartSync:
         subtitle_only_mode = str(self.overlays.get("tts_engine") or "").strip().lower() in (
             "none", "subtitle_only", "no_voice"
         )
-        # Method 1: Check if VoxCPM Cloud Engine is requested
+        # Method 1: Check if VoxCPM Cloud Engine is requested.
+        # Note: curated persona voices have slugs starting with "voxcpm_" even when
+        # the caller explicitly selects Studio/Edge or Gemini via `overlays["tts_engine"]`.
+        _explicit_tts_eng = str(self.overlays.get("tts_engine") or "").strip().lower()
         use_voxcpm = (
             not subtitle_only_mode
+            and _explicit_tts_eng not in ("edge", "edge_tts", "gemini")
             and (
                 str(self.voice).lower().startswith(("voxcpm", "vox_"))
-                or str(self.overlays.get("tts_engine") or "").lower() == "voxcpm"
+                or _explicit_tts_eng == "voxcpm"
             )
         )
         vox_engine = None
@@ -8605,7 +8655,11 @@ class EdgeSmartSync:
                 vox_engine = VoxCPMEngine(work_dir=paths.work / "voxcpm_temp", log_fn=self.log)
                 self.log(f"🎙️ Initialized VoxCPM 2 Cloud Neural Voice Engine ({self.voice})")
             except Exception as vox_init_err:
-                self.log(f"⚠️ VoxCPM 2 init error ({vox_init_err}) — will use Edge TTS")
+                if self.voice_choice_mode is None:
+                    raise RecapCloneSynthesisError(
+                        f"VoxCPM 2 initialization failed: {vox_init_err}"
+                    ) from vox_init_err
+                self.log(f"⚠️ VoxCPM 2 init skipped on edge_all resume ({vox_init_err})")
                 use_voxcpm = False
 
         # Gemini TTS option (production-grade programme): an additional
@@ -8741,39 +8795,29 @@ class EdgeSmartSync:
         # Convert Edge-TTS rate string (e.g. "+12%") → VoxCPM float speed (e.g. 1.12)
         voxcpm_speed_float = resolve_speed_tempo(effective_rate)
 
-        # Persona reference clip (the exact preview sample) — VoxCPM clones THIS voice for every
-        # segment, so the recap sounds like the preview and never drifts between lines.
-        persona_ref_wav: str | None = self.overlays.get("voxcpm_ref_audio") or None
+        # Persona / own-voice reference clip — VoxCPM clones THIS voice for every segment.
+        _own_voice_ref_raw: str | None = self.overlays.get("voxcpm_ref_audio") or None
+        persona_ref_wav: str | None = _own_voice_ref_raw
         persona_ref_text: str = str(self.overlays.get("voxcpm_ref_text") or "")
+        _recap_gender_preset = str(self.overlays.get("gender_preset") or "").strip().lower()
+        _is_recap_gender_flip = _recap_gender_preset in ("m2f", "f2m")
+        if _is_recap_gender_flip and _own_voice_ref_raw:
+            # Part 4 (#3): NEVER force prompt-text mode on an explicit m2f/f2m gender flip.
+            persona_ref_text = ""
+
         if not persona_ref_wav and _global_preset_v:
             try:
                 from app.services.curated_voices import get_persona_reference
                 persona_ref_wav, persona_ref_text = get_persona_reference(_global_preset_v)
             except Exception as ref_err:
                 self.log(f"⚠️ Persona reference lookup failed ({ref_err}) — VoxCPM voice design only")
-        if use_voxcpm:
-            if persona_ref_wav and persona_ref_text:
-                self.log(f"🎯 VoxCPM 2 locked-voice cloning from persona sample: {Path(persona_ref_wav).name}")
-            elif persona_ref_wav:
-                # Batch BV: a reference WITHOUT a transcript is the
-                # user's own-voice sample (persona samples always
-                # carry one) — it still clones, via the spaces that
-                # accept transcript-free references; the old "voice
-                # design only" wording was wrong for this case.
-                self.log(f"🎯 VoxCPM 2 cloning from own-voice sample: {Path(persona_ref_wav).name} (no transcript)")
-            else:
-                self.log("⚠️ No persona sample transcript — VoxCPM voice design (voice may vary slightly)")
 
-        # Batch BV: adapt the narration reference ONCE per job (Batch
-        # BU's 50 s Space cap). synthesize() adapts on every call, so
-        # without this pre-pass each concurrent segment worker would
-        # probe the same over-cap sample — and race the shared
-        # digest-cached trim file. Adapting here, before the segment
-        # loop, makes every per-segment adapt a no-op (the adapted
-        # file is ≤50 s) and yields the job's single
-        # reference_trimmed truth for the checkpoint / plan JSON.
+        # Batch BV + HF Pool Phase 1 Part 4 (#3): pre-adapt own-voice reference ONCE per
+        # job AND run the same one-time steady-slice + Gemini ASR pre-pass (`8-22 chars/s`
+        # plausibility gate) as standalone clones so own-voice recaps unlock `/generate_clone`
+        # spaces and gain timbre stability.
         reference_trimmed = False
-        if use_voxcpm and persona_ref_wav and vox_engine is not None:
+        if use_voxcpm and persona_ref_wav and vox_engine is not None and self.voice_choice_mode is None:
             try:
                 _ref_before = str(persona_ref_wav)
                 persona_ref_wav = str(
@@ -8785,17 +8829,54 @@ class EdgeSmartSync:
                 )
             except Exception as adapt_err:
                 self.log(f"⚠️ Reference pre-adapt skipped ({adapt_err}) — per-segment adapt still applies")
+
+            if _own_voice_ref_raw and Path(persona_ref_wav).is_file():
+                try:
+                    from app.services import clone_prosody as _cp
+
+                    _steady_wav, _steady_secs, _steady_stats = _cp.select_steady_reference_slice(
+                        Path(persona_ref_wav),
+                        paths.work / "voxcpm_temp",
+                        target_sec=_cp.REFERENCE_SLICE_SECONDS,
+                    )
+                    persona_ref_wav = str(_steady_wav)
+                    _eff_slice_secs = _steady_secs if _steady_secs > 0 else _steady_stats.duration_sec
+                    if not _is_recap_gender_flip and not persona_ref_text:
+                        _cached_asr_key = f"{Path(_steady_wav).name}:{int(Path(_steady_wav).stat().st_size)}"
+                        if checkpoint.get("own_voice_asr_key") == _cached_asr_key and "own_voice_ref_text" in checkpoint:
+                            persona_ref_text = str(checkpoint.get("own_voice_ref_text") or "")
+                        else:
+                            persona_ref_text = _cp.transcribe_reference_slice_checked(
+                                Path(_steady_wav),
+                                max(_eff_slice_secs, 0.5),
+                            )
+                            checkpoint["own_voice_asr_key"] = _cached_asr_key
+                            checkpoint["own_voice_ref_text"] = persona_ref_text
+                    if not _is_recap_gender_flip and not persona_ref_text and not self.overlays.get("voxcpm_control"):
+                        if _DEFAULT_CLONE_FIDELITY_CONTROL:
+                            self.overlays["voxcpm_control"] = _DEFAULT_CLONE_FIDELITY_CONTROL
+                except Exception as asr_pre_err:
+                    self.log(f"⚠️ Own-voice recap ASR pre-pass skipped ({asr_pre_err})")
+
+        if use_voxcpm:
+            if persona_ref_wav and persona_ref_text:
+                self.log(f"🎯 VoxCPM 2 locked-voice cloning with transcript: {Path(persona_ref_wav).name}")
+            elif persona_ref_wav:
+                self.log(f"🎯 VoxCPM 2 cloning from own-voice sample: {Path(persona_ref_wav).name} (fidelity control)")
+            else:
+                self.log("⚠️ No persona sample transcript — VoxCPM voice design (voice may vary slightly)")
+
         checkpoint["reference_trimmed"] = bool(reference_trimmed)
 
         timing: list[dict[str, Any]] = []
         audio_parts: list[Path] = []
         cursor = 0.0
         tts_total = 0.0
-        # Batch AL: job-scoped VoxCPM quota memory + per-slot worker
-        # engines. Worker slot N binds to HF account N (token_bind_index)
-        # and all slots share ONE JobQuotaMemory, so a quota refusal
-        # learned by any worker is honoured by every later segment.
+        # Batch AL + HF Pool Phase 1 Part 4 (#2): job-scoped VoxCPM quota memory AND
+        # ONE shared job-level `JobSpacePin` across all worker slots (fixing the Section B
+        # gap where only slot 0 was pinned and slots 1..N ran unpinned).
         vox_job_memory = None
+        vox_space_pin = None
         _vox_engines_by_slot: dict[int, Any] = {}
         if use_voxcpm and vox_engine is not None:
             _vox_engines_by_slot[0] = vox_engine
@@ -8804,6 +8885,12 @@ class EdgeSmartSync:
                 if hasattr(vox_engine, "job_memory"):
                     vox_engine.job_memory = vox_job_memory
                     vox_engine.token_bind_index = 0
+            if _JobSpacePin is not None:
+                _init_pin = str(self.overlays.get("pinned_space") or checkpoint.get("pinned_space") or "").strip() or None
+                vox_space_pin = _JobSpacePin(initial_space=_init_pin)
+                if hasattr(vox_engine, "space_pin"):
+                    vox_engine.space_pin = vox_space_pin
+                    vox_engine.pin_space_enabled = True
 
         def _vox_engine_for_slot(_slot: int) -> Any:
             _eng = _vox_engines_by_slot.get(_slot)
@@ -8812,12 +8899,16 @@ class EdgeSmartSync:
                     _eng = VoxCPMEngine(
                         work_dir=paths.work / "voxcpm_temp", log_fn=self.log,
                         job_memory=vox_job_memory, token_bind_index=_slot,
+                        pin_space=True, space_pin=vox_space_pin,
                     )
                 except TypeError:
                     _eng = VoxCPMEngine(work_dir=paths.work / "voxcpm_temp", log_fn=self.log)
                     if vox_job_memory is not None and hasattr(_eng, "job_memory"):
                         _eng.job_memory = vox_job_memory
                         _eng.token_bind_index = _slot
+                    if vox_space_pin is not None and hasattr(_eng, "space_pin"):
+                        _eng.space_pin = vox_space_pin
+                        _eng.pin_space_enabled = True
                 _vox_engines_by_slot[_slot] = _eng
             return _eng
 
@@ -9282,13 +9373,19 @@ class EdgeSmartSync:
                     if _record is not None:
                         with _checkpoint_lock:
                             checkpoint["audio"][segment_basename(_seg)] = _record
+                            if vox_space_pin is not None and vox_space_pin.pinned_space:
+                                checkpoint["pinned_space"] = vox_space_pin.pinned_space
                             atomic_write_json(paths.checkpoint, checkpoint)
                     if _res.get("fell_back"):
                         fallback_segments.append(_idx)
                     self.progress(_idx, len(segments), f"Audio {_idx}/{len(segments)}")
                     _drain_timing()
 
-            _worker_count = max(1, min(self.tts_workers, len(segments)))
+            _max_stage_workers = self.tts_workers
+            if use_voxcpm and not use_gemini and self.voice_choice_mode is None:
+                # Part 4 (#2): VoxCPM recap TTS workers capped at 2 (Edge/Gemini keep 6).
+                _max_stage_workers = min(_max_stage_workers, VOXCPM_TTS_WORKERS)
+            _worker_count = max(1, min(_max_stage_workers, len(segments)))
             if use_gemini and gem_engine is not None:
                 _own_eng = getattr(gem_engine, "own_engine", None)
                 if (
@@ -9326,7 +9423,13 @@ class EdgeSmartSync:
             if _tts_errors:
                 _stop_part_renderer()
                 _shutdown_prewarm(wait=False)
-                raise _tts_errors[min(_tts_errors)]
+                _first_err = _tts_errors[min(_tts_errors)]
+                if isinstance(_first_err, RecapParkRequested):
+                    _first_err.completed_units = len(checkpoint.get("audio") or {})
+                    _first_err.total_units = max(1, len(segments))
+                    if vox_space_pin is not None and vox_space_pin.pinned_space:
+                        _first_err.pinned_space = vox_space_pin.pinned_space
+                raise _first_err
 
             if (
                 _tts_pass == 0

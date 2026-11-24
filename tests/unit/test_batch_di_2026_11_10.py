@@ -314,11 +314,13 @@ def test_di_parse_admission_refusal():
 
 
 def test_di_balance_tiers():
+    # SUPERSEDED by HF Pool Phase 1 Part 6 (#1, 2026-11-24): Best-Fit selection
+    # sorts solvent Tier 0 tokens by SMALLEST sufficient balance `(0, +bal)`.
     VoxCPMEngine._token_balances = {"hf_a": 60.0, "hf_b": 2400.0, "hf_c": 300.0}
     VoxCPMEngine._last_admission_price = 94.0
     try:
-        assert VoxCPMEngine._balance_sort_key("hf_b") == (0, -2400.0)
-        assert VoxCPMEngine._balance_sort_key("hf_c") == (0, -300.0)
+        assert VoxCPMEngine._balance_sort_key("hf_b") == (0, 2400.0)
+        assert VoxCPMEngine._balance_sort_key("hf_c") == (0, 300.0)
         assert VoxCPMEngine._balance_sort_key("hf_a") == (2, -60.0)
         assert VoxCPMEngine._balance_sort_key("hf_unknown") == (1, 0.0)
         assert VoxCPMEngine._balance_sort_key(None) == (1, 0.0)
@@ -328,13 +330,13 @@ def test_di_balance_tiers():
 
 
 def test_di_walk_starts_from_richest_token(tmp_path, monkeypatch):
+    # SUPERSEDED by HF Pool Phase 1 Part 6 (#1, 2026-11-24): Best-Fit picks
+    # the smallest sufficient solvent token (`hf_c` at 300s >= 94s) before `hf_b` (800s),
+    # and never attempts insolvent sub-gate `hf_a` (60s < 94s).
     result = _write_wav(tmp_path / "ok.wav")
     engine = _bal_engine(tmp_path, monkeypatch, tokens=["hf_a", "hf_b", "hf_c"])
-    # Batch DP note: hf_b stays the RICHEST token but below the
-    # 900 s learned-rich reserve threshold — at >= 900 s a free-tier
-    # call would (correctly, per DP Item 1) never attempt it, which
-    # is not what this DI ordering test exercises.
     VoxCPMEngine._token_balances = {"hf_a": 60.0, "hf_b": 800.0, "hf_c": 300.0}
+    VoxCPMEngine._space_admission_prices = {"spaceA": 94.0}
     VoxCPMEngine._last_admission_price = 94.0
     record: list = []
     _patch_bal_clients(monkeypatch, {
@@ -347,9 +349,7 @@ def test_di_walk_starts_from_richest_token(tmp_path, monkeypatch):
         text="မင်္ဂလာပါ", output_wav=tmp_path / "o.wav", allow_fallback=False
     )
     assert out.is_file()
-    # Richest first: B serves immediately; the insolvent A (60 < 94)
-    # is never even attempted.
-    assert record[0] == ("spaceA", "hf_b")
+    assert record[0] == ("spaceA", "hf_c")
     assert ("spaceA", "hf_a") not in record
 
 

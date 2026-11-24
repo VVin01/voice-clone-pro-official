@@ -724,7 +724,11 @@ def test_bv_core_short_ref_no_trim(tmp_path, monkeypatch):
 
 @pytestmark_ffmpeg
 def test_bv_core_failed_segment_falls_back_to_persona(tmp_path, monkeypatch):
+    # SUPERSEDED by HF Pool Phase 1 Part 2 (#1, 2026-11-24): own-voice VoxCPM
+    # recaps forbid Edge/persona fallback; a failing segment raises
+    # `RecapCloneSynthesisError` with ZERO persona fallback calls.
     import app.services.curated_voices as cv
+    from app.services.recap_engine import core
 
     _patch_core(monkeypatch)
     persona_calls = []
@@ -737,16 +741,9 @@ def test_bv_core_failed_segment_falls_back_to_persona(tmp_path, monkeypatch):
     _SpyVox.fail_texts = {"ဒုတိယ စာကြောင်း ဖြစ်ပါတယ်"}
     ref = _write_wav(tmp_path / "own_ref.wav", seconds=10, rate=8000)
     job = _setup_core_job(tmp_path, ref)
-    result = _run_core_job(job, ref)
-
-    assert Path(result["final"]).is_file()
-    out_plan = json.loads(
-        (job / "edge_tts_smart_sync" / "smart_sync_plan_edge_tts.json").read_text(encoding="utf-8")
-    )
-    assert out_plan["fallback_used"] is True
-    assert out_plan["fallback_segments"] == [2]
-    # The fallback narrated segment 2 with the picked persona.
-    assert persona_calls and persona_calls[0][1] == "komin"
+    with pytest.raises(core.RecapCloneSynthesisError):
+        _run_core_job(job, ref)
+    assert persona_calls == []
 
 
 # ── BV-8: the orphan sweep keeps a parked job's sample ────────────

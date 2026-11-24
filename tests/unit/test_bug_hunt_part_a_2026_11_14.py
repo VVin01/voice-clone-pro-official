@@ -363,7 +363,7 @@ async def test_a4_parked_job_survives_restart_and_resumer_picks_up(db_session, m
         status=JobStatus.WAITING_CHOICE.value,
         input_text="Parked Video",
         chat_id=user.id,
-        voice_choice_state=_waiting_state("recap", choice="edge_mix"),
+        voice_choice_state=_waiting_state("recap", choice="edge_all"),
     )
     db_session.add(job)
     await db_session.commit()
@@ -377,7 +377,7 @@ async def test_a4_parked_job_survives_restart_and_resumer_picks_up(db_session, m
         fresh = await fresh_sess.get(Job, "rc_a4_restart_1")
         assert fresh is not None
         assert fresh.status == JobStatus.QUEUED.value
-        assert vc.parse_choice_state(fresh.voice_choice_state)["choice"] == "edge_mix"
+        assert vc.parse_choice_state(fresh.voice_choice_state)["choice"] == "edge_all"
 
 
 @pytest.mark.asyncio

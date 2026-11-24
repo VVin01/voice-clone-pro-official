@@ -40,16 +40,19 @@ except Exception:  # pragma: no cover - standalone module load fallback
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOXCPM_SPACES = [
-    # GPU VoxCPM2 spaces first (fix 2026-10-29 + Prosody Phase 1: v1 yeyee2609/voxcpm
-    # removed so v2 jobs never mix v1 and v2 acoustic models mid-narration).
-    "yeyee2609/voxcpm2",
-    "soemintheinsmt6/myanmar-voxcpm2",
-    # CPU demo kept only as the last resort.
+    # Third-party VoxCPM2 spaces (yeyee2609/voxcpm2, soemintheinsmt6/myanmar-voxcpm2)
+    # were removed on 2026-11-24 because their fixed 120 s declared GPU duration
+    # creates a ~180 s admission gate that strands quota dust and produces avoidable
+    # refusals; production spaces are supplied via the VOXCPM_SPACES env var.
+    # CPU demo kept only as the explicit merged-list tail placeholder (excluded from
+    # automated failover).
     "openbmb/VoxCPM-Demo",
 ]
 
 # Prosody Phase 1 (1A-2 #3): v1 spaces must never enter a VoxCPM2 failover chain.
 _V1_SPACE_NAMES = frozenset({"yeyee2609/voxcpm"})
+# HF Pool Phase 1 (Part 4 #4): CPU Basic demo is excluded from automated failover.
+_CPU_DEMO_SPACE_NAMES = frozenset({"openbmb/voxcpm-demo"})
 
 
 def is_voxcpm_v1_space(space_name: str) -> bool:
@@ -62,14 +65,21 @@ def is_voxcpm_v1_space(space_name: str) -> bool:
     # Catch full Hugging Face URLs pointing at yeyee2609/voxcpm (without matching voxcpm2)
     return bool(re.search(r"(?:^|/|-)yeyee2609[-/]voxcpm$", norm))
 
-# Per-space capability map (fix 2026-10-29): a request that carries a
-# reference clip is a CLONE request and may only be routed to a space
-# whose API accepts reference audio + reference text. Prompt-only
-# spaces may still serve plain TTS (voice design) requests.
-#   - yeyee2609/*        : /generate_clone (ref audio + ref text) + style TTS
-#   - soemintheinsmt6/*  : prompt /tts only — NO reference-clone endpoint
-#   - openbmb demo       : /generate accepts a reference wav
-_CLONE_INCAPABLE_SPACE_MARKERS = ("soemintheinsmt6",)
+
+def is_cpu_demo_space(space_name: str) -> bool:
+    """True when ``space_name`` identifies the CPU-basic official demo Space."""
+    norm = str(space_name or "").strip().lower().rstrip("/")
+    if not norm:
+        return False
+    if norm in _CPU_DEMO_SPACE_NAMES:
+        return True
+    return bool(re.search(r"(?:^|/|-)openbmb[-/]voxcpm-demo$", norm))
+
+
+# Per-space capability map: third-party prompt-only spaces (soemintheinsmt6) were
+# retired from rotation on 2026-11-24; marker tuple kept empty so no dangling
+# special-case remains while preserving the public predicate contract.
+_CLONE_INCAPABLE_SPACE_MARKERS: tuple[str, ...] = ()
 
 
 def space_supports_clone(space_name: str) -> bool:
@@ -78,14 +88,13 @@ def space_supports_clone(space_name: str) -> bool:
     return not any(marker in name for marker in _CLONE_INCAPABLE_SPACE_MARKERS)
 
 
-# Batch AT (AT-2): per-space attempt cap inside ONE synthesis call.
-# The pre-AT walk was space-major, so a single congested/broken space
-# could consume the whole global failover budget before a healthy
-# space was ever tried (production voice job a670e490: 18 attempts,
-# all on space #1, then the 240 s budget expired). Even with the
-# round-robin order (AT-1), this cap bounds how much of the budget
-# one space may eat per call; the global budget stays the outer bound.
+# Batch AT (AT-2): per-space attempt cap inside ONE unpinned synthesis call.
 MAX_ATTEMPTS_PER_SPACE = 4
+# HF Pool Phase 1 (Part 2 #3): bounded retry ladder for pinned VoxCPM2 spaces.
+MAX_PINNED_SPACE_TOKENS = 6
+MAX_REPIN_SPACE_TOKENS = 3
+SEGMENT_BUDGET_FREE_SECONDS = 120.0
+SEGMENT_BUDGET_PAID_SECONDS = 180.0
 
 # Batch AT (AT-3): per-space Gradio endpoint mapping. Every space
 # defaults to the openbmb-style "/generate" endpoint.
@@ -240,7 +249,6 @@ PRESET_MAP_YEYEE = {
 DEFAULT_VOXCPM_SPACE = (
     os.getenv("VOXCPM_SPACE_URL", "").strip()
     or os.getenv("VOXCPM_API_URL", "").strip()
-    or DEFAULT_VOXCPM_SPACES[0]
 )
 DEFAULT_BURMESE_CONTROL = (
     "A clear, natural, emotionally expressive Burmese speaker with warm tone, "
@@ -288,6 +296,63 @@ class VoxCPMQuotaExhaustedError(RuntimeError):
     the same exhausted accounts. Plain RuntimeError failures (space
     down, bad response) keep the historical retry behaviour.
     """
+
+
+TRANSIENT_RETRY_BACKOFF_SECONDS = 5.0
+
+
+def is_voxcpm_capacity_or_congestion_error(exc: BaseException | None) -> bool:
+    """True when `exc` represents ZeroGPU quota exhaustion or queue/budget timeout
+    congestion (Part 2 #4: Paid -> park; Free -> fail-fast with `worker_error_quota_exhausted`),
+    as opposed to deterministic 5xx / bad-input errors (both tiers -> FAILED + 100% refund)."""
+    if exc is None:
+        return False
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, (VoxCPMQuotaExhaustedError, TimeoutError)):
+            return True
+        low = str(cur).lower()
+        if _quota_failure_kind(low) is not None:
+            return True
+        if (
+            "queue timed out" in low
+            or "total failover budget" in low
+            or "quota exhausted" in low
+        ):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    return False
+
+
+def has_solvent_voxcpm_tokens(engine: Any) -> bool:
+    """True when at least one non-dead token remains solvent for a transient retry (Part 2 #3c)."""
+    try:
+        from app.services import hf_pool_ledger as _hf_ledger
+
+        st = _hf_ledger.load_pool_state()
+        now = time.time()
+        tokens = list(getattr(engine, "hf_tokens", None) or get_available_hf_tokens())
+        if not tokens:
+            return not bool(st.get("tokens"))
+        mem = getattr(engine, "job_memory", None)
+        pin = getattr(engine, "pinned_space", None)
+        gate = VoxCPMEngine._known_space_gate(pin, ledger_state=st)
+        for tok in tokens:
+            if not tok:
+                continue
+            if _hf_ledger.is_token_auth_dead(tok, state=st, now_ts=now):
+                continue
+            if mem is not None and mem.token_dead(tok):
+                continue
+            bal = VoxCPMEngine._known_token_balance(tok, ledger_state=st)
+            if bal is not None and (bal <= 0 or (gate is not None and gate > 0 and bal < gate)):
+                continue
+            return True
+        return False
+    except Exception:
+        return True
 
 
 _QUOTA_ERROR_MARKERS = ("zerogpu", "quota", "runs limit", "402", "payment required")
@@ -386,6 +451,65 @@ class JobQuotaMemory:
                 "gate_pairs": sorted(f"{sp}::{tok}" for sp, tok in self._gate_pairs),
                 "dead_tokens": sorted(self._dead_tokens),
             }
+
+
+class JobSpacePin:
+    """Job-scoped Space pin shared across worker slots (Part 2 #3 & Part 4 #2).
+
+    Pins the first VoxCPM2 Space that succeeds for the job, and allows at most
+    ONE controlled re-pin to an alternate v2 Space if every solvent token on the
+    pinned Space fails.
+    """
+
+    def __init__(self, initial_space: Optional[str] = None) -> None:
+        self._lock = threading.Lock()
+        self._pinned_space: Optional[str] = initial_space
+        self._repin_used: bool = False
+
+    @property
+    def pinned_space(self) -> Optional[str]:
+        with self._lock:
+            return self._pinned_space
+
+    @pinned_space.setter
+    def pinned_space(self, value: Optional[str]) -> None:
+        with self._lock:
+            self._pinned_space = str(value) if value else None
+
+    @property
+    def repin_used(self) -> bool:
+        with self._lock:
+            return self._repin_used
+
+    @repin_used.setter
+    def repin_used(self, value: bool) -> None:
+        with self._lock:
+            self._repin_used = bool(value)
+
+    def pin_if_unset(self, space_name: str) -> bool:
+        with self._lock:
+            if self._pinned_space is None and space_name:
+                self._pinned_space = str(space_name)
+                return True
+            return False
+
+    def reset(self) -> None:
+        with self._lock:
+            self._pinned_space = None
+            self._repin_used = False
+
+
+def _cancel_gradio_job(job: Any) -> bool:
+    """Best-effort cancel of a timed-out Gradio job so it cannot later enter the GPU
+    and silently burn the caller token while the worker retries elsewhere (Part 4 #1)."""
+    cancel_fn = getattr(job, "cancel", None)
+    if callable(cancel_fn):
+        try:
+            cancel_fn()
+            return True
+        except Exception as exc:
+            logger.debug("VoxCPM Gradio job.cancel() error ignored: %s", exc)
+    return False
 
 
 def mask_hf_token(tok: Optional[str]) -> str:
@@ -599,51 +723,110 @@ class VoxCPMEngine:
     def _record_admission_refusal(
         cls, space_name: str, token: Optional[str], requested: float, left: float
     ) -> None:
-        """Batch DI: learn from a refusal — the token's exact balance
-        (``left``) and the space's admission price (``requested``)."""
+        """Learn from a refusal — exact balance (`left`) and space gate (`requested`),
+        persisting through the shared `aj_hf:pool_state` ledger (Part 5)."""
         with cls._lock:
             cls._space_admission_prices[str(space_name)] = float(requested)
             cls._last_admission_price = float(requested)
             if token:
                 cls._token_balances[str(token)] = float(left)
+        try:
+            from app.services import hf_pool_ledger as _hf_ledger
+
+            _hf_ledger.record_admission_refusal(space_name, token, requested, left)
+        except Exception:
+            pass
 
     @classmethod
     def _record_success_balance(cls, space_name: str, token: Optional[str]) -> None:
-        """Batch DI: a successful call proves the token's balance
-        covered this space's admission price. When the balance is
-        already known exactly (learned from a refusal), debit the
-        price just paid; when it is unknown, record the price as the
-        lower bound the success guarantees."""
+        """Debit the space's gate from the token's balance in memory and `aj_hf:pool_state`."""
         if not token:
             return
         with cls._lock:
             price = cls._space_admission_prices.get(str(space_name))
-            if price is None:
-                return
-            key = str(token)
-            known = cls._token_balances.get(key)
-            if known is None:
-                cls._token_balances[key] = float(price)
-            else:
-                cls._token_balances[key] = max(0.0, known - float(price))
+            if price is not None:
+                key = str(token)
+                known = cls._token_balances.get(key)
+                if known is None:
+                    cls._token_balances[key] = float(price)
+                else:
+                    cls._token_balances[key] = max(0.0, known - float(price))
+        try:
+            from app.services import hf_pool_ledger as _hf_ledger
+
+            _hf_ledger.record_success_debit(
+                space_name,
+                token,
+                debit_s=price,
+            )
+        except Exception:
+            pass
 
     @classmethod
-    def _balance_sort_key(cls, token: Optional[str]) -> tuple[int, float]:
-        """Batch DI walk order: (tier, -balance). Tier 0 = known
-        solvent (balance >= the last-seen admission price, richest
-        first), tier 1 = balance unknown, tier 2 = known insolvent
-        (balance below the last-seen price; closest to solvent
-        first). The anonymous caller has no per-token balance and
-        always sorts as unknown."""
+    def _known_token_balance(
+        cls, token: Optional[str], *, ledger_state: Optional[dict] = None
+    ) -> Optional[float]:
+        if not token:
+            return None
+        if ledger_state:
+            try:
+                from app.services import hf_pool_ledger as _hf_ledger
+
+                rem = _hf_ledger.get_token_remaining_s(token, state=ledger_state)
+                if rem is not None:
+                    return float(rem)
+            except Exception:
+                pass
+        bal = cls._token_balances.get(str(token))
+        return float(bal) if bal is not None else None
+
+    @classmethod
+    def _known_space_gate(
+        cls, space_name: Optional[str] = None, *, ledger_state: Optional[dict] = None
+    ) -> Optional[float]:
+        if space_name:
+            if ledger_state and isinstance(ledger_state.get("space_gates"), dict):
+                gates = ledger_state["space_gates"]
+                if str(space_name) in gates:
+                    try:
+                        g = float(gates[str(space_name)])
+                        if g > 0:
+                            return g
+                    except (TypeError, ValueError):
+                        pass
+            if str(space_name) in cls._space_admission_prices:
+                return float(cls._space_admission_prices[str(space_name)])
+            return None
+        if ledger_state and isinstance(ledger_state.get("space_gates"), dict):
+            gates = ledger_state["space_gates"]
+            if gates:
+                vals = [float(v) for v in gates.values() if isinstance(v, (int, float)) and float(v) > 0]
+                if vals:
+                    return min(vals)
+        return cls._last_admission_price
+
+    @classmethod
+    def _balance_sort_key(
+        cls,
+        token: Optional[str],
+        *,
+        gate: Optional[float] = None,
+        ledger_state: Optional[dict] = None,
+    ) -> tuple[int, float]:
+        """Part 6 (#1) Best-Fit token walk order: (tier, +balance).
+        Tier 0 = known solvent (`balance >= gate`, SMALLEST sufficient balance first
+        so tail balances drain completely while full 300 s tokens stay intact for long units),
+        Tier 1 = balance unknown, Tier 2 = known sub-gate (`balance < gate`; filtered out
+        before walking so sub-gate tokens are never attempted)."""
         if not token:
             return (1, 0.0)
-        bal = cls._token_balances.get(str(token))
+        bal = cls._known_token_balance(token, ledger_state=ledger_state)
         if bal is None:
             return (1, 0.0)
-        price = cls._last_admission_price
-        if price is not None and bal < price:
+        eff_gate = gate if gate is not None else cls._known_space_gate(None, ledger_state=ledger_state)
+        if bal <= 0 or (eff_gate is not None and bal < eff_gate):
             return (2, -bal)
-        return (0, -bal)
+        return (0, float(bal))
 
     # Round 15 Part F (owner direction 2026-11-23): SINGLE-POOL RULE.
     # The paid-only HF token reserve (Batch DP / DR) is permanently retired.
@@ -724,11 +907,18 @@ class VoxCPMEngine:
             return False
 
     @classmethod
-    def _ensure_cooldowns_restored(cls, tokens: Any = None) -> None:
-        if cls._cooldowns_restored:
-            return
-        cls._cooldowns_restored = True
-        cls.load_cooldowns_from_store(tokens=tokens)
+    def _ensure_cooldowns_restored(cls, tokens: Any = None) -> dict:
+        """Reload shared `aj_hf:pool_state` on its 30 s TTL (replacing the old
+        one-shot boot restore that caused cross-process blindness — Part 5 #1)."""
+        if not cls._cooldowns_restored:
+            cls._cooldowns_restored = True
+            cls.load_cooldowns_from_store(tokens=tokens)
+        try:
+            from app.services import hf_pool_ledger as _hf_ledger
+
+            return _hf_ledger.load_pool_state()
+        except Exception:
+            return {}
 
     @classmethod
     def _schedule_cooldown_persist(cls) -> None:
@@ -751,12 +941,25 @@ class VoxCPMEngine:
         job_memory: Optional[JobQuotaMemory] = None,
         token_bind_index: Optional[int] = None,
         pin_space: Optional[bool] = None,
+        space_pin: Optional[JobSpacePin] = None,
+        spaces: Optional[List[str]] = None,
+        hf_tokens: Optional[List[str]] = None,
     ):
-        self.spaces = [sp for sp in get_configured_spaces() if not is_voxcpm_v1_space(sp)]
-        if space_name and not is_voxcpm_v1_space(space_name) and space_name not in self.spaces:
+        raw_spaces = list(spaces) if spaces is not None else get_configured_spaces()
+        self.spaces = [
+            sp
+            for sp in raw_spaces
+            if sp and not is_voxcpm_v1_space(sp) and not is_cpu_demo_space(sp)
+        ]
+        if (
+            space_name
+            and not is_voxcpm_v1_space(space_name)
+            and not is_cpu_demo_space(space_name)
+            and space_name not in self.spaces
+        ):
             self.spaces.insert(0, space_name)
-        self.primary_space = self.spaces[0] if self.spaces else DEFAULT_VOXCPM_SPACES[0]
-        self.hf_tokens = get_available_hf_tokens()
+        self.primary_space = self.spaces[0] if self.spaces else ""
+        self.hf_tokens = list(hf_tokens) if hf_tokens is not None else get_available_hf_tokens()
         self.work_dir = Path(work_dir) if work_dir else Path(os.environ.get("TEMP", ".")) / "voxcpm_cache"
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.log_fn = log_fn
@@ -766,14 +969,24 @@ class VoxCPMEngine:
         # Batch AL: parallel-pool workers bind to a starting token so
         # concurrent syntheses do not all queue on the same account.
         self.token_bind_index = token_bind_index
-        # Prosody Phase 1 (1A-2 #3): per-job space pinning (on by default for standalone
-        # voice-clone jobs; off for Recap bound worker slots unless explicitly requested).
-        self.pin_space_enabled: bool = (token_bind_index is None) if pin_space is None else bool(pin_space)
-        self.pinned_space: Optional[str] = None
+        # Prosody Phase 1 + HF Pool Phase 1: per-job space pinning, optionally shared
+        # across worker slots via `space_pin` (Part 4 #2).
+        self.space_pin: JobSpacePin = space_pin if space_pin is not None else JobSpacePin()
+        self.pin_space_enabled: bool = (
+            True if space_pin is not None else ((token_bind_index is None) if pin_space is None else bool(pin_space))
+        )
+
+    @property
+    def pinned_space(self) -> Optional[str]:
+        return self.space_pin.pinned_space
+
+    @pinned_space.setter
+    def pinned_space(self, value: Optional[str]) -> None:
+        self.space_pin.pinned_space = value
 
     def reset_pinned_space(self) -> None:
         """Clear per-job pinned Space state between jobs."""
-        self.pinned_space = None
+        self.space_pin.reset()
 
     def _log(self, msg: str) -> None:
         logger.info(msg)
@@ -940,11 +1153,13 @@ class VoxCPMEngine:
                 self._log(f"♻️ VoxCPM 2 Cache Hit: {out_path.name}")
                 return out_path
 
-        # Batch AJ (M12): resume token cooldowns persisted by the
-        # previous process before the pool order is computed, so a
-        # quota/auth-dead token is not retried first after every boot.
-        self._ensure_cooldowns_restored(self.hf_tokens)
+        # Phase 1 Part 5: reload shared `aj_hf:pool_state` on its 30 s TTL across processes.
+        ledger_state = self._ensure_cooldowns_restored(self.hf_tokens)
+        if not isinstance(ledger_state, dict):
+            ledger_state = {}
+        ledger_seeded = bool(ledger_state.get("tokens"))
 
+        from app.services import hf_pool_ledger as _hf_ledger
         from gradio_client import handle_file
 
         # Prepare reference audio for zero-shot cloning if provided
@@ -952,57 +1167,60 @@ class VoxCPMEngine:
         if reference_wav:
             ref_path = Path(reference_wav)
             if ref_path.is_file():
-                # Batch BU: an over-cap reference is adapted ONCE here
-                # (trimmed to its first 45 s) so every Space attempt in
-                # this call uses the trimmed copy instead of failing
-                # on the 50 s Space limit.
                 ref_path = self._adapt_reference_for_clone(ref_path)
                 ref_file = handle_file(str(ref_path.resolve()))
                 self._log(f"🎵 VoxCPM 2 Reference Audio loaded: {ref_path.name} ({ref_path.stat().st_size} bytes)")
             else:
                 logger.warning("VoxCPM reference_wav not found: %s — proceeding with Voice Design", reference_wav)
 
-        # Build candidate (space, token) pairs with health-aware sorting
+        # Build candidate (space, token) pairs with health + Best-Fit sorting
         now = time.time()
-        raw_tokens: List[Optional[str]] = list(self.hf_tokens) if self.hf_tokens else [None]
-        if None not in raw_tokens:
-            raw_tokens.append(None)  # include anonymous per-IP ZeroGPU quota as backup
-        # Healthy authenticated tokens first, then anonymous, then cooldown tokens
+        auth_tokens = [
+            tok
+            for tok in self.hf_tokens
+            if tok and not _hf_ledger.is_token_auth_dead(tok, state=ledger_state, now_ts=now)
+        ]
+        if not self.hf_tokens:
+            raw_tokens: List[Optional[str]] = [None]
+        elif ledger_seeded:
+            # When the ledger is seeded, walk authenticated tokens only (never blind anonymous).
+            raw_tokens = list(auth_tokens)
+        else:
+            raw_tokens = list(auth_tokens)
+            if None not in raw_tokens:
+                raw_tokens.append(None)
+
+        def _is_cooling(t: Optional[str]) -> bool:
+            if t is None:
+                return False
+            if self._token_cooldowns.get(t, 0) > now:
+                return True
+            return _hf_ledger.is_token_cooling(t, state=ledger_state, now_ts=now)
+
         def _token_sort_key(t: Optional[str]) -> int:
             if t is None:
                 return 1
-            return 2 if self._token_cooldowns.get(t, 0) > now else 0
+            return 2 if _is_cooling(t) else 0
 
         tokens_pool = sorted(raw_tokens, key=_token_sort_key)
-        # Prosody Phase 1 (1A-2 #3): v2 failover chains never include legacy v1 spaces.
-        candidate_spaces = [sp for sp in self.spaces if not is_voxcpm_v1_space(sp)]
+        # Prosody Phase 1 + HF Pool Phase 1 Part 4 (#4): exclude v1 spaces AND CPU demo.
+        candidate_spaces = [
+            sp
+            for sp in self.spaces
+            if not is_voxcpm_v1_space(sp) and not is_cpu_demo_space(sp)
+        ]
         if ref_file is not None:
-            # Clone request: only clone-capable spaces may serve it. A
-            # prompt-only space would ignore the reference clip and
-            # return a random voice that does not match the preview.
             capable = [sp for sp in candidate_spaces if space_supports_clone(sp)]
             skipped = [sp for sp in candidate_spaces if sp not in capable]
             for sp in skipped:
                 self._log(f"ℹ️ Space '{sp}' has no reference-clone endpoint; skipping it for this clone request")
             candidate_spaces = capable
-        is_pinned_walk = False
-        if self.pin_space_enabled and self.pinned_space and self.pinned_space in candidate_spaces:
-            candidate_spaces = [self.pinned_space]
-            is_pinned_walk = True
 
-        # Rotate healthy tokens across requests (starting offset only;
-        # the pair ORDER itself is built round-robin below).
-        healthy_auth = [t for t in tokens_pool if t is not None and self._token_cooldowns.get(t, 0) <= now]
+        # Rotate healthy tokens across requests (round-robin tie-breaker across worker slots).
+        healthy_auth = [t for t in tokens_pool if t is not None and not _is_cooling(t)]
         ordered_toks: List[Optional[str]] = list(tokens_pool)
         if len(healthy_auth) > 1:
             if self.token_bind_index is not None:
-                # Batch AL: a bound pool worker starts at its OWN token,
-                # so N concurrent workers spread over N different
-                # accounts instead of contending on one.
-                # Batch AT (AT-5): the slot's start ADVANCES by one on
-                # every call (per-slot counter shared across engine
-                # instances), so the same first few accounts are not
-                # re-picked at the head of every segment's walk.
                 bind = int(self.token_bind_index)
                 with self._lock:
                     advance = self._token_bind_rr_counters.get(bind, 0)
@@ -1016,85 +1234,98 @@ class VoxCPMEngine:
             other_toks = [t for t in tokens_pool if t not in healthy_auth]
             ordered_toks = rotated_auth + other_toks
 
-        # Batch DI: order the walk by last-known balance, richest
-        # first (owner, 2026-11-10: start from the token with the
-        # most quota left). Production 2026-11-10: a segment burned
-        # its whole 45 s failover budget on instant admission
-        # refusals from tokens holding 63–89 s against a 94 s price,
-        # while richer tokens waited behind them in rotation order.
-        # The sort composes with the health classes above (a cooling
-        # token never jumps the queue on balance alone) and with the
-        # rotation (equal keys keep their rotated relative order):
-        # key = (health class, balance tier, -balance, rotated
-        # position). Space priority is untouched — pairs below still
-        # iterate the configured space order inside each token round.
-        # Round 15 Part F: single shared pool for every tier — token ordering
-        # depends strictly on health class, last-known balance, and rotation
-        # position (no tier-based reserve prioritization or filtering).
-        def _walk_sort_key(item):
-            _pos, _tok = item
-            return (
-                _token_sort_key(_tok),
-                *VoxCPMEngine._balance_sort_key(_tok),
-                _pos,
+        def _solvent_tokens_for_space(sp: str) -> tuple[List[Optional[str]], int]:
+            """Return Best-Fit ordered solvent tokens for `sp` plus count of sub-gate tokens skipped."""
+            sp_gate = VoxCPMEngine._known_space_gate(sp, ledger_state=ledger_state)
+            kept: List[tuple[int, Optional[str]]] = []
+            sub_gate_skipped = 0
+            for pos, tok in enumerate(ordered_toks):
+                if tok is not None:
+                    bal = VoxCPMEngine._known_token_balance(tok, ledger_state=ledger_state)
+                    if bal is not None and (bal <= 0 or (sp_gate is not None and sp_gate > 0 and bal < sp_gate)):
+                        sub_gate_skipped += 1
+                        continue
+                kept.append((pos, tok))
+            kept.sort(
+                key=lambda item: (
+                    _token_sort_key(item[1]),
+                    *VoxCPMEngine._balance_sort_key(item[1], gate=sp_gate, ledger_state=ledger_state),
+                    item[0],
+                )
             )
+            return [tok for _pos, tok in kept], sub_gate_skipped
 
-        ordered_toks = [
-            tok
-            for _pos, tok in sorted(
-                enumerate(ordered_toks),
-                key=_walk_sort_key,
-            )
-        ]
+        is_pinned_walk = False
+        repin_candidate: Optional[str] = None
+        pairs: List[Tuple[str, Optional[str]]] = []
+        sub_gate_filtered_total = 0
 
-        # Batch AT (AT-1): space-first round-robin pair order — one
-        # pair per space per round (token-major), so every space gets
-        # an early attempt before any space gets a second one. The
-        # pre-AT space-major order exhausted the failover budget on
-        # space #1 alone (production voice job a670e490) and burned
-        # half of every recap line's attempts on one broken space
-        # before reaching a healthy one (job rc_1793880623_7150ea).
-        pairs: List[Tuple[str, Optional[str]]] = [
-            (sp, tok) for tok in ordered_toks for sp in candidate_spaces
-        ]
+        cur_pin = self.pinned_space
+        if self.pin_space_enabled and cur_pin and cur_pin in candidate_spaces:
+            is_pinned_walk = True
+            pin_toks, skipped_pin = _solvent_tokens_for_space(cur_pin)
+            sub_gate_filtered_total += skipped_pin
+            for tok in pin_toks[:MAX_PINNED_SPACE_TOKENS]:
+                pairs.append((cur_pin, tok))
+            # Part 2 (#3b): ONE controlled re-pin to an alternate v2 space (up to 3 solvent tokens).
+            if not self.space_pin.repin_used:
+                alt_space = next((sp for sp in candidate_spaces if sp != cur_pin), None)
+                if alt_space is not None:
+                    alt_toks, skipped_alt = _solvent_tokens_for_space(alt_space)
+                    sub_gate_filtered_total += skipped_alt
+                    repin_candidate = alt_space
+                    for tok in alt_toks[:MAX_REPIN_SPACE_TOKENS]:
+                        pairs.append((alt_space, tok))
+        else:
+            per_space_toks: dict[str, List[Optional[str]]] = {}
+            max_len = 0
+            for sp in candidate_spaces:
+                sp_toks, skipped_sp = _solvent_tokens_for_space(sp)
+                sub_gate_filtered_total += skipped_sp
+                per_space_toks[sp] = sp_toks
+                if len(sp_toks) > max_len:
+                    max_len = len(sp_toks)
+            for round_idx in range(max_len):
+                for sp in candidate_spaces:
+                    sp_toks = per_space_toks[sp]
+                    if round_idx < len(sp_toks):
+                        pairs.append((sp, sp_toks[round_idx]))
 
-        # Batch AL: pairs this job has already ruled out (token quota
-        # dead on every space, or the (space, token) pair refused at the
-        # space's admission gate) are not walked again — pre-AL, every
-        # later segment re-discovered the same refusals at full price.
-        total_pairs = len(pairs)
+        total_pairs = len(pairs) + sub_gate_filtered_total
         pairs = [
             (sp, tok) for sp, tok in pairs
             if not self._pair_blocked_by_job(sp, tok)
         ]
-        all_pairs_blocked = total_pairs > 0 and not pairs
+        all_pairs_blocked = (
+            (total_pairs > 0 and not pairs)
+            or (
+                not pairs
+                and bool(self.hf_tokens)
+                and not auth_tokens
+            )
+        )
         if all_pairs_blocked:
             self._log(
-                "🚫 VoxCPM 2: every (space, token) pair is ruled out by this "
-                "job's quota memory — failing fast instead of re-walking."
+                "🚫 VoxCPM 2: every (space, token) pair is ruled out by quota/ledger memory "
+                "— failing fast instead of blind walking."
             )
 
         last_err: Exception | None = None
         max_attempts = len(pairs)
         attempts_made = 0
         quota_failures = 0
-        # Batch DR: set when the walk is cut short by the total
-        # failover-budget deadline (as opposed to running out of
-        # pairs) — the allow_fallback=False tail below uses it to
-        # recognise the mixed evening failure mode for paid walks.
         deadline_cut = False
 
-        # Failover budget (fix 2026-10-29): each attempt keeps the
-        # configured per-attempt timeout (VOXCPM_TIMEOUT / settings,
-        # default 60s; recap passes 75s), but the WHOLE synthesis is
-        # capped by a total budget (default 240s, VOXCPM_TOTAL_TIMEOUT)
-        # so a dead first space cannot burn every token x space x 60s
-        # before a healthy GPU space is tried.
         _budget_env = os.getenv("VOXCPM_TOTAL_TIMEOUT", "").strip()
-        total_budget = float(kwargs.get("total_timeout") or (_budget_env if _budget_env else 240))
+        _tier_norm = str(tier or "free").strip().lower()
+        _default_budget = (
+            SEGMENT_BUDGET_PAID_SECONDS if _tier_norm == "paid" else SEGMENT_BUDGET_FREE_SECONDS
+        )
+        total_budget = float(
+            kwargs.get("total_timeout") or (_budget_env if _budget_env else _default_budget)
+        )
         synth_deadline = time.time() + total_budget
 
-        # Batch AT (AT-2): attempts spent per space within THIS call.
         space_attempts: dict[str, int] = {}
         for attempt, (space_name, active_token) in enumerate(pairs, 1):
             if time.time() > synth_deadline:
@@ -1102,14 +1333,14 @@ class VoxCPMEngine:
                 self._log(f"⏱️ VoxCPM total failover budget ({total_budget:.0f}s) exhausted; stopping further space attempts")
                 break
             if self._pair_blocked_by_job(space_name, active_token):
-                # Ruled out by an earlier failure in THIS walk (e.g. the
-                # token died on another space a moment ago).
                 continue
-            if not is_pinned_walk and space_attempts.get(space_name, 0) >= MAX_ATTEMPTS_PER_SPACE:
-                # Batch AT (AT-2): this space has had its share of
-                # this call — move on even if tokens remain on it, so
-                # the global budget is spread across spaces.
-                continue
+            if not is_pinned_walk:
+                if space_attempts.get(space_name, 0) >= MAX_ATTEMPTS_PER_SPACE:
+                    continue
+            elif repin_candidate is not None and space_name == repin_candidate and not self.space_pin.repin_used:
+                self.space_pin.repin_used = True
+                self._log(f"🔀 VoxCPM 2 controlled one-time re-pin attempt: '{cur_pin}' -> '{repin_candidate}'")
+
             space_attempts[space_name] = space_attempts.get(space_name, 0) + 1
             attempts_made += 1
             tok_masked = mask_hf_token(active_token)
@@ -1120,40 +1351,21 @@ class VoxCPMEngine:
                 )
                 if progress_cb:
                     try:
-                        progress_cb(f"🎙️ အသံ ဖန်တီးနေပါသည်…")
+                        progress_cb("🎙️ အသံ ဖန်တီးနေပါသည်…")
                     except Exception:
                         pass
 
                 client = self.get_client(space_name, hf_token=active_token)
                 effective_control = control_instruction or DEFAULT_BURMESE_CONTROL
                 if ref_file and prompt_text:
-                    # Locked-timbre cloning: the reference clip alone defines the voice.
                     effective_control = ""
                 elif ref_file and not prompt_text and (
                     not control_instruction or control_instruction == DEFAULT_BURMESE_CONTROL
                 ):
                     effective_control = DEFAULT_CLONE_FIDELITY_CONTROL
-                # Batch AT (AT-3): endpoint names for THIS space —
-                # "/generate" by default, the clone/style family for
-                # spaces whose app exposes those functions instead.
                 endpoints = space_api_endpoints(space_name)
 
-                if "soemintheinsmt6" in space_name:
-                    # Prompt-only space: clone requests were filtered
-                    # out above, so only plain TTS reaches this branch.
-                    job = client.submit(
-                        text=clean_text,
-                        voice_description=control_instruction or DEFAULT_BURMESE_CONTROL,
-                        api_name="/tts",
-                    )
-                elif endpoints["clone"] == "/generate_clone":
-                    # yeyee family + mapped duplicates of it (AT-3,
-                    # e.g. yunaisbusy/voxcpm2-fast): the clone call
-                    # shape below is the one their app.py declares —
-                    # generate_clone(ref_audio_path, ref_text,
-                    # target_text) — unchanged from the pre-AT yeyee
-                    # branch; only the routing now comes from the
-                    # endpoint mapping instead of the owner name.
+                if endpoints["clone"] == "/generate_clone":
                     if ref_file:
                         if not prompt_text:
                             self._log(f"ℹ️ Space '{space_name}' cloning needs the reference transcript; skipping to next space...")
@@ -1185,7 +1397,6 @@ class VoxCPMEngine:
                         api_name="/generate",
                     )
                 else:
-                    # openbmb/VoxCPM-Demo and standard Gradio spaces
                     job = client.submit(
                         text_input=clean_text,
                         control_instruction=effective_control,
@@ -1211,10 +1422,12 @@ class VoxCPMEngine:
                         timeout_sec = 60
                 timeout_sec = int(kwargs.get("timeout") or timeout_sec)
                 while not job.done():
-                    # Fail over if queue exceeds timeout
+                    # Part 4 (#1): cancel orphaned Gradio GPU runs BEFORE raising TimeoutError.
                     if time.time() - poll_start > timeout_sec:
+                        _cancel_gradio_job(job)
                         raise TimeoutError(f"VoxCPM 2 Space '{space_name}' queue timed out after {timeout_sec}s")
                     if time.time() > synth_deadline:
+                        _cancel_gradio_job(job)
                         raise TimeoutError(f"VoxCPM 2 total failover budget ({total_budget:.0f}s) exhausted on space '{space_name}'")
 
                     try:
@@ -1223,8 +1436,6 @@ class VoxCPMEngine:
                         pos_val = getattr(st, "queue_position", None) or getattr(st, "position", None)
                         if eta_val is not None and float(eta_val) > 0:
                             eta_sec = int(round(float(eta_val)))
-                            # R40 deck F-3: no engine name in user-facing
-                            # progress text — queue rank only.
                             if pos_val is not None:
                                 msg = f"⏳ စောင့်ဆိုင်းစာရင်းတွင် နံပါတ် {pos_val} — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
                             else:
@@ -1244,9 +1455,12 @@ class VoxCPMEngine:
                 result_path_str = _resolve_result_path(raw_result)
 
                 if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
-                    if self.pin_space_enabled and self.pinned_space is None:
-                        self.pinned_space = space_name
-                        self._log(f"📌 VoxCPM 2 Space pinned for job: '{space_name}'")
+                    if self.pin_space_enabled:
+                        if self.space_pin.pin_if_unset(space_name):
+                            self._log(f"📌 VoxCPM 2 Space pinned for job: '{space_name}'")
+                        elif repin_candidate is not None and space_name == repin_candidate:
+                            self.pinned_space = space_name
+                            self._log(f"📌 VoxCPM 2 Space re-pinned for job: '{space_name}'")
 
                     if skip_mastering:
                         shutil.copy2(result_path_str, out_path)
@@ -1263,9 +1477,6 @@ class VoxCPMEngine:
                             except Exception:
                                 pass
 
-                    # Batch DI: the success proves this token covered
-                    # the space's admission price — update its
-                    # last-known balance for the balance-ordered walk.
                     VoxCPMEngine._record_success_balance(space_name, active_token)
                     self._log(f"✅ VoxCPM 2 Success [{tok_masked}]: {out_path.name} ({out_path.stat().st_size} bytes)")
                     return out_path
@@ -1275,71 +1486,61 @@ class VoxCPMEngine:
             except Exception as e_pair:
                 last_err = e_pair
                 err_lower = str(e_pair).lower()
-                # Quota-class failures for THIS token's account: ZeroGPU
-                # quota text, or an HF 402 Payment Required response
-                # (fix 2026-10-29: 402s carry none of the quota words, so
-                # they previously recorded no cooldown and the exhausted
-                # account kept being picked early on later calls).
                 quota_kind = _quota_failure_kind(err_lower)
                 if quota_kind is not None:
                     quota_failures += 1
                 if quota_kind == "gate":
-                    # Batch AL: the admission-gate rejection is
-                    # space-specific, so the token correctly stays OUT
-                    # of the global cooldown (pre-AL behaviour) — but
-                    # the (space, token) pair is now remembered for the
-                    # rest of this job instead of being re-walked by
-                    # every later segment.
                     if self.job_memory is not None:
                         self.job_memory.record_gate(space_name, active_token)
-                    # Batch DI: the refusal text carries the exact
-                    # figures — learn the token's balance and this
-                    # space's admission price so the NEXT segment's
-                    # walk starts from the richest token.
                     _adm = _parse_admission_refusal(str(e_pair))
                     if _adm is not None:
                         VoxCPMEngine._record_admission_refusal(
                             space_name, active_token, _adm[0], _adm[1]
                         )
+                        ledger_state = _hf_ledger.load_pool_state()
                     self._log(f"⚠️ Token {tok_masked} refused at '{space_name}' admission gate (GPU-seconds requested > balance); pair memoised for this job, rotating...")
                 elif quota_kind == "dead":
-                    # Account quota is gone: cool the token globally as
-                    # before, and mark it dead for this job on ALL
-                    # spaces so the walk never tries it again today.
                     if self.job_memory is not None:
                         self.job_memory.record_dead_token(active_token)
                     if active_token:
                         self._token_cooldowns[active_token] = time.time() + 1800
                         self._schedule_cooldown_persist()
+                        try:
+                            _hf_ledger.record_quota_dead(active_token)
+                            ledger_state = _hf_ledger.load_pool_state()
+                        except Exception:
+                            pass
                     self._log(f"⚠️ Token {tok_masked} hit ZeroGPU quota on '{space_name}'; rotating...")
                 elif active_token and _is_hf_token_auth_failure(err_lower):
-                    # Audit fix E: a revoked/invalid token gets the same
-                    # 30-minute cooldown as a quota-dead one — otherwise
-                    # it stays in rotation and fails one pair-attempt per
-                    # synthesis indefinitely.
-                    self._token_cooldowns[active_token] = time.time() + 1800
-                    self._schedule_cooldown_persist()
-                    self._log(f"⚠️ Token {tok_masked} rejected as invalid/unauthorized on '{space_name}'; cooling down for 30m...")
+                    # Part 5 (#3): confirm once via whoami-v2; if still failing (401/403),
+                    # mark `auth_dead` for 24 h and exclude from all walks.
+                    quarantined = False
+                    try:
+                        quarantined = _hf_ledger.handle_auth_failure(active_token)
+                        ledger_state = _hf_ledger.load_pool_state()
+                    except Exception:
+                        quarantined = False
+                    if quarantined:
+                        if self.job_memory is not None:
+                            self.job_memory.record_dead_token(active_token)
+                        self._token_cooldowns[active_token] = time.time() + 86400
+                        self._schedule_cooldown_persist()
+                        self._log(f"🚫 Token {tok_masked} confirmed auth_dead via whoami-v2; quarantined for 24h...")
+                    else:
+                        self._token_cooldowns[active_token] = time.time() + 1800
+                        self._schedule_cooldown_persist()
+                        self._log(f"⚠️ Token {tok_masked} rejected on '{space_name}'; cooling down for 30m...")
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {_format_pair_error(e_pair)}")
                 time.sleep(0.5)
 
-        # Fallback to the Edge-TTS studio persona engine — ONLY after
-        # every suitable space has been tried (fix 2026-10-29).
+        # Fallback to the Edge-TTS studio persona engine — ONLY when allow_fallback=True
+        # (never allowed on VoxCPM clone jobs — Part 2).
         if not allow_fallback:
             _pure_quota = all_pairs_blocked or (
                 attempts_made > 0 and quota_failures >= attempts_made
             )
-            # Batch DR: a PAID walk cut by the failover-budget
-            # deadline after at least one quota-class refusal is
-            # park-eligible too. The pure-quota test misses the
-            # dominant evening failure mode — mixed slow attempts
-            # plus fragmented balances — so those segments silently
-            # fell back to Edge instead of parking (2026-11-11
-            # evidence; DP parks recorded: zero). Pure congestion
-            # with ZERO quota refusals does not match this clause in
-            # either tier, and the free tail is unchanged.
             _dr_clause = (
-                str(tier or "free").strip().lower() == "paid"
+                _tier_norm == "paid"
                 and deadline_cut
                 and attempts_made >= 1
                 and quota_failures >= 1
@@ -1347,15 +1548,12 @@ class VoxCPMEngine:
             if _pure_quota or _dr_clause:
                 if _dr_clause and not _pure_quota:
                     self._log("🅿️ VoxCPM paid walk cut by the failover budget with quota refusals seen — treating as quota exhaustion (park-eligible)")
-                # Batch AL: purely quota-class failure — a caller-side
-                # retry would re-walk the same exhausted accounts, so
-                # this gets its own error type (see the class docstring).
                 raise VoxCPMQuotaExhaustedError(
                     f"VoxCPM 2 quota exhausted on every space/token available to this job: {last_err}"
-                )
+                ) from last_err
             raise RuntimeError(
                 f"VoxCPM 2 speech synthesis failed after retrying all tokens and spaces: {last_err}"
-            )
+            ) from last_err
         self.last_fallback_reason = str(last_err)
         logger.warning(
             "EDGE_FALLBACK_USED: all suitable VoxCPM spaces failed (%s); using Edge TTS persona fallback — voice will differ from the VoxCPM preview",
@@ -1393,4 +1591,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "master_voxcpm_audio", "space_api_endpoints", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "VoxCPMQuotaExhaustedError"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]

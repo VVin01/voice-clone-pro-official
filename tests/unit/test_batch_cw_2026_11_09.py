@@ -318,8 +318,9 @@ async def test_cw_clone_synthesis_receives_normalized_text(db_session, tmp_path)
 async def test_cw_clone_edge_fallback_receives_same_normalized_text(
     db_session, tmp_path
 ):
-    """When VoxCPM fails, the worker's persona fallback gets the SAME
-    normalized text (normalize once, upstream of both paths)."""
+    """SUPERSEDED by HF Pool Phase 1 Part 2 (#1, 2026-11-24):
+    VoxCPM receives the normalized text with `allow_fallback=False`, and when it fails,
+    Edge/persona fallback is NEVER invoked and `job.input_text` keeps `_ORIGINAL_TEXT`."""
     _FakeEngine.fail = True
     user, job, source = await _make_user_model_job(
         db_session, tmp_path, telegram_id=9202, text=_ORIGINAL_TEXT
@@ -347,9 +348,10 @@ async def test_cw_clone_edge_fallback_receives_same_normalized_text(
     ):
         result = await process_single_job(session=db_session, job=job, bot=mock_bot)
 
-    assert result is True
-    assert job.status == JobStatus.SUCCESS.value
-    assert persona_texts == [_NORMALIZED_TEXT]
+    assert result is False
+    assert job.status == JobStatus.FAILED.value
+    assert persona_texts == []
+    assert _FakeEngine.instances[-1].calls[0]["text"] == _NORMALIZED_TEXT
     assert job.input_text == _ORIGINAL_TEXT
 
 

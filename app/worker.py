@@ -36,9 +36,10 @@ from app.services.billing import (
     release_job_reservation,
     settle_job_reservation,
 )
-from app.services.ledger import consume_seconds
+from app.services.ledger import consume_seconds, get_minute_balance
 from app.services.models import get_authorized_model
 from app.services.progress import JobProgressTracker, render_stepper_progress, safe_edit_status
+from app.services import hf_pool_ledger as _hf_ledger
 from app.services import voice_choice as _vc
 from app.services.speed import DEFAULT_SPEED, DEFAULT_TEMPO, resolve_speed_tempo
 from app.services.voice_chunking import plan_text_chunks
@@ -203,6 +204,15 @@ _INSUFFICIENT_BALANCE_RE = re.compile(
 )
 
 
+def _format_free_balance_label(seconds: int) -> str:
+    sec = max(0, int(seconds or 0))
+    if sec >= 60 and sec % 60 == 0:
+        return f"{sec // 60}m"
+    if sec >= 60:
+        return f"{sec // 60}m {sec % 60}s"
+    return f"{sec}s"
+
+
 def _user_facing_worker_error(exc: BaseException, lang: str = "my") -> str:
     """Map a raw worker exception to the curated user-facing message.
 
@@ -214,12 +224,12 @@ def _user_facing_worker_error(exc: BaseException, lang: str = "my") -> str:
     2026-11-03, mirroring _voice_job_error_detail in the webapp).
     The raw text stays in the logs; the caller logs the exception
     before calling this. Messages that are ALREADY curated user copy
-    (the truncation gate's Burmese reason) pass through untouched.
+    (the truncation gate's Burmese reason or quota fail-fast card) pass
+    through untouched.
     """
     raw = str(exc or "")
-    # Already-curated copy: the implausible-audio gate raises with a
-    # finished Burmese user message — keep it word for word.
-    if "တိုလွန်းနေပါသည်" in raw:
+    # Already-curated copy: the implausible-audio gate or quota fail-fast card
+    if "တိုလွန်းနေပါသည်" in raw or raw.startswith("⏸️"):
         return raw
     m = _INSUFFICIENT_BALANCE_RE.search(raw)
     if m:
@@ -232,13 +242,30 @@ def _user_facing_worker_error(exc: BaseException, lang: str = "my") -> str:
         return t("queue_failed_legacy_model", lang)
     if "model is missing" in low or "not authorized" in low:
         return t("queue_failed_model_not_authorized", lang)
+    if (
+        isinstance(exc, FileNotFoundError)
+        or "reference audio" in low
+        or "corrupt" in low
+        or "unreadable" in low
+        or "cannot read" in low
+        or "soundfile" in low
+    ):
+        return t("worker_error_clone_corrupt_ref", lang)
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timed out" in low or "timeout" in low:
         return t("worker_error_timeout", lang)
     if any(
         needle in low
         for needle in (
+            "500", "502", "503", "504", "5xx",
+            "bad gateway", "service unavailable", "internal server error",
+        )
+    ):
+        return t("worker_error_clone_server_5xx", lang)
+    if any(
+        needle in low
+        for needle in (
             "voxcpm", "synthes", "edge tts", "tts", "provider",
-            "huggingface", "hugging face",
+            "huggingface", "hugging face", "gradio", "upstream",
         )
     ):
         return t("worker_error_engine_failure", lang)
@@ -547,45 +574,105 @@ def _synthesize_voxcpm_voice_job(
     reference_transcript: str = "",
     reference_seconds: float = 0.0,
     tier: str = "free",
-    allow_fallback: bool = True,
+    allow_fallback: bool = False,
     gender_preset: str = "",
+    checkpoint_dir: Path | None = None,
+    checkpoint_progress: dict[str, Any] | None = None,
 ) -> Path:
-    """Batch CH + Prosody Phase 1: VoxCPM synthesis for a voice-clone job.
+    """Batch CH + Prosody Phase 1 + HF Pool Phase 1: VoxCPM synthesis for a voice-clone job.
 
-    Phase 1A-1 (custom clones only):
-      - Selects the steadiest ~10 s voiced slice from the user's reference WAV.
-      - Runs one-time Gemini ASR with an 8-22 chars/s plausibility gate -> prompt_text.
-      - Preserves DEFAULT_CLONE_FIDELITY_CONTROL when prompt_text falls back to ""
-        (unless gender_preset is an explicit m2f/f2m cross-gender flip).
-    Phase 1A-2:
-      - Charges English control at ~0.4 tok/char and uses the sliced reference duration.
-      - Packs sentences up to MAX_CHUNK_CHARS (425); skips per-chunk mastering and runs
-        exactly ONE post-stitch mastering + atempo pass after 135 ms boundary pauses.
-    Phase 1B:
-      - Measures per-chunk octave-guarded YIN median F0 + Burmese syllable rate;
-        regenerates prosody outliers (<=1/chunk, <=2/job), keeps the closer candidate,
-        and applies bounded rubberband micro-correction (±2.0 st, [0.90, 1.12]).
+    - Unconditional no-fallback (`allow_fallback=False`) on every chunk and tier (Part 2 #1).
+    - Bounded retry: 0 extra walks on quota/congestion; at most 1 retry after 5 s backoff
+      on transient transport/5xx while solvent tokens remain (Part 2 #3c).
+    - Standalone Paid chunk checkpointing (`storage/dp_refs/<job_id>/`) so resume reuses
+      completed `chunk01..chunk(N-1).wav`, `active_ref.wav`, `reference_transcript`, and
+      `pinned_space` without re-synthesis (Part 3 #2).
+    - Watermark Conservation (`<= 40%`): skips optional GPU re-generations (edge-clip
+      re-gens and prosody-outlier retries drop to 0) while local rubberband still runs (Part 7).
     """
     import inspect as _inspect
     import statistics as _statistics
     from app.services import clone_prosody as _cp
-    from app.services.voxcpm_engine import DEFAULT_CLONE_FIDELITY_CONTROL, master_voxcpm_audio
+    from app.services import voxcpm_engine as _vx_mod
+    from app.services.voxcpm_engine import (
+        DEFAULT_CLONE_FIDELITY_CONTROL,
+        VoxCPMQuotaExhaustedError,
+        has_solvent_voxcpm_tokens,
+        is_voxcpm_capacity_or_congestion_error,
+        master_voxcpm_audio,
+    )
+
+    _pool_metrics = _hf_ledger.compute_pool_metrics()
+    _allow_optional_regen = bool(_pool_metrics.allow_optional_gpu_regen)
+    _max_prosody_retries = _cp.MAX_PROSODY_RETRIES_PER_JOB if _allow_optional_regen else 0
+
+    try:
+        _synth_sig = _inspect.signature(engine.synthesize)
+        _accepts_var_kw = any(
+            p.kind == _inspect.Parameter.VAR_KEYWORD for p in _synth_sig.parameters.values()
+        )
+        _accepts_allow_fb = _accepts_var_kw or ("allow_fallback" in _synth_sig.parameters)
+        _accepts_tier = _accepts_var_kw or ("tier" in _synth_sig.parameters)
+    except Exception:
+        _accepts_allow_fb = True
+        _accepts_tier = True
 
     _dp_kwargs: dict = {}
-    if tier != "free":
+    if tier != "free" and _accepts_tier:
         _dp_kwargs["tier"] = tier
-    if not allow_fallback:
+    if _accepts_allow_fb:
+        # Part 2 (#1): Edge/persona fallback is unconditionally forbidden on clone paths.
         _dp_kwargs["allow_fallback"] = False
+
+    def _call_unit_with_bounded_retry(call_kw: dict[str, Any]) -> Any:
+        try:
+            return engine.synthesize(**call_kw)
+        except Exception as exc:
+            if checkpoint_progress is not None:
+                checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+            if (
+                isinstance(exc, (VoxCPMQuotaExhaustedError, FileNotFoundError, ValueError, TypeError))
+                or is_voxcpm_capacity_or_congestion_error(exc)
+            ):
+                raise
+            if not getattr(engine, "hf_tokens", None) or not has_solvent_voxcpm_tokens(engine):
+                raise
+            backoff_s = float(getattr(_vx_mod, "TRANSIENT_RETRY_BACKOFF_SECONDS", 5.0) or 0.0)
+            if backoff_s > 0:
+                time.sleep(backoff_s)
+            return engine.synthesize(**call_kw)
 
     norm_gender = str(gender_preset or "").strip().lower()
     is_gender_flip = norm_gender in ("m2f", "f2m")
     is_custom_clone = bool(reference_wav is not None and not preset_voice)
 
+    manifest: dict[str, Any] = {}
+    if checkpoint_dir is not None and (checkpoint_dir / "manifest.json").is_file():
+        try:
+            manifest = json.loads((checkpoint_dir / "manifest.json").read_text(encoding="utf-8"))
+        except Exception:
+            manifest = {}
+
+    if manifest.get("pinned_space") and getattr(engine, "pinned_space", None) is None:
+        try:
+            engine.pinned_space = str(manifest["pinned_space"])
+        except Exception:
+            pass
+
     active_ref_wav = Path(reference_wav) if reference_wav is not None else None
     active_ref_secs = float(reference_seconds or 0.0)
     ref_prosody: _cp.ProsodyStats | None = None
 
-    if is_custom_clone and active_ref_wav is not None and active_ref_wav.is_file():
+    ckpt_ref_file = (checkpoint_dir / "active_ref.wav") if checkpoint_dir is not None else None
+    if ckpt_ref_file is not None and ckpt_ref_file.is_file() and ckpt_ref_file.stat().st_size > 0:
+        active_ref_wav = ckpt_ref_file
+        active_ref_secs = float(manifest.get("active_ref_secs") or active_ref_secs or 0.0)
+        if not reference_transcript and manifest.get("reference_transcript"):
+            reference_transcript = str(manifest["reference_transcript"])
+        if is_custom_clone and not is_gender_flip and not reference_transcript and not control_instruction:
+            control_instruction = DEFAULT_CLONE_FIDELITY_CONTROL
+        ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
+    elif is_custom_clone and active_ref_wav is not None and active_ref_wav.is_file():
         active_ref_wav, sliced_secs, ref_prosody = _cp.select_steady_reference_slice(
             active_ref_wav,
             output_wav.parent,
@@ -613,12 +700,52 @@ def _synthesize_voxcpm_voice_job(
     effective_planning_control = (
         "" if (effective_ref_arg and reference_transcript) else (control_instruction or "")
     )
-    chunks = plan_text_chunks(
-        text,
-        reference_transcript=reference_transcript,
-        control_instruction=effective_planning_control,
-        reference_seconds=active_ref_secs,
-    )
+    if (
+        manifest.get("text") == text
+        and isinstance(manifest.get("chunks"), list)
+        and len(manifest["chunks"]) >= 1
+    ):
+        chunks = [str(c) for c in manifest["chunks"]]
+    else:
+        chunks = plan_text_chunks(
+            text,
+            reference_transcript=reference_transcript,
+            control_instruction=effective_planning_control,
+            reference_seconds=active_ref_secs,
+        )
+
+    def _persist_checkpoint(done_units: int) -> None:
+        if checkpoint_dir is None:
+            return
+        try:
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            if (
+                active_ref_wav is not None
+                and active_ref_wav.is_file()
+                and ckpt_ref_file is not None
+                and active_ref_wav.resolve() != ckpt_ref_file.resolve()
+            ):
+                shutil.copy2(active_ref_wav, ckpt_ref_file)
+            payload = {
+                "job_id": job_id,
+                "text": text,
+                "chunks": chunks,
+                "completed_units": int(done_units),
+                "total_units": max(1, len(chunks)),
+                "pinned_space": getattr(engine, "pinned_space", None),
+                "reference_transcript": reference_transcript,
+                "active_ref_secs": round(float(active_ref_secs or 0.0), 3),
+            }
+            (checkpoint_dir / "manifest.json").write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception as ck_exc:
+            logger.debug("Could not persist standalone clone checkpoint for %s: %s", job_id, ck_exc)
+
+    if checkpoint_progress is not None:
+        checkpoint_progress["completed_units"] = 0
+        checkpoint_progress["total_units"] = max(1, len(chunks))
+        checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
 
     extra_prompt_kw: dict = {}
     if is_custom_clone and not is_gender_flip:
@@ -627,39 +754,37 @@ def _synthesize_voxcpm_voice_job(
         extra_prompt_kw["prompt_text"] = reference_transcript
 
     if len(chunks) <= 1:
-        engine.synthesize(
-            text=text,
-            output_wav=output_wav,
-            reference_wav=effective_ref_arg,
-            control_instruction=control_instruction,
-            preset_voice=preset_voice,
-            speed=speed,
-            progress_cb=progress_cb,
+        single_kw = {
+            "text": text,
+            "output_wav": output_wav,
+            "reference_wav": effective_ref_arg,
+            "control_instruction": control_instruction,
+            "preset_voice": preset_voice,
+            "speed": speed,
+            "progress_cb": progress_cb,
             **extra_prompt_kw,
             **_dp_kwargs,
-        )
-        if is_wav_edge_clipped(output_wav):
+        }
+        try:
+            _call_unit_with_bounded_retry(single_kw)
+        except Exception:
+            _persist_checkpoint(0)
+            raise
+        if _allow_optional_regen and is_wav_edge_clipped(output_wav):
             logger.warning(
                 "VoxCPM single-call output clipped at edge for job %s; regenerating once",
                 job_id,
             )
             try:
-                engine.synthesize(
-                    text=text,
-                    output_wav=output_wav,
-                    reference_wav=effective_ref_arg,
-                    control_instruction=control_instruction,
-                    preset_voice=preset_voice,
-                    speed=speed,
-                    progress_cb=progress_cb,
-                    **extra_prompt_kw,
-                    **_dp_kwargs,
-                )
+                engine.synthesize(**single_kw)
             except Exception as e_regen:
                 logger.warning(
                     "VoxCPM single-call retry failed (%s); keeping existing output",
                     e_regen,
                 )
+        if checkpoint_progress is not None:
+            checkpoint_progress["completed_units"] = 1
+            checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
         return output_wav
 
     logger.info(
@@ -673,10 +798,40 @@ def _synthesize_voxcpm_voice_job(
     accepted_rates: list[float] = []
     chunk_log_f0: list[float | None] = []
     chunk_log_rate: list[float | None] = []
+    completed_so_far = 0
 
     try:
         for idx, chunk in enumerate(chunks, 1):
             part = output_wav.parent / f"{output_wav.stem}.chunk{idx:02d}.wav"
+            ckpt_chunk_file = (
+                checkpoint_dir / f"chunk{idx:02d}.wav" if checkpoint_dir is not None else None
+            )
+            if (
+                ckpt_chunk_file is not None
+                and ckpt_chunk_file.is_file()
+                and ckpt_chunk_file.stat().st_size > 0
+            ):
+                shutil.copy2(ckpt_chunk_file, part)
+                stats = _cp.measure_prosody(part, text=chunk)
+                if stats.f0_median_hz is not None:
+                    accepted_f0s.append(stats.f0_median_hz)
+                if stats.syllable_rate is not None:
+                    accepted_rates.append(stats.syllable_rate)
+                chunk_log_f0.append(stats.f0_median_hz)
+                chunk_log_rate.append(stats.syllable_rate)
+                parts.append(part)
+                completed_so_far = idx
+                if checkpoint_progress is not None:
+                    checkpoint_progress["completed_units"] = idx
+                    checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+                logger.info(
+                    "Reused checkpointed chunk %d/%d for voice job %s without re-synthesis",
+                    idx,
+                    len(chunks),
+                    job_id,
+                )
+                continue
+
             chunk_kw = {
                 "text": chunk,
                 "output_wav": part,
@@ -688,10 +843,18 @@ def _synthesize_voxcpm_voice_job(
                 "allow_fallback": False,
                 "skip_mastering": True,
                 **extra_prompt_kw,
-                **({"tier": tier} if tier != "free" else {}),
+                **({"tier": tier} if (tier != "free" and _accepts_tier) else {}),
             }
-            engine.synthesize(**chunk_kw)
-            if is_wav_edge_clipped(part):
+            try:
+                _call_unit_with_bounded_retry(chunk_kw)
+            except Exception:
+                _persist_checkpoint(completed_so_far)
+                if checkpoint_progress is not None:
+                    checkpoint_progress["completed_units"] = completed_so_far
+                    checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+                raise
+
+            if _allow_optional_regen and is_wav_edge_clipped(part):
                 logger.warning(
                     "VoxCPM segment %d/%d output clipped at edge for job %s; regenerating once",
                     idx,
@@ -735,7 +898,7 @@ def _synthesize_voxcpm_voice_job(
             is_outlier, _df0, _rr = _cp.is_prosody_outlier(
                 stats, anchor_f0_hz=anchor_f0, anchor_rate=anchor_rate
             )
-            if is_outlier and job_prosody_retries < _cp.MAX_PROSODY_RETRIES_PER_JOB:
+            if is_outlier and job_prosody_retries < _max_prosody_retries:
                 retry_part = output_wav.parent / f"{output_wav.stem}.chunk{idx:02d}.retry.wav"
                 job_prosody_retries += 1
                 try:
@@ -776,6 +939,18 @@ def _synthesize_voxcpm_voice_job(
                 part, pitch_shift_st=shift_st, tempo_factor=tempo_mult
             ):
                 corrections_applied += 1
+
+            if ckpt_chunk_file is not None and part.is_file():
+                try:
+                    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(part, ckpt_chunk_file)
+                except Exception:
+                    pass
+            completed_so_far = idx
+            _persist_checkpoint(completed_so_far)
+            if checkpoint_progress is not None:
+                checkpoint_progress["completed_units"] = idx
+                checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
 
             chunk_log_f0.append(stats.f0_median_hz)
             chunk_log_rate.append(stats.syllable_rate)
@@ -1165,142 +1340,190 @@ async def process_single_job(
                     except Exception:
                         reference_seconds = 0.0
 
-                # Batch DP: an owner who already chose Edge-only on
-                # the park prompt skips the clone attempt entirely;
-                # a paid job's quota exhaustion PARKS instead of
-                # reaching the resilient fallback below.
-                _dp_edge_all = (
-                    _dp_choice_state is not None
-                    and _vc.choice_mode(_dp_choice_state) == _vc.CHOICE_EDGE_ALL
-                )
-                _vox_error: Exception | None = None
-                if _dp_edge_all:
-                    _vox_error = RuntimeError(
-                        "Owner chose Edge-only delivery at the park prompt (Batch DP)"
-                    )
-                else:
-                    _vox_t0 = time.monotonic()
+                from app.services.voxcpm_engine import is_voxcpm_capacity_or_congestion_error
+
+                if _dp_choice_state and _dp_choice_state.get("pinned_space"):
                     try:
-                        loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(
-                            None,
-                            functools.partial(
-                                _synthesize_voxcpm_voice_job,
-                                engine_inst,
-                                job_id=str(job.id),
-                                text=clean_text,
-                                output_wav=converted_wav_path,
-                                reference_wav=ref_wav,
-                                control_instruction=control_instruction,
-                                preset_voice=getattr(job, "preset_voice", None),
-                                speed=job.speed_preset or DEFAULT_SPEED,
-                                progress_cb=tracker.set_custom_note,
-                                reference_transcript=reference_transcript,
-                                reference_seconds=reference_seconds,
-                                tier="paid" if _dp_paid else "free",
-                                allow_fallback=not _dp_paid,
-                                gender_preset=_job_gender,
-                            ),
-                        )
-                    except VoxCPMQuotaExhaustedError as e_quota:
-                        if _dp_paid:
-                            # Batch DP (Item 4): park the paid job and
-                            # ASK — never silently switch its voice.
-                            # No charge has been made (billing is stage
-                            # 4), so parking holds everything as-is.
-                            # A re-park (this run was itself a resume)
-                            # keeps the recorded state + prompt and
-                            # refreshes the prompt in place — no new
-                            # message.
-                            _dp_repark = bool(
-                                _dp_choice_state
-                                and _dp_choice_state.get("prompt_message_id")
-                            )
-                            if _dp_repark:
-                                _dp_state = _dp_choice_state
-                                _dp_state["parked_at"] = time.time()
-                                _dp_state.pop("resumed_at", None)
-                            else:
-                                _dp_state = _vc.new_choice_state(_vc.KIND_CLONE)
-                                # Preserve the reference audio: the
-                                # finally below deletes temp inputs,
-                                # and a parked job must resume later —
-                                # move it to the durable park store and
-                                # point the row at the copy.
-                                _src_path = getattr(job, "source_audio_path", None)
-                                if _src_path and Path(_src_path).is_file() and "temp" in str(_src_path):
-                                    _dp_ref_dir = settings.storage_root / "dp_refs"
-                                    _dp_ref_dir.mkdir(parents=True, exist_ok=True)
-                                    _dp_ref_copy = _dp_ref_dir / f"{job.id}{Path(_src_path).suffix or '.wav'}"
-                                    shutil.copy2(_src_path, _dp_ref_copy)
-                                    job.source_audio_path = str(_dp_ref_copy)
-                            job.status = JobStatus.WAITING_CHOICE.value
-                            job.voice_choice_state = _vc.dump_choice_state(_dp_state)
-                            await session.commit()
-                            parked = True
-                            if bot is not None:
-                                if _dp_repark:
-                                    await _vc.refresh_choice_prompt(
-                                        bot,
-                                        chat_id=_dp_state.get("prompt_chat_id") or target_chat_id,
-                                        message_id=_dp_state.get("prompt_message_id"),
-                                        job_id=str(job.id),
-                                        kind=_vc.KIND_CLONE,
-                                        lang=lang,
-                                    )
-                                else:
-                                    _dp_mid = await _vc.deliver_choice_prompt(
-                                        bot,
-                                        chat_id=target_chat_id,
-                                        message_id=target_msg_id,
-                                        job_id=str(job.id),
-                                        kind=_vc.KIND_CLONE,
-                                        lang=lang,
-                                    )
-                                    if _dp_mid:
-                                        _dp_state["prompt_chat_id"] = target_chat_id
-                                        _dp_state["prompt_message_id"] = _dp_mid
-                                        job.voice_choice_state = _vc.dump_choice_state(_dp_state)
-                                        await session.commit()
-                            logger.info(
-                                "Voice job %s parked (WAITING_CHOICE): VoxCPM quota exhausted",
-                                job.id,
-                            )
-                            return False
-                        _vox_error = e_quota
-                    except Exception as e_vox:
-                        _vox_error = e_vox
-                    finally:
-                        _vox_runtime_seconds = round(max(0.0, time.monotonic() - _vox_t0), 3)
-                if _vox_error is not None:
-                    used_fallback = True
-                    logger.warning("VoxCPM 2 primary synthesis failed (%s). Activating resilient High-Fidelity Neural TTS fallback...", _vox_error)
-                    try:
-                        tracker.set_custom_note("⚠️ မူရင်း အသံ Engine အလုပ်များနေသဖြင့် အရန် အသံဖြင့် ထုတ်ပေးနေပါသည်…")
+                        engine_inst.pinned_space = str(_dp_choice_state["pinned_space"])
                     except Exception:
                         pass
 
-                    from app.services.curated_voices import synthesize_curated_persona, get_curated_voice
-                    persona_id = getattr(job, "preset_voice", None)
-                    if not persona_id or not get_curated_voice(persona_id):
-                        is_female = (
-                            getattr(job, "edge_voice", "") == "my-MM-NilarNeural"
-                            or getattr(job, "gender_preset", "") in ("m2f", "f2f")
-                        )
-                        persona_id = "mahnin" if is_female else "komin"
+                _est_units, _est_gate_s, _est_needed_gpu_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+                    kind="clone",
+                    text=clean_text,
+                    reference_transcript=reference_transcript,
+                    control_instruction=control_instruction or "",
+                    reference_seconds=reference_seconds,
+                )
+                _prev_done = int((_dp_choice_state or {}).get("completed_units") or 0)
+                _rem_units = max(1, _est_units - _prev_done)
+                _rem_needed_gpu_s = round(
+                    _rem_units * _est_gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER, 2
+                )
+                _ckpt_dir = (
+                    (settings.storage_root / "dp_refs" / str(job.id)) if _dp_paid else None
+                )
+                _ckpt_progress: dict[str, Any] = {
+                    "completed_units": _prev_done,
+                    "total_units": _est_units,
+                    "pinned_space": getattr(engine_inst, "pinned_space", None),
+                }
 
+                _hf_ledger.acquire_in_flight_gpu(str(job.id), _rem_needed_gpu_s)
+                _vox_t0 = time.monotonic()
+                try:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
                         None,
                         functools.partial(
-                            synthesize_curated_persona,
+                            _synthesize_voxcpm_voice_job,
+                            engine_inst,
+                            job_id=str(job.id),
                             text=clean_text,
-                            persona_id=persona_id,
                             output_wav=converted_wav_path,
+                            reference_wav=ref_wav,
+                            control_instruction=control_instruction,
+                            preset_voice=getattr(job, "preset_voice", None),
                             speed=job.speed_preset or DEFAULT_SPEED,
-                        )
+                            progress_cb=tracker.set_custom_note,
+                            reference_transcript=reference_transcript,
+                            reference_seconds=reference_seconds,
+                            tier="paid" if _dp_paid else "free",
+                            allow_fallback=False,
+                            gender_preset=_job_gender,
+                            checkpoint_dir=_ckpt_dir,
+                            checkpoint_progress=_ckpt_progress,
+                        ),
                     )
-                    logger.info("Resilient fallback audio generated successfully for job %s: %s", job.id, converted_wav_path)
+                except Exception as e_vox:
+                    _hf_ledger.release_in_flight_gpu(str(job.id))
+                    _is_cap_err = (
+                        isinstance(e_vox, VoxCPMQuotaExhaustedError)
+                        or is_voxcpm_capacity_or_congestion_error(e_vox)
+                    )
+                    if _dp_paid and _is_cap_err:
+                        _done_u = int(_ckpt_progress.get("completed_units") or _prev_done or 0)
+                        _tot_u = max(1, int(_ckpt_progress.get("total_units") or _est_units or 1))
+                        _rem_gpu_s = round(
+                            max(1, _tot_u - _done_u) * _est_gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER,
+                            2,
+                        )
+                        _pinned_sp = _ckpt_progress.get("pinned_space") or getattr(
+                            engine_inst, "pinned_space", None
+                        )
+                        _dp_repark = bool(
+                            _dp_choice_state
+                            and _dp_choice_state.get("prompt_message_id")
+                        )
+                        _src_path = getattr(job, "source_audio_path", None)
+                        if _src_path and Path(_src_path).is_file() and "temp" in str(_src_path):
+                            _dp_ref_dir = settings.storage_root / "dp_refs"
+                            _dp_ref_dir.mkdir(parents=True, exist_ok=True)
+                            _dp_ref_copy = _dp_ref_dir / f"{job.id}{Path(_src_path).suffix or '.wav'}"
+                            shutil.copy2(_src_path, _dp_ref_copy)
+                            job.source_audio_path = str(_dp_ref_copy)
+
+                        if _dp_repark and _dp_choice_state is not None:
+                            _dp_state = dict(_dp_choice_state)
+                            _dp_state["parked_at"] = time.time()
+                            _dp_state.pop("resumed_at", None)
+                            _dp_state["completed_units"] = _done_u
+                            _dp_state["total_units"] = _tot_u
+                            _dp_state["needed_gpu_s"] = _rem_gpu_s
+                            _dp_state["pinned_space"] = str(_pinned_sp) if _pinned_sp else None
+                            _dp_state["worker_host"] = _vc.current_worker_host()
+                        else:
+                            _dp_state = _vc.new_choice_state(
+                                _vc.KIND_CLONE,
+                                completed_units=_done_u,
+                                total_units=_tot_u,
+                                needed_gpu_s=_rem_gpu_s,
+                                pinned_space=_pinned_sp,
+                                worker_host=_vc.current_worker_host(),
+                            )
+                        job.status = JobStatus.WAITING_CHOICE.value
+                        job.voice_choice_state = _vc.dump_choice_state(_dp_state)
+                        await session.commit()
+                        parked = True
+                        if bot is not None:
+                            if _dp_repark:
+                                await _vc.refresh_choice_prompt(
+                                    bot,
+                                    chat_id=_dp_state.get("prompt_chat_id") or target_chat_id,
+                                    message_id=_dp_state.get("prompt_message_id"),
+                                    job_id=str(job.id),
+                                    kind=_vc.KIND_CLONE,
+                                    lang=lang,
+                                    state=_dp_state,
+                                )
+                            else:
+                                _dp_mid = await _vc.deliver_choice_prompt(
+                                    bot,
+                                    chat_id=target_chat_id,
+                                    message_id=target_msg_id,
+                                    job_id=str(job.id),
+                                    kind=_vc.KIND_CLONE,
+                                    lang=lang,
+                                    state=_dp_state,
+                                )
+                                if _dp_mid:
+                                    _dp_state["prompt_chat_id"] = target_chat_id
+                                    _dp_state["prompt_message_id"] = _dp_mid
+                                    job.voice_choice_state = _vc.dump_choice_state(_dp_state)
+                                    await session.commit()
+                        logger.info(
+                            "Voice job %s parked (WAITING_CHOICE) at chunk %d/%d: %s",
+                            job.id,
+                            _done_u,
+                            _tot_u,
+                            e_vox,
+                        )
+                        return False
+
+                    if (not _dp_paid) and _is_cap_err:
+                        # Part 2 (#4): Free + quota/congestion exhaustion -> fail-fast + instant restore
+                        # (0 s deducted, never park Free jobs, never fall back to Edge/persona).
+                        if await _voice_job_cancelled(session, job):
+                            if not settings.is_admin(job.user_id):
+                                res_ref = await refund_or_release_job(
+                                    session, job.user_id, str(job.id), reason="USER_CANCELLED"
+                                )
+                                if not res_ref.get("found"):
+                                    from app.services.ledger import refund_job_seconds
+                                    await refund_job_seconds(session, job.user_id, str(job.id))
+                                await session.commit()
+                            return False
+                        if not settings.is_admin(job.user_id):
+                            res_ref = await refund_or_release_job(
+                                session, job.user_id, str(job.id), reason="JOB_FAILED"
+                            )
+                            if not res_ref.get("found"):
+                                from app.services.ledger import refund_job_seconds
+                                await refund_job_seconds(session, job.user_id, str(job.id))
+                        mb = await get_minute_balance(session, job.user_id)
+                        bal_label = _format_free_balance_label(mb.clone_spendable_seconds)
+                        eta_label = _vc.quota_reset_estimate_label(needed_gpu_s=_rem_needed_gpu_s)
+                        quota_msg = t(
+                            "worker_error_quota_exhausted",
+                            lang,
+                            eta=eta_label,
+                            bal=bal_label,
+                        )
+                        job.status = JobStatus.FAILED.value
+                        job.error_message = quota_msg
+                        job.finished_at = utc_now()
+                        await session.commit()
+                        await safe_edit_status(bot, target_chat_id, target_msg_id, quota_msg)
+                        logger.info(
+                            "Free voice job %s failed-fast on quota/congestion (0s deducted): %s",
+                            job.id,
+                            e_vox,
+                        )
+                        return False
+
+                    raise
+                finally:
+                    _vox_runtime_seconds = round(max(0.0, time.monotonic() - _vox_t0), 3)
             else:
                 raise RuntimeError(
                     "Legacy trained voice model is no longer supported. "
@@ -1657,20 +1880,20 @@ async def process_single_job(
         return False
 
     finally:
+        _hf_ledger.release_in_flight_gpu(str(job.id))
         if tracker:
             await tracker.stop_ticker()
         # Safe cleanup of intermediate files
         shutil.rmtree(temp_dir, ignore_errors=True)
-        if getattr(job, "source_audio_path", None):
-            try:
-                p = Path(job.source_audio_path)
-                # Batch DP: a PARKED job keeps its reference (the
-                # resume needs it); a finished job's preserved
-                # dp_refs copy is cleaned up like any temp input.
-                if p.is_file() and not parked and ("temp" in str(p) or "dp_refs" in str(p)):
-                    p.unlink(missing_ok=True)
-            except Exception:
-                pass
+        if not parked:
+            _vc.cleanup_clone_park_artifacts(str(job.id), getattr(job, "source_audio_path", None))
+            if getattr(job, "source_audio_path", None):
+                try:
+                    p = Path(job.source_audio_path)
+                    if p.is_file() and ("temp" in str(p) or "dp_refs" in str(p)):
+                        p.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
 
 # Batch AJ (M11): a single voice job may run at most this long.
@@ -1905,11 +2128,22 @@ async def run_worker_loop(
     _last_stale_sweep = 0.0
     _last_heartbeat = 0.0
     _last_settings_refresh = 0.0
+    _last_hf_reconcile = 0.0
     _active_recap_tasks: set[asyncio.Task] = set()
 
     while True:
         try:
             _now_m = _time.monotonic()
+            if _last_hf_reconcile == 0.0 or (_now_m - _last_hf_reconcile >= 900.0):
+                _last_hf_reconcile = _now_m
+                try:
+                    from app.services.voxcpm_engine import get_available_hf_tokens
+
+                    _hf_toks = get_available_hf_tokens()
+                    if _hf_toks and getattr(settings, "database_url", "") and "sqlite" not in str(getattr(settings, "database_url", "")).lower():
+                        await asyncio.to_thread(_hf_ledger.reconcile_if_env_changed, _hf_toks)
+                except Exception as hf_exc:
+                    logger.debug("HF pool ledger env-change check skipped in worker: %s", hf_exc)
             if _now_m - _last_settings_refresh >= 5.0:
                 _last_settings_refresh = _now_m
                 try:
