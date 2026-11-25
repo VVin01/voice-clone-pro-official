@@ -86,7 +86,7 @@ async def _seed(db, *objs):
 
 def test_cd_cache_token_is_r102():
     html = _read("app/webapp/static/index.html")
-    assert html.count("20261123_round15") == 5
+    assert html.count("20261125_admin_r1") == 5
     assert ("20261104_r" + "101") not in html
 
 
@@ -176,8 +176,9 @@ async def test_cd_detail_payload_completed(db_session):
 
     detail = await api_mod.get_admin_user_detail(TARGET_ID, admin, db_session)
 
-    # Existing fields/shapes untouched.
-    assert detail["balance_seconds"] == 600 + 60 + 120 + 3600
+    # balance_seconds reports clone_spendable_seconds (excludes legacy TTS-only referral_seconds).
+    assert detail["balance_seconds"] == 600 + 60 + 3600
+    assert detail["referral_seconds"] == 120
     assert detail["jobs_total"] == 12
 
     bb = detail["balance_breakdown"]

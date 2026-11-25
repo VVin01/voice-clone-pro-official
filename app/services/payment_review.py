@@ -328,7 +328,7 @@ async def apply_edited_approval(
     payment_id: str,
     admin_id: int,
     corrected_minutes: int,
-    corrected_recap_credits: int | None = None,
+    corrected_recap_credits: float | int | None = None,
 ) -> tuple[bool, PaymentRequest | None, str]:
     """Approve with a corrected minute amount, via the shared service.
 
@@ -350,7 +350,7 @@ async def apply_edited_approval(
     if int(corrected_minutes) < 0 or int(corrected_minutes) > 100_000:
         return False, None, "INVALID_MINUTES"
     if corrected_recap_credits is not None and not (
-        0 <= int(corrected_recap_credits) <= 1000
+        0 <= float(corrected_recap_credits) <= 1000
     ):
         return False, None, "INVALID_RECAP_CREDITS"
     stmt = select(PaymentRequest).where(PaymentRequest.id == payment_id).with_for_update()
@@ -361,16 +361,16 @@ async def apply_edited_approval(
         return False, payment, f"ALREADY_{payment.status}"
     if payment.review_claimed_by != admin_id:
         return False, payment, "NOT_CLAIMED_BY_ADMIN"
-    _eff_credits = (
-        int(corrected_recap_credits)
+    _eff_credits_f = (
+        round(float(corrected_recap_credits), 2)
         if corrected_recap_credits is not None
-        else int(
+        else float(
             payment.recap_credits
             if getattr(payment, "recap_credits", None) is not None
             else package_recap_credits(payment.package_code)
         )
     )
-    if int(corrected_minutes) <= 0 and _eff_credits <= 0:
+    if int(corrected_minutes) <= 0 and _eff_credits_f <= 0:
         return False, None, "INVALID_MINUTES"
 
     if payment.original_minutes is None:
@@ -378,8 +378,11 @@ async def apply_edited_approval(
     original = payment.original_minutes
     payment.minutes = int(corrected_minutes)
     payment.edited_by = admin_id
+    _norm_rc: int | float | None = None
     if corrected_recap_credits is not None:
-        payment.edited_recap_credits = int(corrected_recap_credits)
+        _rc_f = round(float(corrected_recap_credits), 2)
+        _norm_rc = int(_rc_f) if _rc_f == int(_rc_f) else _rc_f
+        payment.edited_recap_credits = int(round(_rc_f))
     session.add(
         AuditLog(
             admin_id=admin_id,
@@ -391,15 +394,16 @@ async def apply_edited_approval(
                     "user_id": payment.user_id,
                     "original_minutes": original,
                     "corrected_minutes": int(corrected_minutes),
-                    "corrected_recap_credits": (
-                        int(corrected_recap_credits)
-                        if corrected_recap_credits is not None
-                        else None
-                    ),
+                    "corrected_recap_credits": _norm_rc,
                     "edited_by": admin_id,
                 }
             ),
         )
     )
     await session.flush()
-    return await approve_payment_request(session, payment_id, admin_id)
+    return await approve_payment_request(
+        session,
+        payment_id,
+        admin_id,
+        recap_credits_override=_norm_rc,
+    )

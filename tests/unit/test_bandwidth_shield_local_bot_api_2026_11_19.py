@@ -120,7 +120,7 @@ async def test_static_cache_policy_immutable_versioned_and_preserves_unversioned
     async def _async_resp():
         return SimpleNamespace(headers={})
 
-    h_ver = await _call("/static/js/app.js", "v=20261123_round15")
+    h_ver = await _call("/static/js/app.js", "v=20261125_admin_r1")
     assert h_ver["Cache-Control"] == "public, max-age=31536000, immutable"
 
     h_font = await _call("/static/fonts/Padauk-Regular.ttf")
@@ -490,7 +490,7 @@ async def test_serve_index_auto_cache_busts_immutable_assets():
     from app.webapp.server import serve_index, _get_static_asset_cache_tag
 
     disk_html = (REPO_ROOT / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
-    assert disk_html.count("?v=20261123_round15") == 5
+    assert disk_html.count("?v=20261125_admin_r1") == 5
 
     tag = _get_static_asset_cache_tag()
     assert tag.startswith("20261123_") and len(tag) == 19
@@ -498,5 +498,5 @@ async def test_serve_index_auto_cache_busts_immutable_assets():
     resp = await serve_index()
     body = resp.body.decode("utf-8")
     assert body.count(f"?v={tag}") == 5
-    assert "?v=20261123_round15" not in body
+    assert "?v=20261125_admin_r1" not in body
     assert resp.headers.get("cache-control") == "no-cache, no-store, must-revalidate, max-age=0"

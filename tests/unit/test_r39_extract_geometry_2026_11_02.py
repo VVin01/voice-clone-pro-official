@@ -875,7 +875,7 @@ def test_analyze_honesty_wiring_present():
 
 def test_yt_dlp_pinned_to_deployed_version():
     lines = [l.strip() for l in REQUIREMENTS.splitlines() if l.strip().startswith("yt-dlp")]
-    assert lines == ["yt-dlp==2026.10.26"]
+    assert lines == ["yt-dlp==2026.11.23"]
 
 
 # ── 9. R39.1 info-stage latency budget ──────────────────────────────

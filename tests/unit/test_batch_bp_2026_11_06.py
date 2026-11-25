@@ -298,5 +298,5 @@ def test_bq_top_texture_dropped_bottom_strip_ships():
 # ── Token ──────────────────────────────────────────────────────────
 
 def test_bp_cache_token_is_r88():
-    assert INDEX_HTML.count("20261123_round15") == 5
+    assert INDEX_HTML.count("20261125_admin_r1") == 5
     assert "20261104_r87" not in INDEX_HTML

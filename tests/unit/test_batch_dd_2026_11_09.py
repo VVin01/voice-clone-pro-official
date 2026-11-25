@@ -482,7 +482,7 @@ def test_submit_and_composite_share_dd_payload_fields():
 # ── 9. Cache token ────────────────────────────────────────────────
 
 def test_cache_token_is_followup1():
-    assert INDEX_HTML.count("20261123_round15") == 5
+    assert INDEX_HTML.count("20261125_admin_r1") == 5
     assert "r125" not in INDEX_HTML
 
 

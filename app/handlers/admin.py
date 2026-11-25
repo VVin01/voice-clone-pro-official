@@ -711,12 +711,21 @@ handle_admin_pay_approve = handle_admin_pay_approve_confirm
 # ---------------------------------------------------------------------------
 
 
-def _pay_edit_cancel_kb(pay_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 ပယ်ဖျက်မယ်", callback_data=f"admin:pay_edit_cancel:{pay_id}")],
-        ]
+def _pay_edit_cancel_kb(pay_id: str, *, include_promo: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if include_promo:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="+20% ပရိုမို",
+                    callback_data=f"admin:pay_edit_promo20:{pay_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="🚫 ပယ်ဖျက်မယ်", callback_data=f"admin:pay_edit_cancel:{pay_id}")]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @admin_router.callback_query(F.data.startswith("admin:pay_edit:"))
@@ -761,28 +770,97 @@ async def handle_admin_pay_edit_start(
     await state.set_state(PaymentReviewFSM.waiting_for_corrected_minutes)
     await state.update_data(payment_id=payment.id, original_minutes=payment.minutes)
 
+    base_rc = _payment_effective_recap_credits(payment)
+    rc_line = f"• လက်ရှိ အတည်ပြုမည့် Recap Credit: <b>{base_rc}</b>\n" if base_rc > 0 else ""
     prompt_text = (
         "✏️ <b>ပြင်ပြီးအတည်ပြုမယ်</b>\n\n"
         f"• Payment ID: <code>{payment.id}</code>\n"
         f"• User: <code>{payment.user_id}</code>\n"
         f"• Package: <b>{html.escape(str(payment.package_code))}</b>\n"
-        f"• လက်ရှိ အတည်ပြုမည့် မိနစ်: <b>{payment.minutes} မိနစ်</b>\n\n"
-        "ပြင်ဆင်မည့် မိနစ် ပမာဏကို ဂဏန်းဖြင့် ရိုက်ထည့်ပေးပါ။"
+        f"• လက်ရှိ အတည်ပြုမည့် မိနစ်: <b>{payment.minutes} မိနစ်</b>\n"
+        f"{rc_line}\n"
+        "ပြင်ဆင်မည့် မိနစ် ပမာဏကို ဂဏန်းဖြင့် ရိုက်ထည့်ပါ (သို့မဟုတ် <b>+20% ပရိုမို</b> ခလုတ်ကို နှိပ်ပါ)။"
     )
+    start_kb = _pay_edit_cancel_kb(payment.id, include_promo=True)
     try:
-        await callback.message.answer(prompt_text, reply_markup=_pay_edit_cancel_kb(payment.id), parse_mode="HTML")
+        await callback.message.answer(prompt_text, reply_markup=start_kb, parse_mode="HTML")
     except Exception:
         try:
             await callback.bot.send_message(
                 chat_id=callback.from_user.id,
                 text=prompt_text,
-                reply_markup=_pay_edit_cancel_kb(payment.id),
+                reply_markup=start_kb,
                 parse_mode="HTML",
             )
         except Exception as exc:
             logger.warning("Failed to send edit prompt for payment %s: %s", payment.id, exc)
     try:
         await callback.answer()
+    except Exception:
+        pass
+
+
+@admin_router.callback_query(F.data.startswith("admin:pay_edit_promo20:"))
+async def handle_admin_pay_edit_promo20(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession | None = None
+):
+    """1-tap +20% promo preset inside Bot DM edit-approve flow (minutes x1.2 rounded, credits x1.2 2dp)."""
+    if not await is_authorized_admin(callback):
+        return
+
+    pay_id = callback.data.split(":")[2]
+    if session is not None:
+        payment = await session.get(PaymentRequest, pay_id)
+    else:
+        async with AsyncSessionLocal() as s:
+            payment = await s.get(PaymentRequest, pay_id)
+
+    if (
+        payment is None
+        or payment.status != PaymentStatus.PENDING.value
+        or payment.review_claimed_by != callback.from_user.id
+    ):
+        await state.clear()
+        await callback.answer(_EDIT_ALREADY_HANDLED_ALERT, show_alert=True)
+        return
+
+    base_mins = int(payment.minutes or 0)
+    base_rc = _payment_effective_recap_credits(payment)
+    promo_mins = int(round(base_mins * 1.2))
+    promo_rc_f = round(float(base_rc) * 1.2, 2)
+    promo_rc: int | float = int(promo_rc_f) if promo_rc_f == int(promo_rc_f) else promo_rc_f
+
+    await state.update_data(
+        payment_id=payment.id,
+        original_minutes=base_mins,
+        corrected_minutes=promo_mins,
+        corrected_recap_credits=promo_rc if base_rc > 0 else None,
+    )
+    await state.set_state(PaymentReviewFSM.confirming_edit)
+
+    rc_block = (
+        f"• မူလ Recap Credit: <b>{base_rc}</b>\n"
+        f"• +20% ပရိုမို Recap Credit: <b>{promo_rc}</b>\n"
+        if base_rc > 0
+        else ""
+    )
+    confirm_text = (
+        "✏️ <b>+20% ပရိုမို ပြင်ဆင်မှု အတည်ပြုရန်</b>\n\n"
+        f"• Payment ID: <code>{payment.id}</code>\n"
+        f"• မူလ မိနစ်: <b>{base_mins} မိနစ်</b>\n"
+        f"• +20% ပရိုမို မိနစ်: <b>{promo_mins} မိနစ်</b>\n"
+        f"{rc_block}\n"
+        "<i>အတည်ပြုလိုက်ပါက +20% ပရိုမို ပမာဏဖြင့် ချက်ချင်း ထည့်ပေးပါမည်။</i>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ အတည်ပြုမယ်", callback_data=f"admin:pay_edit_confirm:{payment.id}")],
+            [InlineKeyboardButton(text="🚫 ပယ်ဖျက်မယ်", callback_data=f"admin:pay_edit_cancel:{payment.id}")],
+        ]
+    )
+    await safe_edit_message(callback, confirm_text, reply_markup=kb, parse_mode="HTML")
+    try:
+        await callback.answer("+20% ပရိုမို ပမာဏ တွက်ချက်ပြီးပါပြီ")
     except Exception:
         pass
 
@@ -894,10 +972,11 @@ async def handle_admin_pay_edit_recap_credits_input(
 
     raw = (message.text or "").strip().replace(",", "")
     try:
-        value = int(raw)
+        raw_f = round(float(raw), 2)
+        value: int | float | None = int(raw_f) if raw_f == int(raw_f) else raw_f
     except (TypeError, ValueError):
         value = None
-    if value is None or not (0 <= value <= 1000):
+    if value is None or not (0 <= float(value) <= 1000):
         await message.answer(
             "⚠️ Recap Credit ပမာဏကို ဂဏန်း မှန်ကန်စွာ ရိုက်ထည့်ပေးပါ (0 – 1000)။",
             reply_markup=_pay_edit_cancel_kb(pay_id),

@@ -13462,7 +13462,16 @@ def _job_display_names(
             tts_engine_display_name(engine) or None,
         )
     if is_recap:
-        _persisted = _load_persisted_recap_state(job) if getattr(job, "recap_config", None) else None
+        from sqlalchemy import inspect as _sa_inspect
+
+        _rc_loaded = True
+        try:
+            _insp = _sa_inspect(job)
+            if _insp is not None and "recap_config" in _insp.unloaded:
+                _rc_loaded = False
+        except Exception:
+            pass
+        _persisted = _load_persisted_recap_state(job) if (_rc_loaded and getattr(job, "recap_config", None)) else None
         _cfg = (_persisted or {}).get("config") or {}
         _act = voice_outcome if voice_outcome is not None else _recap_voice_outcome_from_state(_persisted)
         if _act or _cfg:
@@ -13884,9 +13893,13 @@ async def get_admin_global_history(
     if not settings.is_admin(user.id):
         raise HTTPException(status_code=403, detail="Admin access required")
 
+    from sqlalchemy.orm import defer
+
     now_utc = datetime.now(timezone.utc)
+    input_preview_col = func.substr(Job.input_text, 1, 120).label("input_preview")
     stmt = (
-        select(Job, User.username, User.first_name)
+        select(Job, User.username, User.first_name, input_preview_col)
+        .options(defer(Job.final_script), defer(Job.recap_config), defer(Job.input_text))
         .outerjoin(User, Job.user_id == User.id)
     )
 
@@ -13923,7 +13936,7 @@ async def get_admin_global_history(
     total_success = 0
     out = []
 
-    for job, username, first_name in rows:
+    for job, username, first_name, input_preview in rows:
         is_recap = (job.job_type == JobType.RECAP.value or job.id.startswith("rc_") or job.engine == "recap")
         if is_recap:
             total_recap += 1
@@ -13979,7 +13992,7 @@ async def get_admin_global_history(
                             deliverables[_dk], _audio_token
                         )
 
-        raw_snippet = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
+        raw_snippet = _clean_recap_display_title(input_preview) if is_recap else (input_preview or "")
         out.append({
             "id": job.id,
             "user_id": job.user_id,
@@ -14109,25 +14122,47 @@ async def purge_admin_history(
     except Exception:
         pass
 
+    deleted_files = 0
     for jid, is_recap, res_p, src_p in purge_targets:
         try:
             if is_recap:
                 job_dir = settings.storage_root / "recap_output" / jid
                 if job_dir.is_dir():
                     shutil.rmtree(job_dir, ignore_errors=True)
+                    deleted_files += 1
             if res_p and Path(res_p).is_file():
                 Path(res_p).unlink(missing_ok=True)
+                deleted_files += 1
             if src_p and Path(src_p).is_file():
                 try:
                     if Path(src_p).resolve() not in surviving_sources:
                         Path(src_p).unlink(missing_ok=True)
+                        deleted_files += 1
                 except OSError:
                     pass
         except Exception as e:
             logger.warning(f"Error cleaning media for purged job {jid}: {e}")
+
+    db.add(AuditLog(
+        admin_id=user.id,
+        action="history.purge",
+        target_type="job_history",
+        target_id=str(req.job_id or req.mode),
+        details_json=json.dumps({
+            "mode": req.mode,
+            "job_id": req.job_id,
+            "timeframe": req.timeframe,
+            "status": req.status,
+            "job_type": req.job_type,
+            "deleted_rows": deleted_count,
+            "deleted_files": deleted_files,
+        }),
+    ))
+    await db.commit()
     return {
         "success": True,
         "purged_count": deleted_count,
+        "deleted_files": deleted_files,
         "message": f"မှတ်တမ်းနှင့် ဖိုင်တွဲ {deleted_count} ခုကို အောင်မြင်စွာ ရှင်းလင်းဖျက်သိမ်းပြီးပါပြီ။",
     }
 
@@ -14744,104 +14779,94 @@ async def get_admin_overview(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Return high-level operations statistics for Admin Console."""
-    user_count_res = await db.execute(select(func.count(User.id)))
-    total_users = user_count_res.scalar() or 0
-
-    # Batch X (2026-11-04): REAL users — the overview card's headline.
-    # A User row is created for anyone who ever opened the bot (gate
-    # visitors, one-tap /start, blocked-at-the-gate accounts), so the
-    # raw row count overstates the user base — the owner's complaint
-    # behind this batch. "Real" follows the Batch R headline pattern:
-    # a user counts when they have actually used the bot, defined as
-    #   * at least one Job row, any status (a FAILED job is still a
-    #     real attempt at using the product), OR
-    #   * an APPROVED payment request (a completed purchase), OR
-    #   * a purchase/admin credit grant in the minute ledger
-    #     (PURCHASE / ADJUST credits — the ledger side of a purchase
-    #     or a manual admin grant).
-    # Passive ledger credits (WELCOME / MONTHLY_FREE / REFERRAL) do
-    # NOT qualify on their own: they are granted automatically and
-    # fire for accounts that never did anything. The components ride
-    # along (registered / never-used) for the card's sub-line; the
-    # legacy total_users field keeps its literal meaning for every
-    # other consumer.
+    from sqlalchemy import case, union
     from app.models.enums import LedgerDirection, LedgerSource
 
-    _job_user_ids = {
-        r[0] for r in (await db.execute(select(Job.user_id).distinct())).all()
-    }
-    _buyer_user_ids = {
-        r[0]
-        for r in (
-            await db.execute(
-                select(PaymentRequest.user_id)
-                .where(PaymentRequest.status == PaymentStatus.APPROVED.value)
-                .distinct()
+    cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    # Single-pass User aggregate (collapses 6 separate COUNT queries into 1 scan; no func.sum)
+    u_agg = (
+        await db.execute(
+            select(
+                func.count(User.id),
+                func.count(case((User.account_category == AccountCategory.PURCHASED.value, 1))),
+                func.count(case((User.status == UserStatus.BLOCKED.value, 1))),
+                func.count(case((User.bot_blocked.is_(True), 1))),
+                func.count(
+                    case(
+                        (
+                            or_(
+                                User.status == UserStatus.BLOCKED.value,
+                                User.bot_blocked.is_(True),
+                            ),
+                            1,
+                        )
+                    )
+                ),
+                func.count(case((User.created_at >= cutoff_24h, 1))),
             )
-        ).all()
-    }
-    _granted_user_ids = {
-        r[0]
-        for r in (
-            await db.execute(
-                select(MinuteLedgerEvent.user_id)
-                .where(
-                    MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
-                    MinuteLedgerEvent.source.in_(
-                        [LedgerSource.PURCHASE.value, LedgerSource.ADJUST.value]
-                    ),
-                )
-                .distinct()
-            )
-        ).all()
-    }
-    real_users = len(_job_user_ids | _buyer_user_ids | _granted_user_ids)
+        )
+    ).one()
+    (
+        total_users,
+        vip_users,
+        banned_by_admin,
+        bot_blocked_users,
+        banned_users,
+        new_users_24h,
+    ) = (int(v or 0) for v in u_agg)
+
+    # Batch X REAL users via single SQL UNION deduplication (returns 1 scalar instead of 3 ID sets)
+    real_users_subq = union(
+        select(Job.user_id).where(Job.user_id.is_not(None)),
+        select(PaymentRequest.user_id).where(
+            PaymentRequest.status == PaymentStatus.APPROVED.value,
+            PaymentRequest.user_id.is_not(None),
+        ),
+        select(MinuteLedgerEvent.user_id).where(
+            MinuteLedgerEvent.direction == LedgerDirection.CREDIT.value,
+            MinuteLedgerEvent.source.in_(
+                [LedgerSource.PURCHASE.value, LedgerSource.ADJUST.value]
+            ),
+            MinuteLedgerEvent.user_id.is_not(None),
+        ),
+    ).subquery()
+    real_users = int(
+        (await db.execute(select(func.count()).select_from(real_users_subq))).scalar() or 0
+    )
     never_used_users = max(0, total_users - real_users)
 
-    vip_count_res = await db.execute(select(func.count(User.id)).where(User.account_category == AccountCategory.PURCHASED.value))
-    vip_users = vip_count_res.scalar() or 0
+    pending_slips = int(
+        (
+            await db.execute(
+                select(func.count(PaymentRequest.id)).where(
+                    PaymentRequest.status == PaymentStatus.PENDING.value
+                )
+            )
+        ).scalar()
+        or 0
+    )
 
-    pending_slips_res = await db.execute(select(func.count(PaymentRequest.id)).where(PaymentRequest.status == PaymentStatus.PENDING.value))
-    pending_slips = pending_slips_res.scalar() or 0
+    # Single GROUP BY status pass over jobs (collapses 9 separate COUNT queries into 1)
+    status_rows = (
+        await db.execute(select(Job.status, func.count(Job.id)).group_by(Job.status))
+    ).all()
+    raw_status_counts = {str(st or ""): int(cnt or 0) for st, cnt in status_rows}
+    jobs_by_status = {st.value: raw_status_counts.get(st.value, 0) for st in JobStatus}
+    queued_jobs = jobs_by_status.get(JobStatus.QUEUED.value, 0)
+    running_jobs = jobs_by_status.get(JobStatus.RUNNING.value, 0)
 
-    queued_total_res = await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value))
-    queued_jobs = queued_total_res.scalar() or 0
-
-    running_total_res = await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.RUNNING.value))
-    running_jobs = running_total_res.scalar() or 0
-
-
-    # ── Production ops visibility (2026-10-31) ──────────────────────
-    cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
-    failed_24h = (await db.execute(
-        select(func.count(Job.id)).where(Job.status == JobStatus.FAILED.value, Job.created_at >= cutoff_24h)
-    )).scalar() or 0
-    jobs_by_status = {}
-    for st in JobStatus:
-        jobs_by_status[st.value] = (await db.execute(
-            select(func.count(Job.id)).where(Job.status == st.value)
-        )).scalar() or 0
-    # Batch R (2026-11-04): the old card counted ONLY admin bans
-    # (status == BLOCKED), so it never moved when a broadcast found
-    # users who had blocked the BOT (bot_blocked flag) — the owner
-    # read that as the status screen lying. Headline is now the
-    # combined OR-count (a user who is both counts once); the two
-    # components ride along for the card's sub-line. Semantics are
-    # unchanged — this is counting/presentation only.
-    banned_by_admin = (await db.execute(
-        select(func.count(User.id)).where(User.status == UserStatus.BLOCKED.value)
-    )).scalar() or 0
-    bot_blocked_users = (await db.execute(
-        select(func.count(User.id)).where(User.bot_blocked.is_(True))
-    )).scalar() or 0
-    banned_users = (await db.execute(
-        select(func.count(User.id)).where(
-            or_(User.status == UserStatus.BLOCKED.value, User.bot_blocked.is_(True))
-        )
-    )).scalar() or 0
-    new_users_24h = (await db.execute(
-        select(func.count(User.id)).where(User.created_at >= cutoff_24h)
-    )).scalar() or 0
+    failed_24h = int(
+        (
+            await db.execute(
+                select(func.count(Job.id)).where(
+                    Job.status == JobStatus.FAILED.value,
+                    Job.created_at >= cutoff_24h,
+                )
+            )
+        ).scalar()
+        or 0
+    )
 
     # Batch R: income (ဝင်ငွေ) from APPROVED payment requests.
     # amount_mmk is the server-derived plan price and every approval
@@ -14955,6 +14980,11 @@ async def get_admin_overview(
     except Exception:
         recent_actions = []
 
+    worker_info = await _get_laptop_worker_status(db)
+    worker_status_label = str(
+        worker_info.get("status_text") or worker_info.get("status_code") or "OFFLINE"
+    )
+
     return {
         "total_users": total_users,
         # Batch X: headline + split for the users card (additive —
@@ -14967,7 +14997,9 @@ async def get_admin_overview(
         "queued_jobs": queued_jobs,
         "running_jobs": running_jobs,
         "waiting_choice_jobs": jobs_by_status.get(JobStatus.WAITING_CHOICE.value, 0),
-        "cloud_worker_status": "ONLINE (VPS Server)",
+        "worker": worker_info,
+        "worker_status": worker_status_label,
+        "cloud_worker_status": worker_status_label,
         "failed_jobs_24h": failed_24h,
         "jobs_by_status": jobs_by_status,
         "banned_users": banned_users,
@@ -14999,12 +15031,32 @@ class _LocalBotApiActivateReq(BaseModel):
 async def admin_activate_local_bot_api(
     req: _LocalBotApiActivateReq = _LocalBotApiActivateReq(),
     admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Admin-only Local Bot API handshake (runs 1-time official logOut if needed)."""
     target = (req.url or "").strip() or None
     if target and not (target.startswith("http://127.0.0.1") or target.startswith("http://localhost") or target.startswith("https://")):
         raise HTTPException(status_code=400, detail="Invalid Local Bot API URL")
     status = await activate_local_bot_api(target_url=target, token=settings.bot_token)
+    audit_entry = AuditLog(
+        admin_id=admin.id,
+        action="ops.local_bot_api_activate",
+        target_type="system",
+        target_id="local_bot_api",
+        details_json=json.dumps({
+            "url": target,
+            "active": bool(status.get("active")),
+            "mode": status.get("mode"),
+            "max_upload_mb": status.get("max_upload_mb"),
+        }),
+    )
+    if isinstance(db, AsyncSession):
+        db.add(audit_entry)
+        await db.commit()
+    else:
+        async with AsyncSessionLocal() as _s:
+            _s.add(audit_entry)
+            await _s.commit()
     return {"success": bool(status.get("active")), "local_bot_api": status}
 
 
@@ -15345,7 +15397,7 @@ def _compute_daily_free_pending_seconds(u: User, bal: Optional[MinuteBalance]) -
 
 def _format_admin_user_dict(u: User, bal: Optional[MinuteBalance]) -> dict:
     """Serialize one User + MinuteBalance pair into canonical admin user row JSON."""
-    return {
+    row = {
         "id": u.id,
         "username": u.username,
         "first_name": u.first_name,
@@ -15355,10 +15407,14 @@ def _format_admin_user_dict(u: User, bal: Optional[MinuteBalance]) -> dict:
         "bot_blocked": bool(getattr(u, "bot_blocked", False)),
         "is_test_account": bool(getattr(u, "is_test_account", False)),
         "recap_credits": getattr(u, "recap_credits", 0) or 0,
-        "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
+        "balance_seconds": int(bal.clone_spendable_seconds) if bal else 0,
         "daily_free_pending_seconds": _compute_daily_free_pending_seconds(u, bal),
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
+    ref_sec = int(getattr(bal, "referral_seconds", 0) or 0) if bal else 0
+    if ref_sec > 0:
+        row["referral_seconds"] = ref_sec
+    return row
 
 
 async def _batch_admin_user_rows(db: AsyncSession, rows: list[User]) -> list[dict]:
@@ -15476,10 +15532,30 @@ async def list_admin_users(
         count_stmt = count_stmt.where(or_(*conds))
     total = (await db.execute(count_stmt)).scalar() or 0
     sort_key = (sort or "recent").strip().lower()
-    if sort_key == "balance":
+    if sort_key in ("balance", "balance_desc"):
+        from sqlalchemy import case
+        from app.services.ledger import get_current_daily_period
+
+        current_day = get_current_daily_period()
+        eff_daily = case(
+            (
+                MinuteBalance.last_daily_grant_date == current_day,
+                func.coalesce(MinuteBalance.daily_free_seconds, 0),
+            ),
+            else_=0,
+        )
+        eff_bonus = (
+            func.coalesce(MinuteBalance.monthly_free_seconds, 0)
+            + func.coalesce(MinuteBalance.welcome_seconds, 0)
+            + func.coalesce(MinuteBalance.referral_voice_seconds, 0)
+        )
         stmt = stmt.outerjoin(MinuteBalance, MinuteBalance.user_id == User.id)
-        order_col = func.coalesce(MinuteBalance.purchased_seconds, 0).desc()
-    elif sort_key == "recap":
+        order_col = (
+            func.coalesce(MinuteBalance.purchased_seconds, 0)
+            + eff_daily
+            + eff_bonus
+        ).desc()
+    elif sort_key in ("recap", "recap_desc"):
         order_col = User.recap_credits.desc()
     else:
         order_col = User.created_at.desc()
@@ -15501,9 +15577,22 @@ async def get_admin_user_detail(
     Powers the Mini App user-detail screen reached from search results,
     the recent-users list, job rows and slip rows.
     """
+    from sqlalchemy.orm import defer
+    from app.services.billing import expire_due_grants_for_user, list_user_grants
+
     target = await db.get(User, user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Expire due paid grants and commit BEFORE reading _admin_user_row so header
+    # tier/balance and the grants list below can never disagree.
+    expired_lot_ids = await expire_due_grants_for_user(db, user_id)
+    if expired_lot_ids:
+        await db.commit()
+        target = await db.get(User, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+
     payload = await _admin_user_row(db, target)
     payload["language_code"] = target.language_code
 
@@ -15631,6 +15720,7 @@ async def get_admin_user_detail(
 
     job_rows = (await db.execute(
         select(Job)
+        .options(defer(Job.final_script), defer(Job.recap_config), defer(Job.input_text))
         .where(Job.user_id == user_id)
         .order_by(Job.created_at.desc())
         .limit(10)
@@ -15685,10 +15775,8 @@ async def get_admin_user_detail(
         }
         for e in recap_ledger_rows
     ]
-    from app.services.billing import expire_due_grants_for_user, list_user_grants
     from app.models.schema import WalletTransaction as _WalletTx
 
-    await expire_due_grants_for_user(db, user_id)
     payload["wallet_grants"] = await list_user_grants(db, user_id, include_expired=True, limit=25)
     wtx_rows = (await db.execute(
         select(_WalletTx)
@@ -15935,15 +16023,70 @@ async def get_admin_queue(
     Supports filtering by status (all, queued, running, success, failed, cancelled)
     and by engine (all, voxcpm, recap; legacy rows may still carry the old engine value).
     """
+    from sqlalchemy import case
+    from sqlalchemy.orm import defer
+
     cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    queued_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.QUEUED.value))).scalar() or 0
-    running_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.RUNNING.value))).scalar() or 0
-    waiting_choice_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.WAITING_CHOICE.value))).scalar() or 0
-    success_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.SUCCESS.value, Job.created_at >= cutoff_24h))).scalar() or 0
-    failed_cnt = (await db.execute(select(func.count(Job.id)).where(Job.status == JobStatus.FAILED.value, Job.created_at >= cutoff_24h))).scalar() or 0
+    q_agg = (
+        await db.execute(
+            select(
+                func.count(case((Job.status == JobStatus.QUEUED.value, 1))),
+                func.count(case((Job.status == JobStatus.RUNNING.value, 1))),
+                func.count(case((Job.status == JobStatus.WAITING_CHOICE.value, 1))),
+                func.count(
+                    case(
+                        (
+                            (Job.status == JobStatus.SUCCESS.value)
+                            & (Job.created_at >= cutoff_24h),
+                            1,
+                        )
+                    )
+                ),
+                func.count(
+                    case(
+                        (
+                            (Job.status == JobStatus.FAILED.value)
+                            & (Job.created_at >= cutoff_24h),
+                            1,
+                        )
+                    )
+                ),
+                func.count(
+                    case(
+                        (
+                            (Job.status == JobStatus.CANCELLED.value)
+                            & (Job.created_at >= cutoff_24h),
+                            1,
+                        )
+                    )
+                ),
+            )
+        )
+    ).one()
+    (
+        queued_cnt,
+        running_cnt,
+        waiting_choice_cnt,
+        success_cnt,
+        failed_cnt,
+        cancelled_24h_cnt,
+    ) = (int(v or 0) for v in q_agg)
+    window_24h_total = (
+        queued_cnt
+        + running_cnt
+        + waiting_choice_cnt
+        + success_cnt
+        + failed_cnt
+        + cancelled_24h_cnt
+    )
 
-    query = select(Job, User).outerjoin(User, Job.user_id == User.id)
+    input_preview_col = func.substr(Job.input_text, 1, 120).label("input_preview")
+    query = (
+        select(Job, User, input_preview_col)
+        .options(defer(Job.final_script), defer(Job.recap_config), defer(Job.input_text))
+        .outerjoin(User, Job.user_id == User.id)
+    )
 
     if status and status.lower() != "all":
         query = query.where(Job.status == status.upper())
@@ -15957,7 +16100,7 @@ async def get_admin_queue(
 
     now_utc = datetime.now(timezone.utc)
     jobs_out = []
-    for j, u in rows:
+    for j, u, input_preview in rows:
         created_ts = j.created_at.timestamp() if j.created_at else time.time()
         mins_ago = int((time.time() - created_ts) // 60)
         time_ago = _time_ago_str(mins_ago, admin.language_code or "my")
@@ -16019,7 +16162,7 @@ async def get_admin_queue(
             # (TTS engine/voice; own-voice recap label).
             "voice_display": _job_display_names(j, is_recap=is_recap, is_tts=(j.job_type == JobType.TTS.value))[0],
             "engine_display": _job_display_names(j, is_recap=is_recap, is_tts=(j.job_type == JobType.TTS.value))[1],
-            "input_snippet": (j.input_text[:80] + "...") if j.input_text and len(j.input_text) > 80 else (j.input_text or ""),
+            "input_snippet": (input_preview[:80] + "...") if input_preview and len(input_preview) > 80 else (input_preview or ""),
             "created_at": j.created_at.isoformat() if j.created_at else None,
             "started_at": j.started_at.isoformat() if j.started_at else None,
             "finished_at": j.finished_at.isoformat() if j.finished_at else None,
@@ -16042,6 +16185,8 @@ async def get_admin_queue(
             "waiting_choice": waiting_choice_cnt,
             "success": success_cnt,
             "failed": failed_cnt,
+            "cancelled_24h": cancelled_24h_cnt,
+            "window_total": window_24h_total,
             "total_listed": len(jobs_out),
         },
         "worker": worker_info,
@@ -16335,6 +16480,17 @@ async def retry_queued_job(
             status_code=400,
             detail="Only FAILED or CANCELLED jobs can be retried (job state changed concurrently)",
         )
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="job.admin_retry",
+        target_type="job",
+        target_id=str(job_id),
+        details_json=json.dumps({
+            "user_id": job.user_id,
+            "job_type": "recap" if _is_recap_retry else "voice",
+            "previous_status": job.status,
+        }),
+    ))
     await db.commit()
     await db.refresh(job)
 
@@ -17349,6 +17505,11 @@ async def get_pending_payment_slips(
         raw_rc = getattr(req, "recap_credits", None)
         eff_rc = int(raw_rc) if (raw_rc is not None and int(raw_rc) > 0) else int(package_recap_credits(req.package_code))
         vdays = int(getattr(req, "validity_days", 30) if getattr(req, "validity_days", None) is not None else 30)
+        _created_utc = (
+            req.created_at.replace(tzinfo=timezone.utc)
+            if (req.created_at is not None and req.created_at.tzinfo is None)
+            else req.created_at
+        )
         slips.append({
             "id": req.id,
             "user_id": u.id,
@@ -17363,7 +17524,7 @@ async def get_pending_payment_slips(
             "payment_reference": getattr(req, "payment_reference", None) or "",
             "review_claimed_by": getattr(req, "review_claimed_by", None),
             "slip_url": req.slip_url,
-            "created_at": req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "",
+            "created_at": _created_utc.isoformat() if _created_utc else "",
         })
     return slips
 
@@ -17371,7 +17532,7 @@ async def get_pending_payment_slips(
 class EditApproveSlipRequest(BaseModel):
     request_id: str
     corrected_minutes: int = 0
-    corrected_recap_credits: Optional[int] = None
+    corrected_recap_credits: Optional[float] = None
     validity_days: Optional[int] = None
 
 
@@ -17382,7 +17543,13 @@ async def edit_and_approve_payment_slip(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Edit minutes / recap_credits / validity_days and approve a pending slip directly from Mini App."""
-    from app.services.payment_review import claim_payment_review, apply_edited_approval, release_payment_claim
+    from app.services.payment_review import (
+        approved_status_line,
+        apply_edited_approval,
+        claim_payment_review,
+        release_payment_claim,
+        sync_admin_copies,
+    )
 
     if req.validity_days is not None and not (0 <= int(req.validity_days) <= 3650):
         raise HTTPException(status_code=400, detail="Validity days must be between 0 and 3650")
@@ -17397,12 +17564,17 @@ async def edit_and_approve_payment_slip(
         p_claimed.validity_days = int(req.validity_days)
         await db.flush()
 
+    _corr_rc: Optional[float] = (
+        round(float(req.corrected_recap_credits), 2)
+        if req.corrected_recap_credits is not None
+        else None
+    )
     ok, p_req, status_msg = await apply_edited_approval(
         db,
         payment_id=req.request_id,
         admin_id=admin.id,
         corrected_minutes=int(req.corrected_minutes),
-        corrected_recap_credits=int(req.corrected_recap_credits) if req.corrected_recap_credits is not None else None,
+        corrected_recap_credits=_corr_rc,
     )
     if not ok or p_req is None:
         await release_payment_claim(db, req.request_id, admin.id)
@@ -17410,30 +17582,42 @@ async def edit_and_approve_payment_slip(
         raise HTTPException(status_code=400, detail=f"Edit-Approve မအောင်မြင်ပါ: {status_msg}")
 
     await db.commit()
-    eff_rc = int(getattr(p_req, "edited_recap_credits", None) if getattr(p_req, "edited_recap_credits", None) is not None else getattr(p_req, "recap_credits", 0) or 0)
+    if _corr_rc is not None:
+        eff_rc: int | float = int(_corr_rc) if _corr_rc == int(_corr_rc) else _corr_rc
+    else:
+        eff_rc = int(getattr(p_req, "edited_recap_credits", None) if getattr(p_req, "edited_recap_credits", None) is not None else getattr(p_req, "recap_credits", 0) or 0)
 
     if settings.bot_token:
         try:
-            from aiogram import Bot
             bot = create_telegram_bot(token=settings.bot_token)
             try:
-                vdays = int(getattr(p_req, "validity_days", 30) if getattr(p_req, "validity_days", None) is not None else 30)
-                exp_note = f" (သက်တမ်း {vdays} ရက်)" if vdays > 0 else " (သက်တမ်းမကုန်)"
-                await bot.send_message(
-                    chat_id=p_req.user_id,
-                    text=(
-                        f"✅ <b>ငွေပေးချေမှု အတည်ပြုပြီးပါပြီ (Adjusted)</b>\n\n"
-                        f"• Payment ID: <code>{p_req.id}</code>\n"
-                        f"• Voice Clone: <b>+{p_req.minutes} မိနစ်</b>\n"
-                        f"• Recap Credits: <b>+{eff_rc} Credits</b>{exp_note}\n\n"
-                        f"Mini App တွင် ချက်ချင်း အသုံးပြုနိုင်ပါပြီ။"
-                    ),
-                    parse_mode="HTML",
-                )
+                if p_req.user_id:
+                    try:
+                        vdays = int(getattr(p_req, "validity_days", 30) if getattr(p_req, "validity_days", None) is not None else 30)
+                        exp_note = f" (သက်တမ်း {vdays} ရက်)" if vdays > 0 else " (သက်တမ်းမကုန်)"
+                        await bot.send_message(
+                            chat_id=p_req.user_id,
+                            text=(
+                                f"✅ <b>ငွေပေးချေမှု အတည်ပြုပြီးပါပြီ (Adjusted)</b>\n\n"
+                                f"• Payment ID: <code>{p_req.id}</code>\n"
+                                f"• Voice Clone: <b>+{p_req.minutes} မိနစ်</b>\n"
+                                f"• Recap Credits: <b>+{eff_rc} Credits</b>{exp_note}\n\n"
+                                f"Mini App တွင် ချက်ချင်း အသုံးပြုနိုင်ပါပြီ။"
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("Failed to notify user %s after edit-approve: %s", p_req.user_id, notify_exc)
+                try:
+                    await sync_admin_copies(
+                        bot, p_req, line=approved_status_line(admin.first_name, p_req)
+                    )
+                except Exception as sync_exc:
+                    logger.warning("Failed to sync admin copies for edited payment %s: %s", p_req.id, sync_exc)
             finally:
                 await bot.session.close()
         except Exception as exc:
-            logger.warning("Failed to notify user %s after edit-approve: %s", p_req.user_id, exc)
+            logger.warning("Failed bot session after edit-approve for %s: %s", p_req.id, exc)
 
     return {
         "success": True,
@@ -18030,6 +18214,70 @@ async def get_admin_orders(
     return {"orders": orders, "count": len(orders)}
 
 
+def _get_yangon_tz():
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        return ZoneInfo("Asia/Yangon")
+    except ZoneInfoNotFoundError:
+        return timezone(timedelta(hours=6, minutes=30))
+
+
+def _fmt_yangon_iso_str(iso_or_dt: Any, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    if not iso_or_dt:
+        return ""
+    y_tz = _get_yangon_tz()
+    if isinstance(iso_or_dt, datetime):
+        dt = iso_or_dt
+    else:
+        raw = str(iso_or_dt).strip()
+        if not raw:
+            return ""
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return raw
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(y_tz).strftime(fmt)
+
+
+def _build_admin_orders_csv_bytes(orders: list[dict[str, Any]]) -> tuple[str, bytes]:
+    import csv
+    import io
+
+    y_tz = _get_yangon_tz()
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Order ID", "Created At (Asia/Yangon)", "Reviewed At (Asia/Yangon)", "Status",
+        "User ID", "Username", "Name", "Package Code", "Package Name", "Amount (MMK)",
+        "Voice Mins", "Recap Credits", "Validity Days", "Payment Ref", "Reviewed By", "Rejection Reason",
+    ])
+    for o in orders:
+        writer.writerow([
+            o["id"],
+            _fmt_yangon_iso_str(o.get("created_at")),
+            _fmt_yangon_iso_str(o.get("reviewed_at")),
+            o["status"],
+            o["user_id"],
+            o.get("username") or "",
+            o["user_name"],
+            o["package_code"],
+            o["package_name"],
+            int(o.get("amount_mmk") or 0),
+            o["minutes"],
+            o["recap_credits"],
+            o["validity_days"],
+            o.get("payment_reference") or "",
+            o.get("reviewed_by") or "",
+            o.get("rejection_reason") or "",
+        ])
+    fname = f"vcp_orders_{datetime.now(y_tz).strftime('%Y%m%d_%H%M')}.csv"
+    return fname, buf.getvalue().encode("utf-8")
+
+
 @api_router.get("/admin/orders/export")
 async def export_admin_orders_csv(
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -18038,35 +18286,83 @@ async def export_admin_orders_csv(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Export filtered payment orders as UTF-8 BOM CSV for Excel/accounting reconciliation."""
-    import csv
-    import io
+    """Export filtered payment orders as UTF-8 BOM CSV (Asia/Yangon timestamps)."""
     from fastapi import Response
 
     data = await get_admin_orders(
         status_filter=status_filter, search=search, days=days, limit=500, admin=admin, db=db
     )
-    buf = io.StringIO()
-    buf.write("\ufeff")
-    writer = csv.writer(buf)
-    writer.writerow([
-        "Order ID", "Created At", "Status", "User ID", "Username", "Name",
-        "Package Code", "Package Name", "Amount (MMK)", "Voice Mins",
-        "Recap Credits", "Validity Days", "Payment Ref", "Reviewed By", "Rejection Reason",
-    ])
-    for o in data["orders"]:
-        writer.writerow([
-            o["id"], o["created_at"], o["status"], o["user_id"], o.get("username") or "",
-            o["user_name"], o["package_code"], o["package_name"], o["amount_mmk"],
-            o["minutes"], o["recap_credits"], o["validity_days"], o.get("payment_reference") or "",
-            o.get("reviewed_by") or "", o.get("rejection_reason") or "",
-        ])
-    fname = f"vcp_orders_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.csv"
+    fname, csv_bytes = _build_admin_orders_csv_bytes(data["orders"])
     return Response(
-        content=buf.getvalue().encode("utf-8"),
+        content=csv_bytes,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+class AdminOrdersExportDmRequest(BaseModel):
+    status: Optional[str] = None
+    search: str = ""
+    days: int = Field(default=30, ge=0, le=3650)
+
+
+@api_router.post("/admin/orders/export-dm")
+async def export_admin_orders_csv_to_dm(
+    req: AdminOrdersExportDmRequest = AdminOrdersExportDmRequest(),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Generate Yangon-formatted orders CSV and send it as a document to the requesting admin's Telegram DM."""
+    from aiogram.types import BufferedInputFile
+
+    if not settings.bot_token:
+        raise HTTPException(status_code=503, detail="Bot token is not configured")
+
+    data = await get_admin_orders(
+        status_filter=req.status, search=req.search, days=req.days, limit=500, admin=admin, db=db
+    )
+    orders = data["orders"]
+    fname, csv_bytes = _build_admin_orders_csv_bytes(orders)
+    period_label = f"ပြီးခဲ့သော {int(req.days)} ရက်အတွင်း" if int(req.days or 0) > 0 else "ကာလအားလုံး"
+    caption = (
+        f"📊 <b>အော်ဒါ စာရင်း CSV (Asia/Yangon)</b>\n"
+        f"• ကာလ: <b>{period_label}</b>\n"
+        f"• အော်ဒါ အရေအတွက်: <b>{len(orders)} ခု</b>"
+    )
+
+    bot = create_telegram_bot(token=settings.bot_token)
+    try:
+        await bot.send_document(
+            chat_id=admin.id,
+            document=BufferedInputFile(csv_bytes, filename=fname),
+            caption=caption,
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logger.warning("Failed to send orders CSV to admin %s DM: %s", admin.id, exc)
+        raise HTTPException(status_code=502, detail=f"Telegram DM ပို့၍ မရပါ: {exc}")
+    finally:
+        await bot.session.close()
+
+    db.add(AuditLog(
+        admin_id=admin.id,
+        action="orders.export_dm",
+        target_type="orders",
+        target_id=fname,
+        details_json=json.dumps({
+            "count": len(orders),
+            "days": int(req.days or 0),
+            "status": req.status or "ALL",
+            "search": (req.search or "").strip()[:80],
+        }),
+    ))
+    await db.commit()
+    return {
+        "success": True,
+        "count": len(orders),
+        "filename": fname,
+        "message": "DM သို့ ပို့ပြီးပါပြီ",
+    }
 
 
 @api_router.post("/admin/refunds/job/{job_id}")
@@ -18150,19 +18446,42 @@ async def get_admin_analytics(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Real database-aggregated revenue, package sales, usage & cost monitoring."""
+    """Real database-aggregated revenue, package sales, usage & cost monitoring (zero Job blob loads)."""
     from collections import defaultdict
-    from app.models.schema import JobCostTelemetry, WalletTransaction
+    from app.models.schema import JobCostTelemetry, WalletGrant as _WalletGrant, WalletTransaction
+    from app.services.billing import _as_utc as _wg_as_utc
     from app.services.payments import get_plan_by_code
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days > 0 else None
+    y_tz = _get_yangon_tz()
+    now_utc = datetime.now(timezone.utc)
+    if days == 1:
+        cutoff = (
+            now_utc.astimezone(y_tz)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .astimezone(timezone.utc)
+        )
+    elif days > 0:
+        cutoff = now_utc - timedelta(days=days)
+    else:
+        cutoff = None
 
-    # 1. Revenue & Package Sales (exclude test-flagged accounts, matching Overview)
+    # 1. Revenue & Package Sales (narrow scalar columns; standardized on COALESCE(reviewed_at, created_at) + Asia/Yangon)
     _test_user_ids = await _test_flagged_user_ids(db)
-    pr_stmt = select(PaymentRequest)
+    effective_pay_ts = func.coalesce(PaymentRequest.reviewed_at, PaymentRequest.created_at)
+    pr_stmt = select(
+        PaymentRequest.user_id,
+        PaymentRequest.status,
+        PaymentRequest.amount_mmk,
+        PaymentRequest.minutes,
+        PaymentRequest.package_code,
+        PaymentRequest.recap_credits,
+        PaymentRequest.edited_recap_credits,
+        PaymentRequest.reviewed_at,
+        PaymentRequest.created_at,
+    )
     if cutoff is not None:
-        pr_stmt = pr_stmt.where(PaymentRequest.created_at >= cutoff)
-    all_orders = (await db.execute(pr_stmt)).scalars().all()
+        pr_stmt = pr_stmt.where(effective_pay_ts >= cutoff)
+    pr_rows = (await db.execute(pr_stmt)).all()
 
     total_revenue_mmk = 0
     approved_orders = 0
@@ -18175,36 +18494,42 @@ async def get_admin_analytics(
     by_category_mmk: dict[str, int] = defaultdict(int)
     daily_revenue: dict[str, dict[str, Any]] = {}
 
-    for pr in all_orders:
-        if pr.user_id in _test_user_ids:
+    for (
+        p_uid,
+        p_status,
+        p_amt,
+        p_mins,
+        p_code,
+        p_rc,
+        p_edit_rc,
+        p_rev_at,
+        p_cre_at,
+    ) in pr_rows:
+        if p_uid in _test_user_ids:
             continue
-        if pr.status == PaymentStatus.PENDING.value:
+        if p_status == PaymentStatus.PENDING.value:
             pending_orders += 1
-        elif pr.status == PaymentStatus.REJECTED.value:
+        elif p_status == PaymentStatus.REJECTED.value:
             rejected_orders += 1
-        elif pr.status == PaymentStatus.APPROVED.value:
+        elif p_status == PaymentStatus.APPROVED.value:
             approved_orders += 1
-            amt = int(pr.amount_mmk or 0)
-            mins = int(pr.minutes or 0)
-            plan = get_plan_by_code(pr.package_code) or {}
-            rc_val = (
-                getattr(pr, "edited_recap_credits", None)
-                if getattr(pr, "edited_recap_credits", None) is not None
-                else (getattr(pr, "recap_credits", None) if getattr(pr, "recap_credits", None) is not None else plan.get("recap_credits", 0))
-            )
+            amt = int(p_amt or 0)
+            mins = int(p_mins or 0)
+            plan = get_plan_by_code(p_code) or {}
+            rc_val = p_edit_rc if p_edit_rc is not None else (p_rc if p_rc is not None else plan.get("recap_credits", 0))
             rc = int(rc_val or 0)
             total_revenue_mmk += amt
             total_voice_mins_sold += mins
             total_recap_sold += rc
-            paying_users.add(pr.user_id)
+            paying_users.add(p_uid)
             cat_key = "topup" if plan.get("is_topup") else str(plan.get("category") or "voice")
             by_category_mmk[cat_key] += amt
 
             pkg = by_package.setdefault(
-                pr.package_code,
+                p_code,
                 {
-                    "package_code": pr.package_code,
-                    "name": plan.get("name") or pr.package_code,
+                    "package_code": p_code,
+                    "name": plan.get("name") or p_code,
                     "category": cat_key,
                     "orders": 0,
                     "revenue_mmk": 0,
@@ -18217,8 +18542,8 @@ async def get_admin_analytics(
             pkg["minutes_sold"] += mins
             pkg["recap_credits_sold"] += rc
 
-            day_dt = pr.reviewed_at or pr.created_at
-            day_key = day_dt.strftime("%Y-%m-%d") if day_dt else "unknown"
+            bucket_ts = _payment_bucket_ts(p_rev_at, p_cre_at)
+            day_key = bucket_ts.astimezone(y_tz).strftime("%Y-%m-%d") if bucket_ts else "unknown"
             d_bucket = daily_revenue.setdefault(day_key, {"date": day_key, "orders": 0, "revenue_mmk": 0})
             d_bucket["orders"] += 1
             d_bucket["revenue_mmk"] += amt
@@ -18227,76 +18552,106 @@ async def get_admin_analytics(
         by_package.values(), key=lambda x: (-int(x["orders"]), -int(x["revenue_mmk"]))
     )
 
-    # 2. Usage & Jobs Summary
-    job_stmt = select(Job)
+    # 2. Usage & Jobs Summary via SQL GROUP BY + narrow numeric scalar SELECT (zero full-ORM Job blob loads)
+    j_grp_stmt = select(Job.job_type, Job.status, func.count(Job.id)).group_by(Job.job_type, Job.status)
+    j_usr_stmt = select(func.count(func.distinct(Job.user_id)))
+    j_succ_stmt = select(
+        Job.recap_credits_charged,
+        Job.voice_audio_seconds,
+        Job.output_duration_seconds,
+        Job.seconds_consumed,
+    ).where(Job.status == JobStatus.SUCCESS.value)
     if cutoff is not None:
-        job_stmt = job_stmt.where(Job.created_at >= cutoff)
-    all_jobs = (await db.execute(job_stmt)).scalars().all()
+        j_grp_stmt = j_grp_stmt.where(Job.created_at >= cutoff)
+        j_usr_stmt = j_usr_stmt.where(Job.created_at >= cutoff)
+        j_succ_stmt = j_succ_stmt.where(Job.created_at >= cutoff)
 
-    total_jobs = len(all_jobs)
+    j_grp_rows = (await db.execute(j_grp_stmt)).all()
+    active_users_cnt = int((await db.execute(j_usr_stmt)).scalar() or 0)
+    j_succ_rows = (await db.execute(j_succ_stmt)).all()
+
+    total_jobs = 0
     success_jobs = 0
     failed_jobs = 0
     cancelled_jobs = 0
-    active_users: set[int] = set()
+    jobs_by_type: dict[str, int] = defaultdict(int)
+    for j_type, j_status, cnt_raw in j_grp_rows:
+        cnt = int(cnt_raw or 0)
+        total_jobs += cnt
+        jobs_by_type[str(j_type or "UNKNOWN")] += cnt
+        if j_status == JobStatus.SUCCESS.value:
+            success_jobs += cnt
+        elif j_status == JobStatus.FAILED.value:
+            failed_jobs += cnt
+        elif j_status == JobStatus.CANCELLED.value:
+            cancelled_jobs += cnt
+
     total_recap_cr_used = 0.0
     total_voice_sec_used = 0
     total_output_sec = 0
-    jobs_by_type: dict[str, int] = defaultdict(int)
-    for j in all_jobs:
-        active_users.add(j.user_id)
-        jobs_by_type[str(j.job_type or "UNKNOWN")] += 1
-        if j.status == JobStatus.SUCCESS.value:
-            success_jobs += 1
-            total_recap_cr_used += float(getattr(j, "recap_credits_charged", 0.0) or 0.0)
-            total_voice_sec_used += int(getattr(j, "voice_audio_seconds", 0) or j.seconds_consumed or 0)
-            total_output_sec += int(getattr(j, "output_duration_seconds", 0) or j.seconds_consumed or 0)
-        elif j.status == JobStatus.FAILED.value:
-            failed_jobs += 1
-        elif j.status == JobStatus.CANCELLED.value:
-            cancelled_jobs += 1
+    for rc_chg, v_aud_sec, out_dur_sec, sec_cons in j_succ_rows:
+        total_recap_cr_used += float(rc_chg or 0.0)
+        total_voice_sec_used += int(v_aud_sec or sec_cons or 0)
+        total_output_sec += int(out_dur_sec or sec_cons or 0)
 
-    # 3. Refunds Summary
-    ref_stmt = select(WalletTransaction).where(WalletTransaction.tx_type == "REFUND")
+    # 3. Refunds & Expiration Summary (narrow scalar projections only)
+    ref_stmt = select(
+        WalletTransaction.recap_seconds_delta,
+        WalletTransaction.voice_seconds_delta,
+    ).where(WalletTransaction.tx_type == "REFUND")
     if cutoff is not None:
         ref_stmt = ref_stmt.where(WalletTransaction.created_at >= cutoff)
-    ref_rows = (await db.execute(ref_stmt)).scalars().all()
-    refunded_recap_cr = round(sum(max(0, int(r.recap_seconds_delta or 0)) for r in ref_rows) / 60.0, 2)
-    refunded_voice_min = round(sum(max(0, int(r.voice_seconds_delta or 0)) for r in ref_rows) / 60.0, 2)
+    ref_rows = (await db.execute(ref_stmt)).all()
+    refunded_recap_cr = round(sum(max(0, int(r_d or 0)) for r_d, _ in ref_rows) / 60.0, 2)
+    refunded_voice_min = round(sum(max(0, int(v_d or 0)) for _, v_d in ref_rows) / 60.0, 2)
 
-    # 3b. Expiration Summary (active grants, expiring within 7 days, expired in window)
-    from app.models.schema import WalletGrant as _WalletGrant
-    from app.services.billing import _as_utc as _wg_as_utc
-
-    _now_utc = datetime.now(timezone.utc)
-    _in_7d = _now_utc + timedelta(days=7)
-    _all_active_grants = (
-        await db.execute(select(_WalletGrant).where(_WalletGrant.status == "ACTIVE"))
-    ).scalars().all()
+    _in_7d = now_utc + timedelta(days=7)
+    _active_grant_rows = (
+        await db.execute(
+            select(
+                _WalletGrant.expires_at,
+                _WalletGrant.remaining_voice_seconds,
+                _WalletGrant.remaining_recap_seconds,
+            ).where(_WalletGrant.status == "ACTIVE")
+        )
+    ).all()
     expiring_7d_count = 0
     expiring_7d_recap_sec = 0
     expiring_7d_voice_sec = 0
-    for _g in _all_active_grants:
-        _exp = _wg_as_utc(_g.expires_at)
-        if _exp is not None and _now_utc < _exp <= _in_7d:
-            _rv = int(_g.remaining_voice_seconds or 0)
-            _rr = int(_g.remaining_recap_seconds or 0)
+    for g_exp, g_rv, g_rr in _active_grant_rows:
+        _exp = _wg_as_utc(g_exp)
+        if _exp is not None and now_utc < _exp <= _in_7d:
+            _rv = int(g_rv or 0)
+            _rr = int(g_rr or 0)
             if (_rv + _rr) > 0:
                 expiring_7d_count += 1
                 expiring_7d_voice_sec += _rv
                 expiring_7d_recap_sec += _rr
 
-    exp_tx_stmt = select(WalletTransaction).where(WalletTransaction.tx_type == "EXPIRE")
+    exp_tx_stmt = select(
+        WalletTransaction.recap_seconds_delta,
+        WalletTransaction.voice_seconds_delta,
+    ).where(WalletTransaction.tx_type == "EXPIRE")
     if cutoff is not None:
         exp_tx_stmt = exp_tx_stmt.where(WalletTransaction.created_at >= cutoff)
-    exp_tx_rows = (await db.execute(exp_tx_stmt)).scalars().all()
-    expired_recap_cr = round(sum(abs(int(r.recap_seconds_delta or 0)) for r in exp_tx_rows) / 60.0, 2)
-    expired_voice_min = round(sum(abs(int(r.voice_seconds_delta or 0)) for r in exp_tx_rows) / 60.0, 2)
+    exp_tx_rows = (await db.execute(exp_tx_stmt)).all()
+    expired_recap_cr = round(sum(abs(int(r_d or 0)) for r_d, _ in exp_tx_rows) / 60.0, 2)
+    expired_voice_min = round(sum(abs(int(v_d or 0)) for _, v_d in exp_tx_rows) / 60.0, 2)
 
-    # 4. Cost Telemetry & Storage (strictly measured/configured, zero mock data)
-    cost_stmt = select(JobCostTelemetry)
+    # 4. Cost Telemetry & Storage (narrow scalar columns + cached storage bytes)
+    cost_stmt = select(
+        JobCostTelemetry.provider,
+        JobCostTelemetry.cost_basis,
+        JobCostTelemetry.estimated_cost_usd,
+        JobCostTelemetry.input_tokens,
+        JobCostTelemetry.output_tokens,
+        JobCostTelemetry.requests_count,
+        JobCostTelemetry.runtime_seconds,
+        JobCostTelemetry.bytes_transferred,
+    )
     if cutoff is not None:
         cost_stmt = cost_stmt.where(JobCostTelemetry.created_at >= cutoff)
-    cost_rows = (await db.execute(cost_stmt)).scalars().all()
+    cost_rows = (await db.execute(cost_stmt)).all()
 
     gemini_text_usd = 0.0
     gemini_tts_usd = 0.0
@@ -18309,26 +18664,26 @@ async def get_admin_analytics(
     bandwidth_bytes = 0
     basis_counts: dict[str, int] = defaultdict(int)
 
-    for ev in cost_rows:
-        usd = float(ev.estimated_cost_usd or 0.0)
-        prov = str(ev.provider or "").lower()
-        basis_counts[str(ev.cost_basis or "estimated")] += 1
+    for c_prov, c_basis, c_usd, c_in, c_out, c_reqs, c_rt, c_bytes in cost_rows:
+        usd = float(c_usd or 0.0)
+        prov = str(c_prov or "").lower()
+        basis_counts[str(c_basis or "estimated")] += 1
         if prov == "gemini_text":
             gemini_text_usd += usd
-            gemini_in_tok += int(ev.input_tokens or 0)
-            gemini_out_tok += int(ev.output_tokens or 0)
-            gemini_requests += int(ev.requests_count or 0)
+            gemini_in_tok += int(c_in or 0)
+            gemini_out_tok += int(c_out or 0)
+            gemini_requests += int(c_reqs or 0)
         elif prov == "gemini_tts":
             gemini_tts_usd += usd
         elif prov in ("voxcpm", "runpod", "gpu"):
             gpu_usd += usd
-            gpu_runtime_sec += float(ev.runtime_seconds or 0.0)
+            gpu_runtime_sec += float(c_rt or 0.0)
         elif prov == "bandwidth":
             bandwidth_usd += usd
-            bandwidth_bytes += int(ev.bytes_transferred or 0)
+            bandwidth_bytes += int(c_bytes or 0)
 
-    storage_bytes = await asyncio.to_thread(_scan_storage_bytes, settings.storage_root)
-    storage_gb = storage_bytes / float(1024 ** 3)
+    storage_bytes = await _cached_storage_bytes()
+    storage_gb = (storage_bytes or 0) / float(1024 ** 3)
     storage_usd = storage_gb * float(settings.storage_cost_per_gb_month_usd)
 
     _dyn_fx = await get_dynamic_setting(db, "usd_to_mmk_rate", default=getattr(settings, "usd_to_mmk_rate", 4500.0))
@@ -18360,7 +18715,7 @@ async def get_admin_analytics(
             "success_jobs": success_jobs,
             "failed_jobs": failed_jobs,
             "cancelled_jobs": cancelled_jobs,
-            "active_users_count": len(active_users),
+            "active_users_count": active_users_cnt,
             "total_recap_credits_consumed": round(total_recap_cr_used, 2),
             "total_voice_minutes_consumed": round(total_voice_sec_used / 60.0, 2),
             "total_output_minutes": round(total_output_sec / 60.0, 2),
@@ -18370,7 +18725,7 @@ async def get_admin_analytics(
             "refunded_voice_minutes": refunded_voice_min,
         },
         "expiration": {
-            "active_grants_count": len(_all_active_grants),
+            "active_grants_count": len(_active_grant_rows),
             "expiring_7d_count": expiring_7d_count,
             "expiring_7d_recap_credits": round(expiring_7d_recap_sec / 60.0, 2),
             "expiring_7d_voice_minutes": round(expiring_7d_voice_sec / 60.0, 2),
@@ -18981,10 +19336,11 @@ async def extend_admin_wallet_grant(
     ))
     await db.commit()
 
+    new_exp_yangon_str = _fmt_yangon_iso_str(new_exp, "%Y-%m-%d %H:%M MMT")
+    new_exp_yangon_date = _fmt_yangon_iso_str(new_exp, "%Y-%m-%d")
+
     if req.notify_user and settings.bot_token:
         try:
-            from aiogram import Bot
-
             bot = create_telegram_bot(token=settings.bot_token)
             try:
                 rem_parts = []
@@ -18999,7 +19355,7 @@ async def extend_admin_wallet_grant(
                         f"🎁 <b>Package သက်တမ်း တိုးပေးပြီးပါပြီ!</b>\n\n"
                         f"• လက်ကျန်: <b>{bal_str}</b>\n"
                         f"• ထပ်တိုးသက်တမ်း: <b>+{int(req.add_days)} ရက်</b>\n"
-                        f"• သက်တမ်းကုန်မည့်ရက်အသစ်: <code>{new_exp.strftime('%Y-%m-%d')}</code>"
+                        f"• သက်တမ်းကုန်မည့်ရက်အသစ် (မြန်မာစံတော်ချိန်): <code>{new_exp_yangon_str}</code>"
                     ),
                     parse_mode="HTML",
                 )
@@ -19012,7 +19368,8 @@ async def extend_admin_wallet_grant(
         "success": True,
         "grant_id": grant.id,
         "new_expires_at": new_exp.isoformat(),
-        "message": f"သက်တမ်း +{int(req.add_days)} ရက် တိုးပေးပြီးပါပြီ ({new_exp.strftime('%Y-%m-%d')})",
+        "new_expires_yangon": new_exp_yangon_str,
+        "message": f"သက်တမ်း +{int(req.add_days)} ရက် တိုးပေးပြီးပါပြီ ({new_exp_yangon_date})",
     }
 
 

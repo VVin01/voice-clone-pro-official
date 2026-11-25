@@ -30,7 +30,7 @@ INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 # ── Release pin: cache token ─────────────────────────────────────
 
 def test_cy_cache_token_is_r140():
-    assert INDEX_HTML.count("20261123_round15") == 5
+    assert INDEX_HTML.count("20261125_admin_r1") == 5
     assert "20261104_r" + "122" not in INDEX_HTML
 
 

@@ -327,4 +327,4 @@ def test_admin_design_pass_i18n_parity_and_user_detail_completeness():
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
 
-    assert INDEX_HTML.count("20261123_round15") == 5
+    assert INDEX_HTML.count("20261125_admin_r1") == 5

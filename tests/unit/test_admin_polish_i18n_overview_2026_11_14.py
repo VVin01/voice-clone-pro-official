@@ -415,7 +415,7 @@ def _mock_payloads() -> dict:
 
 
 def test_cache_bust_token_is_r150():
-    assert INDEX_HTML.count("20261123_round15") == 5
+    assert INDEX_HTML.count("20261125_admin_r1") == 5
     assert "20261114_r149" not in INDEX_HTML
 
 
@@ -542,11 +542,11 @@ def test_playwright_admin_polish_overview_and_i18n_sweep():
 
             # Open Admin tab & load overview + key health while in 'my' first
             page.evaluate("document.querySelector('[data-tab=\"tab-admin\"]').click()")
-            page.wait_for_function("document.getElementById('adm-total-users').innerText.trim() === '420'")
+            page.wait_for_function("document.getElementById('adm-total-users').innerText.trim() === '185'")
 
-            # Item 3 in MY
-            assert page.locator("#adm-total-users").inner_text().strip() == "420"
-            assert page.locator("#adm-total-users-split").inner_text().strip() == "တကယ်သုံးသူ 185 · တစ်ခါမှ မသုံးသူ 235"
+            # Item 3 in MY (Round 1 F2: real_users headline, total_users in split)
+            assert page.locator("#adm-total-users").inner_text().strip() == "185"
+            assert page.locator("#adm-total-users-split").inner_text().strip() == "စုစုပေါင်း စာရင်းဝင် 420 · တစ်ခါမှ မသုံးသူ 235"
 
             # Root-cause fix (Item 2.1): late switch to 'en' after loadAdminData
             page.evaluate("setLanguage('en')")
@@ -557,10 +557,10 @@ def test_playwright_admin_polish_overview_and_i18n_sweep():
             assert "3" in triage_title and "slip" in triage_title.lower()
 
             # Item 3 in EN
-            assert page.locator("#adm-total-users").inner_text().strip() == "420"
-            assert page.locator("#adm-total-users-split").inner_text().strip() == "Real 185 · never used 235"
+            assert page.locator("#adm-total-users").inner_text().strip() == "185"
+            assert page.locator("#adm-total-users-split").inner_text().strip() == "Total registered 420 · never used 235"
             users_lbl = page.locator(".adm-kpi-users .stat-lbl").inner_text().strip()
-            assert users_lbl == "Total Users", f"Unexpected EN headline label: {users_lbl!r}"
+            assert users_lbl == "Active Users", f"Unexpected EN headline label: {users_lbl!r}"
 
             # Item 1: open Key Health & inspect fixed-rhythm rows + 20+ char ellipsis at 360px
             page.evaluate("showAdminSection('keys')")
@@ -696,8 +696,8 @@ def test_playwright_admin_polish_overview_and_i18n_sweep():
             page.wait_for_timeout(100)
             page.evaluate("showAdminSection('overview')")
             page.wait_for_timeout(100)
-            assert page.locator(".adm-kpi-users .stat-lbl").inner_text().strip() == "စုစုပေါင်း အသုံးပြုသူများ"
-            assert page.locator("#adm-total-users-split").inner_text().strip() == "တကယ်သုံးသူ 185 · တစ်ခါမှ မသုံးသူ 235"
+            assert page.locator(".adm-kpi-users .stat-lbl").inner_text().strip() == "အမှန်တကယ် သုံးစွဲသူများ"
+            assert page.locator("#adm-total-users-split").inner_text().strip() == "စုစုပေါင်း စာရင်းဝင် 420 · တစ်ခါမှ မသုံးသူ 235"
 
             # Verify no console pageerror occurred
             assert not page_errors, f"Uncaught JS page errors: {page_errors}"

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html
 import inspect
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -805,10 +806,10 @@ async def handle_moderation_ban_callback(
         await callback_query.answer(f"Ban မအောင်မြင်ပါ: {exc}", show_alert=True)
         return
 
-    # Update DB strike row
+    # Update DB strike row + write AuditLog
     async with _session_or_new(session) as s:
         from sqlalchemy import select
-        from app.models.schema import GroupAiModerationStrike, utc_now
+        from app.models.schema import AuditLog, GroupAiModerationStrike, utc_now
 
         strike = (
             await s.execute(
@@ -818,15 +819,47 @@ async def handle_moderation_ban_callback(
         if strike is not None:
             strike.banned_by = admin_user.id
             strike.banned_at = utc_now()
-            await s.commit()
+        s.add(
+            AuditLog(
+                admin_id=admin_user.id,
+                action="group_mod.gai_ban",
+                target_type="group_member",
+                target_id=str(target_user_id),
+                details_json=json.dumps(
+                    {
+                        "chat_id": chat_id,
+                        "strike_id": strike_id,
+                        "source": "gai_ban",
+                    }
+                ),
+            )
+        )
+        await s.commit()
 
-    # Update the escalation DM
+    # Update the escalation DM with 1-tap undo button reusing gmod_undo:unban:
     if callback_query.message:
         try:
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+            from app.services import group_moderation as gmod
+
             admin_label = admin_user.username or str(admin_user.id)
             current_text = getattr(callback_query.message, "html_text", None) or callback_query.message.text or ""
             updated_text = f"{current_text}\n\n🔨 <b>Banned by @{admin_label}</b>"
-            await callback_query.message.edit_text(updated_text, parse_mode="HTML")
+            undo_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="↩️ ပြန်ဖြည်မည်",
+                            callback_data=f"{gmod.UNDO_CALLBACK_PREFIX}:unban:{int(chat_id)}:{int(target_user_id)}",
+                        )
+                    ]
+                ]
+            )
+            await callback_query.message.edit_text(
+                updated_text,
+                parse_mode="HTML",
+                reply_markup=undo_kb,
+            )
         except Exception as exc:
             logger.debug("group_ai_admin: failed to edit escalation DM after ban: %s", exc)
 

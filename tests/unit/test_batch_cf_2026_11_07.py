@@ -145,7 +145,7 @@ def test_recap_step_text_placeholder_matches_neutral_value():
 # ── Release pin: cache token (split-literal, sweep-proof) ────────
 
 def test_cache_token_is_followup1():
-    token = "20261123_" + "round15"
+    token = "20261125_" + "admin_r1"
     stale = "20261104_r" + "99"
     assert INDEX_HTML.count(token) == 5
     assert stale not in INDEX_HTML

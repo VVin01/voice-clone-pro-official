@@ -10,7 +10,7 @@ This module pins:
   2. The auditor's credit/sign-off detection + prompt rule.
   3. The ``is_credit_or_signoff`` detector on both evidence sentences.
   4. The ``audit_script_ending_credit`` repair function (drop only).
-  5. Cache token bump to 20261123_round15.
+  5. Cache token bump to 20261125_admin_r1.
 """
 import pytest
 from pathlib import Path
@@ -228,7 +228,7 @@ INDEX_HTML = _INDEX_HTML.read_text(encoding="utf-8")
 
 
 def test_cache_token_r158():
-    assert INDEX_HTML.count("?v=20261123_round15") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
 
 
 def test_cache_token_no_stale_r157():

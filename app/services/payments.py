@@ -477,6 +477,8 @@ async def approve_payment_request(
     session: AsyncSession,
     payment_id: str,
     admin_id: int,
+    *,
+    recap_credits_override: float | None = None,
 ) -> tuple[bool, PaymentRequest | None, str]:
     """Approve payment request and credit purchased minutes idempotently.
 
@@ -524,12 +526,22 @@ async def approve_payment_request(
     cat = get_plan_by_code(payment.package_code)
     _edited_recap = getattr(payment, "edited_recap_credits", None)
     _snap_recap = getattr(payment, "recap_credits", None)
-    if _edited_recap is not None:
+    if recap_credits_override is not None:
+        _recap_sec_to_credit = max(0, int(round(float(recap_credits_override) * 60)))
+        _recap_to_credit: int | float = (
+            _recap_sec_to_credit // 60
+            if _recap_sec_to_credit % 60 == 0
+            else round(_recap_sec_to_credit / 60.0, 2)
+        )
+    elif _edited_recap is not None:
         _recap_to_credit = int(_edited_recap)
+        _recap_sec_to_credit = _recap_to_credit * 60
     elif _snap_recap is not None and int(_snap_recap) > 0:
         _recap_to_credit = int(_snap_recap)
+        _recap_sec_to_credit = _recap_to_credit * 60
     else:
         _recap_to_credit = int(cat["recap_credits"]) if cat else 0
+        _recap_sec_to_credit = _recap_to_credit * 60
 
     from app.services.billing import (
         DEFAULT_PLAN_VALIDITY_DAYS,
@@ -547,8 +559,8 @@ async def approve_payment_request(
     ).scalar_one_or_none()
     bal = await get_minute_balance(session, payment.user_id)
 
-    if _recap_to_credit > 0 and target_user is not None:
-        new_avail_sec = get_recap_available_seconds(target_user) + (_recap_to_credit * 60)
+    if _recap_sec_to_credit > 0 and target_user is not None:
+        new_avail_sec = get_recap_available_seconds(target_user) + _recap_sec_to_credit
         sync_user_recap_balance(target_user, new_avail_sec)
         target_user.account_category = AccountCategory.PURCHASED.value
         await record_recap_credit_event(
@@ -556,7 +568,7 @@ async def approve_payment_request(
             user_id=payment.user_id,
             direction=LedgerDirection.CREDIT.value,
             credits=_recap_to_credit,
-            seconds=_recap_to_credit * 60,
+            seconds=_recap_sec_to_credit,
             reference_id=str(payment.id),
             note=(
                 f"Approved by admin {admin_id}: {_recap_to_credit} "
@@ -570,17 +582,17 @@ async def approve_payment_request(
     _grant_source = (
         "TOPUP"
         if _is_topup
-        else ("COMBO" if (payment.minutes > 0 and _recap_to_credit > 0) else "PACKAGE")
+        else ("COMBO" if (payment.minutes > 0 and _recap_sec_to_credit > 0) else "PACKAGE")
     )
     _pkg_name = (cat.get("name") if cat else None) or payment.package_code
 
-    if target_user is not None and (payment.minutes > 0 or _recap_to_credit > 0):
+    if target_user is not None and (payment.minutes > 0 or _recap_sec_to_credit > 0):
         grant = await create_wallet_grant(
             session,
             payment.user_id,
             source_type=_grant_source,
             voice_seconds=int(payment.minutes or 0) * 60,
-            recap_seconds=_recap_to_credit * 60,
+            recap_seconds=_recap_sec_to_credit,
             validity_days=_grant_vdays if _grant_vdays > 0 else None,
             payment_request_id=str(payment.id),
             package_code=payment.package_code,

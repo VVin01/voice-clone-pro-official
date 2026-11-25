@@ -1820,7 +1820,7 @@ async function loadIncomeDetail() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed");
         if (totalEl) {
-            totalEl.innerText = (data.total_mmk || 0).toLocaleString() + " MMK · " +
+            totalEl.innerText = admFmtMmk(data.total_mmk || 0) + " · " +
                 tf("admin_income_count", { count: data.count || 0 });
         }
         const rows = data.payments || [];
@@ -1832,9 +1832,9 @@ async function loadIncomeDetail() {
             <div class="live-job-row income-detail-row${p.is_test ? " is-test" : ""}">
                 <div class="live-job-row-main">
                     <div class="live-job-row-title">${escapeHtml(p.user_name || "")}${p.username ? " <span class='income-detail-username'>@" + escapeHtml(p.username) + "</span>" : ""}${p.is_test ? ` <span class="badge-test">${t("admin_income_test_badge")}</span>` : ""}</div>
-                    <div class="live-job-row-meta">${escapeHtml(p.package_code || "")} · ${tf("admin_income_minutes", { minutes: p.minutes ?? 0 })} · ${admFmtDate(p.paid_at)}</div>
+                    <div class="live-job-row-meta">${escapeHtml(p.package_code || "")} · ${tf("admin_income_minutes", { minutes: p.minutes ?? 0 })} · ${admFmtYangon(p.paid_at)}</div>
                 </div>
-                <div class="income-detail-amount">${(p.amount_mmk || 0).toLocaleString()} MMK</div>
+                <div class="income-detail-amount">${admFmtMmk(p.amount_mmk || 0)}</div>
             </div>`).join("");
     } catch (e) {
         list.innerHTML = "";
@@ -3598,32 +3598,65 @@ function markPaneEnter(pane) {
 }
 window.addEventListener("resize", () => { try { moveNavPill(); } catch (e) {} try { moveSpeedPills(); } catch (e) {} try { moveSegPills(); } catch (e) {} });
 
+let admCurrentJobsSubTab = "live";
+let _admQueueActiveCount = 0;
+
+function _clearAdminQueuePoll() {
+    if (window.adminQueueInterval) {
+        clearTimeout(window.adminQueueInterval);
+        clearInterval(window.adminQueueInterval);
+        window.adminQueueInterval = null;
+    }
+}
+
+function scheduleAdminQueuePoll() {
+    _clearAdminQueuePoll();
+    if (typeof document !== "undefined" && document.hidden) return;
+    const adminPane = document.getElementById("tab-admin");
+    if (!adminPane || !adminPane.classList.contains("active")) return;
+    if (admCurrentSection !== "jobs" || admCurrentJobsSubTab !== "live") return;
+    const delayMs = _admQueueActiveCount > 0 ? 4000 : 15000;
+    window.adminQueueInterval = setTimeout(() => {
+        window.adminQueueInterval = null;
+        if (typeof document !== "undefined" && document.hidden) return;
+        const paneNow = document.getElementById("tab-admin");
+        if (!paneNow || !paneNow.classList.contains("active") || admCurrentJobsSubTab !== "live") return;
+        if (admCurrentSection === "jobs") loadAdminQueue(true);
+    }, delayMs);
+}
+window.scheduleAdminQueuePoll = scheduleAdminQueuePoll;
+
+if (typeof document !== "undefined" && !window._admQueueVisBound) {
+    window._admQueueVisBound = true;
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            _clearAdminQueuePoll();
+        } else {
+            scheduleAdminQueuePoll();
+        }
+    });
+}
+
 function syncTabAdminLifecycle(tabId) {
     if (tabId === "tab-admin") {
         if (!window._adminProRequested && state.user && state.user.is_admin) {
             window._adminProRequested = true;
             const s = document.createElement("script");
-            const _av = (document.querySelector('script[src*="/static/js/app.js"]')?.src.match(/[?&]v=([^&]+)/) || [])[1] || "20261123_followup1";
+            const _av = (document.querySelector('script[src*="/static/js/app.js"]')?.src.match(/[?&]v=([^&]+)/) || [])[1] || "20261125_admin_r1";
             s.src = "/static/js/admin_pro.js?v=" + _av;
             s.defer = true;
             document.head.appendChild(s);
         }
         loadAdminData();
-        if (admCurrentSection === "jobs") loadAdminQueue();
+        if (admCurrentSection === "payments") loadAdminPendingSlips();
+        if (admCurrentSection === "jobs") {
+            if (admCurrentJobsSubTab === "live") loadAdminQueue();
+            else loadAdminHistory();
+        }
         if (admCurrentSection === "settings") { loadAdminSettings(); loadAdminPricing(); }
-        if (window.adminQueueInterval) clearInterval(window.adminQueueInterval);
-        window.adminQueueInterval = setInterval(() => {
-            if (document.hidden) return;
-            const adminPane = document.getElementById("tab-admin");
-            if (adminPane && adminPane.classList.contains("active")) {
-                if (admCurrentSection === "jobs") loadAdminQueue(true);
-            } else {
-                clearInterval(window.adminQueueInterval);
-            }
-        }, 4000);
-    } else if (window.adminQueueInterval) {
-        clearInterval(window.adminQueueInterval);
-        window.adminQueueInterval = null;
+        scheduleAdminQueuePoll();
+    } else {
+        _clearAdminQueuePoll();
     }
 }
 
@@ -12889,10 +12922,53 @@ function admFmtBytes(n) {
     return Math.round(n / 1024) + " KB";
 }
 
-function admFmtDate(iso) {
+const _ADM_MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function admFmtYangon(iso) {
     if (!iso) return "—";
-    return String(iso).replace("T", " ").slice(0, 16);
+    let raw = String(iso).trim();
+    if (!raw) return "—";
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(raw) && !/(Z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
+        raw = raw.replace(" ", "T") + "Z";
+    }
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return String(iso);
+    try {
+        const toParts = (dt) => {
+            const map = {};
+            new Intl.DateTimeFormat("en-GB", {
+                timeZone: "Asia/Yangon",
+                year: "numeric",
+                month: "numeric",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                hour12: true,
+            }).formatToParts(dt).forEach(p => { map[p.type] = p.value; });
+            return map;
+        };
+        const p = toParts(d);
+        const nowP = toParts(new Date());
+        const mer = String(p.dayPeriod || "").toUpperCase();
+        const timeStr = `${p.hour}:${p.minute}${mer ? " " + mer : ""}`;
+        if (p.year === nowP.year && p.month === nowP.month && p.day === nowP.day) {
+            const todayWord = (typeof currentLang !== "undefined" && currentLang === "en")
+                ? "Today"
+                : (typeof t === "function" ? t("adm_today_word") : "Today");
+            return `${todayWord} · ${timeStr}`;
+        }
+        const mIdx = Math.max(0, Math.min(11, parseInt(p.month, 10) - 1));
+        return `${parseInt(p.day, 10)} ${_ADM_MONTHS_SHORT[mIdx]} ${p.year} · ${timeStr}`;
+    } catch (e) {
+        return raw;
+    }
 }
+window.admFmtYangon = admFmtYangon;
+
+function admFmtDate(iso) {
+    return admFmtYangon(iso);
+}
+window.admFmtDate = admFmtDate;
 
 function admStateLoading(el) {
     if (el) el.innerHTML = `<div class="adm-state"><span class="spinner"></span><span data-i18n="admin_loading">${t("admin_loading")}</span></div>`;
@@ -12930,24 +13006,39 @@ function showAdminSection(name) {
     if (pane) pane.scrollTop = 0;
     window.scrollTo({ top: 0, behavior: "smooth" });
 
-    // Lazy-load each screen the first time it is opened.
+    // Lazy-load each screen without duplicate bursts.
     if (name === "overview") {
-        if (!admStageTimingsData) loadAdminStageTimings(false);
-        loadAdminAnalytics(30);
+        if (!window._lastAdminOverview) {
+            loadAdminData();
+        } else {
+            if (!admStageTimingsData) loadAdminStageTimings(false);
+            if (!window._admAnalyticsLoadedAt || (Date.now() - window._admAnalyticsLoadedAt) > 30000) {
+                loadAdminAnalytics(30);
+            }
+        }
     }
     if (name === "payments") {
-        if (!admLoadedSections.payments) { loadAdminData(); admLoadedSections.payments = true; }
+        loadAdminPendingSlips();
         loadAdminOrders("");
         loadAdminRefunds();
     }
     if (name === "jobs") {
-        loadAdminQueue();
-        if (typeof loadAdminFleetStatus === "function") loadAdminFleetStatus();
+        if (admCurrentJobsSubTab === "history") {
+            loadAdminHistory();
+        } else {
+            loadAdminQueue();
+        }
     }
     if (name === "users" && !admLoadedSections.users) { loadAdminUsersRecent(); admLoadedSections.users = true; }
     if (name === "activity" && !admLoadedSections.activity) { loadAdminAudit(); admLoadedSections.activity = true; }
     if (name === "keys") loadAdminKeyHealth(false);
-    if (name === "settings") { loadAdminSettings(); loadAdminPricing(); }
+    if (name === "settings") {
+        if (window.adminPro && typeof window.adminPro.mountAll === "function") {
+            window.adminPro.mountAll();
+        }
+        loadAdminSettings();
+        loadAdminPricing();
+    }
     if (name === "broadcast") {
         const ta = document.getElementById("adm-broadcast-text");
         if (ta && !ta.dataset.admCountBound) {
@@ -12958,23 +13049,26 @@ function showAdminSection(name) {
             });
         }
     }
+    scheduleAdminQueuePoll();
 }
 window.showAdminSection = showAdminSection;
 
 function showAdminJobsTab(tab) {
+    admCurrentJobsSubTab = tab === "history" ? "history" : "live";
     const live = document.getElementById("adm-jobs-live");
     const hist = document.getElementById("adm-jobs-history");
     const bLive = document.getElementById("adm-jobs-tab-live");
     const bHist = document.getElementById("adm-jobs-tab-history");
-    if (live) live.classList.toggle("hidden", tab !== "live");
-    if (hist) hist.classList.toggle("hidden", tab !== "history");
-    if (bLive) bLive.classList.toggle("active", tab === "live");
-    if (bHist) bHist.classList.toggle("active", tab === "history");
-    if (tab === "history") {
+    if (live) live.classList.toggle("hidden", admCurrentJobsSubTab !== "live");
+    if (hist) hist.classList.toggle("hidden", admCurrentJobsSubTab !== "history");
+    if (bLive) bLive.classList.toggle("active", admCurrentJobsSubTab === "live");
+    if (bHist) bHist.classList.toggle("active", admCurrentJobsSubTab === "history");
+    if (admCurrentJobsSubTab === "history") {
+        _clearAdminQueuePoll();
         loadAdminHistory();
     } else {
         loadAdminQueue();
-        if (typeof loadAdminFleetStatus === "function") loadAdminFleetStatus();
+        scheduleAdminQueuePoll();
     }
 }
 window.showAdminJobsTab = showAdminJobsTab;
@@ -13000,7 +13094,7 @@ async function loadAdminKeyHealth(force) {
         admStateLoading(summary);
     }
     try {
-        const res = await fetchWithTimeout("/api/admin/key-health" + (force ? "?refresh=1" : ""), { headers: getAuthHeaders() });
+        const res = await fetchWithTimeout("/api/admin/key-health" + (force ? "?refresh=true" : ""), { headers: getAuthHeaders() });
         if (!res.ok) throw new Error("key-health " + res.status);
         admKeyHealthData = await res.json();
         renderAdminKeyHealth();
@@ -13110,8 +13204,8 @@ function renderAdminOverview(stats) {
     if (!stats) return;
     window._lastAdminOverview = stats;
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
-    set("adm-total-users", stats.total_users ?? 0);
-    set("adm-total-users-split", tf("admin_stat_users_split", { real: stats.real_users ?? 0, never: stats.never_used_users ?? 0 }));
+    set("adm-total-users", stats.real_users ?? 0);
+    set("adm-total-users-split", tf("admin_stat_users_split", { total: stats.total_users ?? 0, real: stats.real_users ?? 0, never: stats.never_used_users ?? 0 }));
     set("adm-vip-users", stats.vip_users ?? 0);
     set("adm-pending-slips", stats.pending_slips ?? 0);
     set("adm-queued-jobs", stats.queued_jobs ?? 0);
@@ -13136,7 +13230,7 @@ function renderAdminOverview(stats) {
     }
     const inc = stats.income || {};
     const setIncome = (id, mmk, count) => {
-        set(id, (mmk || 0).toLocaleString() + " MMK");
+        set(id, admFmtMmk(mmk || 0));
         set(id + "-count", tf("admin_income_count", { count: count || 0 }));
     };
     setIncome("adm-income-today", inc.today_mmk, inc.today_count);
@@ -13160,11 +13254,20 @@ function renderAdminOverview(stats) {
     }
     const worker = document.getElementById("adm-worker-line");
     if (worker) {
-        const rawWorker = stats.cloud_worker_status || "";
-        const workerText = (!rawWorker || /online/i.test(rawWorker))
-            ? t("adm_worker_online")
-            : localizeServerText(rawWorker);
-        worker.innerText = "☁️ " + workerText;
+        const wObj = stats.worker || null;
+        if (wObj && wObj.status_code) {
+            const seenBit = wObj.last_seen_ago ? ` · ${wObj.last_seen_ago}` : "";
+            const stLabel = wObj.status_code === "ONLINE"
+                ? t("adm_worker_online")
+                : localizeServerText(wObj.status_text || wObj.status_code);
+            worker.innerText = "☁️ " + stLabel + seenBit;
+        } else {
+            const rawWorker = stats.worker_status || stats.cloud_worker_status || "";
+            const workerText = (!rawWorker || /online/i.test(rawWorker))
+                ? t("adm_worker_online")
+                : localizeServerText(rawWorker);
+            worker.innerText = "☁️ " + workerText;
+        }
     }
     const actionsBox = document.getElementById("admin-recent-actions");
     if (actionsBox) {
@@ -13175,9 +13278,12 @@ function renderAdminOverview(stats) {
             actionsBox.innerHTML = acts.map(a => `
                 <div class="adm-action-row-line">
                     <span>• <b>${escapeHtml(a.action)}</b> → ${escapeHtml(a.target_type || "")} ${escapeHtml(String(a.target_id || ""))}</span>
-                    <span class="text-muted adm-line-time">${admFmtDate(a.created_at)}</span>
+                    <span class="text-muted adm-line-time">${admFmtYangon(a.created_at)}</span>
                 </div>`).join("");
         }
+    }
+    if (typeof window._admpRenderOverviewFromStats === "function") {
+        window._admpRenderOverviewFromStats(stats);
     }
 }
 window.renderAdminOverview = renderAdminOverview;
@@ -13291,8 +13397,8 @@ async function loadAdminData() {
         const host = document.getElementById("adm-overview-error");
         if (host) host.innerHTML = "";
     };
-    // B0: cached stage timings card on Overview (parallel, non-blocking).
-    loadAdminStageTimings(false);
+    // B0: cached stage timings + analytics on Overview (single fetch, non-blocking).
+    if (!admStageTimingsData) loadAdminStageTimings(false);
     loadAdminAnalytics(30);
     try {
         const resStats = await fetchWithTimeout("/api/admin/overview", { headers: getAuthHeaders() });
@@ -13305,27 +13411,38 @@ async function loadAdminData() {
     } catch (e) {
         console.warn("Error loading admin overview:", e);
         admOverviewError();
-        // Not silent: the recent-actions card shows error + Retry.
         const actionsBox = document.getElementById("admin-recent-actions");
         if (actionsBox && !actionsBox.children.length) admStateError(actionsBox, loadAdminData);
     }
 
-    // Pending payment slips
+    // Pending payment slips — only fetch when Payments screen is active (Overview already gets pending_slips count).
+    if (admCurrentSection === "payments") {
+        await loadAdminPendingSlips();
+    }
+}
+
+async function loadAdminPendingSlips() {
+    if (!state.user?.is_admin) return;
     const slipsContainer = document.getElementById("admin-slips-list");
     try {
         const resSlips = await fetchWithTimeout("/api/admin/pending-slips", { headers: getAuthHeaders() });
         if (resSlips.ok && slipsContainer) {
             renderAdminSlips(await resSlips.json());
         } else if (slipsContainer) {
-            admStateError(slipsContainer, "loadAdminData()");
+            admStateError(slipsContainer, "loadAdminPendingSlips()");
         }
     } catch (e) {
-        if (slipsContainer) admStateError(slipsContainer, "loadAdminData()");
+        if (slipsContainer) admStateError(slipsContainer, "loadAdminPendingSlips()");
     }
 }
+window.loadAdminPendingSlips = loadAdminPendingSlips;
 
 function renderAdminSlips(slips) {
     window._lastAdminSlips = Array.isArray(slips) ? slips : [];
+    if (typeof window._admpRenderSlipsFromData === "function") {
+        window._admpRenderSlipsFromData(window._lastAdminSlips);
+        return;
+    }
     const slipsContainer = document.getElementById("admin-slips-list");
     if (!slipsContainer) return;
     if (!window._lastAdminSlips.length) {
@@ -13337,29 +13454,30 @@ function renderAdminSlips(slips) {
         const item = document.createElement("div");
         item.className = "slip-item-card";
         const slipThumb = s.slip_url
-            ? `<img src="${escapeHtml(s.slip_url)}" class="slip-thumb" onclick="openSlipModal('${escapeHtml(s.slip_url)}')" title="${escapeHtml(t("adm_slip_img_title"))}">`
+            ? `<img data-slip-src="${escapeHtml(s.slip_url)}" class="slip-thumb" onclick="openSlipModal('${escapeHtml(s.slip_url)}')" title="${escapeHtml(t("adm_slip_img_title"))}">`
             : `<div class="slip-thumb" style="display:flex;align-items:center;justify-content:center;font-size:20px;opacity:.75;">🧾</div>`;
         item.innerHTML = `
             <div class="slip-item-row">
                 ${slipThumb}
                 <div class="slip-info">
                     <div class="slip-user adm-tap" onclick="openAdminUserDetail(${s.user_id})">${escapeHtml(s.user_name)}${s.username ? ` (@${escapeHtml(s.username)})` : ` (ID: ${s.user_id})`}</div>
-                    <div class="slip-amount">${(s.amount_mmk || 0).toLocaleString()} MMK • ${escapeHtml(s.package_code)}</div>
-                    <div class="slip-date">${escapeHtml(s.created_at)}</div>
+                    <div class="slip-amount">${admFmtMmk(s.amount_mmk || 0)} • ${escapeHtml(s.package_code)}</div>
+                    <div class="slip-date">${escapeHtml(admFmtYangon(s.created_at))}</div>
                 </div>
             </div>
             <div class="slip-actions">
-                <button class="btn-approve" onclick="adminApproveSlip('${s.id}')">${t("btn_approve")}</button>
-                <button class="btn-reject" onclick="adminRejectSlip('${s.id}')">${t("btn_reject")}</button>
+                <button class="btn-approve" onclick="adminApproveSlip('${escapeHtml(s.id)}')">${t("btn_approve")}</button>
+                <button class="btn-reject" onclick="adminRejectSlip('${escapeHtml(s.id)}')">${t("btn_reject")}</button>
             </div>
         `;
         slipsContainer.appendChild(item);
     });
-    slipsContainer.querySelectorAll(".slip-thumb").forEach(async (imgEl) => {
-        const authUrl = await fetchAuthImageUrl(imgEl.getAttribute("src"));
+    slipsContainer.querySelectorAll("img[data-slip-src]").forEach(async (imgEl) => {
+        const authUrl = await fetchAuthImageUrl(imgEl.getAttribute("data-slip-src"));
         if (authUrl) imgEl.src = authUrl;
     });
 }
+window.renderAdminSlips = renderAdminSlips;
 
 async function openSlipModal(url) {
     const modal = document.getElementById("slip-modal");
@@ -13628,12 +13746,15 @@ async function adminApproveSlip(reqId) {
                 showStudioToast(adminErrorText("admin_generic_err", data.detail || data.message), 'error');
             }
             admLoadedSections.payments = false;
+            loadAdminPendingSlips();
+            loadAdminOrders("");
             loadAdminData();
         } catch (e) {
             showStudioToast(adminErrorText("admin_generic_err", e.message), 'error');
         }
     });
 }
+window.adminApproveSlip = adminApproveSlip;
 
 async function adminRejectSlip(reqId) {
     haptic("medium");
@@ -13659,6 +13780,8 @@ async function adminRejectSlip(reqId) {
                 } else {
                     showStudioToast(adminErrorText("admin_generic_err", data.detail || data.message), 'error');
                 }
+                loadAdminPendingSlips();
+                loadAdminOrders("");
                 loadAdminData();
             } catch (e) {
                 showStudioToast(adminErrorText("admin_generic_err", e.message), 'error');
@@ -13666,6 +13789,7 @@ async function adminRejectSlip(reqId) {
         },
     });
 }
+window.adminRejectSlip = adminRejectSlip;
 
 // ── Users: search, recent list, detail ───────────────────────────────
 
@@ -13707,7 +13831,7 @@ function _adminRequireBanReason() {
 function admUserRowHtml(u) {
     // First grapheme, not charAt(0): names starting with an emoji or a
     const initial = escapeHtml((Array.from((u.first_name || "?").trim())[0] || "?").toUpperCase());
-    const balFmt = Math.floor((u.balance_seconds || 0) / 60) + "m";
+    const balFmt = admFmtSecs(u.balance_seconds || 0);
     const pendingBadge = Number(u.daily_free_pending_seconds || 0) > 0
         ? ` <span class="mini-tag text-muted">${escapeHtml(t("admin_daily_free_pending"))}</span>`
         : "";
@@ -13717,7 +13841,7 @@ function admUserRowHtml(u) {
     segs.push(`ID: ${u.id}`);
     segs.push(escapeHtml(u.account_category || "FREE"));
     segs.push(`\u23f1 ${balFmt}${pendingBadge}`);
-    segs.push(`\ud83c\udfac ${u.recap_credits ?? 0}`);
+    segs.push(`\ud83c\udfac ${admFmtCredits(u.recap_credits ?? 0)}`);
     if (u.is_banned) segs.push("\ud83d\udeab");
     const subHtml = segs.map(s => `<span class="adm-sub-seg">${s}</span>`).join("");
     // Two-line row (full-app audit A-3/A-4/A-6): line 1 is the name
@@ -13734,6 +13858,7 @@ function admUserRowHtml(u) {
         <span class="adm-row-chev">\u203a</span>
     </div>`;
 }
+window.admUserRowHtml = admUserRowHtml;
 
 // ── Admin Users list state (A-6): category filter + offset paging ──
 let admUsersCategory = "";   // "" | "FREE" | "PURCHASED"
@@ -13852,6 +13977,9 @@ async function openAdminUserDetail(uid) {
         const u = await res.json();
         if (!res.ok) throw new Error(u.detail || "Failed");
         renderAdminUserDetail(u);
+        if (typeof window._admpEnhanceUserDetailFromData === "function") {
+            window._admpEnhanceUserDetailFromData(u);
+        }
     } catch (e) {
         showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
         closeAdminUserDetail();
@@ -13883,10 +14011,8 @@ function renderAdminUserDetail(u) {
             ${u.is_test_account ? `<span class="mini-tag">${t("admin_badge_test_acct")}</span>` : ""}
             ${activeJobs > 0 ? `<span class="mini-tag">${t("admin_badge_active_jobs")}: ${activeJobs}</span>` : ""}`;
     }
-    const mins = Math.floor((u.balance_seconds || 0) / 60);
-    const secs = (u.balance_seconds || 0) % 60;
-    set("adm-detail-balance", mins + "m " + secs + "s");
-    set("adm-detail-credits", String(u.recap_credits ?? 0));
+    set("adm-detail-balance", admFmtSecs(u.balance_seconds || 0));
+    set("adm-detail-credits", admFmtCredits(u.recap_credits ?? 0));
     set("adm-detail-jobs", `${u.jobs_total ?? 0} (${u.jobs_success ?? 0}✓ / ${u.jobs_failed ?? 0}✗)`);
     set("adm-detail-lastjob", admFmtDate(u.last_job_at));
     // Reset adjust form
@@ -13920,9 +14046,34 @@ function renderAdminUserDetail(u) {
 }
 
 function admFmtSecs(total) {
-    const s = Math.max(0, Math.round(total || 0));
-    return Math.floor(s / 60) + "m " + (s % 60) + "s";
+    const compact = arguments.length > 1 ? !!arguments[1] : true;
+    const s = Math.max(0, Math.round(Number(total) || 0));
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    if (!compact) return m + "m " + rem + "s";
+    if (s === 0) return "0m";
+    if (m === 0) return rem + "s";
+    if (rem === 0) return m + "m";
+    return m + "m " + rem + "s";
 }
+window.admFmtSecs = admFmtSecs;
+
+function admFmtCredits(val) {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n === 0) return "0";
+    return String(Number(n.toFixed(2)));
+}
+window.admFmtCredits = admFmtCredits;
+
+function admFmtMmk(val) {
+    const num = Math.round(Number(val) || 0);
+    if (typeof currentLang !== "undefined" && currentLang === "en") {
+        return num.toLocaleString() + " MMK";
+    }
+    const suffix = typeof t === "function" ? t("adm_mmk_suffix") : " MMK";
+    return num.toLocaleString("en-US") + suffix;
+}
+window.admFmtMmk = admFmtMmk;
 
 // Batch CD Item 1: render the completed-detail sections (balance
 function renderAdminDetailExtras(u) {
@@ -13930,18 +14081,16 @@ function renderAdminDetailExtras(u) {
     const bb = u.balance_breakdown || {};
     const dailyPending = Number(bb.daily_free_pending_seconds || 0);
     const dailyVal = dailyPending > 0
-        ? `${admFmtSecs(bb.daily_free_seconds)} · ${admFmtSecs(dailyPending)} (${escapeHtml(t("admin_daily_free_pending"))})`
-        : admFmtSecs(bb.daily_free_seconds);
+        ? `${admFmtSecs(bb.daily_free_seconds, false)} · ${admFmtSecs(dailyPending, false)} (${escapeHtml(t("admin_daily_free_pending"))})`
+        : admFmtSecs(bb.daily_free_seconds, false);
     const bd = document.getElementById("adm-detail-breakdown");
     if (bd) bd.innerHTML =
         row(t("admin_bal_daily"), dailyVal) +
-        row(t("admin_bal_monthly"), admFmtSecs(bb.monthly_free_seconds)) +
-        row(t("admin_bal_welcome"), admFmtSecs(bb.welcome_seconds)) +
-        row(t("admin_bal_referral_voice"), admFmtSecs(bb.referral_voice_seconds)) +
-        row(t("admin_bal_referral"), admFmtSecs(bb.referral_seconds)) +
-        row(t("admin_bal_purchased"), admFmtSecs(bb.purchased_seconds)) +
-        row(t("admin_bal_consumed"), admFmtSecs(bb.consumed_seconds)) +
-        row(t("admin_custom_voices"), String(u.custom_voices_count ?? 0));
+        row(t("admin_bal_welcome"), admFmtSecs(bb.welcome_seconds, false)) +
+        row(t("admin_bal_referral_voice"), admFmtSecs(bb.referral_voice_seconds, false)) +
+        row(t("admin_bal_referral"), admFmtSecs(bb.referral_seconds, false)) +
+        row(t("admin_bal_purchased"), admFmtSecs(bb.purchased_seconds, false)) +
+        row(t("admin_bal_consumed"), admFmtSecs(bb.consumed_seconds, false));
     const gEl = document.getElementById("adm-detail-grants");
     if (gEl) gEl.innerHTML = `<div class="text-xs font-bold mt-2">${escapeHtml(t("adm_grants_lbl"))}</div>${renderGrantsRowsHtml(u.wallet_grants || [])}`;
     const tt = u.tts_today || {};
@@ -13993,10 +14142,10 @@ function renderAdminDetailExtras(u) {
             <div class="adm-job-mini">
                 <span class="adm-job-mini-main">${escapeHtml(p.plan || "")}</span>
                 <span class="history-item-badge status-${(p.status || "").toLowerCase()}">${escapeHtml(p.status || "")}</span>
-                <span class="text-muted text-xs">${Number(p.amount_mmk || 0).toLocaleString("en-US")} MMK · ${admFmtDate(p.created_at)}</span>
+                <span class="text-muted text-xs">${admFmtMmk(p.amount_mmk || 0)} · ${admFmtDate(p.created_at)}</span>
             </div>`).join("") : `<p class="text-muted">${t("admin_payments_empty")}</p>`;
     const ptEl = document.getElementById("adm-detail-payments-total");
-    if (ptEl) ptEl.innerHTML = row(t("admin_payments_total"), Number(u.payments_total_mmk || 0).toLocaleString("en-US") + " MMK");
+    if (ptEl) ptEl.innerHTML = row(t("admin_payments_total"), admFmtMmk(u.payments_total_mmk || 0));
     const led = u.ledger_recent || [];
     const lEl = document.getElementById("adm-detail-ledger");
     if (lEl) lEl.innerHTML = led.length ? led.map(e => `
@@ -14010,7 +14159,7 @@ function renderAdminDetailExtras(u) {
     if (rlEl) rlEl.innerHTML = rLed.length ? rLed.map(e => `
             <div class="adm-job-mini">
                 <span class="adm-job-mini-main">${escapeHtml(e.kind || "")}${e.reason ? " · " + escapeHtml(e.reason) : ""}</span>
-                <span class="text-muted text-xs">${(e.delta >= 0 ? "+" : "-") + Math.abs(e.delta || 0)} cr · ${admFmtDate(e.created_at)}</span>
+                <span class="text-muted text-xs">${(e.delta >= 0 ? "+" : "-") + admFmtCredits(Math.abs(e.delta || 0))} cr · ${admFmtDate(e.created_at)}</span>
             </div>`).join("") : `<p class="text-muted">${t("admin_recap_ledger_empty")}</p>`;
     const chats = u.ai_chats || [];
     const cEl = document.getElementById("adm-detail-ai-chats");
@@ -14062,26 +14211,34 @@ async function adminSendUserMessage() {
 }
 window.adminSendUserMessage = adminSendUserMessage;
 
-// Batch BC-1: set/unset the test-account flag (audited server-side).
+// Batch BC-1: set/unset the test-account flag (Tier 2 confirmed, audited server-side).
 async function adminToggleTestFlag(checked) {
     const uid = admCurrentUserId;
     const toggle = document.getElementById("adm-test-flag-toggle");
     if (!uid) { if (toggle) toggle.checked = !checked; return; }
     haptic("light");
-    try {
-        const res = await fetch(`/api/admin/users/${uid}/test-flag`, {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ is_test_account: !!checked }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Failed");
-        showStudioToast(t(checked ? "admin_test_flag_on" : "admin_test_flag_off"), "success");
-        loadAdminData();
-    } catch (e) {
+    const confirmKey = checked ? "adm_confirm_test_flag_on" : "adm_confirm_test_flag_off";
+    showStudioConfirm(t(confirmKey), async () => {
+        if (toggle) toggle.disabled = true;
+        try {
+            const res = await fetch(`/api/admin/users/${uid}/test-flag`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ is_test_account: !!checked }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            showStudioToast(t(checked ? "admin_test_flag_on" : "admin_test_flag_off"), "success");
+            loadAdminData();
+        } catch (e) {
+            if (toggle) toggle.checked = !checked;
+            showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
+        } finally {
+            if (toggle) toggle.disabled = false;
+        }
+    }, () => {
         if (toggle) toggle.checked = !checked;
-        showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
-    }
+    });
 }
 window.adminToggleTestFlag = adminToggleTestFlag;
 
@@ -14137,12 +14294,35 @@ async function adminApplyAdjust() {
     }
     const reason = _adminRequireReason();
     if (reason === null) return;
-    const isNegative = (minutes * 60 + seconds) < 0 || credits < 0;
+    const uSnap = window._lastAdminUserDetail || {};
+    const curVoiceSec = Number(uSnap.balance_seconds || 0);
+    const curPurchasedSec = Number(uSnap.balance_breakdown?.purchased_seconds || 0);
+    const curCredits = Number(uSnap.recap_credits || 0);
+    const deltaVoiceSec = Math.round(minutes * 60 + seconds);
+    const nextVoiceSec = (tier === "FREE")
+        ? Math.max(0, curVoiceSec - curPurchasedSec + deltaVoiceSec)
+        : Math.max(0, curVoiceSec + deltaVoiceSec);
+    const nextCredits = Math.max(0, curCredits + credits);
+    const curTier = String(uSnap.account_category || "FREE");
+    const nextTier = tier || curTier;
+    const userLabel = `${uSnap.first_name || "User"} (ID: ${uid})`;
+    const freeWipeWarning = (tier === "FREE")
+        ? tf("adm_confirm_adjust_free_warn", { mins: admFmtSecs(curPurchasedSec) })
+        : "";
+    const confirmAdjustMsg = tf("adm_confirm_adjust_msg", {
+        user: userLabel,
+        curTier,
+        nextTier,
+        curVoice: admFmtSecs(curVoiceSec),
+        nextVoice: admFmtSecs(nextVoiceSec),
+        curCr: admFmtCredits(curCredits),
+        nextCr: admFmtCredits(nextCredits),
+        reason,
+        warn: freeWipeWarning,
+    });
+
     const doApply = async () => {
         haptic("medium");
-        // In-flight guard (hunt #2 R4): a double-tap on Apply would
-        // otherwise credit/debit twice — disable the button for the
-        // duration of the request, mirroring submitPaymentSlip.
         const applyBtn = document.getElementById("adm-adjust-apply-btn");
         if (applyBtn) applyBtn.disabled = true;
         try {
@@ -14161,7 +14341,7 @@ async function adminApplyAdjust() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || "Failed");
-            _admAdjustIdemKey = null; // applied — the next apply is a new intent
+            _admAdjustIdemKey = null;
             showStudioToast(data.message, "success");
             const reasonEl = document.getElementById("adm-adjust-reason");
             if (reasonEl) reasonEl.value = "";
@@ -14173,11 +14353,7 @@ async function adminApplyAdjust() {
             if (applyBtn) applyBtn.disabled = false;
         }
     };
-    if (isNegative) {
-        showStudioConfirm(t("admin_confirm_negative_adjust"), doApply);
-    } else {
-        await doApply();
-    }
+    showStudioConfirm(confirmAdjustMsg, doApply);
 }
 window.adminApplyAdjust = adminApplyAdjust;
 
@@ -14206,11 +14382,7 @@ async function _adminBanCall(uid, ban) {
             showStudioToast(adminErrorText("admin_generic_err", e.message), "error");
         }
     };
-    if (ban) {
-        showStudioConfirm(t("admin_confirm_ban"), doCall);
-    } else {
-        await doCall();
-    }
+    showStudioConfirm(t(ban ? "admin_confirm_ban" : "adm_confirm_unban_user"), doCall);
 }
 
 async function adminBanUser(uid) { await _adminBanCall(uid, true); }
@@ -14336,15 +14508,17 @@ function renderAdminQueueData(data) {
     if (!data) return;
     window._lastAdminQueue = data;
     if (data.worker && typeof renderAdminFleetUI === "function") {
-        renderAdminFleetUI({ vps_worker: data.worker });
+        _adminFleetData = { vps_worker: data.worker };
+        renderAdminFleetUI(_adminFleetData);
     }
     const container = document.getElementById("admin-queue-list");
     const bannerEl = document.getElementById("admin-queue-status-banner");
     if (!container) return;
 
-    const c = data.counts || { total_listed: 0, queued: 0, running: 0, success: 0, failed: 0 };
+    const c = data.counts || { total_listed: 0, window_total: 0, queued: 0, running: 0, success: 0, failed: 0 };
+    _admQueueActiveCount = Number(c.queued || 0) + Number(c.running || 0);
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
-    set("cnt-total", c.total_listed);
+    set("cnt-total", c.window_total ?? c.total_listed);
     set("cnt-queued", c.queued);
     set("cnt-running", c.running);
     set("cnt-waiting-choice", c.waiting_choice ?? 0);
@@ -14389,31 +14563,38 @@ function renderAdminQueueData(data) {
         return;
     }
 
+    const _fmtYgn = (v, fb) => (typeof admFmtYangon === "function" ? admFmtYangon(v) : (fb || v || "—"));
+    const _fmtSec = (v) => (typeof admFmtSecs === "function" ? admFmtSecs(v) : (Math.round(Number(v) || 0) + "s"));
     const renderJobCard = (j) => {
         const statusLower = (j.status || "queued").toLowerCase();
         const engineLower = (j.engine || "voxcpm").toLowerCase();
         const engineLabel = engineLower === "recap" ? t("adm_badge_recap") : t("adm_opt_engine_voxcpm");
 
+        const hasRealDur = j.duration_seconds != null && Number.isFinite(Number(j.duration_seconds)) && Number(j.duration_seconds) > 0;
+        const realDurBit = hasRealDur ? `⏱️ ${_fmtSec(j.duration_seconds)} • ` : "";
+        const createdLabel = _fmtYgn(j.created_at, j.created_ago);
         let statusBadgeText = jobStatusText(j.status);
-        let durationTxt = `⏳ ${j.created_ago}`;
+        let durationTxt = `⏳ ${createdLabel}`;
         if (statusLower === "success") {
             statusBadgeText = t("badge_completed");
-            durationTxt = `⏱️ ${j.duration_seconds || '15'}s • ${j.created_ago}`;
+            durationTxt = `${realDurBit}${createdLabel}`;
         } else if (statusLower === "queued") {
             statusBadgeText = t("badge_queued");
-            durationTxt = `⏳ ${j.created_ago}`;
+            durationTxt = `⏳ ${createdLabel}`;
         } else if (statusLower === "running") {
             statusBadgeText = t("badge_running");
-            durationTxt = `⚡ ${j.created_ago}`;
+            durationTxt = `⚡ ${realDurBit}${createdLabel}`;
         } else if (statusLower === "failed") {
             statusBadgeText = t("badge_failed");
+            durationTxt = `${realDurBit}${createdLabel}`;
         } else if (statusLower === "cancelled") {
             statusBadgeText = t("badge_cancelled");
+            durationTxt = createdLabel;
         }
 
         let actionsHtml = "";
         if (statusLower === "failed" || statusLower === "cancelled") {
-            actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>`;
+            actionsHtml += `<button class="queue-act-btn retry" id="btn-q-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_retry")}</button>`;
         } else if (statusLower === "queued" || statusLower === "running") {
             actionsHtml += `<button class="queue-act-btn cancel" onclick="adminCancelJob('${j.id}')">⏹️ ${t("admin_cancel_job")}</button>`;
         }
@@ -14422,16 +14603,19 @@ function renderAdminQueueData(data) {
         }
         if (j.is_expired) {
             actionsHtml += `<span class="badge-expired text-xs">⌛ ${t("admin_expired")}</span>`;
-            actionsHtml += `<button class="queue-act-btn retry" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>`;
+            actionsHtml += `<button class="queue-act-btn retry" id="btn-q-regen-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>`;
         } else if (j.download_url) {
             const qTitle = `${j.username ? '@' + j.username : 'ID: ' + j.user_id} • ${j.voice_display || j.preset_voice || j.engine}`;
             actionsHtml += `<button class="queue-act-btn uid adm-media-open-btn" data-job-id="${escapeHtml(j.id)}" data-job-type="${escapeHtml(j.job_type)}" data-download-url="${escapeHtml(j.download_url)}" data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}" data-title="${escapeHtml(qTitle)}">${escapeHtml(t("adm_btn_play"))}</button>`;
             actionsHtml += `<a href="${signedAdminHref(j.download_url)}" target="_blank" rel="noopener" data-open-url="${j.download_url}" class="queue-act-btn uid" title="${escapeHtml(t("adm_open_stream_title"))}">↗️</a>`;
         }
 
-        const pct = Math.min(100, Math.max(8, Number(j.progress_percent) || (statusLower === "running" ? 58 : 22)));
-        const progressHtml = (statusLower === "running" || statusLower === "queued")
-            ? `<div class="vcp-job-progress"><span class="vcp-job-progress-fill" style="width:${pct}%"></span></div>`
+        const hasRealPct = typeof j.progress_percent === "number" && Number.isFinite(j.progress_percent) && j.progress_percent > 0;
+        const realProgressHtml = (statusLower === "running" && hasRealPct)
+            ? `<div class="vcp-job-progress mt-1"><div class="vcp-job-progress-fill" style="width:${Math.max(0, Math.min(100, Math.round(j.progress_percent)))}%"></div></div>`
+            : "";
+        const stageLine = (statusLower === "running" || statusLower === "queued" || statusLower === "waiting_choice")
+            ? `<div class="text-xs text-muted mt-1">${escapeHtml(j.progress_label || statusBadgeText)}</div>${realProgressHtml}`
             : "";
 
         return `
@@ -14450,10 +14634,10 @@ function renderAdminQueueData(data) {
                     <span>#${j.id.slice(0, 8)}</span>
                 </div>
                 <div class="queue-item-body">${escapeHtml(j.input_snippet || t("adm_task_content_fallback"))}</div>
-                ${progressHtml}
+                ${stageLine}
                 ${j.error_message ? `<div class="queue-item-error">⚠️ ${escapeHtml(displayJobError(j.error_message))}</div>` : ""}
                 <div class="queue-item-footer vcp-job-footer-row">
-                    <span class="queue-timing">${escapeHtml(j.created_ago)}</span>
+                    <span class="queue-timing">${escapeHtml(j.created_ago || "")}</span>
                     <div class="queue-actions-row">${actionsHtml}</div>
                 </div>
             </div>`;
@@ -14494,7 +14678,7 @@ async function loadAdminQueue(isSilent = false) {
             return;
         }
         renderAdminQueueData(await res.json());
-        loadAdminFleetStatus();
+        scheduleAdminQueuePoll();
     } catch (e) {
         console.warn("Could not load admin queue:", e);
         if (!isSilent) admStateError(container, "loadAdminQueue()");
@@ -14505,16 +14689,9 @@ window.loadAdminQueue = loadAdminQueue;
 let _adminFleetData = null;
 
 async function loadAdminFleetStatus() {
+    // Worker status already rides inside /api/admin/queue (data.worker); no redundant second HTTP poll.
     if (!state.user?.is_admin) return;
-    try {
-        const res = await fetch("/api/admin/fleet/status", { headers: getAuthHeaders() });
-        if (!res.ok) return;
-        const data = await res.json();
-        _adminFleetData = data;
-        renderAdminFleetUI(data);
-    } catch (e) {
-        console.warn("Could not load fleet status:", e);
-    }
+    await loadAdminQueue(true);
 }
 
 function renderAdminFleetUI(data) {
@@ -14552,46 +14729,66 @@ function renderAdminFleetUI(data) {
 
 async function toggleVpsWorker() {
     haptic("medium");
-    try {
-        const currPaused = _adminFleetData?.vps_worker?.status_code === "PAUSED";
-        const nextStatus = currPaused ? "ONLINE" : "PAUSED";
-        const res = await fetch("/api/admin/fleet/worker-toggle", {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ status: nextStatus }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Failed");
-        showStudioToast(nextStatus === "PAUSED" ? t("adm_vps_paused_toast") : t("adm_vps_resumed_toast"), "success");
-        await loadAdminFleetStatus();
-    } catch (e) {
-        showStudioToast(tf("adm_vps_toggle_failed", { error: e.message }), "error");
-    }
+    const currPaused = _adminFleetData?.vps_worker?.status_code === "PAUSED";
+    const nextStatus = currPaused ? "ONLINE" : "PAUSED";
+    const confirmKey = nextStatus === "PAUSED" ? "adm_confirm_worker_pause" : "adm_confirm_worker_resume";
+    showStudioConfirm(t(confirmKey), async () => {
+        const btn = document.getElementById("adm-btn-toggle-vps");
+        if (btn) btn.disabled = true;
+        try {
+            const res = await fetch("/api/admin/fleet/worker-toggle", {
+                method: "POST",
+                headers: {
+                    ...getAuthHeaders(),
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ status: nextStatus }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            showStudioToast(nextStatus === "PAUSED" ? t("adm_vps_paused_toast") : t("adm_vps_resumed_toast"), "success");
+            if (data.worker) {
+                _adminFleetData = { vps_worker: data.worker };
+                renderAdminFleetUI(_adminFleetData);
+            }
+        } catch (e) {
+            showStudioToast(tf("adm_vps_toggle_failed", { error: e.message }), "error");
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
 }
 
 async function toggleRecapQueueRouting() {
     haptic("medium");
-    try {
-        const currOn = !!_adminFleetData?.vps_worker?.recap_on_queue;
-        const nextOn = !currOn;
-        const res = await fetch("/api/admin/fleet/worker-toggle", {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ recap_on_queue: nextOn }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Failed");
-        showStudioToast(nextOn ? t("adm_recap_queue_on_toast") : t("adm_recap_queue_off_toast"), "success");
-        await loadAdminFleetStatus();
-    } catch (e) {
-        showStudioToast(tf("adm_recap_queue_failed", { error: e.message }), "error");
-    }
+    const currOn = !!_adminFleetData?.vps_worker?.recap_on_queue;
+    const nextOn = !currOn;
+    const confirmKey = nextOn ? "adm_confirm_recap_route_on" : "adm_confirm_recap_route_off";
+    showStudioConfirm(t(confirmKey), async () => {
+        const btn = document.getElementById("adm-btn-toggle-recap-queue");
+        if (btn) btn.disabled = true;
+        try {
+            const res = await fetch("/api/admin/fleet/worker-toggle", {
+                method: "POST",
+                headers: {
+                    ...getAuthHeaders(),
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ recap_on_queue: nextOn }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            showStudioToast(nextOn ? t("adm_recap_queue_on_toast") : t("adm_recap_queue_off_toast"), "success");
+            if (data.worker) {
+                _adminFleetData = { vps_worker: data.worker };
+                renderAdminFleetUI(_adminFleetData);
+            }
+        } catch (e) {
+            showStudioToast(tf("adm_recap_queue_failed", { error: e.message }), "error");
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
 }
 
 window.loadAdminFleetStatus = loadAdminFleetStatus;
@@ -14712,7 +14909,7 @@ function renderAdminHistoryData(data) {
                 <div id="retry-status-box-${j.id}"></div>
             </div>
             <div class="history-item-footer">
-                <span>⏱️ ${j.time_ago} <code class="adm-job-code">(${j.id.slice(0, 8)})</code></span>
+                <span>⏱️ ${escapeHtml(typeof admFmtYangon === "function" ? admFmtYangon(j.created_at) : (j.time_ago || j.created_at || "—"))} <code class="adm-job-code">(${j.id.slice(0, 8)})</code></span>
                 <div class="history-btn-row" id="adm-actions-row-${j.id}">
                     ${j.is_expired ? `
                         <button class="btn mini-btn secondary-btn btn-retry-job" id="btn-retry-${j.id}" onclick="adminRetryJob('${j.id}')">🔄 ${t("admin_regen")}</button>
@@ -14756,54 +14953,59 @@ window.loadAdminHistory = loadAdminHistory;
 
 async function adminRetryJob(jobId) {
     haptic("medium");
-    const itemEl = document.getElementById(`adm-job-item-${jobId}`);
-    const retryBtn = document.getElementById(`btn-retry-${jobId}`);
-    const statusBox = document.getElementById(`retry-status-box-${jobId}`);
+    showStudioConfirm(tf("adm_confirm_retry_job", { id: String(jobId || "").slice(0, 10) }), async () => {
+        const itemEl = document.getElementById(`adm-job-item-${jobId}`);
+        const retryBtn = document.getElementById(`btn-retry-${jobId}`) || document.getElementById(`btn-q-retry-${jobId}`) || document.getElementById(`btn-q-regen-${jobId}`);
+        const statusBox = document.getElementById(`retry-status-box-${jobId}`);
 
-    if (retryBtn) {
-        retryBtn.disabled = true;
-        retryBtn.innerText = t("admin_retry_starting");
-    }
-    if (itemEl) {
-        itemEl.className = "history-item border-running-dim";
-        const badge = itemEl.querySelector('.history-item-badge[class*="status-"]');
-        if (badge) {
-            badge.className = "history-item-badge status-running";
-            badge.innerText = "QUEUED";
+        if (retryBtn) {
+            retryBtn.disabled = true;
+            retryBtn.innerText = t("admin_retry_starting");
         }
-    }
-    if (statusBox) {
-        statusBox.innerHTML = `
-            <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
-                ⏳ <strong>${t("admin_retry_queued_note")}</strong>
-            </div>
-        `;
-    }
+        if (itemEl) {
+            itemEl.className = "history-item border-running-dim";
+            const badge = itemEl.querySelector('.history-item-badge[class*="status-"]');
+            if (badge) {
+                badge.className = "history-item-badge status-running";
+                badge.innerText = "QUEUED";
+            }
+        }
+        if (statusBox) {
+            statusBox.innerHTML = `
+                <div class="text-xs mt-1 p-2" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; color: #38bdf8;">
+                    ⏳ <strong>${t("admin_retry_queued_note")}</strong>
+                </div>
+            `;
+        }
 
-    try {
-        const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
-            method: "POST",
-            headers: getAuthHeaders(),
-        });
-        const data = await res.json();
-        if (res.ok) {
-            loadAdminQueue(true);
-            pollAdminJobProgress(jobId);
-        } else {
-            showStudioToast(adminErrorText("admin_retry_err", data.detail || data.message), 'error');
+        try {
+            const res = await fetch(`/api/admin/queue/${jobId}/retry`, {
+                method: "POST",
+                headers: getAuthHeaders(),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                loadAdminQueue(true);
+                if (admCurrentSection !== "jobs" || admCurrentJobsSubTab !== "live") {
+                    pollAdminJobProgress(jobId);
+                }
+            } else {
+                showStudioToast(adminErrorText("admin_retry_err", data.detail || data.message), 'error');
+                if (retryBtn) {
+                    retryBtn.disabled = false;
+                    retryBtn.innerText = `🔄 ${t("admin_retry")}`;
+                }
+            }
+        } catch (e) {
+            showStudioToast(adminErrorText("admin_retry_err", e.message), 'error');
             if (retryBtn) {
                 retryBtn.disabled = false;
                 retryBtn.innerText = `🔄 ${t("admin_retry")}`;
             }
         }
-    } catch (e) {
-        showStudioToast(adminErrorText("admin_retry_err", e.message), 'error');
-        if (retryBtn) {
-            retryBtn.disabled = false;
-            retryBtn.innerText = `🔄 ${t("admin_retry")}`;
-        }
-    }
+    });
 }
+window.adminRetryJob = adminRetryJob;
 
 let activeRetryPollers = {};
 
@@ -15165,6 +15367,7 @@ function openAdminPricingShortcut() {
 window.openAdminPricingShortcut = openAdminPricingShortcut;
 
 async function loadAdminAnalytics(days = 30) {
+    window._admAnalyticsLoadedAt = Date.now();
     document.querySelectorAll("#adm-analytics-window-btns [data-days]").forEach(b => {
         b.classList.toggle("active", Number(b.getAttribute("data-days")) === Number(days));
     });
@@ -15181,20 +15384,19 @@ async function loadAdminAnalytics(days = 30) {
         ).join("");
         body.innerHTML = `
             <div class="adm-analytics-grid">
-                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(tf("adm_rev_lbl", { n: rev.approved_orders || 0 }))}</span><span class="stat-num text-gold">${(rev.total_approved_mmk || 0).toLocaleString()} MMK</span></div>
                 <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_profit_lbl"))}</span><span class="stat-num ${(c.estimated_gross_profit_mmk || 0) >= 0 ? "text-green" : "text-danger"}">${(c.estimated_gross_profit_mmk || 0).toLocaleString()} MMK</span></div>
-                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_cost_lbl"))}</span><span class="stat-num">$${(c.total_cost_usd || 0).toFixed(3)} (${(c.total_cost_mmk || 0).toLocaleString()} MMK)</span></div>
+                <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_cost_lbl"))}</span><span class="stat-num">$${(c.total_cost_usd || 0).toFixed(2)} (${(c.total_cost_mmk || 0).toLocaleString()} MMK)</span></div>
                 <div class="card glass stat-mini-card"><span class="stat-lbl">${escapeHtml(t("adm_arpu_lbl"))}</span><span class="stat-num" style="font-size:13px;">${(c.arpu_mmk || 0).toLocaleString()} / ${(c.avg_cost_job_mmk ?? c.avg_cost_per_job_mmk ?? 0).toLocaleString()} MMK</span></div>
             </div>
-            <div class="mt-2 text-xs text-muted">Jobs: ${usg.total_jobs || 0} (✓${usg.success_jobs || 0} / ✗${usg.failed_jobs || 0}) • ${_fmtCreditNum(usg.total_recap_credits_consumed || 0)} Cr, ${_fmtCreditNum(usg.total_voice_minutes_consumed || 0)}m • Refunds: ${_fmtCreditNum(usg.refunded_recap_credits || 0)} Cr</div>
-            <div class="adm-cost-row mt-2"><span>${escapeHtml(t("adm_exp_lbl"))} (≤7d: <b>${exp.expiring_7d_count || 0}</b> lots)</span><b>-${_fmtCreditNum(exp.expired_recap_credits || 0)} Cr · -${_fmtCreditNum(exp.expired_voice_minutes || 0)}m</b></div>
+            <div class="mt-2 text-xs text-muted">Jobs: ${usg.total_jobs || 0} (✓${usg.success_jobs || 0} / ✗${usg.failed_jobs || 0}) • ${admFmtCredits(usg.total_recap_credits_consumed || 0)} Cr, ${admFmtCredits(usg.total_voice_minutes_consumed || 0)}m • Refunds: ${admFmtCredits(usg.refunded_recap_credits || 0)} Cr</div>
+            <div class="adm-cost-row mt-2"><span>${escapeHtml(t("adm_exp_lbl"))} (≤7d: <b>${exp.expiring_7d_count || 0}</b> lots)</span><b>-${admFmtCredits(exp.expired_recap_credits || 0)} Cr · -${admFmtCredits(exp.expired_voice_minutes || 0)}m</b></div>
             ${top ? `<div class="mt-2"><div class="text-xs font-bold">${escapeHtml(t("adm_top_pkg_lbl"))}</div>${topPkgsHtml}</div>` : ""}
             <div class="mt-2">
                 <div class="text-xs font-bold">${escapeHtml(t("adm_infra_lbl"))}</div>
-                <div class="adm-cost-row"><span>Gemini Text (${(tel.gemini_input_tokens || 0) + (tel.gemini_output_tokens || 0)} tok)</span><b>$${(c.gemini_text_usd || 0).toFixed(4)}</b></div>
-                <div class="adm-cost-row"><span>Gemini TTS</span><b>$${(c.gemini_tts_usd || 0).toFixed(4)}</b></div>
-                <div class="adm-cost-row"><span>GPU / VoxCPM (${Math.round(tel.gpu_runtime_seconds || 0)}s)</span><b>$${(c.gpu_usd || 0).toFixed(4)}</b></div>
-                <div class="adm-cost-row"><span>Storage (${(tel.storage_gb || 0).toFixed(3)} GB) + BW</span><b>$${((c.storage_usd || 0) + (c.bandwidth_usd || 0)).toFixed(4)}</b></div>
+                <div class="adm-cost-row"><span>Gemini Text (${(tel.gemini_input_tokens || 0) + (tel.gemini_output_tokens || 0)} tok)</span><b>$${(c.gemini_text_usd || 0).toFixed(2)}</b></div>
+                <div class="adm-cost-row"><span>Gemini TTS</span><b>$${(c.gemini_tts_usd || 0).toFixed(2)}</b></div>
+                <div class="adm-cost-row"><span>GPU / VoxCPM (${Math.round(tel.gpu_runtime_seconds || 0)}s)</span><b>$${(c.gpu_usd || 0).toFixed(2)}</b></div>
+                <div class="adm-cost-row"><span>Storage (${(tel.storage_gb || 0).toFixed(2)} GB) + BW</span><b>$${((c.storage_usd || 0) + (c.bandwidth_usd || 0)).toFixed(2)}</b></div>
             </div>`;
     } catch (e) { admStateError(body, `loadAdminAnalytics(${days})`); }
 }
@@ -15232,7 +15434,7 @@ async function loadAdminRefunds() {
         el.innerHTML = rows.length ? rows.slice(0, 20).map(rf => `
             <div class="vcp-tx-row">
                 <div><b>User ${rf.user_id}</b> • ${escapeHtml(rf.reference_id || "")}<br><span class="text-xs text-muted">${escapeHtml(rf.note || "")} • ${admFmtDate(rf.created_at)}</span></div>
-                <b>+${_fmtCreditNum(rf.recap_credits_refunded)} Cr · +${_fmtCreditNum(rf.voice_minutes_refunded)}m</b>
+                <b>+${admFmtCredits(rf.recap_credits_refunded)} Cr · +${admFmtCredits(rf.voice_minutes_refunded)}m</b>
             </div>`).join("") : `<p class="text-muted text-xs">${escapeHtml(t("admin_empty"))}</p>`;
     } catch (e) { admStateError(el, "loadAdminRefunds()"); }
 }
@@ -15490,6 +15692,16 @@ async function loadAdminSettings() {
         const elWmSizeVal = document.getElementById("adm-wm-size-val");
         if (elWmSizeVal && elWmSize) elWmSizeVal.textContent = `${elWmSize.value || 16}%`;
 
+        // Advanced Runtime Ops (#admp-runtime-card) painted from the same single GET /api/admin/settings payload
+        const elRtConc = document.getElementById("admp-rt-conc");
+        const elRtTimeout = document.getElementById("admp-rt-timeout");
+        const elRtProfile = document.getElementById("admp-rt-profile");
+        const elRtFx = document.getElementById("admp-rt-fx");
+        if (s.recap_worker_concurrency != null) _admPaintValue(elRtConc, s.recap_worker_concurrency);
+        if (s.recap_stale_job_timeout_seconds != null) _admPaintValue(elRtTimeout, s.recap_stale_job_timeout_seconds);
+        if (s.ai_prompt_profile != null) _admPaintValue(elRtProfile, s.ai_prompt_profile);
+        if (s.usd_to_mmk_rate != null) _admPaintValue(elRtFx, s.usd_to_mmk_rate);
+
         updateTutorialUI(s);
         await loadAdminGroupAiConsole();
         _snapshotAdminSettingsValues();
@@ -15583,6 +15795,17 @@ async function saveGeminiModelSettings() {
     }
 }
 
+function _isSettingsElDirty(elId) {
+    const el = document.getElementById(elId);
+    if (!el) return false;
+    if (adminSettingsDirty.has(elId)) {
+        if (!(elId in _adminSettingsSavedSnapshot)) return true;
+    }
+    if (!(elId in _adminSettingsSavedSnapshot)) return false;
+    const saved = _adminSettingsSavedSnapshot[elId];
+    return (el.type === "checkbox" || el.type === "radio") ? (el.checked !== saved) : (el.value !== saved);
+}
+
 async function saveAdminSettings() {
     haptic("medium");
     const kpayNum = document.getElementById("adm-set-kpay-num")?.value?.trim();
@@ -15641,10 +15864,10 @@ async function saveAdminSettings() {
     const ttsDailyPaid = ttsDailyPaidRaw === "" || ttsDailyPaidRaw == null ? null : parseInt(ttsDailyPaidRaw, 10);
     const voxcpmTimeoutRaw = document.getElementById("adm-set-voxcpm-timeout")?.value?.trim();
     const voxcpmTimeout = voxcpmTimeoutRaw === "" || voxcpmTimeoutRaw == null ? null : parseInt(voxcpmTimeoutRaw, 10);
-    const reqChannelId = document.getElementById("adm-set-required-channel-id")?.value?.trim();
-    const reqGroupId = document.getElementById("adm-set-required-group-id")?.value?.trim();
-    const channelInvite = document.getElementById("adm-set-channel-invite-link")?.value?.trim();
-    const groupInvite = document.getElementById("adm-set-group-invite-link")?.value?.trim();
+    const reqChannelId = document.getElementById("adm-set-required-channel-id")?.value?.trim() || "";
+    const reqGroupId = document.getElementById("adm-set-required-group-id")?.value?.trim() || "";
+    const channelInvite = document.getElementById("adm-set-channel-invite-link")?.value?.trim() || "";
+    const groupInvite = document.getElementById("adm-set-group-invite-link")?.value?.trim() || "";
 
     const tutVoiceEn = !!document.getElementById("adm-tut-voice-enabled")?.checked;
     const tutVoiceTitle = document.getElementById("adm-tut-voice-title")?.value?.trim() || t("tutorial_default_voice_title");
@@ -15654,12 +15877,20 @@ async function saveAdminSettings() {
     const tutRecapLink = document.getElementById("adm-tut-recap-link")?.value?.trim() || "";
     const recapDemoAsset = document.getElementById("adm-recap-demo-asset")?.value?.trim() || "";
 
+    const rtConcRaw = document.getElementById("admp-rt-conc")?.value?.trim();
+    const rtConc = rtConcRaw === "" || rtConcRaw == null ? null : parseInt(rtConcRaw, 10);
+    const rtTimeoutRaw = document.getElementById("admp-rt-timeout")?.value?.trim();
+    const rtTimeout = rtTimeoutRaw === "" || rtTimeoutRaw == null ? null : parseInt(rtTimeoutRaw, 10);
+    const rtProfile = document.getElementById("admp-rt-profile")?.value?.trim() || "";
+    const rtFxRaw = document.getElementById("admp-rt-fx")?.value?.trim();
+    const rtFx = rtFxRaw === "" || rtFxRaw == null ? null : parseFloat(rtFxRaw);
+
     const tutExtraLinks = {};
     for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
         tutExtraLinks[settingKey] = document.getElementById(elId)?.value?.trim() || "";
     }
 
-    const payload = {
+    const fullPayload = {
         payment_kpay_number: kpayNum,
         payment_kpay_name: kpayName,
         payment_wave_number: waveNum,
@@ -15670,7 +15901,6 @@ async function saveAdminSettings() {
         tutorial_voice_link: tutVoiceLink,
         tutorial_recap_enabled: tutRecapEn,
         tutorial_recap_link: tutRecapLink,
-        // Batch L demo slot asset (file_id or URL; "" hides the slot).
         recap_demo_asset: recapDemoAsset,
         ...tutExtraLinks,
         maintenance_mode: maint,
@@ -15701,37 +15931,167 @@ async function saveAdminSettings() {
         ...(Number.isFinite(ttsDailyFree) ? { tts_daily_limit_minutes_free: ttsDailyFree } : {}),
         ...(Number.isFinite(ttsDailyPaid) ? { tts_daily_limit_minutes_paid: ttsDailyPaid } : {}),
         ...(Number.isFinite(voxcpmTimeout) ? { voxcpm_timeout: voxcpmTimeout } : {}),
-        ...(reqChannelId ? { required_channel_id: reqChannelId } : {}),
-        ...(reqGroupId ? { required_group_id: reqGroupId } : {}),
-        ...(channelInvite ? { channel_invite_link: channelInvite } : {}),
-        ...(groupInvite ? { group_invite_link: groupInvite } : {}),
+        required_channel_id: reqChannelId,
+        required_group_id: reqGroupId,
+        channel_invite_link: channelInvite,
+        group_invite_link: groupInvite,
         ..._collectWatermarkPayload(),
+        ...(Number.isFinite(rtConc) ? { recap_worker_concurrency: rtConc } : {}),
+        ...(Number.isFinite(rtTimeout) ? { recap_stale_job_timeout_seconds: rtTimeout } : {}),
+        ...(rtProfile ? { ai_prompt_profile: rtProfile } : {}),
+        ...(Number.isFinite(rtFx) ? { usd_to_mmk_rate: rtFx } : {}),
+        gemini_primary_model: getSelectOrCustom("adm-gemini-primary", "adm-gemini-primary-custom", "gemini-3.6-flash"),
+        gemini_fallback_1: getSelectOrCustom("adm-gemini-fb1", "adm-gemini-fb1-custom", "gemini-3.5-flash"),
+        gemini_fallback_2: getSelectOrCustom("adm-gemini-fb2", "adm-gemini-fb2-custom", "gemini-3.5-flash-lite"),
+        gemini_fallback_3: getSelectOrCustom("adm-gemini-fb3", "adm-gemini-fb3-custom", "gemini-flash-lite-latest"),
+        groq_whisper_model: document.getElementById("adm-groq-whisper-model")?.value?.trim() || "",
+        gemini_tts_primary_model: getSelectOrCustom("adm-tts-primary", "adm-tts-primary-custom", "gemini-3.8-flash-tts"),
+        gemini_tts_fallback_1: getSelectOrCustom("adm-tts-fb1", "adm-tts-fb1-custom", ""),
+        gemini_tts_lite_model: getSelectOrCustom("adm-tts-lite", "adm-tts-lite-custom", "gemini-3.8-flash-lite-tts"),
+        gemini_tts_fallback_2: getSelectOrCustom("adm-tts-fb2", "adm-tts-fb2-custom", ""),
     };
-    updateTutorialUI(payload);
+    const keyToIds = {
+        payment_kpay_number: ["adm-set-kpay-num"],
+        payment_kpay_name: ["adm-set-kpay-name"],
+        payment_wave_number: ["adm-set-wave-num"],
+        payment_wave_name: ["adm-set-wave-name"],
+        tutorial_video_link: ["adm-set-tutorial-link"],
+        tutorial_voice_enabled: ["adm-tut-voice-enabled"],
+        tutorial_voice_title: ["adm-tut-voice-title"],
+        tutorial_voice_link: ["adm-tut-voice-link"],
+        tutorial_recap_enabled: ["adm-tut-recap-enabled"],
+        tutorial_recap_link: ["adm-tut-recap-link"],
+        recap_demo_asset: ["adm-recap-demo-asset"],
+        maintenance_mode: ["adm-set-maintenance"],
+        maintenance_note: ["adm-set-maintenance-note"],
+        group_ai_admin_enabled: ["adm-group-ai-master-toggle"],
+        group_ai_user_cooldown_seconds: ["adm-set-group-ai-cooldown"],
+        group_ai_hourly_budget: ["adm-set-group-ai-hourly"],
+        group_ai_daily_budget: ["adm-set-group-ai-daily"],
+        group_ai_moderation_enabled: ["adm-group-ai-moderation-toggle"],
+        group_ai_moderation_confidence_threshold: ["adm-group-ai-mod-threshold"],
+        group_ai_moderation_mute_duration_strike2_seconds: ["adm-group-ai-mute-s2"],
+        group_ai_moderation_mute_duration_strike3_seconds: ["adm-group-ai-mute-s3"],
+        group_ai_moderation_whitelist: ["adm-group-ai-whitelist"],
+        group_ai_voice_enabled: ["adm-group-ai-voice-toggle"],
+        group_ai_voice_daily_cap: ["adm-group-ai-voice-cap"],
+        private_ai_enabled: ["adm-set-private-ai"],
+        private_ai_user_cooldown_seconds: ["adm-set-private-ai-cooldown"],
+        private_ai_hourly_budget: ["adm-set-private-ai-hourly"],
+        private_ai_daily_budget: ["adm-set-private-ai-daily"],
+        character_limit_free: ["adm-set-char-limit-free"],
+        character_limit_purchased: ["adm-set-char-limit-purchased"],
+        free_daily_allowance_seconds: ["adm-set-free-allowance"],
+        free_gemini_taste_minutes: ["adm-set-free-gemini-taste"],
+        paid_gemini_taste_minutes: ["adm-set-paid-gemini-taste"],
+        free_gemini_daily_budget_requests: ["adm-set-free-gemini-budget"],
+        recap_free_max_duration_seconds: ["adm-set-recap-free-max"],
+        recap_max_duration_seconds: ["adm-set-recap-max"],
+        tts_daily_limit_minutes_free: ["adm-set-tts-daily-free"],
+        tts_daily_limit_minutes_paid: ["adm-set-tts-daily-paid"],
+        voxcpm_timeout: ["adm-set-voxcpm-timeout"],
+        required_channel_id: ["adm-set-required-channel-id"],
+        required_group_id: ["adm-set-required-group-id"],
+        channel_invite_link: ["adm-set-channel-invite-link"],
+        group_invite_link: ["adm-set-group-invite-link"],
+        watermark_free_enabled: ["adm-wm-free-enabled"],
+        watermark_paid_enabled: ["adm-wm-paid-enabled"],
+        watermark_style: ["adm-wm-style"],
+        watermark_position: ["adm-wm-position"],
+        watermark_opacity: ["adm-wm-opacity"],
+        watermark_size: ["adm-wm-size"],
+        recap_worker_concurrency: ["admp-rt-conc"],
+        recap_stale_job_timeout_seconds: ["admp-rt-timeout"],
+        ai_prompt_profile: ["admp-rt-profile"],
+        usd_to_mmk_rate: ["admp-rt-fx"],
+        gemini_primary_model: ["adm-gemini-primary", "adm-gemini-primary-custom"],
+        gemini_fallback_1: ["adm-gemini-fb1", "adm-gemini-fb1-custom"],
+        gemini_fallback_2: ["adm-gemini-fb2", "adm-gemini-fb2-custom"],
+        gemini_fallback_3: ["adm-gemini-fb3", "adm-gemini-fb3-custom"],
+        groq_whisper_model: ["adm-groq-whisper-model"],
+        gemini_tts_primary_model: ["adm-tts-primary", "adm-tts-primary-custom"],
+        gemini_tts_fallback_1: ["adm-tts-fb1", "adm-tts-fb1-custom"],
+        gemini_tts_lite_model: ["adm-tts-lite", "adm-tts-lite-custom"],
+        gemini_tts_fallback_2: ["adm-tts-fb2", "adm-tts-fb2-custom"],
+    };
+    for (const [elId, settingKey] of ADMIN_TUTORIAL_LINK_FIELDS) {
+        keyToIds[settingKey] = [elId];
+    }
 
-    try {
-        const res = await fetch("/api/admin/settings", {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Failed");
-        // Batch BY: the save succeeded — clear the edit-clobber guard
-        // so the post-save reload below paints fresh server truth
-        // over every field again.
-        adminSettingsDirty.clear();
-        _snapshotAdminSettingsValues();
+    const hasSnapshot = Object.keys(_adminSettingsSavedSnapshot).length > 0;
+    const payload = {};
+    for (const [key, val] of Object.entries(fullPayload)) {
+        if (val === undefined) continue;
+        const ids = keyToIds[key] || [];
+        const dirty = !hasSnapshot || !ids.length || ids.some(id => _isSettingsElDirty(id));
+        if (dirty) payload[key] = val;
+    }
+
+    if (!Object.keys(payload).length) {
+        showStudioToast(t("adm_settings_no_changes"), "info");
         updateAdminSettingsSaveBar(true);
-        showStudioToast(data.message || t("admin_settings_saved"), 'success');
-        loadAdminSettings();
-    } catch (e) {
-        showStudioToast(adminErrorText("admin_settings_save_err", e.message), 'error');
+        return;
+    }
+
+    updateTutorialUI(fullPayload);
+
+    const doSaveSettings = async () => {
+        const saveBtn = document.getElementById("btn-save-admin-settings");
+        const rtSaveBtn = document.getElementById("admp-rt-save");
+        if (saveBtn) saveBtn.disabled = true;
+        if (rtSaveBtn) rtSaveBtn.disabled = true;
+        try {
+            const res = await fetch("/api/admin/settings", {
+                method: "POST",
+                headers: {
+                    ...getAuthHeaders(),
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Failed");
+            adminSettingsDirty.clear();
+            _snapshotAdminSettingsValues();
+            updateAdminSettingsSaveBar(true);
+            showStudioToast(data.message || t("admin_settings_saved"), 'success');
+            loadAdminSettings();
+        } catch (e) {
+            showStudioToast(adminErrorText("admin_settings_save_err", e.message), 'error');
+        } finally {
+            if (saveBtn) saveBtn.disabled = false;
+            if (rtSaveBtn) rtSaveBtn.disabled = false;
+        }
+    };
+
+    const emptyLbl = t("adm_empty_val");
+    const warnLines = [];
+    if (payload.maintenance_mode === true) {
+        warnLines.push(t("adm_warn_maint_on"));
+    }
+    if ("required_channel_id" in payload) {
+        warnLines.push(tf("adm_warn_chan_change", {
+            oldVal: _adminSettingsSavedSnapshot["adm-set-required-channel-id"] || emptyLbl,
+            newVal: payload.required_channel_id || emptyLbl,
+        }));
+    }
+    if ("required_group_id" in payload) {
+        warnLines.push(tf("adm_warn_group_change", {
+            oldVal: _adminSettingsSavedSnapshot["adm-set-required-group-id"] || emptyLbl,
+            newVal: payload.required_group_id || emptyLbl,
+        }));
+    }
+
+    if (warnLines.length) {
+        showStudioConfirm(
+            tf("adm_confirm_critical_settings", { lines: warnLines.join("\n") }),
+            doSaveSettings
+        );
+    } else {
+        await doSaveSettings();
     }
 }
+window.saveAdminSettings = saveAdminSettings;
 
 async function saveGeminiTtsModelSettings() {
     haptic("medium");
@@ -15826,14 +16186,7 @@ async function saveWatermarkSettings() {
 window.saveWatermarkSettings = saveWatermarkSettings;
 
 function formatIsoTime(isoStr) {
-    if (!isoStr) return "";
-    try {
-        const d = new Date(isoStr);
-        if (isNaN(d.getTime())) return isoStr;
-        return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    } catch (e) {
-        return isoStr;
-    }
+    return admFmtYangon(isoStr);
 }
 
 async function loadAdminGroupAiConsole() {
@@ -15949,25 +16302,27 @@ async function saveGroupAiKnowledgeSheet() {
         showStudioToast("Knowledge sheet exceeds 20,000 characters", "error");
         return;
     }
-    try {
-        const res = await fetch("/api/admin/group-ai/knowledge-sheet", {
-            method: "POST",
-            headers: {
-                ...getAuthHeaders(),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ sheet }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            showStudioToast(data.detail || t("err_generic"), "error");
-            return;
+    showStudioConfirm(t("adm_confirm_sheet_save"), async () => {
+        try {
+            const res = await fetch("/api/admin/group-ai/knowledge-sheet", {
+                method: "POST",
+                headers: {
+                    ...getAuthHeaders(),
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ sheet }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                showStudioToast(data.detail || t("err_generic"), "error");
+                return;
+            }
+            showStudioToast(t("adm_group_ai_sheet_saved"), "success");
+            await loadAdminGroupAiConsole();
+        } catch (err) {
+            showStudioToast((err && err.message) ? err.message : t("err_generic"), "error");
         }
-        showStudioToast(t("adm_group_ai_sheet_saved"), "success");
-        await loadAdminGroupAiConsole();
-    } catch (err) {
-        showStudioToast((err && err.message) ? err.message : t("err_generic"), "error");
-    }
+    });
 }
 
 async function resetGroupAiKnowledgeSheet() {

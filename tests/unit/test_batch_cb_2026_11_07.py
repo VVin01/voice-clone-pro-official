@@ -423,7 +423,7 @@ def test_fact_sheet_tts_caps_track_settings(monkeypatch):
 # ── Release pin: cache token (split-literal, sweep-proof) ──────────
 
 def test_cache_token_is_followup1():
-    token = "20261123_" + "round15"
+    token = "20261125_" + "admin_r1"
     stale = "20261104_r" + "122"
     assert INDEX_HTML.count(token) == 5
     assert stale not in INDEX_HTML

@@ -612,5 +612,5 @@ def test_batch_ao_wiring_contracts():
     assert "formatRecapQuoteDuration(" in app_js
     assert "estCredits" in app_js
     assert i18n_js.count("recap_tiered_cost_estimate:") == 2
-    assert "20261123_round15" in html
+    assert "20261125_admin_r1" in html
     assert "20261104_r64" not in html
