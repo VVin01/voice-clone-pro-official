@@ -557,7 +557,7 @@ def test_dedupe_rule_inventory_and_static_baseline_under_9500():
         "selling:",
         "bashing:",
         "harm:",
-        "MODERATION: category=<selling|bashing|harm|none> confidence=<0.0-1.0>",
+        "MODERATION: category=<selling|bashing|harm|disparagement|competitor|none> confidence=<0.0-1.0>",
         "REPLY: <အဖြေ စာသား>",
     ]
     for phrase in required_rule_phrases:

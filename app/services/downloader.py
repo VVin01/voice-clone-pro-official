@@ -2220,7 +2220,7 @@ class MediaDownloader:
         sub_visual_overrides: Optional[dict] = None,
         sub_font_custom_path: Optional[str] = None,
         sub_bold: bool = True,
-        sub_render_mode: str = "png",
+        sub_render_mode: str = "timeline",
         sub_effect: str = "none",
         embed_soft_subs: bool = True,
         protection_level: str = "strong",

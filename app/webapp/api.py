@@ -7730,6 +7730,20 @@ def _build_clean_recap_script_file(
         return None
 
 
+def _rel_dir_parts_lower(cand: Path, base_dir: Path) -> set[str]:
+    """Return lower-cased parent directory components of ``cand`` relative to ``base_dir``.
+
+    Inspecting only relative components inside ``job_dir`` avoids false
+    skips when an ancestor directory above ``storage_root`` happens to be
+    named ``work`` (e.g., GitHub Actions ``/home/runner/work/...``).
+    """
+    try:
+        rel_parts = cand.relative_to(base_dir).parts[:-1]
+    except ValueError:
+        rel_parts = cand.parts[:-1]
+    return {p.lower() for p in rel_parts}
+
+
 def resolve_recap_deliverable_path(
     job_id: str,
     file_type: str,
@@ -7765,7 +7779,7 @@ def resolve_recap_deliverable_path(
                 return str(cand)
         if job_dir.is_dir():
             for cand in job_dir.rglob("*.mp4"):
-                parts_lower = {p.lower() for p in cand.parts}
+                parts_lower = _rel_dir_parts_lower(cand, job_dir)
                 name_lower = cand.name.lower()
                 if "video_parts" in parts_lower or "work" in parts_lower:
                     continue
@@ -7788,7 +7802,7 @@ def resolve_recap_deliverable_path(
                 return str(cand)
         if job_dir.is_dir():
             for cand in list(job_dir.rglob("*.mp3")) + list(job_dir.rglob("*.wav")):
-                parts_lower = {p.lower() for p in cand.parts}
+                parts_lower = _rel_dir_parts_lower(cand, job_dir)
                 name_lower = cand.name.lower()
                 if "tts_parts" in parts_lower or "work" in parts_lower:
                     continue
@@ -7950,7 +7964,7 @@ class RecapConfigRequest(BaseModel):
     sub_bg_opacity: Optional[int] = Field(None, ge=0, le=100)
     sub_shadow: Optional[bool] = None
     sub_bold: bool = True
-    sub_render_mode: str = "png"
+    sub_render_mode: str = "timeline"
     sub_effect: str = "none"
     embed_soft_subs: bool = True
     # Batch DD: custom subtitle font — client handle + SERVER-ONLY
@@ -13913,10 +13927,20 @@ async def get_admin_global_history(
         stmt = stmt.where(Job.created_at >= now_utc - timedelta(hours=24))
     elif timeframe == "7d":
         stmt = stmt.where(Job.created_at >= now_utc - timedelta(days=7))
-    elif timeframe == "older_24h":
-        stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
 
-    if status and status != "all":
+    _st_norm = (status or "all").strip().lower()
+    if _st_norm == "active":
+        stmt = stmt.where(
+            Job.status.in_((
+                JobStatus.PENDING.value,
+                JobStatus.QUEUED.value,
+                JobStatus.RUNNING.value,
+                JobStatus.WAITING_CHOICE.value,
+            ))
+        )
+    elif _st_norm == "failed_all":
+        stmt = stmt.where(Job.status.in_((JobStatus.FAILED.value, JobStatus.CANCELLED.value)))
+    elif _st_norm != "all":
         stmt = stmt.where(Job.status == status.upper())
 
     if job_type == "RECAP":
@@ -13993,9 +14017,16 @@ async def get_admin_global_history(
                         )
 
         raw_snippet = _clean_recap_display_title(input_preview) if is_recap else (input_preview or "")
+        duration_sec = None
+        if job.started_at and job.finished_at:
+            duration_sec = round((job.finished_at - job.started_at).total_seconds(), 1)
+        elif job.started_at and job.status == JobStatus.RUNNING.value:
+            s_ts = job.started_at.replace(tzinfo=timezone.utc) if job.started_at.tzinfo is None else job.started_at
+            duration_sec = round((now_utc - s_ts).total_seconds(), 1)
         out.append({
             "id": job.id,
             "user_id": job.user_id,
+            "user_name": first_name or f"User {job.user_id}",
             "username": username or "Unknown",
             "first_name": first_name or "",
             "job_type": "RECAP" if is_recap else ("TTS" if job.job_type == JobType.TTS.value else "VOICE_CLONE"),
@@ -14009,13 +14040,38 @@ async def get_admin_global_history(
             "status": job.status,
             "input_snippet": (raw_snippet[:70] + "...") if raw_snippet and len(raw_snippet) > 70 else raw_snippet,
             "created_at": job.created_at.isoformat() if job.created_at else None,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+            "duration_seconds": duration_sec,
             "time_ago": time_ago,
+            "created_ago": time_ago,
             "download_url": download_url,
             "deliverables": deliverables,
             "error_message": job.error_message,
             "file_exists": file_exists,
             "is_expired": is_expired,
         })
+
+    _active_counts = {
+        JobStatus.PENDING.value: 0,
+        JobStatus.QUEUED.value: 0,
+        JobStatus.RUNNING.value: 0,
+        JobStatus.WAITING_CHOICE.value: 0,
+    }
+    _agg_rows = (
+        await db.execute(
+            select(Job.status, func.count(Job.id))
+            .where(Job.status.in_(tuple(_active_counts.keys())))
+            .group_by(Job.status)
+        )
+    ).all()
+    for _st, _cnt in _agg_rows:
+        _active_counts[str(_st)] = int(_cnt or 0)
+    _q_cnt = _active_counts[JobStatus.QUEUED.value]
+    _r_cnt = _active_counts[JobStatus.RUNNING.value]
+    _w_cnt = _active_counts[JobStatus.WAITING_CHOICE.value]
+    _p_cnt = _active_counts[JobStatus.PENDING.value]
+    worker_info = await _get_laptop_worker_status(db)
 
     return {
         "success": True,
@@ -14024,6 +14080,17 @@ async def get_admin_global_history(
         "total_success": total_success,
         "total_voice": total_voice,
         "total_recap": total_recap,
+        "counts": {
+            "pending": _p_cnt,
+            "queued": _q_cnt,
+            "running": _r_cnt,
+            "waiting_choice": _w_cnt,
+            "active": _p_cnt + _q_cnt + _r_cnt + _w_cnt,
+            "success": total_success,
+            "failed": total_failed,
+            "total_listed": len(out),
+        },
+        "worker": worker_info,
         "timeframe": timeframe,
         "status_filter": status,
         "user_id_filter": user_id,
@@ -14033,7 +14100,7 @@ async def get_admin_global_history(
 
 
 class AdminPurgeHistoryRequest(BaseModel):
-    mode: str = "failed"  # "failed", "older_24h", "all_completed", "single", "matching"
+    mode: str = "failed"  # "failed", "older_retention", "single", "matching"
     job_id: Optional[str] = None
     timeframe: Optional[str] = None
     status: Optional[str] = None
@@ -14072,25 +14139,23 @@ async def purge_admin_history(
         # boundary the automatic sweep uses, so a manual purge can never
         # wipe media users are still entitled to download.
         stmt = stmt.where(Job.created_at < now_utc - timedelta(days=_media_retention_days()))
-    elif req.mode == "older_24h":
-        stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
-    elif req.mode == "all_completed":
-        stmt = stmt.where(Job.status.in_([JobStatus.SUCCESS.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value]))
     elif req.mode == "matching":
-        if req.timeframe == "older_24h":
-            stmt = stmt.where(Job.created_at < now_utc - timedelta(hours=24))
-        elif req.timeframe == "24h":
+        if req.timeframe == "24h":
             stmt = stmt.where(Job.created_at >= now_utc - timedelta(hours=24))
         elif req.timeframe == "7d":
             stmt = stmt.where(Job.created_at >= now_utc - timedelta(days=7))
 
-        if req.status and req.status != "all":
+        if req.status and req.status.lower() == "failed_all":
+            stmt = stmt.where(Job.status.in_((JobStatus.FAILED.value, JobStatus.CANCELLED.value)))
+        elif req.status and req.status != "all":
             stmt = stmt.where(Job.status == req.status.upper())
 
         if req.job_type == "RECAP":
             stmt = stmt.where((Job.job_type == JobType.RECAP.value) | Job.id.startswith("rc_") | (Job.engine == "recap"))
+        elif req.job_type == "TTS":
+            stmt = stmt.where((Job.job_type == "TTS") | (Job.engine.in_(("gemini_tts", "edge_tts", "tts"))))
         elif req.job_type == "VOICE_CLONE":
-            stmt = stmt.where((Job.job_type != JobType.RECAP.value) & (~Job.id.startswith("rc_")) & (Job.engine != "recap"))
+            stmt = stmt.where((Job.job_type != JobType.RECAP.value) & (Job.job_type != "TTS") & (~Job.id.startswith("rc_")) & (Job.engine != "recap"))
 
     res = await db.execute(stmt)
     jobs_to_delete = res.scalars().all()
@@ -15429,42 +15494,8 @@ async def _batch_admin_user_rows(db: AsyncSession, rows: list[User]) -> list[dic
     return [_format_admin_user_dict(u, bal_by_uid.get(u.id)) for u in rows]
 
 
-@api_router.get("/admin/users/search")
-async def search_admin_users(
-    q: str = "",
-    limit: int = 20,
-    admin: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db_session),
-    category: str = "",
-):
-    """Search users by Telegram ID, @username or first name (admin only).
-
-    The optional ``category`` (FREE|PURCHASED) narrows the search to the
-    Users screen's active filter chip, same as the browse list.
-    """
-    query = (q or "").strip().lstrip("@")
-    if len(query) < 2:
-        raise HTTPException(status_code=400, detail="Search query too short (min 2 characters)")
-    limit = max(1, min(int(limit or 20), 50))
-    conds = [
-        User.username.ilike(f"%{query}%"),
-        User.first_name.ilike(f"%{query}%"),
-    ]
-    if query.isdigit():
-        conds.append(User.id == int(query))
-    stmt = select(User).where(or_(*conds))
-    cat = _admin_category_filter(category)
-    if cat:
-        stmt = stmt.where(User.account_category == cat)
-    rows = (await db.execute(
-        stmt.order_by(User.created_at.desc()).limit(limit)
-    )).scalars().all()
-    out = await _batch_admin_user_rows(db, list(rows))
-    return {"users": out, "count": len(out)}
-
-
 async def _admin_user_row(db: AsyncSession, u: User) -> dict:
-    """Canonical admin user payload (same shape as /admin/users/search)."""
+    """Canonical admin user payload (same shape as /admin/users)."""
     bal = await db.get(MinuteBalance, u.id)
     return _format_admin_user_dict(u, bal)
 
@@ -16015,6 +16046,9 @@ async def get_admin_queue(
     status: Optional[str] = "all",
     engine: Optional[str] = "all",
     limit: int = 60,
+    timeframe: Optional[str] = "all",
+    job_type: Optional[str] = "all",
+    job_id: Optional[str] = None,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -16088,11 +16122,38 @@ async def get_admin_queue(
         .outerjoin(User, Job.user_id == User.id)
     )
 
-    if status and status.lower() != "all":
+    _q_st = (status or "all").strip().lower()
+    if _q_st == "active":
+        query = query.where(
+            Job.status.in_((
+                JobStatus.PENDING.value,
+                JobStatus.QUEUED.value,
+                JobStatus.RUNNING.value,
+                JobStatus.WAITING_CHOICE.value,
+            ))
+        )
+    elif _q_st == "failed_all":
+        query = query.where(Job.status.in_((JobStatus.FAILED.value, JobStatus.CANCELLED.value)))
+    elif _q_st != "all":
         query = query.where(Job.status == status.upper())
 
     if engine and engine.lower() != "all":
         query = query.where(Job.engine == engine.lower())
+
+    if timeframe == "24h":
+        query = query.where(Job.created_at >= datetime.now(timezone.utc) - timedelta(hours=24))
+    elif timeframe == "7d":
+        query = query.where(Job.created_at >= datetime.now(timezone.utc) - timedelta(days=7))
+
+    if job_id and job_id.strip():
+        query = query.where(Job.id.like(f"{job_id.strip()}%"))
+
+    if job_type == "RECAP":
+        query = query.where((Job.job_type == JobType.RECAP.value) | Job.id.startswith("rc_") | (Job.engine == "recap"))
+    elif job_type == "TTS":
+        query = query.where((Job.job_type == "TTS") | (Job.engine.in_(("gemini_tts", "edge_tts", "tts"))))
+    elif job_type == "VOICE_CLONE":
+        query = query.where((Job.job_type != JobType.RECAP.value) & (Job.job_type != "TTS") & (~Job.id.startswith("rc_")) & (Job.engine != "recap"))
 
     query = query.order_by(Job.created_at.desc()).limit(min(limit, 100))
     res = await db.execute(query)
@@ -16197,41 +16258,6 @@ async def get_admin_queue(
 class FleetWorkerTogglePayload(BaseModel):
     status: str | None = None
     recap_on_queue: bool | None = None
-
-
-@api_router.get("/admin/fleet/status")
-async def get_admin_fleet_status(
-    admin: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db_session),
-):
-    """Inspect VPS Worker Node status & VPS Web Service status."""
-    worker = await _get_laptop_worker_status(db)
-    vps_web_info = {
-        "is_online": True,
-        "status_code": "ONLINE",
-        "status_text": "Online 🟢 (VPS Web Service)",
-        "host": "vmi3759442.contaboserver.net",
-        "workloads": [
-            "Fast Web HTTP API & Telegram Webhook (/telegram/webhook)",
-            "Mini App UI & Static Asset Delivery",
-            "PostgreSQL / SQLite Database Session Pool",
-            "Edge-TTS Synthesis Fallback & Instant Bot Notifications",
-        ],
-    }
-    return {
-        "success": True,
-        "vps_worker": {
-            **worker,
-            "workloads": [
-                "Heavy Voice Synthesis (Cloud VoxCPM 2 Engine)",
-                "Faster-Whisper ASR (Speech-to-Text Transcription)",
-                "Movie Recap Video Rendering (FFmpeg + HarfBuzz)",
-                "Cloudflare WARP Egress & YouTube POT Sidecar (:4416)",
-            ],
-        },
-        "vps_web": vps_web_info,
-        "render_cloud": vps_web_info,
-    }
 
 
 @api_router.post("/admin/fleet/worker-toggle")
@@ -17168,9 +17194,9 @@ async def get_admin_group_ai_console(
 ):
     """Return Group AI console status: current knowledge sheet, budgets, and recent actions."""
     from app.services import group_ai_admin as gai
-    from app.services.dynamic_settings import load_dynamic_settings
+    from app.services.dynamic_settings import refresh_dynamic_settings_if_changed
 
-    await load_dynamic_settings(db)
+    await refresh_dynamic_settings_if_changed(db)
     custom_sheet = str(getattr(settings, "group_ai_knowledge_sheet", "") or "").strip()
     is_custom = bool(custom_sheet)
     effective_sheet = custom_sheet if is_custom else gai.get_built_in_fact_sheet()
@@ -19450,51 +19476,4 @@ async def revoke_admin_wallet_grant(
         "revoked_voice_minutes": round(ded_v / 60.0, 2),
         "revoked_recap_credits": round(ded_r / 60.0, 2),
         "message": "Grant ကို ရုပ်သိမ်းပြီးပါပြီ",
-    }
-
-
-@api_router.get("/admin/ops-queues")
-async def get_admin_ops_queues(
-    admin: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db_session),
-):
-    """Operational queues summary: pending Custom Voice Requests & pending Group AI Escalations."""
-    from app.models.schema import CustomVoiceRequest, GroupAiEscalation
-
-    cv_rows = (await db.execute(
-        select(CustomVoiceRequest)
-        .where(CustomVoiceRequest.status == "PENDING")
-        .order_by(CustomVoiceRequest.created_at.desc())
-        .limit(20)
-    )).scalars().all()
-    esc_rows = (await db.execute(
-        select(GroupAiEscalation)
-        .where(GroupAiEscalation.status == "PENDING")
-        .order_by(GroupAiEscalation.created_at.desc())
-        .limit(20)
-    )).scalars().all()
-    return {
-        "custom_voice_pending_count": len(cv_rows),
-        "custom_voice_requests": [
-            {
-                "id": r.id,
-                "user_id": r.user_id,
-                "name": getattr(r, "requested_name", None) or getattr(r, "name", "") or f"Voice #{r.id}",
-                "status": r.status,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in cv_rows
-        ],
-        "group_ai_escalations_pending_count": len(esc_rows),
-        "group_ai_escalations": [
-            {
-                "id": e.id,
-                "author_name": getattr(e, "author_name", "") or "",
-                "question": (getattr(e, "question_text", "") or "")[:140],
-                "draft_reply": (getattr(e, "draft_reply", "") or "")[:140],
-                "status": e.status,
-                "created_at": e.created_at.isoformat() if e.created_at else None,
-            }
-            for e in esc_rows
-        ],
     }

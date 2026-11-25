@@ -291,5 +291,5 @@ def test_bg_persona_work_intact_and_not_restyled():
 
 
 def test_token_r80():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert "20261104_r79" not in INDEX_HTML

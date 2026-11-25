@@ -77,7 +77,7 @@ def _extract_js_fn(src: str, name: str) -> str:
 
 
 def test_r150_cache_token():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "20261114_r149" not in INDEX_HTML
 
 
@@ -602,9 +602,10 @@ async def test_a4_retention_and_orphan_sweeps_preserve_waiting_choice_artifacts(
 
 
 def test_a4_admin_ui_wires_waiting_choice_filter_banner_and_i18n():
-    assert 'data-status="waiting_choice"' in INDEX_HTML
-    assert 'id="cnt-waiting-choice"' in INDEX_HTML
-    assert '"WAITING_CHOICE"' in APP_JS
+    admin_js = (REPO / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    assert 'data-jstatus="active"' in INDEX_HTML
+    assert 'id="cnt-active"' in INDEX_HTML
+    assert "waiting_choice" in admin_js
     assert "admin_queue_parked_title" in I18N_JS
     assert "badge_waiting_choice" in I18N_JS
     assert "filter_waiting_choice" in I18N_JS

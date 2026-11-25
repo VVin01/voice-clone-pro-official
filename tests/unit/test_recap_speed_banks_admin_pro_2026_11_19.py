@@ -307,20 +307,19 @@ async def test_admin_power_tools_endpoints_end_to_end(db_session, monkeypatch):
     st_get = await api.get_admin_settings(admin=admin, db=db_session)
     assert st_get["recap_worker_concurrency"] == 3 and st_get["usd_to_mmk_rate"] == 4800.0
 
-    ops = await api.get_admin_ops_queues(admin=admin, db=db_session)
-    assert "custom_voice_pending_count" in ops and "group_ai_escalations_pending_count" in ops
+    assert not hasattr(api, "get_admin_ops_queues")
 
 
 def test_frontend_admin_pro_and_bundle_budget():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
     app_js = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
-    admin_pro = (ROOT / "app/webapp/static/js/admin_pro.js").read_text(encoding="utf-8")
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert 'id="extra-payment-accounts"' in html
     assert '<option value="TTS">' in html
-    assert html.count("?v=20261125_admin_r1") == 5
-    assert "/static/js/admin_pro.js" in app_js
+    assert html.count("?v=20261125_admin_r23") == 5
+    assert "/static/js/admin.js" in app_js
     for marker in ("admp-banks-card", "admp-orders-bar", "admp-expiring-card", "admp-bc-aud", "admp-audit-bar", "admp-runtime-card"):
-        assert marker in admin_pro
+        assert marker in html or marker in admin_js
     lf_sum = sum(
         len((ROOT / f).read_bytes().replace(b"\r\n", b"\n"))
         for f in ("app/webapp/static/css/style.css", "app/webapp/static/js/app.js", "app/webapp/static/js/i18n.js")

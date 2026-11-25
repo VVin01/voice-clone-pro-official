@@ -153,9 +153,10 @@ def test_remaining_is_none_only_when_the_model_has_no_known_cap():
 
 def test_order_for_model_richest_first():
     health = KeyHealth(clock=_Clock())
-    health.record_usage("k1", _TTS, n=5)
-    health.record_usage("k2", _TTS, n=2)
-    # k3 untouched (richest), then k2, then the drained k1.
+    health.record_usage("k1", _TTS, n=6)
+    health.record_usage("k2", _TTS, n=3)
+    # Coarse daily usage buckets (bucket width 3, spread <= 2): k3 untouched
+    # (bucket 0), then k2 (bucket 1), then the drained k1 (bucket 2).
     assert health.order_for_model(["k1", "k2", "k3"], _TTS) == ["k3", "k2", "k1"]
     # Ordering is per-model: on an untouched model the same keys are
     # all tied, so what comes back is the rotated order for THAT call
@@ -169,10 +170,12 @@ def test_order_for_model_ties_keep_rotation_and_cursor_advances():
     assert health.order_for_model(keys, _TTS) == ["k1", "k2", "k3"]
     assert health.order_for_model(keys, _TTS) == ["k2", "k3", "k1"]
     assert health.order_for_model(keys, _TTS) == ["k3", "k1", "k2"]
-    # A usage leader sinks within the rotated frame: k2 was used, so
-    # the fourth call (rotation back to k1) orders k1, k3, k2.
-    health.record_usage("k2", _TTS)
-    assert health.order_for_model(keys, _TTS) == ["k1", "k3", "k2"]
+    # Spread <= 2 (n=1) keeps the rotated cursor order instead of resetting to Key #0;
+    # reaching the next coarse bucket (n=3) sinks k2 behind k1, k3.
+    health.record_usage("k2", _TTS, n=1)
+    assert health.order_for_model(keys, _TTS) == ["k1", "k2", "k3"]
+    health.record_usage("k2", _TTS, n=2)  # total n=3 -> bucket 1
+    assert health.order_for_model(keys, _TTS) == ["k2", "k3", "k1"][:0] + ["k3", "k1", "k2"]
 
 
 def test_order_for_model_cooldown_interplay():
@@ -192,7 +195,7 @@ def test_order_for_model_cooldown_interplay():
 def test_order_for_model_unknown_model_sorts_with_default_cap():
     health = KeyHealth(clock=_Clock())
     health.record_usage("k1", "mystery-model", n=7)
-    health.record_usage("k2", "mystery-model", n=1)
+    health.record_usage("k2", "mystery-model", n=3)
     assert health.order_for_model(["k1", "k2", "k3"], "mystery-model") == [
         "k3", "k2", "k1"]
 

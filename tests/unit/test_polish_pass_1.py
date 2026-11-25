@@ -27,7 +27,7 @@ def _extract_fn(src: str, name: str) -> str:
 
 
 def test_r148_cache_token_and_budgets():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "r147" not in INDEX_HTML
 
     total_lf = sum(
@@ -206,7 +206,8 @@ console.log(JSON.stringify({{ rowFresh }}));
 
 
 def test_1b_pricing_cards_and_1c_overview_settings_dom():
-    pricing_fn = _extract_fn(APP_JS, "renderAdminPricingList")
+    admin_js = (REPO / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+    pricing_fn = _extract_fn(admin_js, "renderAdminPricingList")
     assert "admin_plan_name_" in pricing_fn
     assert "adm-price-card" in pricing_fn
     assert "adm-price-controls" in pricing_fn

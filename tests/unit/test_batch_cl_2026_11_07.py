@@ -299,5 +299,5 @@ console.log(JSON.stringify(clickCounts));
 # ── Release pin: cache token r109 ───────────────────────────────────
 
 def test_cl_cache_token_is_r109():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert ("20261104_r" + "108") not in INDEX_HTML

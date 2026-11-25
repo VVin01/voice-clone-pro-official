@@ -124,14 +124,13 @@ async def test_user_search_by_name_username_id(db_session):
     a = _user(USER_ID, first_name="Aung Khant", username="aungkhant")
     b = _user(OTHER_ID, first_name="Su Su", username="susu")
     await _seed(db_session, admin, a, b)
-    by_name = await api_mod.search_admin_users("aung", 20, admin, db_session)
+    assert not hasattr(api_mod, "search_admin_users")
+    by_name = await api_mod.list_admin_users(20, 0, admin, db_session, search="aung")
     assert [u["id"] for u in by_name["users"]] == [USER_ID]
-    by_username = await api_mod.search_admin_users("@susu", 20, admin, db_session)
+    by_username = await api_mod.list_admin_users(20, 0, admin, db_session, search="@susu")
     assert [u["id"] for u in by_username["users"]] == [OTHER_ID]
-    by_id = await api_mod.search_admin_users(str(USER_ID), 20, admin, db_session)
+    by_id = await api_mod.list_admin_users(20, 0, admin, db_session, search=str(USER_ID))
     assert [u["id"] for u in by_id["users"]] == [USER_ID]
-    with pytest.raises(HTTPException):
-        await api_mod.search_admin_users("a", 20, admin, db_session)
 
 
 # ── Adjust-user: reason + audited ledger ─────────────────────────────
@@ -282,7 +281,7 @@ async def test_audit_log_endpoint_lists_actions(db_session):
 
 def test_new_admin_routes_require_admin_dependency():
     wanted = {
-        "/api/admin/users/search",
+        "/api/admin/users",
         "/api/admin/users/{user_id}/ban",
         "/api/admin/users/{user_id}/unban",
         "/api/admin/audit-log",
@@ -299,13 +298,13 @@ def test_new_admin_routes_require_admin_dependency():
 
 def test_frontend_wiring_present():
     root = Path(__file__).resolve().parents[2]
-    app_js = (root / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
+    admin_js = (root / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     i18n_js = (root / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
     index_html = (root / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert "/api/admin/users/search" in app_js
-    assert "adminSearchUsers" in app_js
-    assert "_adminRequireReason" in app_js
-    assert "is_banned" in app_js and "banned" in app_js
+    assert "/api/admin/users?" in admin_js
+    assert "loadAdminUsersRecent" in admin_js
+    assert "_adminRequireReason" in admin_js
+    assert "is_banned" in admin_js and "banned" in admin_js
     assert "admin-ops-card" in index_html
     assert "adm-user-search-q" in index_html
     assert "adm-adjust-reason" in index_html

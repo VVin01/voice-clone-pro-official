@@ -416,5 +416,5 @@ def test_av_touch_targets_and_text_fit_guards():
 
 
 def test_av_cache_token_bumped():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert "r70" not in INDEX_HTML

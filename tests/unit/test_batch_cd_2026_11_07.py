@@ -86,7 +86,7 @@ async def _seed(db, *objs):
 
 def test_cd_cache_token_is_r102():
     html = _read("app/webapp/static/index.html")
-    assert html.count("20261125_admin_r1") == 5
+    assert html.count("20261125_admin_r23") == 5
     assert ("20261104_r" + "101") not in html
 
 
@@ -657,16 +657,16 @@ def test_cd_client_sections_and_send_wiring():
     for el_id in (
         "adm-detail-breakdown", "adm-detail-tts", "adm-detail-verify",
         "adm-detail-referrals", "adm-msg-text", "adm-msg-note",
-        "adm-msg-send-btn", "adm-detail-recent-jobs", "adm-detail-payments",
+        "adm-msg-send-btn", "adm-user-jobs", "adm-detail-payments",
         "adm-detail-payments-total", "adm-detail-ledger", "adm-detail-ai-chats",
     ):
         assert f'id="{el_id}"' in html
     for key in ("admin_balance_breakdown", "admin_msg_title",
-                "admin_recent_jobs_title", "admin_payments_title",
+                "admin_user_jobs", "admin_payments_title",
                 "admin_ledger_title", "admin_ai_chats_title"):
         assert f'data-i18n="{key}"' in html
 
-    js = _read("app/webapp/static/js/app.js")
+    js = _read("app/webapp/static/js/admin.js")
     assert "async function adminSendUserMessage()" in js
     assert "`/api/admin/users/${uid}/message`" in js
     assert 'showStudioConfirm(t("admin_msg_confirm")' in js

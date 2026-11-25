@@ -200,10 +200,10 @@ async def test_cu_admin_detail_includes_recap_ledger(db_session, monkeypatch):
 
 
 def test_cu_recap_ledger_ui_wired():
-    js = _read("app/webapp/static/js/app.js")
+    js = _read("app/webapp/static/js/admin.js")
     html = _read("app/webapp/static/index.html")
     i18n = _read("app/webapp/static/js/i18n.js")
     assert "recap_ledger_recent" in js
-    assert 'id="adm-detail-recap-ledger"' in html
+    assert 'id="adm-detail-ledger"' in html
     assert "admin_recap_ledger_title" in i18n and "admin_recap_ledger_empty" in i18n
     assert i18n.count("admin_recap_ledger_title") >= 2  # my + en

@@ -5518,16 +5518,7 @@ body.lite #tab-downloader .vcp-skel {
     background: var(--vcp-flat-glass-inset);
 }
 @media (max-width: 420px) {
-    #tab-admin .form-row-2 {
-        grid-template-columns: 1fr;
-    }
-    #tab-admin #adm-jobs-history .form-row-2 {
-        grid-template-columns: 1fr 1fr;
-    }
     #tab-admin .admin-purge-grid {
-        grid-template-columns: 1fr;
-    }
-    #tab-admin .gemini-chain-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -8476,10 +8467,10 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     align-items: center;
     justify-content: center;
 }
-/* 5) Admin Console (#tab-admin): 4x2 Nav Grid, Action Triage, KPI Cards & Collapsible Accordions */
+/* 5) Admin Console (#tab-admin): 3x2 Nav Grid, Action Triage, KPI Rows & Collapsible Accordions */
 #tab-admin #adm-nav {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     padding: 6px;
     position: static;
@@ -8490,6 +8481,109 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     border: 1px solid rgba(15, 23, 42, 0.08);
     box-shadow: 0 8px 20px -12px rgba(15, 23, 42, 0.14);
 }
+#tab-admin .adm-kv-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+#tab-admin .adm-kv-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    text-align: left;
+}
+#tab-admin .adm-kv-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+#tab-admin .adm-kv-row .stat-lbl {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: #334155;
+}
+#tab-admin .adm-kv-row .stat-sub {
+    font-size: 11px;
+    color: #64748B;
+}
+#tab-admin .adm-kv-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    text-align: right;
+}
+#tab-admin .adm-kv-row .stat-num {
+    font-size: 16px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+#tab-admin .adm-worker-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+}
+#tab-admin .adm-worker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+#tab-admin .adm-worker-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+html[data-theme="dark"] #tab-admin .adm-kv-row,
+html[data-theme="dark"] #tab-admin .adm-worker-bar {
+    background: rgba(15, 23, 42, 0.72);
+    border-color: rgba(255, 255, 255, 0.10);
+}
+html[data-theme="dark"] #tab-admin .adm-kv-row .stat-lbl {
+    color: #E2E8F0;
+}
+html[data-theme="dark"] #tab-admin .adm-kv-row .stat-sub {
+    color: #94A3B8;
+}
+.admp-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.admp-row-nowrap{display:flex;flex-wrap:nowrap;gap:6px;align-items:center;flex-shrink:0}
+.admp-between{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.admp-stack{display:flex;flex-direction:column;gap:10px}
+.admp-field{display:flex;flex-direction:column;gap:4px;width:100%}
+.admp-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:44px;padding:4px 0}
+.admp-toggle-row .input-label{margin:0;flex:1 1 auto;min-width:0}
+.admp-card-item{padding:10px 12px;border-radius:12px;background:rgba(15,23,42,0.04);border:1px solid rgba(15,23,42,0.10);margin-bottom:8px}
+.admp-bank-item{border-left:4px solid #0047BA}
+.admp-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(15,23,42,0.07);color:inherit;font-weight:600;white-space:nowrap}
+.admp-badge-ok{background:rgba(16,185,129,0.15);color:#059669}
+.admp-badge-warn{background:rgba(245,158,11,0.18);color:#b45309}
+.admp-badge-err{background:rgba(239,68,68,0.16);color:#dc2626}
+.admp-preset-chip{font-size:12px;padding:5px 10px;border-radius:999px;border:1px solid rgba(15,23,42,0.18);background:rgba(15,23,42,0.04);color:inherit;cursor:pointer;white-space:nowrap;font-weight:600}
+.admp-preset-chip.active,.admp-preset-chip:hover{border-color:#d4af37;background:rgba(212,175,55,0.16)}
+.admp-bar-bg{height:8px;width:100%;border-radius:999px;background:rgba(15,23,42,0.11);overflow:hidden;margin-top:6px}
+.admp-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#10b981,#f59e0b)}
+.admp-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.68);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px}
+.admp-modal{width:100%;max-width:420px;border-radius:18px;padding:18px;background:var(--surface-elevated,#141824);border:1px solid rgba(255,255,255,0.14);color:var(--text-primary,#fff);max-height:88vh;overflow-y:auto}
+html[data-theme="dark"] .admp-card-item{background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.09)}
+html[data-theme="dark"] .admp-badge{background:rgba(255,255,255,0.09)}
+html[data-theme="dark"] .admp-badge-ok{color:#34d399}
+html[data-theme="dark"] .admp-badge-warn{color:#fbbf24}
+html[data-theme="dark"] .admp-badge-err{color:#f87171}
+html[data-theme="dark"] .admp-preset-chip{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.16)}
+html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
 #tab-admin #adm-nav .adm-nav-btn {
     position: relative;
     display: flex;
@@ -8670,6 +8764,46 @@ html[data-theme="dark"].lite #tab-tts #tts-engine-picker.segmented-control {
     min-height: 48px;
     border-radius: 14px;
     font-weight: 800;
+}
+#tab-admin details.adm-diag-sub {
+    border: 1px solid rgba(15, 23, 42, 0.10);
+    border-radius: 14px;
+    background: rgba(248, 250, 255, 0.68);
+    overflow: hidden;
+}
+#tab-admin details.adm-diag-sub > summary.adm-diag-head {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 48px;
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--vcp-text-primary, #0F172A);
+    user-select: none;
+}
+#tab-admin details.adm-diag-sub > summary.adm-diag-head::-webkit-details-marker {
+    display: none;
+}
+#tab-admin details.adm-diag-sub[open] > summary .adm-acc-chev {
+    transform: rotate(0deg);
+}
+#tab-admin details.adm-diag-sub > .adm-diag-body {
+    padding: 12px 14px 14px;
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+html[data-theme="dark"] #tab-admin details.adm-diag-sub {
+    background: rgba(15, 23, 42, 0.45);
+    border-color: rgba(255, 255, 255, 0.10);
+}
+html[data-theme="dark"] #tab-admin details.adm-diag-sub > summary.adm-diag-head {
+    color: #F8FAFC;
+}
+html[data-theme="dark"] #tab-admin details.adm-diag-sub > .adm-diag-body {
+    border-top-color: rgba(255, 255, 255, 0.08);
 }
 /* 6) Phase 5 Dark Glass Overrides (High Contrast Obsidian) */
 html[data-theme="dark"] #tab-downloader .pane-header h2,
@@ -8949,10 +9083,14 @@ html[data-theme="dark"].lite .modal-content {
 }
 #admin-pricing-list .adm-price-controls {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: 8px;
     padding-top: 9px;
     border-top: 1px dashed rgba(148, 163, 184, 0.30);
+}
+#admin-pricing-list .adm-price-save-btn {
+    width: 100%;
 }
 #admin-pricing-list .adm-price-input-wrap {
     flex: 1 1 auto;
@@ -9659,8 +9797,6 @@ select.studio-select, select.studio-input, select.glass-dropdown {
 #tab-vip, #tab-vip .pricing-grid, #tab-vip .plan-panel { min-width: 0; max-width: 100%; }
 .adm-cost-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px dashed rgba(255,255,255,0.08); font-size: 12px; }
 .adm-basis-tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); opacity: 0.85; }
-.adm-price-specs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
-.adm-price-specs input { width: 72px; }
 /* ════════════════════════════════════════════════════════════════════════════
    2026-11-20 UI/UX SIMPLIFICATION PASS (ZERO BACKDROP-FILTER HERE)
    ════════════════════════════════════════════════════════════════════════════ */

@@ -535,14 +535,12 @@ async def test_part_d5_backend_quality_lock_and_surcharge_admin_vs_non_admin(db_
 def test_round12_config_build_parity_vs_base_759f98c():
     """Verify Step 2/3 JSON config output is byte-identical to 759f98c,
     and Step 4 differs ONLY by non-admin render_quality='standard' & split_video=False."""
-    try:
-        base_js = subprocess.check_output(
-            ["git", "show", "759f98c:app/webapp/static/js/app.js"],
-            cwd=str(ROOT),
-            stderr=subprocess.DEVNULL,
-        ).decode("utf-8")
-    except Exception:
-        base_js = APP_JS
+    base_js = subprocess.check_output(
+        ["git", "show", "759f98c:app/webapp/static/js/app.js"],
+        cwd=str(ROOT),
+        text=True,
+        encoding="utf-8",
+    )
 
     def _build_harness(js_src: str) -> str:
         locked_and_extras = _extract_block(

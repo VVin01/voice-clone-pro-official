@@ -923,7 +923,7 @@ def _get_static_asset_cache_tag() -> str:
         "css/style.css",
         "js/i18n.js",
         "js/app.js",
-        "js/admin_pro.js",
+        "js/admin.js",
         "img/brand-logo.svg",
     ):
         p = STATIC_DIR / rel
@@ -939,7 +939,7 @@ async def serve_index():
     index_file = STATIC_DIR / "index.html"
     if index_file.is_file():
         html = index_file.read_text(encoding="utf-8").replace(
-            "?v=20261125_admin_r1",
+            "?v=20261125_admin_r23",
             f"?v={_get_static_asset_cache_tag()}",
         )
         return HTMLResponse(

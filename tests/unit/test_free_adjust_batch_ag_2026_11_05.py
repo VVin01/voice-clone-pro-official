@@ -568,7 +568,7 @@ def test_frontend_css_and_i18n():
 
 
 def test_cache_version_r58():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
 
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────

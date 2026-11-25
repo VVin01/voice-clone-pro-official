@@ -191,7 +191,7 @@ def test_admin_form_has_maintenance_note_input():
 
     root = Path(__file__).resolve().parents[2]
     index_html = (root / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    app_js = (root / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
+    admin_js = (root / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     i18n_js = (root / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
 
     assert 'id="adm-set-maintenance-note"' in index_html
@@ -199,10 +199,10 @@ def test_admin_form_has_maintenance_note_input():
     assert 'data-i18n-ph="settings_maintenance_note_ph"' in index_html
     assert i18n_js.count("settings_maintenance_note_ph:") == 2
     # Load + save wiring.
-    assert "adm-set-maintenance-note" in app_js
-    assert "maintenance_note" in app_js
+    assert "adm-set-maintenance-note" in admin_js
+    assert "maintenance_note" in admin_js
     # Labels exist in both locales.
     assert i18n_js.count("settings_maintenance_note:") == 2
     assert i18n_js.count("settings_maintenance_note_hint:") == 2
     # Statics cache token bumped for this batch.
-    assert index_html.count("?v=20261125_admin_r1") == 5
+    assert index_html.count("?v=20261125_admin_r23") == 5

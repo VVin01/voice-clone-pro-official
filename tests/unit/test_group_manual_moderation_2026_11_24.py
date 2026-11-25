@@ -1228,12 +1228,12 @@ def test_all_manual_moderation_copy_is_zero_emoji():
 
 def test_admin_console_static_badges_and_audit_filter():
     """Admin Console UI renders manual moderation badges and exposes group_mod audit filter."""
-    app_js = (ROOT / "app" / "webapp" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    admin_js = (ROOT / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
     for token in ("manual_mute", "manual_unmute", "manual_ban", "manual_unban", "Manual Mute", "Manual Ban"):
-        assert token in app_js
+        assert token in admin_js
 
-    admin_pro_js = (ROOT / "app" / "webapp" / "static" / "js" / "admin_pro.js").read_text(encoding="utf-8")
-    assert '<option value="group_mod">group_mod.*</option>' in admin_pro_js
+    index_html = (ROOT / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
+    assert '<option value="group_mod">group_mod.*</option>' in index_html
 
 
 # ===========================================================================

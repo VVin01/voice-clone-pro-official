@@ -427,7 +427,7 @@ def test_buy_tab_v8_and_profile_wallet_move_markup_and_js():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
     app_js = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
     i18n_js = (ROOT / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
-    admin_pro_js = (ROOT / "app/webapp/static/js/admin_pro.js").read_text(encoding="utf-8")
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
 
     # Isolate #tab-vip and #tab-profile blocks
     vip_start = html.index('<section id="tab-vip"')
@@ -464,8 +464,8 @@ def test_buy_tab_v8_and_profile_wallet_move_markup_and_js():
     assert "switchVipSubView" not in app_js
     assert "switchVipSubView" not in html
 
-    # Part C JS audit: no `validity_days || 30` in admin_pro.js
-    assert "validity_days || 30" not in admin_pro_js
+    # Part C JS audit: no `validity_days || 30` in admin.js
+    assert "validity_days || 30" not in admin_js
 
     # Part D: verbatim MY Terms strings & Buy pill strings present in i18n.js
     assert 'buy_validity_no_expiry: "♾️ သက်တမ်း မကုန်"' in i18n_js

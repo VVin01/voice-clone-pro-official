@@ -219,24 +219,24 @@ def test_no_text_to_edit_error_is_suppressed_globally():
 # ── Frontend wiring + cache pin ──────────────────────────────────────
 
 def test_frontend_income_and_banned_split_wiring():
-    app_js = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     i18n_js = (ROOT / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
     index_html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 
     # Banned split sub-line.
     assert 'id="adm-banned-split"' in index_html
-    assert "stats.banned_by_admin" in app_js
-    assert "stats.bot_blocked_users" in app_js
-    assert "admin_stat_banned_split" in app_js
+    assert "stats.banned_by_admin" in admin_js
+    assert "stats.bot_blocked_users" in admin_js
+    assert "admin_stat_banned_split" in admin_js
 
     # Income card + wiring.
     assert 'id="admin-income-card"' in index_html
     for el in ("adm-income-today", "adm-income-7d", "adm-income-30d", "adm-income-all"):
         assert f'id="{el}"' in index_html
         assert f'id="{el}-count"' in index_html
-        assert el in app_js
-    assert "stats.income" in app_js
-    assert ".toLocaleString() + \" MMK\"" in app_js
+        assert el in admin_js
+    assert "stats.income" in admin_js
+    assert ".toLocaleString() + \" MMK\"" in admin_js
 
     # i18n parity: every new key exists in both locales.
     for key in (
@@ -249,4 +249,4 @@ def test_frontend_income_and_banned_split_wiring():
 
 def test_cache_version_r52():
     index_html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert index_html.count("?v=20261125_admin_r1") == 5
+    assert index_html.count("?v=20261125_admin_r23") == 5

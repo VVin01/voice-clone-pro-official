@@ -70,6 +70,7 @@ RECAP_JOB = "rc_ck_recap_1"
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_JS = (ROOT / "app" / "webapp" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+ADMIN_JS = (ROOT / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
 API_PY = (ROOT / "app" / "webapp" / "api.py").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
 
@@ -121,15 +122,15 @@ def test_ck_source_pins():
         "e.target.closest"
     )
     # CK-1: the modal wires its own anchors directly, flagging events.
-    assert 'delivEl.querySelectorAll("a[data-dl-url]")' in APP_JS
-    assert 'delivEl.querySelectorAll("a[data-open-url]")' in APP_JS
-    assert APP_JS.count("e.__dlHandled = true") == 2
+    assert 'delivEl.querySelectorAll("a[data-dl-url]")' in ADMIN_JS
+    assert 'delivEl.querySelectorAll("a[data-open-url]")' in ADMIN_JS
+    assert ADMIN_JS.count("e.__dlHandled = true") == 2
     # The wrapper's stopPropagation stays (it keeps content clicks
     # from closing the modal) — CK works around it, never removes it.
     assert 'onclick="event.stopPropagation()"' in INDEX_HTML
     # CK-1: the RECAP player prefers the stream-form downloadUrl.
-    assert "const videoUrl = downloadUrl || deliverables.video;" in APP_JS
-    assert "const videoUrl = deliverables.video || downloadUrl;" not in APP_JS
+    assert "const videoUrl = downloadUrl || deliverables.video;" in ADMIN_JS
+    assert "const videoUrl = deliverables.video || downloadUrl;" not in ADMIN_JS
     # CK-2: disposition is route-only in the recap endpoint — the
     # file-type inline clause is gone everywhere.
     assert 'or file_type in ["video", "audio"]' not in API_PY
@@ -402,9 +403,9 @@ def _delegated_handler_js() -> str:
 
 
 def _ck_wiring_js() -> str:
-    start = APP_JS.index("// Batch CK: wire these anchors DIRECTLY.")
-    end = APP_JS.index('modal.classList.remove("hidden")', start)
-    body = APP_JS[start:end].rstrip()
+    start = ADMIN_JS.index("// Batch CK: wire these anchors DIRECTLY.")
+    end = ADMIN_JS.index('modal.classList.remove("hidden")', start)
+    body = ADMIN_JS[start:end].rstrip()
     assert body.endswith("}")
     # Drop the closing brace of the enclosing if (delivEl) block: the
     # harness supplies delivEl itself and runs the wiring statements.
@@ -515,5 +516,5 @@ console.log(JSON.stringify({ dl: dlCalls, open: openCalls }));
 # ── Release pin: cache token r108 ───────────────────────────────────
 
 def test_ck_cache_token_is_r108():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert ("20261104_r" + "107") not in INDEX_HTML

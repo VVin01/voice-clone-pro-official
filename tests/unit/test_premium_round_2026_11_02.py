@@ -60,7 +60,7 @@ def _css_rule(selector: str) -> str:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_bumped_to_r37():
-    assert HTML.count("?v=20261125_admin_r1") == 5
+    assert HTML.count("?v=20261125_admin_r23") == 5
     assert "20261102_ma1" not in HTML
 
 
@@ -178,16 +178,15 @@ async def test_d3_admin_users_list_exposes_bot_blocked(db_session):
 
 
 def test_d3_ui_labels_bot_blocked_distinctly():
-    list_body = _js_slice(
-        '<span class="badge-status ${u.is_banned',
-        "</span>",
-    )
+    admin_js = (STATIC / "js" / "admin.js").read_text(encoding="utf-8")
+    i_b = admin_js.index('<span class="badge-status ${u.is_banned')
+    j_b = admin_js.index("</span>", i_b + 39)
+    list_body = admin_js[i_b:j_b]
     assert "bot_blocked" in list_body
     assert 't("admin_status_bot_blocked")' in list_body
-    detail_body = _js_slice(
-        "function renderAdminUserDetail(u)",
-        "function renderAdminBanZone(u)",
-    )
+    i_d = admin_js.index("function renderAdminUserDetail(u)")
+    j_d = admin_js.index("function renderAdminBanZone(u)", i_d)
+    detail_body = admin_js[i_d:j_d]
     assert 't("admin_status_bot_blocked")' in detail_body
     # Burmese label, proofread: "Bot က ပိတ်ထားသည်" (blocked by the bot).
     assert 'admin_status_bot_blocked: "Bot ကို Block ထားသည်"' in I18N_JS

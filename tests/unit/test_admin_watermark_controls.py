@@ -407,8 +407,9 @@ def test_admin_ui_and_i18n_wiring():
     ):
         assert elem_id in INDEX_HTML, elem_id
 
+    admin_js = (REPO_ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     for fn in ("saveWatermarkSettings", "_collectWatermarkPayload", "watermark_free_enabled", "watermark_paid_enabled"):
-        assert fn in APP_JS, fn
+        assert fn in admin_js, fn
 
     for key in (
         "adm_wm_title",

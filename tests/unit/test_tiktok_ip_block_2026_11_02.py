@@ -249,10 +249,11 @@ def test_c_display_other_raw_errors_unchanged(tmp_path):
 
 
 def test_c_all_admin_error_sites_use_display_mapping():
-    assert "escapeHtml(displayJobError(j.error_message))" in APP_JS       # admin queue card
-    assert "const errText = displayJobError(j.error_message);" in APP_JS  # admin history card
-    assert "displayJobError(data.error_message)" in APP_JS                # retry status box
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    assert "displayJobError(j.error_message)" in admin_js                 # unified admin jobs card
+    assert "escapeHtml(errText.slice(0, 200))" in admin_js                 # sanitized card render
+    assert "displayJobError(data.error_message)" in admin_js               # retry status box
     # No admin card interpolates a stored error raw any more.
-    assert "escapeHtml(j.error_message)" not in APP_JS
-    assert "escapeHtml(j.error_message.slice" not in APP_JS
-    assert 'escapeHtml(data.error_message || "Execution failed")' not in APP_JS
+    assert "escapeHtml(j.error_message)" not in APP_JS and "escapeHtml(j.error_message)" not in admin_js
+    assert "escapeHtml(j.error_message.slice" not in APP_JS and "escapeHtml(j.error_message.slice" not in admin_js
+    assert 'escapeHtml(data.error_message || "Execution failed")' not in APP_JS and 'escapeHtml(data.error_message || "Execution failed")' not in admin_js

@@ -357,6 +357,42 @@ async def _deliver_ai_failed_holding(
     return True
 
 
+async def _post_moderator_notice_and_delete(
+    message: Message,
+    sender: Bot | Any,
+    *,
+    user: Any,
+    category: str,
+    strike_num: int,
+) -> None:
+    """Best-effort delete offending message + post ONE named 60s-TTL public correction notice."""
+    from app.handlers import group_moderation as gm_handlers
+
+    try:
+        await sender.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+    except Exception as exc:
+        logger.warning("group_ai_admin: moderation delete_message failed: %s", exc)
+
+    notice_text = gai.build_moderator_notice(
+        category=category,
+        strike_num=strike_num,
+        first_name=getattr(user, "first_name", None),
+        username=getattr(user, "username", None),
+    )
+    try:
+        sent_notice = await sender.send_message(chat_id=message.chat.id, text=notice_text)
+        notice_mid = getattr(sent_notice, "message_id", None)
+        if isinstance(notice_mid, int):
+            gm_handlers._schedule_message_deletion(
+                sender,
+                message.chat.id,
+                notice_mid,
+                delay_seconds=gm_handlers.GROUP_NOTICE_TTL_SECONDS,
+            )
+    except Exception as exc:
+        logger.warning("group_ai_admin: moderator notice failed: %s", exc)
+
+
 async def _execute_moderation(
     message: Message,
     bot: Bot | None,
@@ -366,15 +402,18 @@ async def _execute_moderation(
     category: str,
     text: str,
 ) -> None:
-    """Execute the Part 1 moderation action ladder (strikes in rolling 7 days).
+    """Execute the moderation action ladder (strikes in rolling 7 days).
 
-    Strike 1: public warning reply (Burmese, polite, no emoji), message left in place.
-    Strike 2: warning reply + mute 1h (restrict_chat_member, can_send_messages=False, until_date +1h).
-    Strike 3: mute 24h + escalation DM to all admins with a Ban button (ban_chat_member).
+    Legacy selling/bashing/harm: reply in-place with WARNING_TEXT_STRIKE_*.
+    Disparagement/competitor: best-effort delete offending message, post ONE
+    named 60s auto-delete notice (female persona, zero emoji), and apply
+    Strike 1 warn / Strike 2 1h mute / Strike 3 24h mute + Admin Ban DM.
     """
     import time
 
     sender = bot or message.bot
+    is_delete_moderator = category in gai.MODERATOR_DELETE_NOTICE_CATEGORIES
+
     async with _session_or_new(session) as s:
         previous_strikes = await gai.get_user_strikes_in_window(s, user.id)
         strike_num = len(previous_strikes) + 1
@@ -382,11 +421,15 @@ async def _execute_moderation(
 
         if strike_num == 1:
             action = "warn"
-            warning = gai.WARNING_TEXT_STRIKE_1
-            try:
-                await message.reply(warning)
-            except Exception as exc:
-                logger.warning("group_ai_admin: strike 1 warning failed: %s", exc)
+            if is_delete_moderator:
+                await _post_moderator_notice_and_delete(
+                    message, sender, user=user, category=category, strike_num=1
+                )
+            else:
+                try:
+                    await message.reply(gai.WARNING_TEXT_STRIKE_1)
+                except Exception as exc:
+                    logger.warning("group_ai_admin: strike 1 warning failed: %s", exc)
 
             strike = await gai.record_moderation_strike(
                 s,
@@ -400,7 +443,6 @@ async def _execute_moderation(
 
         elif strike_num == 2:
             action = "mute_1h"
-            warning = gai.WARNING_TEXT_STRIKE_2
             until_date = int(time.time() + s2_duration)
             try:
                 from aiogram.types import ChatPermissions
@@ -414,10 +456,15 @@ async def _execute_moderation(
             except Exception as exc:
                 logger.warning("group_ai_admin: strike 2 restrict failed: %s", exc)
 
-            try:
-                await message.reply(warning)
-            except Exception as exc:
-                logger.warning("group_ai_admin: strike 2 warning failed: %s", exc)
+            if is_delete_moderator:
+                await _post_moderator_notice_and_delete(
+                    message, sender, user=user, category=category, strike_num=2
+                )
+            else:
+                try:
+                    await message.reply(gai.WARNING_TEXT_STRIKE_2)
+                except Exception as exc:
+                    logger.warning("group_ai_admin: strike 2 warning failed: %s", exc)
 
             strike = await gai.record_moderation_strike(
                 s,
@@ -431,7 +478,6 @@ async def _execute_moderation(
 
         else:
             action = "mute_24h"
-            warning = gai.WARNING_TEXT_STRIKE_3
             until_date = int(time.time() + s3_duration)
             try:
                 from aiogram.types import ChatPermissions
@@ -445,10 +491,15 @@ async def _execute_moderation(
             except Exception as exc:
                 logger.warning("group_ai_admin: strike 3 restrict failed: %s", exc)
 
-            try:
-                await message.reply(warning)
-            except Exception as exc:
-                logger.warning("group_ai_admin: strike 3 warning failed: %s", exc)
+            if is_delete_moderator:
+                await _post_moderator_notice_and_delete(
+                    message, sender, user=user, category=category, strike_num=3
+                )
+            else:
+                try:
+                    await message.reply(gai.WARNING_TEXT_STRIKE_3)
+                except Exception as exc:
+                    logger.warning("group_ai_admin: strike 3 warning failed: %s", exc)
 
             strike = await gai.record_moderation_strike(
                 s,
@@ -583,8 +634,31 @@ async def handle_group_message(
                 _log_decision(message, user.id if user else None, "prefiltered", reason)
                 return
 
-        # Hard rule first: payment/refund/account topics never reach
-        # the AI and NEVER enter moderation — defer in the group and hand the question to a human.
+        is_admin = settings.is_admin(user.id) if user else True
+        is_bot = bool(user.is_bot) if user else True
+        whitelist = await gai.get_moderation_whitelist(session)
+        user_exempt = is_admin or is_bot or gai.is_user_whitelisted(user.id, whitelist)
+        mod_enabled = await gai.is_moderation_enabled(session)
+
+        # Disparagement / competitor-promotion deterministic hits run before sensitive-topic deferral
+        # (so public scam accusations / competitor redirects trigger delete+notice+strike instead of helpdesk escalation).
+        det_category, _det_conf = (
+            gai.detect_moderation_violation(message_text)
+            if (mod_enabled and not user_exempt)
+            else (None, 0.0)
+        )
+        if det_category in gai.MODERATOR_DELETE_NOTICE_CATEGORIES:
+            await _execute_moderation(
+                message,
+                bot,
+                session=session,
+                user=user,
+                category=det_category,
+                text=message_text or "",
+            )
+            return
+
+        # Hard rule: payment/refund/account topics never reach the AI and NEVER enter selling moderation.
         if gai.detect_sensitive_topic(message_text):
             _log_decision(message, user.id if user else None, "escalate", "sensitive")
             await _escalate(
@@ -599,24 +673,16 @@ async def handle_group_message(
             return
 
         # Moderation Layer (a): Deterministic rules check (runs even during reply cooldown!)
-        is_admin = settings.is_admin(user.id) if user else True
-        is_bot = bool(user.is_bot) if user else True
-        whitelist = await gai.get_moderation_whitelist(session)
-        user_exempt = is_admin or is_bot or gai.is_user_whitelisted(user.id, whitelist)
-        mod_enabled = await gai.is_moderation_enabled(session)
-
-        if mod_enabled and not user_exempt:
-            det_category, det_conf = gai.detect_moderation_violation(message_text)
-            if det_category is not None:
-                await _execute_moderation(
-                    message,
-                    bot,
-                    session=session,
-                    user=user,
-                    category=det_category,
-                    text=message_text or "",
-                )
-                return
+        if det_category is not None:
+            await _execute_moderation(
+                message,
+                bot,
+                session=session,
+                user=user,
+                category=det_category,
+                text=message_text or "",
+            )
+            return
 
         if not gai.rate_limiter.can_reply(user.id, message.message_id):
             return
@@ -707,7 +773,8 @@ async def handle_group_message(
                     return
                 else:
                     _log_decision(message, user.id, "moderation_ignored", f"{ai_category}:{ai_conf:.2f}_below_threshold")
-                    return
+                    if decision != gai.DECISION_REPLY or not reply_text:
+                        return
 
         if decision == gai.DECISION_AI_FAILED:
             consec_fails = gai.rate_limiter.record_ai_failure(user.id)

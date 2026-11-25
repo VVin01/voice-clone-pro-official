@@ -275,14 +275,15 @@ async def test_b0_cache_hit_and_on_demand_refresh(db_session, monkeypatch):
 
 
 def test_b0_ui_i18n_and_cache_token():
+    admin_js = (REPO / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert 'id="admin-stage-timings-card"' in INDEX_HTML
     assert 'id="adm-stage-timings-refresh-btn"' in INDEX_HTML
     assert 'onclick="loadAdminStageTimings(true)"' in INDEX_HTML
-    assert '"/api/admin/stage-timings"' in APP_JS
-    assert "loadAdminStageTimings(false)" in APP_JS
+    assert '"/api/admin/stage-timings"' in admin_js
+    assert "loadAdminStageTimings(false)" in admin_js
     assert "syncTabAdminLifecycle(tabId)" in APP_JS
     assert "switchTab(targetTab);" in APP_JS
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "20261114_r149" not in INDEX_HTML
 
     # Verify all new B0 keys exist cleanly in BOTH my and en locales

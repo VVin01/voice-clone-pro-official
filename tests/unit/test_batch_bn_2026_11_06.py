@@ -125,7 +125,7 @@ def probes(monkeypatch):
 
 def test_bn_cache_token_is_r86():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261125_admin_r1") == 5
+    assert html.count("20261125_admin_r23") == 5
     assert "20261104_r85" not in html
 
 
@@ -295,14 +295,12 @@ def test_bn_estimate_attached_only_below_base(probes):
 
 def test_bn_frontend_section_loader_and_i18n():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert 'id="adm-screen-keys"' in html
-    assert 'data-adm-section="keys"' in html
-    assert 'data-i18n="adm_nav_keys"' in html
+    assert 'id="adm-settings-keys-details"' in html
     assert 'data-i18n="adm_keys_title"' in html
 
-    js = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
+    js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert '"/api/admin/key-health"' in js
-    assert '"keys"' in js.split("ADM_SECTIONS = [", 1)[1].split("]", 1)[0]
+    assert "adm-settings-keys-details" in js
     assert "loadAdminKeyHealth" in js
 
     i18n = (ROOT / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")

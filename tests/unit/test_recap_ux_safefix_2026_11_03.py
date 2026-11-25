@@ -404,8 +404,10 @@ def test_engine_voiceover_deliverable_is_mp3():
 
 
 def test_all_recap_audio_brands_say_mp3():
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert 'brandedDlName("RecapAudio", "wav"' not in APP_JS
-    assert APP_JS.count('brandedDlName("RecapAudio", "mp3"') >= 5
+    assert 'brandedDlName("RecapAudio", "wav"' not in admin_js
+    assert APP_JS.count('brandedDlName("RecapAudio", "mp3"') + admin_js.count('brandedDlName("RecapAudio", "mp3"') >= 5
     # The voice-clone deliverable really is WAV — untouched.
     assert 'brandedDlName("Voice", "wav"' in APP_JS
 
@@ -550,5 +552,5 @@ def test_batch_k_key_sets_stay_symmetric():
 # ── static version lockstep ──────────────────────────────────────────
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "20261103_r42" not in INDEX_HTML

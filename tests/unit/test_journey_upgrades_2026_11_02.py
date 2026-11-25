@@ -92,7 +92,7 @@ def _user(uid: int, **kw) -> User:
 # ── Statics token ───────────────────────────────────────────────────
 
 def test_statics_token_r38():
-    assert HTML.count("?v=20261125_admin_r1") == 5
+    assert HTML.count("?v=20261125_admin_r23") == 5
     assert "20261102_r37" not in HTML
 
 
@@ -133,8 +133,11 @@ def test_overview_cards_ship_dash_not_zero():
 
 
 def test_overview_failure_paints_error_state():
+    admin_js = (STATIC / "js" / "admin.js").read_text(encoding="utf-8")
     assert 'id="adm-overview-error"' in HTML
-    body = _js_slice("async function loadAdminData()", "// Pending payment slips")
+    i = admin_js.index("async function loadAdminData()")
+    j = admin_js.index("// Pending payment slips", i)
+    body = admin_js[i:j]
     assert "adm-overview-error" in body
     # Both failure shapes route to the error state: non-OK response
     # (else branch) and a thrown/timed-out fetch (catch).

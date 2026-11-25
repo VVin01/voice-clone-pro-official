@@ -181,7 +181,7 @@ SLOW_TAIL_GEMINI_MODELS = ("gemini-3.8-flash", "gemini-3.7-flash")
 # models' separate per-project quota buckets instead of draining the
 # primary's bucket first.
 _MODEL_ROTATION_LOCK = threading.Lock()
-_MODEL_ROTATION_COUNTERS: dict[str, int] = {"full": 0, "wide": 0}
+_MODEL_ROTATION_COUNTERS: dict[str, int] = {"full": 0, "wide": 0, "lite": 0}
 
 
 def _next_model_rotation(tier: str) -> int:
@@ -258,7 +258,7 @@ def _is_gemini_transient_model_error(exc: BaseException) -> bool:
 # budget below caps every logical call; the success path and the
 # rotation/failover ORDER are unchanged (the cap only bites once
 # 24 attempts have already failed).
-GEMINI_JSON_MAX_HTTP_ATTEMPTS = 24
+GEMINI_JSON_MAX_HTTP_ATTEMPTS = 48
 # translate_batch's split-in-half fallback terminates on its own
 # (batch sizes halve and <=6-item batches never split), but the
 # depth is now explicit: batches are at most 40 items, so depth 3
@@ -339,6 +339,9 @@ def _configure_gemini_key_pool(
     log: LogFn,
     request_timeout_seconds: int = 120,
     model_chain: list[str] | None = None,
+    worker_index: int = 0,
+    dead_model_keys: set[tuple[str, str]] | None = None,
+    dead_lock: threading.Lock | None = None,
 ) -> None:
     """Attach ordered model-major/key-minor Gemini fallback state.
 
@@ -429,15 +432,18 @@ def _configure_gemini_key_pool(
             pass
 
     model_index = 0
-    key_index = 0
+    stride_offset = (max(0, int(worker_index or 0)) * 4) % len(key_pool)
+    key_index = stride_offset
+    _dead_keys: set[tuple[str, str]] = dead_model_keys if dead_model_keys is not None else set()
+    _dead_lock = dead_lock if dead_lock is not None else threading.Lock()
+    keys_tried_on_model: set[int] = set()
     # Batch U: the current logical call's model visit order (indices
     # into `models`). Defaults to the natural chain order; begin_call()
     # rebuilds it per call around the rotated starting model.
     visit_order = list(range(len(models)))
     visit_pos = 0
-    # Batch AL-P: per-request timeout trimmed 90 s → 60 s — with
-    # parallel translate batches a hung request must fail over sooner.
-    timeout_seconds = max(25, min(int(request_timeout_seconds), 60))
+    # Per-request timeout clamped [20, 60] seconds.
+    timeout_seconds = max(20, min(int(request_timeout_seconds), 60))
     http_options = {
         "timeout": timeout_seconds * 1000,
         "retryOptions": {"attempts": 1},
@@ -459,10 +465,23 @@ def _configure_gemini_key_pool(
         finally:
             ai._disable_proxy()
 
+    def _is_pair_dead(mi: int, ki: int) -> bool:
+        pair = (models[mi], key_pool[ki][1])
+        with _dead_lock:
+            return pair in _dead_keys
+
+    def _pick_key_for_model(mi: int, preferred_start: int) -> int | None:
+        for step in range(len(key_pool)):
+            ki = (preferred_start + step) % len(key_pool)
+            if not _is_pair_dead(mi, ki):
+                return ki
+        return None
+
     def activate(mi: int, ki: int, *, reason: str | None = None) -> None:
         nonlocal model_index, key_index
         model_index = mi
         key_index = ki
+        keys_tried_on_model.add(ki)
         label, key = key_pool[key_index]
         model = models[model_index]
         ai.client = build_client(key)
@@ -481,35 +500,44 @@ def _configure_gemini_key_pool(
             )
 
     # Replace the AIService client before the first planner request.
-    activate(0, 0)
+    activate(0, stride_offset)
 
     def _cool_current_key() -> None:
-        # Audit fix E: remember the key being abandoned for a quota/auth
-        # rejection across jobs, so the next job deprioritizes it until
-        # the cooldown expires instead of re-trying it first.
+        # Mark (model, key) dead for other concurrent workers in this job and
+        # pass model= to KeyHealth so 429 cooldowns remain scoped per-model.
+        cur_model = models[model_index]
+        cur_key = key_pool[key_index][1]
+        with _dead_lock:
+            _dead_keys.add((cur_model, cur_key))
         if _key_rotation is not None:
             try:
-                _key_rotation.health_for("gemini").mark_failure(key_pool[key_index][1])
+                _key_rotation.health_for("gemini").mark_failure(cur_key, model=cur_model)
             except Exception:
                 pass
 
     def rotate_key() -> bool:
         _cool_current_key()
-        next_key = key_index + 1
-        if next_key >= len(key_pool):
-            return False
-        activate(model_index, next_key, reason="next key")
-        return True
+        for step in range(1, len(key_pool)):
+            cand = (key_index + step) % len(key_pool)
+            if cand in keys_tried_on_model:
+                continue
+            if _is_pair_dead(model_index, cand):
+                continue
+            activate(model_index, cand, reason="next key")
+            return True
+        return False
 
     def advance_model(reason: str = "next model") -> bool:
         nonlocal visit_pos
-        next_pos = visit_pos + 1
-        if next_pos >= len(visit_order):
-            return False
-        visit_pos = next_pos
-        # Required behavior: every model starts again at Key 1.
-        activate(visit_order[visit_pos], 0, reason=reason)
-        return True
+        for pos in range(visit_pos + 1, len(visit_order)):
+            mi = visit_order[pos]
+            ki = _pick_key_for_model(mi, stride_offset)
+            if ki is not None:
+                visit_pos = pos
+                keys_tried_on_model.clear()
+                activate(mi, ki, reason=reason)
+                return True
+        return False
 
     def advance_after_key_pool() -> bool:
         _cool_current_key()
@@ -528,6 +556,16 @@ def _configure_gemini_key_pool(
     def _visit_order_for(tier: str | None) -> list[int]:
         if not body_positions:
             return list(range(len(models)))
+        if tier == "lite":
+            # Dedicated lite-first routing for light structural passes:
+            # put flash-lite models first, then remaining full models as fallback, then tail.
+            lite_positions = [p for p in body_positions if "lite" in models[p].lower()]
+            other_body = [p for p in body_positions if p not in lite_positions]
+            if lite_positions:
+                start = lite_positions[_next_model_rotation("lite") % len(lite_positions)]
+                k = lite_positions.index(start)
+                return lite_positions[k:] + lite_positions[:k] + other_body + tail_positions
+            return body_positions + tail_positions
         if tier == "full":
             # Rotate the start between the two full models only; the
             # other full model follows, then the lite models in chain
@@ -546,15 +584,28 @@ def _configure_gemini_key_pool(
 
     def begin_call(tier: str | None = None) -> None:
         """Point the chain at this logical call's rotated starting
-        model (Batch U) and restart it at Key 1. Failover afterwards
-        walks the visit order, so every model remains reachable from
-        either start and the slow tail is always last."""
+        model and this worker's strided starting key, skipping pairs
+        already proven dead in this job."""
         nonlocal visit_order, visit_pos
         visit_order = _visit_order_for(tier)
-        visit_pos = 0
-        activate(visit_order[0], 0)
+        keys_tried_on_model.clear()
+        chosen_pos = None
+        chosen_ki = None
+        for pos, mi in enumerate(visit_order):
+            ki = _pick_key_for_model(mi, stride_offset)
+            if ki is not None:
+                chosen_pos = pos
+                chosen_ki = ki
+                break
+        if chosen_ki is None or chosen_pos is None:
+            with _dead_lock:
+                _dead_keys.clear()
+            chosen_pos = 0
+            chosen_ki = stride_offset
+        visit_pos = chosen_pos
+        activate(visit_order[visit_pos], chosen_ki)
 
-    ai._recap_active_key_label = key_pool[0][0]
+    ai._recap_active_key_label = key_pool[stride_offset][0]
     ai._recap_active_model = models[0]
     ai._recap_key_pool_size = len(key_pool)
     ai._recap_model_pool_size = len(models)
@@ -1768,7 +1819,7 @@ SOURCE CHUNK {i}/{len(batches)}:
 {_source_lines(batch)}
 """
         try:
-            data = _gemini_json(ai, prompt, log=log, rotation_tier="wide")
+            data = _gemini_json(ai, prompt, log=log, rotation_tier="lite")
             if not isinstance(data, dict):
                 raise RuntimeError("Story context response must be a JSON object")
         except (GeminiKeyPoolExhaustedError, InterruptedError):
@@ -3249,7 +3300,13 @@ def translate_batches_in_parallel(
     translated_all = list(initial_translated)
     if not pending:
         return translated_all
-    workers = max(1, min(int(max_workers or 1), 3, len(pending)))
+    workers = max(1, min(int(max_workers or 1), 6, len(pending)))
+
+    import inspect as _inspect
+    try:
+        _factory_accepts_idx = len(_inspect.signature(worker_ai_factory).parameters) >= 1
+    except Exception:
+        _factory_accepts_idx = False
 
     def _next_units(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
         last_index = unit_index[int(batch[-1]["id"])]
@@ -3284,8 +3341,9 @@ def translate_batches_in_parallel(
             if should_stop():
                 raise InterruptedError("STOP requested during timestamp translation")
             log(f"🌐 Translate batch {bi + 1}/{len(batches)} — IDs {batch[0]['id']:05d}–{batch[-1]['id']:05d}")
+            _w_ai = worker_ai_factory(pos % workers) if _factory_accepts_idx else worker_ai_factory()
             results[bi] = translate_batch(
-                worker_ai_factory(),
+                _w_ai,
                 source_title=source_title,
                 story_context=story_context,
                 previous_context=prev,
@@ -3376,7 +3434,7 @@ class RecapPlanBuilder:
         log: LogFn,
         progress: ProgressFn,
         should_stop: Callable[[], bool],
-        translation_batch_max_items: int = 40,
+        translation_batch_max_items: int = 28,
         story_context_batch_max_items: int = 80,
         context_overlap: int = 6,
         lookahead: int = 6,
@@ -3419,18 +3477,17 @@ class RecapPlanBuilder:
         self.translation_audit = bool(translation_audit)
         self.atomic_max_duration = max(4.0, float(atomic_max_duration))
         self.atomic_target_duration = max(2.5, min(float(atomic_target_duration), self.atomic_max_duration))
-        self.gemini_request_timeout_seconds = max(30, min(int(gemini_request_timeout_seconds), 600))
+        self.gemini_request_timeout_seconds = max(20, min(int(gemini_request_timeout_seconds), 600))
         self.gemini_text_model = _clean(gemini_text_model) or "gemini-3.6-flash"
-        # Batch AL-P: parallel translate batches (hard cap 3 — the
-        # Gemini key pool is the real limit). RECAP_PLANNER_TRANSLATE_WORKERS=1
-        # restores the exact pre-AL serial loop.
+        # Parallel translate batches (default 5, hard cap 6).
+        # RECAP_PLANNER_TRANSLATE_WORKERS=1 restores the exact serial loop.
         if translate_workers is None:
             _env_tw = str(os.getenv("RECAP_PLANNER_TRANSLATE_WORKERS", "") or "").strip()
             try:
-                translate_workers = int(_env_tw) if _env_tw else 3
+                translate_workers = int(_env_tw) if _env_tw else 5
             except ValueError:
-                translate_workers = 3
-        self.translate_workers = max(1, min(int(translate_workers), 3))
+                translate_workers = 5
+        self.translate_workers = max(1, min(int(translate_workers), 6))
         if isinstance(voice_speed, (int, float)) and not isinstance(voice_speed, bool):
             self.voice_speed: str | float = max(0.5, float(voice_speed))
         else:
@@ -3707,7 +3764,7 @@ class RecapPlanBuilder:
             self.progress(2, 4, "Timestamp translation")
             self.log("🌐 [3/4] Gemini English → Myanmar translation — narrator source | V2 Smart Sync | no summary / no shortening...")
             t_translate_start = time.monotonic()
-            batches = _batch_by_size(units, max_items=self.translation_batch_max_items, max_chars=16000)
+            batches = _batch_by_size(units, max_items=self.translation_batch_max_items, max_chars=12000)
             translated_all: list[dict[str, Any]] = []
             if reuse and translations_file.is_file():
                 try:
@@ -3784,12 +3841,13 @@ class RecapPlanBuilder:
                     "items": list(rows),
                 })
 
-            def _make_worker_ai() -> Any:
-                # Batch AL-P: a shallow copy of the shared ai carrying
-                # its OWN key-pool closures — _gemini_json drives
-                # ai.client/ai.text_model through those closures, so
-                # concurrent translate batches must never share one
-                # ai object.
+            _dead_model_keys: set[tuple[str, str]] = set()
+            _dead_lock = threading.Lock()
+
+            def _make_worker_ai(worker_idx: int = 0) -> Any:
+                # A shallow copy of the shared ai carrying its OWN key-pool
+                # closures with worker-strided key offset + shared dead_model_keys
+                # memory across workers in this job.
                 facade = copy.copy(ai)
                 _configure_gemini_key_pool(
                     facade,
@@ -3797,6 +3855,9 @@ class RecapPlanBuilder:
                     client_factory=ai_mod.genai.Client,
                     log=self.log,
                     request_timeout_seconds=self.gemini_request_timeout_seconds,
+                    worker_index=worker_idx,
+                    dead_model_keys=_dead_model_keys,
+                    dead_lock=_dead_lock,
                 )
                 return facade
 

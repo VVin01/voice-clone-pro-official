@@ -88,7 +88,7 @@ def _pay(pid: str, user_id: int, amount: int, status: str, **kw) -> PaymentReque
 
 def test_bc_cache_token_is_r79():
     html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261125_admin_r1") == 5
+    assert html.count("20261125_admin_r23") == 5
     assert "20261104_r76" not in html
 
 
@@ -340,11 +340,12 @@ def test_bc_frontend_wiring_and_i18n():
     assert 'onclick="openIncomeDetail(' in html
     assert 'onchange="adminToggleTestFlag(this.checked)"' in html
 
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     # JS calls the two new endpoints.
-    assert "/api/admin/income-detail" in js
-    assert "/test-flag" in js
-    assert "function adminToggleTestFlag" in js
-    assert "function loadIncomeDetail" in js
+    assert "/api/admin/income-detail" in admin_js
+    assert "/test-flag" in admin_js
+    assert "function adminToggleTestFlag" in admin_js
+    assert "function loadIncomeDetail" in admin_js
 
     # Muted TEST treatment exists in CSS.
     assert ".income-detail-row.is-test" in css

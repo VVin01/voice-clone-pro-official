@@ -14,7 +14,7 @@ from app.webapp import api as api_mod
 ROOT = Path(__file__).resolve().parents[2]
 INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 APP_JS = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
-ADMIN_PRO_JS = (ROOT / "app/webapp/static/js/admin_pro.js").read_text(encoding="utf-8")
+ADMIN_JS = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
 
 
 def test_dead_and_abolished_settings_removed_from_registry_and_admin_ui():
@@ -44,7 +44,7 @@ def test_dead_and_abolished_settings_removed_from_registry_and_admin_ui():
     ):
         assert dead_id not in INDEX_HTML, f"Retired control {dead_id} still in index.html"
 
-    assert '<option value="topup">' not in ADMIN_PRO_JS
+    assert '<option value="topup">' not in ADMIN_JS
     assert api_mod._tiered_recap_pricing_enabled() is False
 
 

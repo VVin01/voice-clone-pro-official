@@ -332,12 +332,13 @@ def test_bs_groq_ui_and_i18n_wiring():
     assert 'id="adm-groq-whisper-model"' in INDEX_HTML
     assert 'data-i18n="adm_groq_whisper_label"' in INDEX_HTML
     assert 'data-i18n="adm_groq_whisper_note"' in INDEX_HTML
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     # Load wiring: GET value lands in the input (Batch BY: through
     # the admin-settings dirty guard, _admPaintValue).
-    assert 'document.getElementById("adm-groq-whisper-model")' in APP_JS
-    assert "_admPaintValue(elGroqWhisper, s.groq_whisper_model" in APP_JS
+    assert 'document.getElementById("adm-groq-whisper-model")' in admin_js
+    assert "_admPaintValue(elGroqWhisper, s.groq_whisper_model" in admin_js
     # Save wiring: the field rides the Model Chain save payload.
-    assert "groq_whisper_model:" in APP_JS
+    assert "groq_whisper_model:" in admin_js
     # i18n labels exist in BOTH languages (no hardcoded UI text).
     for key in ("adm_groq_whisper_label", "adm_groq_whisper_note"):
         assert I18N_JS.count(f"{key}:") >= 2, key
@@ -401,5 +402,5 @@ async def test_bs_webapp_broadcast_persists_fitting_token(db_session, monkeypatc
 
 
 def test_bs_cache_token_is_r90():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert "20261104_r89" not in INDEX_HTML

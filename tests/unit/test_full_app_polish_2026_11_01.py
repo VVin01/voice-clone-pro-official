@@ -127,25 +127,28 @@ def test_users_filter_chips_markup():
 
 
 def test_vip_stat_card_opens_paid_users():
+    admin_js = (STATIC / "js" / "admin.js").read_text(encoding="utf-8")
     seg = HTML[HTML.index('id="adm-vip-users"') - 400:HTML.index('id="adm-vip-users"')]
     assert "adm-tap" in seg and 'onclick="openAdminUsersPaid()"' in seg
-    body = _fn(APP_JS, "openAdminUsersPaid")
+    body = _fn(admin_js, "openAdminUsersPaid")
     assert 'admUsersCategory = "PURCHASED"' in body
     assert 'showAdminSection("users")' in body
 
 
 def test_users_list_is_server_filtered_and_paged():
-    assert "admUsersCategoryParam" in APP_JS
-    assert "&category=${encodeURIComponent(admUsersCategory)}" in APP_JS
-    body = _fn(APP_JS, "loadAdminUsersRecent")
-    assert "offset=${admUsersOffset}" in body
+    admin_js = (STATIC / "js" / "admin.js").read_text(encoding="utf-8")
+    assert "admUsersCategoryParam" in admin_js
+    assert "&category=${encodeURIComponent(admUsersCategory)}" in admin_js
+    body = _fn(admin_js, "loadAdminUsersRecent")
+    assert "offset: String(admUsersOffset)" in body
     assert "data.total" in body  # Load-more end detection
-    search = _fn(APP_JS, "adminSearchUsers")
-    assert "admUsersCategoryParam()" in search
+    assert 'qs.set("category", admUsersCategory)' in body
+    assert 'qs.set("search", q)' in body
 
 
 def test_user_row_two_lines_with_vip_badge():
-    body = _fn(APP_JS, "admUserRowHtml")
+    admin_js = (STATIC / "js" / "admin.js").read_text(encoding="utf-8")
+    body = _fn(admin_js, "admUserRowHtml")
     assert "adm-user-line1" in body
     assert '<span class="badge-vip">👑 VIP</span>' in body
     assert 'u.account_category === "PURCHASED"' in body
@@ -317,9 +320,10 @@ async def test_search_users_respects_category(db_session):
                  account_category=AccountCategory.PURCHASED.value)
     await _seed(db_session, admin, free, paid)
 
-    both = await api_mod.search_admin_users("aung", 20, admin, db_session)
+    both = await api_mod.list_admin_users(20, 0, admin, db_session, search="aung")
     assert {u["id"] for u in both["users"]} == {700111, 700333}
 
-    only_paid = await api_mod.search_admin_users("aung", 20, admin, db_session,
-                                                 category="PURCHASED")
+    only_paid = await api_mod.list_admin_users(
+        20, 0, admin, db_session, category="PURCHASED", search="aung"
+    )
     assert [u["id"] for u in only_paid["users"]] == [700333]

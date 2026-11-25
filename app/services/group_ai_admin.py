@@ -168,7 +168,8 @@ LIMITER_STATE_KEY = "aj_gai:limiter:v1"  # M12: BotSetting key holding
 # Moderation Ladder & Voice Understanding Constants (2026-11-16)
 # ---------------------------------------------------------------------------
 
-MODERATION_CATEGORIES = ("selling", "bashing", "harm")
+MODERATION_CATEGORIES = ("selling", "bashing", "harm", "disparagement", "competitor")
+MODERATOR_DELETE_NOTICE_CATEGORIES = frozenset({"disparagement", "competitor"})
 DEFAULT_MODERATION_THRESHOLD = 0.8
 DEFAULT_STRIKE2_MUTE_SECONDS = 3600  # 1 hour
 DEFAULT_STRIKE3_MUTE_SECONDS = 86400  # 24 hours
@@ -188,6 +189,49 @@ WARNING_TEXT_STRIKE_3 = (
     "သတိပေးချက်: Group စည်းကမ်းကို ထပ်ခါတလဲလဲ ချိုးဖောက်သဖြင့် စာပို့ခွင့် ၂၄ နာရီ ပိတ်ထားပြီး "
     "Admin အဖွဲ့ထံ အစီရင်ခံထားပါသည်။"
 )
+
+MODERATOR_NOTICE_STRIKE_1 = (
+    "{target_display} ရှင့် — {reason_my}ကို Group စည်းကမ်းအရ ခွင့်မပြုပါ။ "
+    "ဒီစာကို ဖျက်ပေးပြီး သတိပေးထားပါတယ်ရှင်။"
+)
+MODERATOR_NOTICE_STRIKE_2 = (
+    "{target_display} ရှင့် — {reason_my} ထပ်မံပြုလုပ်သဖြင့် စာကို ဖျက်ပြီး စာပို့ခွင့် ၁ နာရီ ပိတ်ထားပါတယ်ရှင်။ "
+    "ထပ်မံချိုးဖောက်ပါက ၂၄ နာရီ ပိတ်ပြီး အပြီး ပိတ်သိမ်းခြင်း (Ban) ခံရနိုင်ပါတယ်ရှင်။"
+)
+MODERATOR_NOTICE_STRIKE_3 = (
+    "{target_display} ရှင့် — {reason_my} ထပ်ခါတလဲလဲ ချိုးဖောက်သဖြင့် စာကို ဖျက်ပြီး စာပို့ခွင့် ၂၄ နာရီ ပိတ်၍ "
+    "Admin အဖွဲ့ထံ အစီရင်ခံထားပါတယ်ရှင်။"
+)
+
+_MODERATION_REASON_MY: dict[str, str] = {
+    "disparagement": "ဝန်ဆောင်မှုအပေါ် မမှန်မကန် စွပ်စွဲပုပ်ချပြောဆိုခြင်း",
+    "competitor": "အခြား ပြိုင်ဘက် ဝန်ဆောင်မှု သို့မဟုတ် Bot များသို့ ညွှန်းဆိုဆွဲဆောင်ခြင်း",
+}
+
+
+def build_moderator_notice(
+    *,
+    category: str,
+    strike_num: int,
+    first_name: str | None = None,
+    username: str | None = None,
+) -> str:
+    """Build ONE firm-but-polite named Burmese moderator notice (female persona, zero emoji)."""
+    from app.services.group_moderation import format_target_display
+
+    target_display = strip_emoji(format_target_display(first_name, username)) or "Member"
+    reason_my = _MODERATION_REASON_MY.get(
+        str(category or "").strip().lower(),
+        "Group စည်းကမ်းနှင့် မညီညွတ်သော စာ ရေးသားခြင်း",
+    )
+    if strike_num <= 1:
+        tpl = MODERATOR_NOTICE_STRIKE_1
+    elif strike_num == 2:
+        tpl = MODERATOR_NOTICE_STRIKE_2
+    else:
+        tpl = MODERATOR_NOTICE_STRIKE_3
+    rendered = tpl.format(target_display=target_display, reason_my=reason_my)
+    return normalize_ai_speech_style(strip_emoji(rendered))
 
 # ---------------------------------------------------------------------------
 # Chat resolution
@@ -987,6 +1031,20 @@ def build_fact_sheet() -> str:
     except Exception:
         persona_names = ""
 
+    # Owner-mandated 2026-11-25 Group AI built-in sheet validity schedule (1 / 3 / 6 months).
+    sheet_validity_months = {
+        "pkg_starter": 1,
+        "pkg_creator": 1,
+        "pkg_pro": 3,
+        "pkg_business": 6,
+        "voice_200": 1,
+        "voice_500": 3,
+        "voice_1000": 6,
+        "recap_30": 1,
+        "recap_60": 3,
+        "recap_180": 6,
+    }
+
     def price_line(entry: dict) -> str:
         name = entry.get("name") or entry["code"]
         parts = []
@@ -999,8 +1057,15 @@ def build_fact_sheet() -> str:
                 parts.append(f"Voice {entry['minutes']} Mins")
         if entry.get("recap_credits"):
             parts.append(f"Recap {entry['recap_credits']} Credits")
-        vdays = int(entry["validity_days"]) if entry.get("validity_days") is not None else 30
-        v_txt = f"သက်တမ်း {vdays} ရက်" if vdays > 0 else "သက်တမ်း မကုန်"
+        months = sheet_validity_months.get(str(entry.get("code") or ""))
+        if months is not None:
+            v_txt = f"သက်တမ်း {months} လ"
+        else:
+            vdays = int(entry["validity_days"]) if entry.get("validity_days") is not None else 30
+            if vdays > 0 and vdays % 30 == 0:
+                v_txt = f"သက်တမ်း {vdays // 30} လ"
+            else:
+                v_txt = f"သက်တမ်း {max(30, vdays)} ရက်"
         return f"  - {name} ({' + '.join(parts)} · {v_txt}): {entry['price_mmk']:,} ကျပ်"
 
     combined = [e for e in PLAN_CATALOGUE if e["category"] == "combo" and not e.get("is_topup")]
@@ -1075,22 +1140,20 @@ def build_fact_sheet() -> str:
         f"• Voice/TTS တစ်ကြိမ် စာလုံး: Free {free_chars:,} လုံးအထိ · VIP/Purchased {paid_chars:,} လုံးအထိ။",
         "• Package (Combo) Plan များ (Voice + Recap Wallet နှစ်မျိုးလုံး သီးခြားဖြည့်):",
         *[price_line(e) for e in combined],
-        "• Voice Clone Plan များ (သက်တမ်း မကုန်):",
+        "• Voice Clone Plan များ:",
         *[price_line(e) for e in voice],
-        "• Recap Credit Plan များ (1 Credit = Final Output 1 Min · သက်တမ်း မကုန်):",
+        "• Recap Credit Plan များ (1 Credit = Final Output 1 Min):",
         *[price_line(e) for e in recap],
         "• ဝယ်နည်း: Mini App ထဲက Buy Tab မှာ ကြိုက်တဲ့ Plan ရွေး → ပြထားတဲ့ KBZPay / "
         "WavePay နှင့် အခြား Bank / Wallet / QR အကောင့်များသို့ ငွေလွှဲ → ပြေစာ (Slip) ပုံ ပို့ → Admin အတည်ပြုပြီးတာနဲ့ "
         "မိနစ်/Credit ဝင်ပါတယ်။ (ငွေလွှဲ နံပါတ်တွေကို Group ထဲမှာ မပြောရပါ — Mini App ထဲက "
         "Buy Tab မှာ ကြည့်ခိုင်းပါ။ တရားဝင် Bot/Mini App အပြင်က မသိတဲ့ အကောင့်တွေဆီ ငွေမလွှဲဖို့လည်း သတိပေးပါ။)",
-        "• သက်တမ်း (အရေးကြီး): Package အလိုက် သက်တမ်း ကွဲပြားပါသည် — Starter နှင့် Creator Package များသည် "
-        "သက်တမ်း ၃၀ ရက် (30 Days)၊ Pro Package သည် သက်တမ်း ၉၀ ရက် (90 Days) ဖြစ်ပြီး Business Package နှင့် "
-        "Voice / Recap သီးသန့် Pack များအားလုံးသည် သက်တမ်း မကုန် (No Expiry) ဖြစ်ပါသည်။ Package အများအပြား "
-        "ဝယ်ယူထားပါက သက်တမ်းအစောဆုံးကုန်မည့် Package မှ အရင်ဖြတ်တောက်ပေးပါသည် (FEFO)။",
-        "• ယခင်စနစ်ဟောင်းဖြင့် ဝယ်ယူထားပြီးသား Balance များကိုမူ သက်တမ်းမကုန် "
-        "(Grandfathered) အဖြစ် ဆက်ထိန်းထားပေးပါသည်။ သက်တမ်းမကုန်မီ ၃ ရက်အလိုနှင့် "
-        "၂၄ နာရီအလိုတွင် Telegram Bot မှ သတိပေးစာ ပို့ပေးပါသည်။ Job ပျက်/Cancel ဖြစ်ချိန် "
-        "မူလ Package သက်တမ်းကုန်သွားပြီးဖြစ်ပါက ပြန်အမ်းပေးသော Credit ကို +7 ရက် Grace သက်တမ်း အလိုအလျောက် တိုးပေးပါသည်။",
+        "• သက်တမ်း (အရေးကြီး): လက်ရှိ Plan များ ၁/၃/၆ လ သက်တမ်းရှိသည် — "
+        "Starter, Creator, Voice 200, Recap 30 သည် သက်တမ်း ၃၀ ရက် (30 Days) (1 လ)၊ "
+        "Pro, Voice 500, Recap 60 သည် ၉၀ ရက် (90 Days) (3 လ)၊ Business, Voice 1000, Recap 180 သည် ၁၈၀ ရက် (180 Days) (6 လ) ဖြစ်သည်။ "
+        "များစွာဝယ်လျှင် စောကုန်မည်မှ အရင်ဖြတ်သည် (FEFO)။ "
+        "ယခင် Balance ဟောင်းများသာ (Grandfathered) ဖြစ်ပြီး၊ မကုန်မီ ၃ ရက်အလို/၂၄ နာရီအလို Bot မှ သတိပေးသည်။ "
+        "ပျက်/Cancel ဖြစ်လျှင် ကုန်ပြီး Credit ကို +7 ရက် Grace တိုးပေးသည်။",
         "• မရောပါနှင့်: Free ရဲ့ နေ့စဉ် အခမဲ့ ပမာဏ ကသာ နေ့အလိုက် ပြန်ပြည့်တာပါ "
         "(မသုံးဖြစ်ရင် နောက်နေ့ မပေါင်းပါ — တစ်နေ့ဟာ တစ်နေ့ပဲ)။ ဝယ်ထားတဲ့ Package များနှင့် သီးခြားစီ ဖြစ်ပါတယ်။",
         f"• Refer & Earn: သူငယ်ချင်း ၁ ယောက် ဖိတ်တိုင်း Voice Clone {referral_minutes} မိနစ် "
@@ -1189,8 +1252,8 @@ SYSTEM_INSTRUCTIONS = """သင်သည် "Voice Clone Pro Community" Telegram
 【Senior Admin ကျွမ်းကျင်မှု (Consultative Advisor & Anti-Scam)】
 1. Error/ကြာနေ/Credit စိတ်ပူသူကို အလုပ်ပျက်ရင် Credit အလိုအလျောက် ပြန်ဝင်ကြောင်း နှစ်သိမ့်ပြီး အဆင့် ၁–၂ ချက်သာ ပြောပါ။ အသေးစိတ်မပါဘဲ "မရဘူး" မေးရင် ဘယ် Tab မှာ ဘာ Error တက်လဲ တစ်ကြောင်း မေးပါ။
 2. ငွေလွှဲ၊ Slip၊ Refund၊ Balance/Job Failure အကောင့်သီးသန့် စစ်ဆေးမှုများကို Group ထဲ လုံးဝ မှန်းမဖြေရ — @VoiceCloneProAdmin ဆီ ညွှန်ပြီး ESCALATE သာ ထုတ်ရမည်။
-3. Plan အကြံပေးရာတွင် စျေးစာရင်းကြီး မအန်ချဘဲ အကိုက်ဆုံး ၁–၂ ခုသာ ညွှန်းပါ (Voice+Recap = Combo၊ အသံသီးသန့် = Voice Pack၊ Gemini/Edge/Subtitle Recap = Recap Pack)။ သက်တမ်းကို တိကျစွာပြောပါ — Starter/Creator ၃၀ ရက် (30 Days)၊ Pro ၉၀ ရက် (90 Days)၊ Business နှင့် Voice/Recap Pack များနှင့် Grandfathered Balance များ သက်တမ်းမကုန်။
-4. အဖွဲ့ဝင် အချင်းချင်း မှန်ကန်စွာ ကူဖြေပြီးသားဆို NO_REPLY ထုတ်ပါ (အချက်မှားမှသာ ယဉ်ကျေးစွာ ဖြည့်စွက်ပါ)။ တရားဝင် Bot/Mini App Buy Tab ပြင်ပ ပုဂ္ဂိုလ်ရေးအကောင့်ဆီ ငွေလွှဲခိုင်းတာတွေ့ရင် တရားဝင် App ထဲကသာ လွှဲရန် ချက်ချင်း သတိပေးပါ။
+3. Plan အကြံပေးရာတွင် စျေးစာရင်းကြီး မအန်ချဘဲ ၁–၂ ခုသာ ညွှန်းပါ (Voice+Recap=Combo၊ အသံ=Voice၊ Gemini/Edge=Recap)။ သက်တမ်း — Starter/Creator/Voice200/Recap30 ၃၀ ရက် (30 Days)၊ Pro/Voice500/Recap60 ၉၀ ရက် (90 Days)၊ Business/Voice1000/Recap180 ၆ လ (180 Days)၊ ဟောင်း Grandfathered သာ ကန့်သတ်မဲ့။
+4. အဖွဲ့ဝင် အချင်းချင်း မှန်ကန်စွာ ကူဖြေပြီးသားဆို NO_REPLY ထုတ်ပါ (အချက်မှားမှသာ ယဉ်ကျေးစွာ ဖြည့်စွက်ပါ)။ တရားဝင် App Buy Tab ပြင်ပ ငွေလွှဲခိုင်းတာတွေ့ရင် ချက်ချင်း သတိပေးပါ။
 
 【ဘယ်အခါ ဖြေမလဲ / တိတ်ဆိတ်မလဲ】
 - ဖြေရန်: နှုတ်ဆက်စာ၊ ကျေးဇူးတင်စာ၊ "စမ်းချင်တယ်"/"want to try" စတင်လိုသူ၊ Voice Clone Pro မေးခွန်းအားလုံး၊ Admin အကူအညီတောင်းစာ။
@@ -1198,14 +1261,15 @@ SYSTEM_INSTRUCTIONS = """သင်သည် "Voice Clone Pro Community" Telegram
 - NO_REPLY သာ ထုတ်ရန်: အဖွဲ့ဝင် အချင်းချင်း စကားဝိုင်း (အကူအညီ မတောင်းရင်)၊ ပစ္စည်းနဲ့ မဆိုင်သော အကြောင်းအရာ (ဘောလုံးပွဲ၊ အခြား App၊ နိုင်ငံရေး)။
 
 【Moderation အကဲဖြတ်ချက်】
-YouTube, TikTok, CapCut, Google AI Studio တို့ကို သာမန်မေးခွန်းအဖြစ် ပြောရုံဖြင့် မှားမသတ်မှတ်ရ:
+မမှားသတ်မှတ်ရ: Support၊ Error/Job ပျက် စိတ်ညစ်စာ၊ စျေး/သက်တမ်းမေးခွန်း၊ YouTube/TikTok/CapCut/Google AI Studio/ပြိုင်ဘက် Tool သဘောရိုး နှိုင်းယှဉ်မေးခွန်း ("X နဲ့ ဘာကွာလဲ") တို့ကို ချိုးဖောက်မှု မသတ်မှတ်ရ (category=none ထုတ်ပြီး ကူဖြေပါ)။
 - selling: ကိုယ်ပိုင် အရောင်းကြော်ငြာ၊ စျေးနှုန်းတင်ခြင်း၊ ဝယ်ရန် ဆက်သွယ်ခိုင်းခြင်း၊ ပြိုင်ဘက် bot/channel လင့်ခ် တင်ခြင်း။
 - bashing: အခြား အဖွဲ့/channel/လုပ်ငန်းကို မကောင်းပြော တိုက်ခိုက်ခြင်း။
 - harm: ပြိုင်ဘက် အပုပ်ချခြင်း၊ အဖွဲ့ဝင် ဖောက်ထုတ်ခြင်း၊ Boycott လုပ်ခိုင်းခြင်း။
-ချိုးဖောက်မှု မရှိပါက category=none confidence=0.0 ထုတ်ပါ။
+- disparagement: ဝန်ဆောင်မှု/Owner ကို Scam/အတု/အမှိုက် ဟု ပုပ်ချခြင်း၊ မဝယ်/ထွက်ရန် သွေးထိုးခြင်း။
+- competitor: ပြိုင်ဘက် Bot/Service/Website/Channel သို့ ညွှန်းဆိုဆွဲဆောင်ခြင်း (URL/`@` ပါ/မပါ)။
+သေချာမှ (Confidence >= 0.8) Moderation ထုတ်ပါ (disparagement/competitor ဆို NO_REPLY ထုတ်ပါ)။
 
-ထုတ်ပေးရမယ့် ပုံစံ:
-MODERATION: category=<selling|bashing|harm|none> confidence=<0.0-1.0>
+MODERATION: category=<selling|bashing|harm|disparagement|competitor|none> confidence=<0.0-1.0>
 [နောက်တစ်ကြောင်းတွင် ၁ မျိုးသာ]
 NO_REPLY
 ESCALATE
@@ -3593,9 +3657,74 @@ _EXTERNAL_TG_LINK_RE = re.compile(
     r"(?:https?://)?(?:t\.me|telegram\.me)/([a-zA-Z0-9_+/]+)", re.IGNORECASE
 )
 
+_NEUTRAL_COMPARISON_MARKERS: tuple[str, ...] = (
+    "ဘာကွာ",
+    "ကွာခြား",
+    "ဘယ်လိုကွာ",
+    "difference",
+    "compare",
+    "comparison",
+    " versus ",
+    " vs ",
+)
+
+_DISPARAGEMENT_PATTERNS_BURMESE: tuple[str, ...] = (
+    "လိမ်စား",
+    "လူလိမ်",
+    "scam ပါ",
+    "scam ကြီး",
+    "အတုကြီး",
+    "အမှိုက် bot",
+    "မဝယ်ကြနဲ့",
+    "မသုံးကြနဲ့",
+    "group ထဲက ထွက်",
+    "ပိုက်ဆံလိမ်",
+)
+
+_DISPARAGEMENT_PATTERNS_ENGLISH: tuple[str, ...] = (
+    "scam bot",
+    "is a scam",
+    "total scam",
+    "fake bot",
+    "trash bot",
+    "garbage bot",
+    "don't buy this",
+    "dont buy this",
+    "boycott",
+    "leave this group",
+)
+
+_COMPETITOR_PROMO_PATTERNS_BURMESE: tuple[str, ...] = (
+    "ဟို bot ကို သွားသုံး",
+    "တခြား bot သွားသုံး",
+    "တခြား bot မှာ",
+    "ဒီ bot မသုံးနဲ့",
+    "တခြား service မှာ",
+    "တခြား website မှာ",
+    "ပြိုင်ဘက် bot",
+    "တခြား tool သွားသုံး",
+)
+
+_COMPETITOR_PROMO_PATTERNS_ENGLISH: tuple[str, ...] = (
+    "switch to ",
+    "use another bot",
+    "try this other bot",
+    "better bot ",
+    "better service ",
+    "our own bot",
+)
+
+_COMPETITOR_RE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\buse\s+\S+\s+instead\b", re.IGNORECASE),
+)
+
 
 def detect_moderation_violation(text: str | None) -> tuple[str | None, float]:
-    """Deterministic layer (a) detection for selling / promotional violations.
+    """Deterministic layer (a) detection for selling, disparagement, and competitor promo.
+
+    False-positive guardrail: neutral comparison questions, support requests,
+    and frustrated bug/job-failure complaints without attack/redirect cues
+    are never flagged here.
 
     Returns (category, confidence): e.g. ("selling", 1.0) or (None, 0.0).
     """
@@ -3623,6 +3752,30 @@ def detect_moderation_violation(text: str | None) -> tuple[str | None, float]:
         pat_despaced = pat_norm.replace(" ", "")
         if pat_norm in norm_my or (pat_despaced and pat_despaced in despaced_my):
             return "selling", 1.0
+
+    # Guardrail: sincere/neutral comparisons ("X နဲ့ ဘာကွာလဲ") must not be penalized.
+    if any(marker in low or marker in norm_my for marker in _NEUTRAL_COMPARISON_MARKERS):
+        return None, 0.0
+
+    # 3. High-precision disparagement patterns (never fire on bare bug/error complaints)
+    if any(pat in low for pat in _DISPARAGEMENT_PATTERNS_ENGLISH):
+        return "disparagement", 1.0
+    for pat in _DISPARAGEMENT_PATTERNS_BURMESE:
+        pat_norm = _sensitive_normalise(pat)
+        pat_despaced = pat_norm.replace(" ", "")
+        if pat_norm in norm_my or (pat_despaced and pat_despaced in despaced_my):
+            return "disparagement", 1.0
+
+    # 4. High-precision competitor promotion/redirection patterns
+    if any(pat in low for pat in _COMPETITOR_PROMO_PATTERNS_ENGLISH) or any(
+        rx.search(low) for rx in _COMPETITOR_RE_PATTERNS
+    ):
+        return "competitor", 1.0
+    for pat in _COMPETITOR_PROMO_PATTERNS_BURMESE:
+        pat_norm = _sensitive_normalise(pat)
+        pat_despaced = pat_norm.replace(" ", "")
+        if pat_norm in norm_my or (pat_despaced and pat_despaced in despaced_my):
+            return "competitor", 1.0
 
     return None, 0.0
 

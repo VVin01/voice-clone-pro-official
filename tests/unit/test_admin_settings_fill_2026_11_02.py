@@ -279,12 +279,13 @@ def test_admin_settings_ui_controls_present():
 
 
 def test_admin_settings_js_wiring():
-    load_body = APP_JS.split("async function loadAdminSettings")[1].split(
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    load_body = admin_js.split("async function loadAdminSettings")[1].split(
         "async function saveGeminiModelSettings")[0]
-    save_body = APP_JS.split("async function saveAdminSettings")[1].split(
+    save_body = admin_js.split("async function saveAdminSettings")[1].split(
         "\n}")[0]
     for key, el_id in FIELD_IDS.items():
-        assert f'"{el_id}"' in APP_JS, el_id
+        assert f'"{el_id}"' in admin_js, el_id
         assert f"s.{key}" in load_body, key
     for fragment in (
         "character_limit_purchased: charLimitPurchased",
@@ -315,5 +316,5 @@ def test_api_source_carries_gap_keys():
 
 
 def test_statics_token_bumped():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "20261102_ga1" not in INDEX_HTML

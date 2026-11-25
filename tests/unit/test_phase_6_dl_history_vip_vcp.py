@@ -292,4 +292,4 @@ def test_phase6_i18n_parity_and_cache_token():
     for key in required:
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5

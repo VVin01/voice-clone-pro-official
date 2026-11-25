@@ -22,9 +22,9 @@ STYLE_CSS = (ROOT / "app/webapp/static/css/style.css").read_text(encoding="utf-8
 
 def test_asset_version_stamp_bumped_and_server_aligned():
     assert "?v=20261118_r164" not in INDEX_HTML
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     serve_src = inspect.getsource(server_mod.serve_index)
-    assert "?v=20261125_admin_r1" in serve_src
+    assert "?v=20261125_admin_r23" in serve_src
     assert "?v=20261118_r164" not in serve_src
 
 

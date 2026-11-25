@@ -388,5 +388,5 @@ global.fetch = async () => streamResponse([new Uint8Array(50), new Uint8Array(50
 # ── Cache token ───────────────────────────────────────────────────
 
 def test_cache_token_is_r64():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "20261104_r55" not in INDEX_HTML

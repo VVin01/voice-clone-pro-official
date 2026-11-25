@@ -335,14 +335,12 @@ def test_round11_text_only_labels_zero_emojis_and_one_language_headings():
 def test_round11_config_build_parity_vs_base_3d501f1():
     """Execute the JS config collectors from base 3d501f1 and current app.js in Node VM
     on identical DOM + state inputs and verify byte-identical recap_config JSON output."""
-    try:
-        base_js = subprocess.check_output(
-            ["git", "show", "3d501f1:app/webapp/static/js/app.js"],
-            cwd=str(ROOT),
-            stderr=subprocess.DEVNULL,
-        ).decode("utf-8")
-    except Exception:
-        base_js = APP_JS
+    base_js = subprocess.check_output(
+        ["git", "show", "3d501f1:app/webapp/static/js/app.js"],
+        cwd=str(ROOT),
+        text=True,
+        encoding="utf-8",
+    )
 
     def _extract_block(src: str, start_marker: str, end_marker: str) -> str:
         i = src.index(start_marker)

@@ -906,9 +906,9 @@ def test_part_i_never_upscale_real_ffmpeg_render_and_subtitle_burn(tmp_path):
 
 def test_global_rule_4_asset_version_stamp_round15():
     assert "?v=20261123_round14" not in INDEX_HTML
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     serve_src = inspect.getsource(server_mod.serve_index)
-    assert "?v=20261125_admin_r1" in serve_src
+    assert "?v=20261125_admin_r23" in serve_src
     assert "?v=20261123_round14" not in serve_src
 
 

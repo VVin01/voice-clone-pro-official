@@ -210,26 +210,26 @@ def test_private_handler_step_ordering():
 # Item 2 — Admin Settings dirty guard (static-JS pins)
 # ===========================================================================
 
-APP_JS = _read("app/webapp/static/js/app.js")
+ADMIN_JS = _read("app/webapp/static/js/admin.js")
 
 
 def _load_body() -> str:
-    return APP_JS.split("async function loadAdminSettings", 1)[1].split(
+    return ADMIN_JS.split("async function loadAdminSettings", 1)[1].split(
         "async function saveGeminiModelSettings", 1)[0]
 
 
 def _save_body() -> str:
-    return APP_JS.split("async function saveAdminSettings", 1)[1].split(
+    return ADMIN_JS.split("async function saveAdminSettings", 1)[1].split(
         "\n}\n", 1)[0]
 
 
 def test_dirty_guard_is_generic_over_the_settings_pane():
     # Tracking binds by delegation on the settings pane (every painted
     # field lives inside it) — not a per-field list that can drift.
-    assert "const adminSettingsDirty = new Set()" in APP_JS
-    assert 'document.getElementById("adm-screen-settings")' in APP_JS
-    assert 'pane.addEventListener("input", mark)' in APP_JS
-    assert 'pane.addEventListener("change", mark)' in APP_JS
+    assert "const adminSettingsDirty = new Set()" in ADMIN_JS
+    assert 'document.getElementById("adm-screen-settings")' in ADMIN_JS
+    assert 'pane.addEventListener("input", mark)' in ADMIN_JS
+    assert 'pane.addEventListener("change", mark)' in ADMIN_JS
     assert "_bindAdminSettingsDirtyTracking()" in _load_body()
 
 
@@ -250,8 +250,8 @@ def test_dirty_guard_clears_only_after_successful_settings_save():
     assert body.index("if (!res.ok) throw") < body.index("adminSettingsDirty.clear()")
     # The Gemini model-chain save must respect the guard (it repaints
     # via loadAdminSettings) but never clear it.
-    gemini_body = APP_JS.split("async function saveGeminiModelSettings", 1)[1].split(
+    gemini_body = ADMIN_JS.split("async function saveGeminiModelSettings", 1)[1].split(
         "async function saveAdminSettings", 1)[0]
     assert "adminSettingsDirty.clear()" not in gemini_body
     # And the model selects are guarded too.
-    assert "adminSettingsDirty.has(selectId)" in APP_JS
+    assert "adminSettingsDirty.has(selectId)" in ADMIN_JS

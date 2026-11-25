@@ -30,7 +30,7 @@ INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 # ── Release pin: cache token ─────────────────────────────────────
 
 def test_cy_cache_token_is_r140():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert "20261104_r" + "122" not in INDEX_HTML
 
 
@@ -198,11 +198,11 @@ def test_busy_first_round_then_success_on_second(tmp_path, monkeypatch):
 # ── 3: planner timeout 45 s -> 30 s ────────────────────────────────
 
 def test_pipeline_planner_timeout_is_30_seconds():
-    # Both RecapPlanBuilder call sites in the pipeline pass the
-    # trimmed per-request timeout (was 45 s). Source pin: the
-    # pipeline module is data, read it directly.
+    # Part D2 (2026-11-25): both RecapPlanBuilder call sites in the
+    # pipeline pass the trimmed 25 s per-request timeout (was 30 s).
     src = Path(core.__file__).with_name("recap_pipeline.py").read_text(encoding="utf-8")
-    assert src.count("gemini_request_timeout_seconds=30") == 2
+    assert src.count("gemini_request_timeout_seconds=25") == 2
+    assert "gemini_request_timeout_seconds=30" not in src
     assert "gemini_request_timeout_seconds=45" not in src
 
 

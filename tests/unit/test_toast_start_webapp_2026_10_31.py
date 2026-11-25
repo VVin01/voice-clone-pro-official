@@ -225,7 +225,8 @@ def test_premium_input_modal_exists():
 
 
 def test_slip_reject_uses_modal_same_payload():
-    body = APP_JS.split("async function adminRejectSlip")[1].split("\n}")[0]
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    body = admin_js.split("async function adminRejectSlip")[1].split("\n}")[0]
     assert "showStudioInputModal" in body
     assert '"/api/admin/reject-slip"' in body
     assert "request_id: reqId" in body and "reason: reason" in body
@@ -241,6 +242,7 @@ def test_copy_account_uses_modal_not_prompt():
 # ── B5: admin toast prefixes localized ────────────────────────────────
 
 def test_admin_hardcoded_english_prefixes_gone():
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     for stale in (
         '"Cancel error: "', '"Retry failed: "', '"Retry error: "',
         '"Delete failed: "', '"Delete error: "', '"Purge failed: "',
@@ -248,7 +250,7 @@ def test_admin_hardcoded_english_prefixes_gone():
         '"Failed to save Gemini models: "',
         "Gemini Model Chain အောင်မြင်စွာ",
     ):
-        assert stale not in APP_JS, stale
+        assert stale not in APP_JS and stale not in admin_js, stale
     for call in (
         'adminErrorText("admin_cancel_err"',
         'adminErrorText("admin_retry_err"',
@@ -257,10 +259,10 @@ def test_admin_hardcoded_english_prefixes_gone():
         'adminErrorText("admin_settings_save_err"',
         'adminErrorText("admin_gemini_save_err"',
     ):
-        assert call in APP_JS, call
+        assert call in admin_js, call
     # purge success no longer hand-prepends ✅ (the helper adds it)
-    assert "`✅ ${data.message" not in APP_JS
-    assert 'showStudioToast(t("admin_gemini_saved"), \'success\')' in APP_JS
+    assert "`✅ ${data.message" not in APP_JS and "`✅ ${data.message" not in admin_js
+    assert 'showStudioToast(t("admin_gemini_saved"), \'success\')' in admin_js
 
 
 # ── B1/B5: api.py server-side wording ─────────────────────────────────

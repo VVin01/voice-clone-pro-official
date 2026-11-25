@@ -17,7 +17,7 @@ PHASE2_CSS = STYLE_CSS[STYLE_CSS.index("VCP UI REBUILD V2 — PHASE 2") :]
 
 
 def test_v2_phase2_cache_token_current():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -64,7 +64,8 @@ def test_v2_phase2_zone_b_recap_hero_and_twin_studios():
 
 
 def test_v2_phase2_unified_queue_job_card_system_no_badge_button_overlap():
-    # Round 13 retired #home-recent-projects-card (History & Live Sheet & Admin Queue keep .vcp-job-card).
+    # Round 13 retired #home-recent-projects-card; Admin Round 2 merged Queue+History into renderAdminJobsData in admin.js.
+    admin_js = (ROOT / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
     for marker in (
         ".vcp-job-card",
         ".vcp-job-progress",
@@ -74,8 +75,8 @@ def test_v2_phase2_unified_queue_job_card_system_no_badge_button_overlap():
         assert marker in PHASE2_CSS, marker
     live_fn = APP_JS.split("function liveJobsSheetRowHtml(job)", 1)[1].split("function renderLiveJobsSheet()", 1)[0]
     hist_fn = APP_JS.split("function hubHistoryRowHtml(j)", 1)[1].split("function renderHistoryHub()", 1)[0]
-    queue_fn = APP_JS.split("function renderAdminQueueData(", 1)[1].split("window.loadAdminQueue", 1)[0]
-    for name, body in (("liveJobsSheetRowHtml", live_fn), ("hubHistoryRowHtml", hist_fn), ("loadAdminQueue", queue_fn)):
+    queue_fn = admin_js.split("function renderAdminJobsData(", 1)[1].split("window.loadAdminJobs", 1)[0]
+    for name, body in (("liveJobsSheetRowHtml", live_fn), ("hubHistoryRowHtml", hist_fn), ("loadAdminJobs", queue_fn)):
         assert "vcp-job-card" in body, f"{name} must use unified .vcp-job-card"
         assert "vcp-job-footer-row" in body, f"{name} must use fixed .vcp-job-footer-row"
         assert "vcp-job-progress" in body, f"{name} must include unified .vcp-job-progress track"
@@ -145,6 +146,17 @@ _RETIRED_VIP_STATIC_IDS = {
     # Round 15 (2026-11-23 Parts A & B)
     "studio-alert-carousel", "carousel-track", "recap-limit-pill",
     "recap-tier-limit-text", "recap-inline-status", "recap-inline-status-text",
+    # Admin Round 2 (Part A: merged Jobs/Users/Details + Settings collapse + dead screens removed)
+    "adm-detail-recap-ledger", "adm-detail-recent-jobs", "adm-fleet-refresh-btn",
+    "adm-hist-failed", "adm-hist-recap", "adm-hist-status-sel",
+    "adm-hist-success", "adm-hist-total", "adm-hist-voice",
+    "adm-jobs-history", "adm-jobs-live", "adm-jobs-tab-history", "adm-jobs-tab-live",
+    "adm-screen-activity", "adm-screen-keys",
+    "admin-global-history-list", "admin-user-search-results",
+    "cnt-queued", "cnt-running", "cnt-waiting-choice",
+    "queue-engine-select", "queue-status-filters",
+    # Admin Round 3 (Part B1: retired legacy static kpay/wave inputs)
+    "adm-set-kpay-name", "adm-set-kpay-num", "adm-set-wave-name", "adm-set-wave-num",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",
@@ -172,18 +184,33 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "filterAdminPricing('topup')",
     # Round 15 Part B
     "openCurrentRecapDetail()",
+    # Admin Round 2 (Part A: merged handlers & lazy detail panels)
+    "adminSearchUsers()", "loadAdminFleetStatus()", "loadAdminHistory()",
+    "loadAdminQueue()", "loadAdminRefunds()",
+    "setAdminHistFilter('timeframe', 'older_24h')",
+    "setQueueStatusFilter('all')", "setQueueStatusFilter('failed')",
+    "setQueueStatusFilter('queued')", "setQueueStatusFilter('running')",
+    "setQueueStatusFilter('success')", "setQueueStatusFilter('waiting_choice')",
+    "showAdminJobsTab('history')", "showAdminJobsTab('live')",
+    "showAdminSection('activity')", "showAdminSection('keys')",
 }
 
 
 def test_v2_phase2_zero_deleted_ids_or_onclicks_vs_main():
-    try:
-        main_html = subprocess.check_output(
-            ["git", "show", "main:app/webapp/static/index.html"],
-            cwd=str(ROOT),
-            stderr=subprocess.DEVNULL,
-        ).decode("utf-8")
-    except Exception:
-        return
+    main_html = None
+    last_err = None
+    for ref in ("main", "origin/main"):
+        try:
+            main_html = subprocess.check_output(
+                ["git", "show", f"{ref}:app/webapp/static/index.html"],
+                cwd=str(ROOT),
+                stderr=subprocess.STDOUT,
+            ).decode("utf-8")
+            break
+        except Exception as exc:
+            last_err = exc
+    if main_html is None:
+        pytest.fail(f"Could not resolve base main index.html via git show (ensure fetch-depth: 0 in CI): {last_err}")
     main_ids = set(re.findall(r'\bid="([^"]+)"', main_html))
     curr_ids = set(re.findall(r'\bid="([^"]+)"', INDEX_HTML))
     assert not ((main_ids - curr_ids) - _RETIRED_VIP_STATIC_IDS), sorted((main_ids - curr_ids) - _RETIRED_VIP_STATIC_IDS)

@@ -153,7 +153,7 @@ def test_no_seven_day_retention_promise_remains():
     # The only legitimate remaining 7-day strings in the dictionary
     # are the income reporting window and the admin history FILTER
     # chip — neither is a retention promise.
-    allowed_keys = {"admin_income_7d", "adm_tf_7d"}
+    allowed_keys = {"admin_income_7d", "adm_tf_7d", "adm_bc_aud_exp", "adm_users_filter_exp"}
     for line in i18n_js.splitlines():
         if "၇ ရက်" in line or "7 day" in line.lower():
             m = re.match(r"\s*([a-z0-9_]+):", line)
@@ -189,11 +189,11 @@ def test_no_seven_day_retention_promise_remains():
 
 
 def test_overview_users_card_is_wired_to_real_users():
-    app_js = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     index_html = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert "stats.real_users" in app_js
+    assert "stats.real_users" in admin_js
     assert 'id="adm-total-users-split"' in index_html
-    assert "admin_stat_users_split" in app_js
+    assert "admin_stat_users_split" in admin_js
 
 
 # ── 2. Real users: headline + split ──────────────────────────────────

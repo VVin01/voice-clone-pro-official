@@ -92,16 +92,20 @@ def test_home_samples_use_komin_and_mahnin_routes():
 def test_fetch_with_timeout_used_by_loaders():
     assert "async function fetchWithTimeout" in APP_JS
     assert "AbortController" in APP_JS
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     for needle in [
         'fetchWithTimeout("/api/user/me"',
         'fetchWithTimeout("/api/voices/curated"',
         'fetchWithTimeout("/api/history"',
         'fetchWithTimeout("/api/vip/plans"',
-        'fetchWithTimeout("/api/admin/overview"',
-        'fetchWithTimeout("/api/admin/pricing"',
-        'fetchWithTimeout("/api/admin/audit-log?limit=50"',
     ]:
         assert needle in APP_JS, needle
+    for needle in [
+        'fetchWithTimeout("/api/admin/overview"',
+        'fetchWithTimeout("/api/admin/pricing"',
+        'fetchWithTimeout(`/api/admin/audit-log?${qs.toString()}`',
+    ]:
+        assert needle in admin_js, needle
 
 
 def test_home_load_error_strip_with_retry():
@@ -150,12 +154,13 @@ def test_p10_slip_upload_styled_label_same_input():
 
 
 def test_p12_dedicated_ban_reason_field():
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert 'id="adm-ban-reason"' in INDEX_HTML
     assert 'data-i18n-ph="admin_ban_reason_ph"' in INDEX_HTML
-    assert "function _adminBanReason" in APP_JS
-    assert "_adminRequireBanReason()" in APP_JS
+    assert "function _adminBanReason" in admin_js
+    assert "_adminRequireBanReason()" in admin_js
     # ban call no longer reads the Adjust card's field
-    ban_fn = APP_JS.split("async function _adminBanCall")[1].split("\n}")[0]
+    ban_fn = admin_js.split("async function _adminBanCall")[1].split("\n}")[0]
     assert "adm-adjust-reason" not in ban_fn
     # Adjust flow keeps its own reason field (unchanged behaviour)
     assert 'id="adm-adjust-reason"' in INDEX_HTML

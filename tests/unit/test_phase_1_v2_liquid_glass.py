@@ -43,7 +43,7 @@ def test_v2_phase1_asset_weight_under_15_percent_cap():
 
 
 def test_v2_phase1_cache_token_bumped():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "20261114_r146" not in INDEX_HTML
 
 
@@ -160,6 +160,17 @@ _RETIRED_VIP_STATIC_IDS = {
     # Round 15 (2026-11-23 Parts A & B): tier pill carousel and inline recap status row deleted
     "studio-alert-carousel", "carousel-track", "recap-limit-pill",
     "recap-tier-limit-text", "recap-inline-status", "recap-inline-status-text",
+    # Admin Round 2 (Part A: merged Jobs/Users/Details + Settings collapse + dead screens removed)
+    "adm-detail-recap-ledger", "adm-detail-recent-jobs", "adm-fleet-refresh-btn",
+    "adm-hist-failed", "adm-hist-recap", "adm-hist-status-sel",
+    "adm-hist-success", "adm-hist-total", "adm-hist-voice",
+    "adm-jobs-history", "adm-jobs-live", "adm-jobs-tab-history", "adm-jobs-tab-live",
+    "adm-screen-activity", "adm-screen-keys",
+    "admin-global-history-list", "admin-user-search-results",
+    "cnt-queued", "cnt-running", "cnt-waiting-choice",
+    "queue-engine-select", "queue-status-filters",
+    # Admin Round 3 (Part B1: retired legacy static kpay/wave inputs)
+    "adm-set-kpay-name", "adm-set-kpay-num", "adm-set-wave-name", "adm-set-wave-num",
 }
 _RETIRED_VIP_STATIC_ONCLICKS = {
     "copyAccount('09790760003')",
@@ -187,18 +198,33 @@ _RETIRED_VIP_STATIC_ONCLICKS = {
     "filterAdminPricing('topup')",
     # Round 15 Part B: inline status strip removed (openCurrentRecapDetail still called from Active Jobs sheet)
     "openCurrentRecapDetail()",
+    # Admin Round 2 (Part A: merged handlers & lazy detail panels)
+    "adminSearchUsers()", "loadAdminFleetStatus()", "loadAdminHistory()",
+    "loadAdminQueue()", "loadAdminRefunds()",
+    "setAdminHistFilter('timeframe', 'older_24h')",
+    "setQueueStatusFilter('all')", "setQueueStatusFilter('failed')",
+    "setQueueStatusFilter('queued')", "setQueueStatusFilter('running')",
+    "setQueueStatusFilter('success')", "setQueueStatusFilter('waiting_choice')",
+    "showAdminJobsTab('history')", "showAdminJobsTab('live')",
+    "showAdminSection('activity')", "showAdminSection('keys')",
 }
 
 
 def test_v2_phase1_zero_deleted_ids_or_onclicks_vs_main():
-    try:
-        main_html = subprocess.check_output(
-            ["git", "show", "main:app/webapp/static/index.html"],
-            cwd=str(ROOT),
-            stderr=subprocess.DEVNULL,
-        ).decode("utf-8")
-    except Exception:
-        return  # Shallow CI clone without main ref skips git show check cleanly
+    main_html = None
+    last_err = None
+    for ref in ("main", "origin/main"):
+        try:
+            main_html = subprocess.check_output(
+                ["git", "show", f"{ref}:app/webapp/static/index.html"],
+                cwd=str(ROOT),
+                stderr=subprocess.STDOUT,
+            ).decode("utf-8")
+            break
+        except Exception as exc:
+            last_err = exc
+    if main_html is None:
+        pytest.fail(f"Could not resolve base main index.html via git show (ensure fetch-depth: 0 in CI): {last_err}")
     main_ids = set(re.findall(r'\bid="([^"]+)"', main_html))
     curr_ids = set(re.findall(r'\bid="([^"]+)"', INDEX_HTML))
     missing_ids = (main_ids - curr_ids) - _RETIRED_VIP_STATIC_IDS

@@ -187,5 +187,5 @@ def test_blur_payload_master_gate_unchanged():
 # ── Cache token ────────────────────────────────────────────────────
 
 def test_cache_token_r64():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "r63" not in INDEX_HTML

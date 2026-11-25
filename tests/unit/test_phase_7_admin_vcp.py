@@ -209,11 +209,12 @@ def test_six_gap_settings_and_tts_chain_controls_in_html_and_js():
     ):
         assert f'id="{el_id}"' in admin_html, el_id
 
-    load_body = APP_JS.split("async function loadAdminSettings", 1)[1].split(
+    admin_js = (ROOT / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+    load_body = admin_js.split("async function loadAdminSettings", 1)[1].split(
         "async function saveGeminiModelSettings", 1
     )[0]
-    save_body = APP_JS.split("async function saveAdminSettings", 1)[1].split("\n}\n", 1)[0]
-    tts_save_body = APP_JS.split("async function saveGeminiTtsModelSettings", 1)[1].split("\n}\n", 1)[0]
+    save_body = admin_js.split("async function saveAdminSettings", 1)[1].split("\n}\n", 1)[0]
+    tts_save_body = admin_js.split("async function saveGeminiTtsModelSettings", 1)[1].split("\n}\n", 1)[0]
 
     for key in (
         "tts_daily_limit_minutes_free",
@@ -283,11 +284,12 @@ def test_all_admin_routes_require_admin_server_side():
 
 
 def test_admin_design_pass_i18n_parity_and_user_detail_completeness():
+    admin_js = (ROOT / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
     # User detail displays active job & test account badges when present
-    assert "u.is_test_account" in APP_JS
-    assert "admin_badge_test_acct" in APP_JS
-    assert "u.jobs_active" in APP_JS
-    assert "admin_badge_active_jobs" in APP_JS
+    assert "u.is_test_account" in admin_js
+    assert "admin_badge_test_acct" in admin_js
+    assert "u.jobs_active" in admin_js
+    assert "admin_badge_active_jobs" in admin_js
 
     # Phase 7 CSS design pass & lite mode rules present
     p7_css = STYLE_CSS.split("PHASE 7: ADMIN CONSOLE DESIGN PASS", 1)[1]
@@ -327,4 +329,4 @@ def test_admin_design_pass_i18n_parity_and_user_detail_completeness():
         assert key in my and my[key], f"missing my.{key}"
         assert key in en and en[key], f"missing en.{key}"
 
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5

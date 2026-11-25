@@ -528,7 +528,7 @@ def test_new_i18n_keys_in_both_languages():
 
 
 def test_cache_bump_r62():
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
 
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────

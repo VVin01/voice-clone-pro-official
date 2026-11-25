@@ -267,71 +267,6 @@ def admin_pay_review_kb(pay_id: str) -> InlineKeyboardMarkup:
     )
 
 
-def admin_tutorial_mgmt_kb(
-    video_link: str | None = None,
-    is_enabled: bool = True,
-    lang: str = "my",
-    voice_enabled: bool = True,
-    voice_link: str | None = None,
-    recap_enabled: bool = True,
-    recap_link: str | None = None,
-) -> InlineKeyboardMarkup:
-    v_status = "🟢 ON" if voice_enabled else "🔴 OFF"
-    r_status = "🟢 ON" if recap_enabled else "🔴 OFF"
-
-    buttons = [
-        [
-            InlineKeyboardButton(text=f"🎙️ Voice Tut: {v_status}", callback_data="admin:tutorial:voice_toggle"),
-            InlineKeyboardButton(text="✏️ Voice Link", callback_data="admin:tutorial:voice_edit"),
-        ],
-        [
-            InlineKeyboardButton(text=f"🎬 Recap Tut: {r_status}", callback_data="admin:tutorial:recap_toggle"),
-            InlineKeyboardButton(text="✏️ Recap Link", callback_data="admin:tutorial:recap_edit"),
-        ],
-    ]
-    test_btns = []
-    if voice_link:
-        test_btns.append(InlineKeyboardButton(text="🎙️ Test Voice", url=voice_link))
-    if recap_link:
-        test_btns.append(InlineKeyboardButton(text="🎬 Test Recap", url=recap_link))
-    if test_btns:
-        buttons.append(test_btns)
-
-    buttons.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="admin:dashboard")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_tutorial_confirm_remove_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🗑️ Confirm Remove", callback_data="admin:tutorial_remove_confirm")],
-            [InlineKeyboardButton(text="❌ Cancel", callback_data="admin:tutorial")],
-        ]
-    )
-
-
-def admin_tutorial_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Cancel", callback_data="admin:tutorial")]
-        ]
-    )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def user_history_kb(
     job_count: int = 0,
     ledger_count: int = 0,
@@ -389,38 +324,6 @@ def user_history_clear_confirm_kb(lang: str = "my") -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="menu:history")],
         ]
     )
-
-
-def custom_voice_hub_kb(can_request: bool, lang: str = "my") -> InlineKeyboardMarkup:
-    buttons = []
-    if can_request:
-        buttons.append([InlineKeyboardButton(text=t("custom_voice_btn_request_new", lang), callback_data="cvr:request_start")])
-    buttons.append([
-        InlineKeyboardButton(text=t("kb_refresh_queue", lang), callback_data="menu:custom_voice"),
-        InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def custom_voice_vip_promo_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("custom_voice_btn_upgrade", lang), callback_data="menu:buy_minutes")],
-            [InlineKeyboardButton(text=t("btn_main_menu", lang), callback_data="menu:home")],
-        ]
-    )
-
-
-def custom_voice_cancel_kb(lang: str = "my") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="cvr:cancel")]
-        ]
-    )
-
-
-
-
 
 
 def voice_samples_catalog_kb(

@@ -98,10 +98,11 @@ def test_p1_no_raw_result_media_urls_remain():
 
 def test_p1_download_buttons_use_data_dl_url():
     # Recap completion buttons + history rows + admin modal chips.
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert APP_JS.count('setAttribute("data-dl-url", data.download_urls.') == 12
     assert 'data-dl-url="${j.deliverables.video}"' in APP_JS
     assert 'data-dl-url="${j.download_url}"' in APP_JS
-    assert 'data-open-url="${j.download_url}"' in APP_JS
+    assert 'data-open-url="${escapeHtml(j.download_url)}"' in admin_js
 
 
 def test_p1_blob_flow_behaviour():
@@ -207,12 +208,13 @@ def test_p5_settings_validation_bounds():
 
 
 def test_p5_get_settings_and_ui_wiring():
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert '"character_limit_free": int(getattr(settings, "character_limit_free", 3000) or 3000)' in API_PY
     assert 'id="adm-set-char-limit-free"' in INDEX_HTML
     assert 'data-i18n="settings_char_limit_free"' in INDEX_HTML
-    assert '"adm-set-char-limit-free"' in APP_JS
-    assert "character_limit_free: charLimitFree" in APP_JS
-    assert "s.character_limit_free" in APP_JS
+    assert '"adm-set-char-limit-free"' in admin_js
+    assert "character_limit_free: charLimitFree" in admin_js
+    assert "s.character_limit_free" in admin_js
 
 
 # ── P6: pipeline status lines localized ─────────────────────────────
@@ -396,7 +398,7 @@ def test_cache_buster_bumped():
     # voice preview feature) -> rt1 (Recap tab tidy, all three statics)
     # -> rt3 (tidy return pass 2) -> rt4 (full-app polish batch)
     # -> fp1 (admin-demote + voice-picker batch).
-    assert INDEX_HTML.count("?v=20261125_admin_r1") == 5
+    assert INDEX_HTML.count("?v=20261125_admin_r23") == 5
     assert "?v=20261101_rt4" not in INDEX_HTML
     assert "?v=20261101_rt3" not in INDEX_HTML
     assert "?v=20261101_rt1" not in INDEX_HTML
@@ -449,5 +451,7 @@ def test_p2_home_card_and_handlers():
 # ── P10: admin sub-nav affordance ───────────────────────────────────
 
 def test_p10_admin_nav_scroll_cue_and_active_centering():
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     assert "mask-image: linear-gradient(to right, #000 92%, transparent 100%)" in STYLE_CSS
-    assert 'scrollIntoView({ block: "nearest", inline: "center"' in APP_JS
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in STYLE_CSS
+    assert 'b.classList.toggle("active", active)' in admin_js

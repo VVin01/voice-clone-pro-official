@@ -203,11 +203,13 @@ async def test_rate_limit_canonical_bucketing_and_put_enforcement():
 
 
 @pytest.mark.asyncio
-async def test_admin_fleet_status_reads_paused_bot_setting(db_session):
+async def test_admin_fleet_status_reads_paused_bot_setting(db_session, monkeypatch):
+    from app.config import settings
     from app.models.schema import BotSetting, User, utc_now
-    from app.webapp.api import get_admin_fleet_status
+    from app.webapp.api import get_admin_global_history
 
     admin = User(id=991802, first_name="AdminUser")
+    monkeypatch.setattr(settings, "admin_ids_raw", str(admin.id))
     db_session.add(admin)
     db_session.add_all(
         [
@@ -218,9 +220,9 @@ async def test_admin_fleet_status_reads_paused_bot_setting(db_session):
     )
     await db_session.commit()
 
-    payload = await get_admin_fleet_status(admin=admin, db=db_session)
-    assert payload["vps_worker"]["status_code"] == "PAUSED"
-    assert payload["vps_worker"]["host"] == "worker.internal"
+    payload = await get_admin_global_history(timeframe="all", status="active", job_type="all", limit=10, user=admin, db=db_session)
+    assert payload["worker"]["status_code"] == "PAUSED"
+    assert payload["worker"]["host"] == "worker.internal"
 
 
 def test_frontend_p2_and_assets_p3_contracts():
@@ -236,11 +238,11 @@ def test_frontend_p2_and_assets_p3_contracts():
     assert home_idx < err_idx < voice_idx
 
     assert 'data-hub-filter="TTS"' in index_html
-    assert 'id="adm-vps-host-label">(VPS Worker)<' in index_html
+    assert 'id="adm-vps-host-label">VPS Worker<' in index_html
     assert "212.28.177.252" not in index_html
     assert '<span class="acc-num" id="kpay-num">—</span>' in index_html
     assert '<span class="acc-num" id="wave-num">—</span>' in index_html
-    assert index_html.count("?v=20261125_admin_r1") == 5
+    assert index_html.count("?v=20261125_admin_r23") == 5
 
     my_part = i18n_js.split("    my: {", 1)[1].split("    en: {", 1)[0]
     en_part = i18n_js.split("    en: {", 1)[1]

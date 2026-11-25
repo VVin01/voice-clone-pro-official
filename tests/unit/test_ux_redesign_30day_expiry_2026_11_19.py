@@ -371,8 +371,10 @@ def test_ux_redesign_voice_custom_first_recap_ratio_visible_and_admin_console():
     assert "Package သက်တမ်းများ" in INDEX_HTML
 
     # Admin console fixes: queue polling gated to jobs screen, pricing shortcut, validity_days, grants viewer
-    assert 'if (admCurrentSection === "jobs") loadAdminQueue(true);' in APP_JS
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    assert 'if (admCurrentSection !== "jobs") return;' in admin_js
+    assert "loadAdminJobs(true);" in admin_js
     assert 'id="btn-adm-pricing-shortcut"' in INDEX_HTML
     assert 'id="adm-detail-grants"' in INDEX_HTML
     assert 'id="adm-adj-vdays"' in INDEX_HTML
-    assert "adm-vdays-" in APP_JS
+    assert "adm-vdays-" in admin_js

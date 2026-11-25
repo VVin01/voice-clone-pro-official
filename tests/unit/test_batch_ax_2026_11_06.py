@@ -296,7 +296,7 @@ def test_ax_payload_and_prefs_invariants_hold():
 
 
 def test_ax_cache_token_r79():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert "20261104_r69" not in INDEX_HTML
 
 

@@ -766,7 +766,10 @@ class KeyHealth:
         rotated = pool[start:] + pool[:start]
         healthy = [k for k in rotated if key_id(k) not in cooling]
         candidates = healthy or rotated
-        return sorted(candidates, key=lambda k: used[key_id(k)])
+        # Coarse daily usage bucketing (bucket width 3, spread <= 2 RPD):
+        # keys within 0..2 calls of each other preserve rotated cursor order
+        # across concurrent workers instead of pinning every worker onto Key #0.
+        return sorted(candidates, key=lambda k: used[key_id(k)] // 3)
 
     def order(self, keys: Sequence[str]) -> list[str]:
         """Candidate order for the next call.

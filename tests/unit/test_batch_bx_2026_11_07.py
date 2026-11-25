@@ -294,9 +294,9 @@ def test_serializers_carry_display_names_and_keep_raw_preset_voice():
 
 def test_frontend_history_and_admin_rows_prefer_voice_display():
     js = _read("app/webapp/static/js/app.js")
+    admin_js = _read("app/webapp/static/js/admin.js")
     assert 'escapeHtml(j.voice_display || j.preset_voice || "")' in js  # user History
-    assert 'escapeHtml(j.voice_display || j.preset_voice)' in js  # admin queue tag
-    assert 'escapeHtml(j.voice_display || j.preset_voice || j.engine)' in js  # admin history
+    assert 'escapeHtml(j.voice_display || j.preset_voice || j.engine)' in admin_js  # unified admin jobs card & viewer
 
 
 # ===========================================================================
@@ -693,7 +693,7 @@ def test_private_ai_admin_ui_block():
                 "settings_private_ai_cooldown", "settings_private_ai_hourly_budget",
                 "settings_private_ai_daily_budget"):
         assert i18n_js.count(key) >= 2, key  # my + en
-    js = _read("app/webapp/static/js/app.js")
+    js = _read("app/webapp/static/js/admin.js")
     assert "private_ai_enabled: privateAi," in js
     assert 'document.getElementById("adm-set-private-ai")' in js
 

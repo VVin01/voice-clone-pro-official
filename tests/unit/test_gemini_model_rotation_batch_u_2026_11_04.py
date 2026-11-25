@@ -156,8 +156,8 @@ def test_untiered_calls_keep_natural_head_and_do_not_consume_rotation(monkeypatc
 
 def test_call_sites_pass_their_rotation_tiers():
     src = Path(planner_mod.__file__).read_text(encoding="utf-8")
-    # Story context is the light call: wide rotation.
-    assert '_gemini_json(ai, prompt, log=log, rotation_tier="wide")' in src
+    # Part D3 (2026-11-25): Story context uses dedicated lite-first routing.
+    assert '_gemini_json(ai, prompt, log=log, rotation_tier="lite")' in src
     # Translation and the sentence-lock audit are quality-sensitive:
     # full-tier rotation between the two full models only.
     assert '_gemini_json(ai, prompt, retries=1, log=log, rotation_tier="full")' in src

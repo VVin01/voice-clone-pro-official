@@ -120,7 +120,7 @@ async def test_static_cache_policy_immutable_versioned_and_preserves_unversioned
     async def _async_resp():
         return SimpleNamespace(headers={})
 
-    h_ver = await _call("/static/js/app.js", "v=20261125_admin_r1")
+    h_ver = await _call("/static/js/app.js", "v=20261125_admin_r23")
     assert h_ver["Cache-Control"] == "public, max-age=31536000, immutable"
 
     h_font = await _call("/static/fonts/Padauk-Regular.ttf")
@@ -479,8 +479,9 @@ def test_group_ai_tokens_and_webapp_audit_fixes():
     assert "window._lastReferralStats" in app_js
     assert "pill.disabled = knownTotal > 0 && pSec > knownTotal" in app_js
     assert "if (res.status === 403) { hubHistoryCache = [];" in app_js
-    analytics_start = app_js.index("async function loadAdminAnalytics")
-    analytics_block = app_js[analytics_start:analytics_start + 2200]
+    admin_js = (REPO_ROOT / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+    analytics_start = admin_js.index("async function loadAdminAnalytics")
+    analytics_block = admin_js[analytics_start:analytics_start + 2200]
     assert " Ks" not in analytics_block and " MMK" in analytics_block
     assert len(css.encode("utf-8")) + len(app_js.encode("utf-8")) + len(i18n_js.encode("utf-8")) <= 1_650_000
 
@@ -490,7 +491,7 @@ async def test_serve_index_auto_cache_busts_immutable_assets():
     from app.webapp.server import serve_index, _get_static_asset_cache_tag
 
     disk_html = (REPO_ROOT / "app" / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
-    assert disk_html.count("?v=20261125_admin_r1") == 5
+    assert disk_html.count("?v=20261125_admin_r23") == 5
 
     tag = _get_static_asset_cache_tag()
     assert tag.startswith("20261123_") and len(tag) == 19
@@ -498,5 +499,5 @@ async def test_serve_index_auto_cache_busts_immutable_assets():
     resp = await serve_index()
     body = resp.body.decode("utf-8")
     assert body.count(f"?v={tag}") == 5
-    assert "?v=20261125_admin_r1" not in body
+    assert "?v=20261125_admin_r23" not in body
     assert resp.headers.get("cache-control") == "no-cache, no-store, must-revalidate, max-age=0"

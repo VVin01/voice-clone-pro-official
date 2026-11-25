@@ -4,39 +4,17 @@ import html
 import json
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Any
 from aiogram import Router, F
-from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import uuid
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
-from app.models.enums import (
-    AccountCategory,
-    BroadcastRecipientGroup,
-    JobStatus,
-    PaymentStatus,
-    UserStatus,
-)
-from app.models.schema import (
-    AuditLog,
-    BotSetting,
-    Job,
-    PaymentRequest,
-    User,
-)
-from app.services.broadcast import (
-    create_or_get_broadcast_campaign,
-    deliver_broadcast,
-    get_broadcast_recipient_ids,
-)
+from app.models.enums import PaymentStatus
+from app.models.schema import AuditLog, PaymentRequest, User
 from app.services.i18n import t
 from app.services.ledger import get_or_create_user
 from app.services.payment_review import (
@@ -52,18 +30,9 @@ from app.services.payment_review import (
 )
 from app.services.payments import approve_payment_request, package_recap_credits, reject_payment_request
 from app.ui.keyboards import (
-    admin_broadcast_audience_kb,
-    admin_broadcast_preview_kb,
-    admin_broadcast_prompt_kb,
-    admin_menu_kb,
     admin_pay_approve_confirm_kb,
     admin_pay_reject_confirm_kb,
-    admin_tutorial_cancel_kb,
-    admin_tutorial_confirm_remove_kb,
-    admin_tutorial_mgmt_kb,
 )
-from app.services.dynamic_settings import set_dynamic_setting
-from app.services.url_safety import is_valid_telegram_link
 from app.ui.helpers import safe_edit_message
 
 logger = logging.getLogger(__name__)
@@ -97,18 +66,6 @@ def _wrap_admin_value(raw: str, width: int = 56, max_chars: int = 400) -> str:
             else ""
         )
     return html.escape("\n".join(wrapped_lines))
-
-
-class AdminBroadcastFSM(StatesGroup):
-    choosing_audience = State()
-    waiting_for_message = State()
-    confirming = State()
-
-
-class AdminTutorialFSM(StatesGroup):
-    waiting_for_url = State()
-    waiting_for_voice_url = State()
-    waiting_for_recap_url = State()
 
 
 async def is_authorized_admin(event: CallbackQuery | Message) -> bool:
@@ -157,131 +114,6 @@ def _failure_class(error_message: str | None) -> str | None:
     m = _FAILURE_CLASS_RE.match(first_line)
     label = m.group(1) if m else first_line[:48]
     return html.escape(label)
-
-
-async def _fetch_pulse_metrics(session: AsyncSession) -> dict:
-    """The compact read-only pulse (bot cleanup 2026-11-03).
-
-    Replaces the old 11-button dashboard's metric fetch: total users,
-    paid users, jobs created today (UTC), live queue counts, and the
-    most recent failed job for the failure-class line. All counts come
-    from the same tables the dashboard used — nothing invented.
-    """
-    total_users = (await session.execute(select(func.count()).select_from(User))).scalar() or 0
-    purchased_users = (await session.execute(select(func.count()).where(User.account_category == AccountCategory.PURCHASED.value))).scalar() or 0
-
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    jobs_today = (await session.execute(select(func.count()).where(Job.created_at >= today_start))).scalar() or 0
-    queued_jobs = (await session.execute(select(func.count()).where(Job.status == JobStatus.QUEUED.value))).scalar() or 0
-    running_jobs = (await session.execute(select(func.count()).where(Job.status == JobStatus.RUNNING.value))).scalar() or 0
-
-    last_failed_job = (await session.execute(
-        select(Job).where(Job.status == JobStatus.FAILED.value).order_by(Job.created_at.desc()).limit(1)
-    )).scalar_one_or_none()
-
-    return {
-        "total_users": total_users,
-        "purchased_users": purchased_users,
-        "jobs_today": jobs_today,
-        "queued_jobs": queued_jobs,
-        "running_jobs": running_jobs,
-        "last_failed_error": last_failed_job.error_message if last_failed_job else None,
-    }
-
-
-async def render_admin_pulse(
-    lang: str = "my",
-    session: AsyncSession | None = None,
-) -> tuple[str, InlineKeyboardMarkup]:
-    """Compact admin landing: read-only pulse text + admin_menu_kb.
-
-    The full admin work surface is the Mini App Admin tab (the menu's
-    Admin Suite WebApp button); chat keeps the pulse, Broadcast, and
-    the payment-approval push flow (bot cleanup 2026-11-03).
-    """
-    if session is not None:
-        data = await _fetch_pulse_metrics(session)
-    else:
-        async with AsyncSessionLocal() as s:
-            data = await _fetch_pulse_metrics(s)
-
-    failure = _failure_class(data["last_failed_error"])
-    text = t(
-        "admin_pulse_text",
-        lang,
-        total_users=data["total_users"],
-        purchased_users=data["purchased_users"],
-        jobs_today=data["jobs_today"],
-        running_jobs=data["running_jobs"],
-        queued_jobs=data["queued_jobs"],
-        last_failure=failure if failure else t("admin_pulse_no_failure", lang),
-    )
-    return text, admin_menu_kb(lang=lang)
-
-
-async def _render_user_welcome_fallthrough(
-    message: Message,
-    session: AsyncSession | None = None,
-) -> None:
-    """Non-admin /admin: silently fall through to the user welcome.
-
-    Bot cleanup 2026-11-03 (agy consult): the old explicit "Admin
-    only" denial confirmed the command exists and dead-ended regular
-    users. A non-admin typing /admin now simply gets the normal
-    /start experience — gate card when unverified, main menu when
-    verified — with no denial and no mention of admin at all. Admin
-    CALLBACKS keep the is_authorized_admin alert: those buttons are
-    only ever rendered for admins.
-    """
-    from app.handlers.menu import render_main_menu
-    from app.services.gate import build_gate_reminder_text, verify_user_membership
-    from app.ui.keyboards import membership_gate_kb
-
-    telegram_id = message.from_user.id
-
-    async def _flow(s: AsyncSession) -> tuple[str, Any]:
-        user, _ = await get_or_create_user(
-            s,
-            telegram_id=telegram_id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-        )
-        await s.commit()
-        lang = user.language_code or "my"
-
-        if getattr(user, "status", None) == UserStatus.BLOCKED.value:
-            return t("user_account_suspended", lang), None
-
-        if settings.maintenance_mode:
-            return (
-                f"{t('maintenance_title', lang)}\n\n{t('maintenance_desc', lang)}",
-                None,
-            )
-
-        is_verified, _ = await verify_user_membership(s, user, message.bot)
-        if not is_verified:
-            await s.commit()
-            text = build_gate_reminder_text(lang, user.channel_verified, user.group_verified)
-            kb = membership_gate_kb(
-                channel_link=settings.channel_invite_link,
-                group_link=settings.group_invite_link,
-                lang=lang,
-                channel_ok=user.channel_verified,
-                group_ok=user.group_verified,
-            )
-            return text, kb
-
-        menu_text, kb = await render_main_menu(telegram_id, lang, session=s)
-        await s.commit()
-        return f"{t('welcome_title', lang)}\n\n{t('welcome_desc', lang)}\n\n{menu_text}", kb
-
-    if session is not None:
-        text, kb = await _flow(session)
-    else:
-        async with AsyncSessionLocal() as s:
-            text, kb = await _flow(s)
-
-    await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
 @admin_router.callback_query(F.data.startswith("admin:pay_detail:"))

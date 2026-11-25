@@ -46,7 +46,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_dr_cache_token_is_r140():
     html = (REPO / "app/webapp/static/index.html").read_text(encoding="utf-8")
-    assert html.count("20261125_admin_r1") == 5
+    assert html.count("20261125_admin_r23") == 5
     assert "r139" not in html
 
 

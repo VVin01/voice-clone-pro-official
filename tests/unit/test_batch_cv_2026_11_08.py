@@ -54,11 +54,11 @@ async def test_cv_detail_exposes_key_presence_masked(db_session, monkeypatch):
 
 
 def test_cv_ui_wired():
-    js = _read("app/webapp/static/js/app.js")
+    admin_js = _read("app/webapp/static/js/admin.js")
     html = _read("app/webapp/static/index.html")
     i18n = _read("app/webapp/static/js/i18n.js")
     assert 'id="adm-detail-gemini-key"' in html
-    assert "gemini_key" in js and "adm-detail-gemini-key" in js
+    assert "gemini_key" in admin_js and "adm-detail-gemini-key" in admin_js
     for key in ("admin_gemini_key", "admin_gemini_key_none",
                 "admin_gemini_key_ok", "admin_gemini_key_invalid"):
         assert i18n.count(key) >= 2, key  # my + en

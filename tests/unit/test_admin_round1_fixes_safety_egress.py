@@ -57,7 +57,7 @@ PaymentReviewFSM = admin_handlers.PaymentReviewFSM
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_JS = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
-ADMIN_PRO_JS = (ROOT / "app/webapp/static/js/admin_pro.js").read_text(encoding="utf-8")
+ADMIN_JS = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 
@@ -624,12 +624,12 @@ def test_f3_universal_formatters_in_node_vm(tmp_path):
     if not node:
         pytest.skip("node not available")
 
-    fmt_start = APP_JS.index("function admFmtSecs(total)")
-    fmt_end = APP_JS.index("function renderAdminBanZone", fmt_start)
-    fmt_slice = APP_JS[fmt_start:fmt_end]
+    fmt_start = ADMIN_JS.index("function admFmtSecs(total)")
+    fmt_end = ADMIN_JS.index("function renderAdminBanZone", fmt_start)
+    fmt_slice = ADMIN_JS[fmt_start:fmt_end]
 
     ygn_start = APP_JS.index("const _ADM_MONTHS_SHORT =")
-    ygn_end = APP_JS.index("function admStateLoading", ygn_start)
+    ygn_end = APP_JS.index("async function openSlipModal", ygn_start)
     ygn_slice = APP_JS[ygn_start:ygn_end]
 
     script = (
@@ -687,64 +687,65 @@ def test_f3_universal_formatters_in_node_vm(tmp_path):
 
 def test_f1_to_f5_static_safety_confirmations_and_egress_guards():
     # F1: No dangling approveSlip( / rejectSlip( calls; receipt thumbnails use fetchAuthImageUrl; 4 promo chips present
-    assert re.search(r"(?<![A-Za-z0-9_])approveSlip\s*\(", ADMIN_PRO_JS) is None
-    assert re.search(r"(?<![A-Za-z0-9_])rejectSlip\s*\(", ADMIN_PRO_JS) is None
-    assert "adminApproveSlip(" in ADMIN_PRO_JS and "adminRejectSlip(" in ADMIN_PRO_JS
-    assert "fetchAuthImageUrl(" in ADMIN_PRO_JS
-    assert '<img src="/api/receipts/' not in ADMIN_PRO_JS
+    assert re.search(r"(?<![A-Za-z0-9_])approveSlip\s*\(", ADMIN_JS) is None
+    assert re.search(r"(?<![A-Za-z0-9_])rejectSlip\s*\(", ADMIN_JS) is None
+    assert "adminApproveSlip(" in ADMIN_JS and "adminRejectSlip(" in ADMIN_JS
+    assert "fetchAuthImageUrl(" in ADMIN_JS
+    assert '<img src="/api/receipts/' not in ADMIN_JS
     for chip in ("မူလအတိုင်း", "+10%", "+20% ပရိုမို", "+50%"):
-        assert chip in ADMIN_PRO_JS, f"Missing Edit-Approve preset chip: {chip}"
+        assert chip in ADMIN_JS, f"Missing Edit-Approve preset chip: {chip}"
 
     # B7/F1: Orders CSV button posts to /api/admin/orders/export-dm and never window.open()s /orders/export
-    assert "/api/admin/orders/export-dm" in ADMIN_PRO_JS
-    assert "window.open(" not in ADMIN_PRO_JS
+    assert "/api/admin/orders/export-dm" in ADMIN_JS
+    assert "window.open(" not in ADMIN_JS
     assert "/api/admin/orders/export" not in APP_JS
+    assert re.search(r"/api/admin/orders/export(?!-dm)", ADMIN_JS) is None
 
     # F2: Misleading fields & fake progress bars eliminated
-    assert "balance_minutes" not in ADMIN_PRO_JS
-    det_start = APP_JS.index("function renderAdminDetailExtras(u)")
-    det_end = APP_JS.index("function renderAdminBanZone", det_start)
-    det_body = APP_JS[det_start:det_end]
+    assert "balance_minutes" not in ADMIN_JS
+    det_start = ADMIN_JS.index("function renderAdminDetailExtras(u)")
+    det_end = ADMIN_JS.index("function renderAdminBanZone", det_start)
+    det_body = ADMIN_JS[det_start:det_end]
     assert "monthly_free_seconds" not in det_body
     assert "custom_voices_count" not in det_body
 
-    q_start = APP_JS.index("function renderAdminQueueData(data)")
-    q_end = APP_JS.index("window.loadAdminQueue = loadAdminQueue", q_start)
-    q_body = APP_JS[q_start:q_end]
+    q_start = ADMIN_JS.index("function renderAdminJobsData(data)")
+    q_end = ADMIN_JS.index("window.loadAdminJobs = loadAdminJobs", q_start)
+    q_body = ADMIN_JS[q_start:q_end]
     assert "22%" not in q_body and "58%" not in q_body
     assert "|| '15'" not in q_body and '|| "15"' not in q_body
 
     # F3: Manual Key Health refresh passes true -> ?refresh=true
     assert 'onclick="loadAdminKeyHealth(true)"' in INDEX_HTML
-    assert "?refresh=true" in APP_JS
+    assert "?refresh=true" in ADMIN_JS
 
-    # F4: Segmented broadcast guard covers ALL audiences via /api/admin/broadcast/preview + askConfirm -> showStudioConfirm
-    assert "/api/admin/broadcast/preview" in ADMIN_PRO_JS
-    bc_idx = ADMIN_PRO_JS.index("window.adminSendBroadcast")
-    bc_block = ADMIN_PRO_JS[bc_idx : bc_idx + 2200]
-    assert "askConfirm(confirmMsg," in bc_block
+    # F4: Segmented broadcast guard covers ALL audiences via /api/admin/broadcast/preview + showStudioConfirm
+    assert "/api/admin/broadcast/preview" in ADMIN_JS
+    bc_idx = ADMIN_JS.index("async function adminSendBroadcast()")
+    bc_block = ADMIN_JS[bc_idx : bc_idx + 2200]
+    assert "showStudioConfirm(confirmMsg," in bc_block
     assert "loadBroadcastPreview()" in bc_block
 
     # F4: adjust-user default tier = မပြောင်းပါ (""), wrapped in showStudioConfirm with FREE-downgrade warning
     assert '<option value="" data-i18n="admin_tier_keep">' in INDEX_HTML
-    adj_start = APP_JS.index("async function adminApplyAdjust()")
-    adj_end = APP_JS.index("window.adminApplyAdjust", adj_start)
-    adj_body = APP_JS[adj_start:adj_end]
+    adj_start = ADMIN_JS.index("async function adminApplyAdjust()")
+    adj_end = ADMIN_JS.index("window.adminApplyAdjust", adj_start)
+    adj_body = ADMIN_JS[adj_start:adj_end]
     assert "showStudioConfirm(confirmAdjustMsg," in adj_body
     assert 'tier === "FREE"' in adj_body and "adm_confirm_adjust_free_warn" in adj_body
     assert "0m ဖြစ်သွားပါမည်" in I18N_JS
 
     # F4: Grant extend custom sheet includes default-checked notify_user checkbox
-    assert "admp-ge-notify" in ADMIN_PRO_JS
-    assert "သုံးစွဲသူထံ Telegram စာ ပို့ အသိပေးမည်" in ADMIN_PRO_JS
-    assert "notify_user" in ADMIN_PRO_JS
+    assert "admp-ge-notify" in ADMIN_JS
+    assert "သုံးစွဲသူထံ Telegram စာ ပို့ အသိပေးမည်" in ADMIN_JS
+    assert "notify_user" in ADMIN_JS
 
     # F5: Zero /api/admin/fleet/status polls in frontend JS; adaptive queue polling; dirty-only settings w/ runtime keys
     assert "/api/admin/fleet/status" not in APP_JS
-    assert "/api/admin/fleet/status" not in ADMIN_PRO_JS
-    assert "scheduleAdminQueuePoll" in APP_JS
-    assert "4000" in APP_JS and "15000" in APP_JS
-    assert "visibilitychange" in APP_JS
+    assert "/api/admin/fleet/status" not in ADMIN_JS
+    assert "scheduleAdminQueuePoll" in ADMIN_JS
+    assert "4000" in ADMIN_JS and "15000" in ADMIN_JS
+    assert "visibilitychange" in ADMIN_JS
     for rt_id in ("admp-rt-conc", "admp-rt-timeout", "admp-rt-profile", "admp-rt-fx"):
-        assert rt_id in APP_JS, f"saveAdminSettings missing runtime input tracking for {rt_id}"
-    assert "_isSettingsElDirty" in APP_JS and "_adminSettingsSavedSnapshot" in APP_JS
+        assert rt_id in ADMIN_JS, f"saveAdminSettings missing runtime input tracking for {rt_id}"
+    assert "_isSettingsElDirty" in ADMIN_JS and "_adminSettingsSavedSnapshot" in ADMIN_JS

@@ -588,11 +588,12 @@ async def test_vip_plans_db_price_wins_and_catalogue_fills(tmp_path, monkeypatch
 
 
 def test_broadcast_preblocked_is_own_block_not_breakdown_row():
-    detail_start = APP_JS.index('<div class="adm-bc-detail">')
-    detail_end = APP_JS.index("</div>", detail_start)
-    detail_block = APP_JS[detail_start:detail_end]
+    admin_js = (ROOT / "app" / "webapp" / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+    detail_start = admin_js.index('<div class="adm-bc-detail">')
+    detail_end = admin_js.index("</div>", detail_start)
+    detail_block = admin_js[detail_start:detail_end]
     assert "admin_bc_preblocked" not in detail_block
-    assert '<div class="adm-bc-note">${row(t("admin_bc_preblocked")' in APP_JS
+    assert '<div class="adm-bc-note">${row(t("admin_bc_preblocked")' in admin_js
     # Counting is untouched.
     assert '"pre_existing_blocked_in_db": db_blocked_count' in API_SRC
 

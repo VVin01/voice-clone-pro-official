@@ -16,7 +16,7 @@ from sqlalchemy import select
 from app.models.schema import BotSetting, User
 from app.webapp.api import (
     _get_laptop_worker_status,
-    get_admin_fleet_status,
+    get_admin_global_history,
     toggle_admin_worker_status,
     FleetWorkerTogglePayload,
 )
@@ -40,7 +40,7 @@ def test_admin_save_bar_dom_scoping():
     assert 'id="adm-settings-save-bar"' in settings_block, "Save bar must be inside #adm-screen-settings"
 
     # Verify NOT inside other admin screens
-    for screen in ("adm-screen-overview", "adm-screen-users", "adm-screen-jobs", "adm-screen-activity"):
+    for screen in ("adm-screen-overview", "adm-screen-payments", "adm-screen-jobs", "adm-screen-users", "adm-screen-broadcast"):
         s_idx = INDEX_HTML.index(f'id="{screen}"')
         next_screen_idx = INDEX_HTML.find('class="adm-screen', s_idx + len(screen) + 10)
         if next_screen_idx == -1:
@@ -50,17 +50,17 @@ def test_admin_save_bar_dom_scoping():
 
 
 def test_admin_fleet_card_dom():
-    """Verify Fleet status card is present in #adm-jobs-live."""
+    """Verify Fleet worker bar is present in #adm-screen-jobs."""
     assert 'id="adm-fleet-card"' in INDEX_HTML
     assert 'id="adm-vps-status-badge"' in INDEX_HTML
     assert 'id="adm-btn-toggle-vps"' in INDEX_HTML
     assert 'id="adm-btn-toggle-recap-queue"' in INDEX_HTML
 
-    jobs_live_idx = INDEX_HTML.index('id="adm-jobs-live"')
+    jobs_idx = INDEX_HTML.index('id="adm-screen-jobs"')
     queue_card_idx = INDEX_HTML.index('id="admin-queue-card"')
     fleet_card_idx = INDEX_HTML.index('id="adm-fleet-card"')
 
-    assert jobs_live_idx < fleet_card_idx < queue_card_idx, "Fleet card must be inside #adm-jobs-live before queue card"
+    assert jobs_idx < fleet_card_idx < queue_card_idx, "Fleet card must be inside #adm-screen-jobs before queue card"
 
 
 def test_admin_save_bar_dirty_state_node_eval():
@@ -101,9 +101,9 @@ def test_admin_save_bar_dirty_state_node_eval():
     saveBar.classList.add('hidden');
     elements['adm-settings-save-bar'] = saveBar;
 
-    const input1 = createElement('adm-set-kpay-num', 'input', 'text', '09123456789');
+    const input1 = createElement('adm-set-required-channel-id', 'input', 'text', '-1001234567890');
     const input2 = createElement('adm-set-maintenance', 'input', 'checkbox', '', false);
-    elements['adm-set-kpay-num'] = input1;
+    elements['adm-set-required-channel-id'] = input1;
     elements['adm-set-maintenance'] = input2;
 
     const pane = {
@@ -166,7 +166,7 @@ def test_admin_save_bar_dirty_state_node_eval():
     const modifiedVisible = !saveBar.classList.contains('hidden');
 
     // 3. Field reverted to original snapshot -> bar hidden
-    input1.value = '09123456789';
+    input1.value = '-1001234567890';
     updateAdminSettingsSaveBar();
     const revertedHidden = saveBar.classList.contains('hidden');
 
@@ -225,8 +225,10 @@ async def test_get_laptop_worker_status_paused(db_session):
 
 
 @pytest.mark.asyncio
-async def test_fleet_endpoints(db_session):
-    """Verify /admin/fleet/status and /admin/fleet/worker-toggle."""
+async def test_fleet_endpoints(db_session, monkeypatch):
+    """Verify /admin/history worker payload and /admin/fleet/worker-toggle."""
+    from app.config import settings
+
     now_iso = datetime.now(timezone.utc).isoformat()
     db_session.add(BotSetting(key="worker_laptop_heartbeat", value=now_iso))
     db_session.add(BotSetting(key="worker_laptop_status", value="ONLINE"))
@@ -235,15 +237,14 @@ async def test_fleet_endpoints(db_session):
     await db_session.commit()
 
     admin_user = User(id=999999, username="admin_tester")
+    monkeypatch.setattr(settings, "admin_ids_raw", str(admin_user.id))
 
-    # 1. Inspect fleet status
-    fleet = await get_admin_fleet_status(admin=admin_user, db=db_session)
-    assert fleet["success"] is True
-    assert "vps_worker" in fleet
-    assert "render_cloud" in fleet
-    assert fleet["vps_worker"]["status_code"] == "ONLINE"
-    assert len(fleet["vps_worker"]["workloads"]) >= 4
-    assert len(fleet["render_cloud"]["workloads"]) >= 4
+    # 1. Inspect worker status via unified jobs endpoint
+    fleet = await get_admin_global_history(timeframe="all", status="active", job_type="all", limit=10, user=admin_user, db=db_session)
+    assert "worker" in fleet
+    assert fleet["worker"]["status_code"] == "ONLINE"
+    assert fleet["worker"]["engine"] == "VOXCPM"
+    assert fleet["worker"]["host"] == "212.28.177.252"
 
     # 2. Toggle worker to PAUSED
     res1 = await toggle_admin_worker_status(

@@ -1069,7 +1069,7 @@ async def test_e2e_worker_mode_recap_pipeline_merges_subtitles_and_syncs_bundle_
         assert sync_res["skipped"] is False
 
         # Bot-facing lookup on web_storage
-        settings.storage_root = web_storage
+        monkeypatch.setattr(settings, "storage_root", web_storage)
         web_video_path = sync_res["remote_paths"]["video"]
         for ftype in ("video", "audio", "srt", "script"):
             found = api_mod.resolve_recap_deliverable_path(jid, ftype, result_path=web_video_path)

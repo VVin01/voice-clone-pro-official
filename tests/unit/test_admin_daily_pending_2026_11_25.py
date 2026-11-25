@@ -33,6 +33,7 @@ from app.webapp import api as api_mod
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_JS = (ROOT / "app/webapp/static/js/app.js").read_text(encoding="utf-8")
+ADMIN_JS = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "app/webapp/static/js/i18n.js").read_text(encoding="utf-8")
 
 
@@ -98,8 +99,8 @@ async def test_admin_daily_free_pending_projection_matrix_and_read_only_invarian
 
     assert by_id[admin_caller.id]["daily_free_pending_seconds"] == 0
 
-    # 2. Search endpoint payload check
-    search_res = await api_mod.search_admin_users(q="free_yday", admin=admin_caller, db=db_session)
+    # 2. Users endpoint search check (unified into GET /api/admin/users)
+    search_res = await api_mod.list_admin_users(limit=20, offset=0, admin=admin_caller, db=db_session, category="", search="free_yday")
     assert len(search_res["users"]) == 1
     assert search_res["users"][0]["daily_free_pending_seconds"] == 180
     assert search_res["users"][0]["balance_seconds"] == 0
@@ -144,13 +145,13 @@ def test_admin_frontend_renders_pending_marker_in_list_and_detail_node(tmp_path)
     if not node:
         pytest.skip("node not available")
 
-    row_start = APP_JS.index("function admUserRowHtml(u)")
-    row_end = APP_JS.index("let admUsersCategory =", row_start)
-    row_fn = APP_JS[row_start:row_end]
+    row_start = ADMIN_JS.index("function admUserRowHtml(u)")
+    row_end = ADMIN_JS.index("let admUsersCategory =", row_start)
+    row_fn = ADMIN_JS[row_start:row_end]
 
-    fmt_start = APP_JS.index("function admFmtSecs(total)")
-    det_end = APP_JS.index("function renderAdminBanZone", fmt_start) if "function renderAdminBanZone" in APP_JS[fmt_start:] else APP_JS.index("async function adminSendUserMessage", fmt_start)
-    det_fn = APP_JS[fmt_start:det_end]
+    fmt_start = ADMIN_JS.index("function admFmtSecs(total)")
+    det_end = ADMIN_JS.index("function renderAdminBanZone", fmt_start) if "function renderAdminBanZone" in ADMIN_JS[fmt_start:] else ADMIN_JS.index("async function adminSendUserMessage", fmt_start)
+    det_fn = ADMIN_JS[fmt_start:det_end]
 
     script = (
         "var window = {};\n"

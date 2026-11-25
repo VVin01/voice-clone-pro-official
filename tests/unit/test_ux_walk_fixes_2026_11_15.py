@@ -375,15 +375,15 @@ console.log(JSON.stringify({{ my: runForLang('my'), en: runForLang('en') }}));
 
 
 def test_item3_admin_job_viewer_links_wired_via_node():
+    admin_js = (REPO / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     fns = "\n".join(
         [
             _extract_fn(APP_JS, "urlCarriesStreamToken"),
             _extract_fn(APP_JS, "escapeHtml"),
             _extract_fn(APP_JS, "brandedDlName"),
-            _extract_fn(APP_JS, "signedAdminHref"),
-            _extract_fn(APP_JS, "openAdminMediaModal"),
-            _extract_fn(APP_JS, "renderAdminQueueData"),
-            _extract_fn(APP_JS, "renderAdminHistoryData"),
+            _extract_fn(admin_js, "signedAdminHref"),
+            _extract_fn(admin_js, "openAdminMediaModal"),
+            _extract_fn(admin_js, "renderAdminJobsData"),
         ]
     )
     script = f"""
@@ -397,7 +397,7 @@ const mkEl = (id) => (els[id] = {{
   querySelector: () => null,
 }});
 ['admin-media-modal','admin-media-badge','admin-media-title','admin-media-body','admin-media-deliverables',
- 'admin-queue-list','admin-global-history-list'].forEach(mkEl);
+ 'admin-queue-list'].forEach(mkEl);
 
 const ctx = {{
   document: {{ getElementById: (id) => els[id] || null }},
@@ -408,11 +408,15 @@ const ctx = {{
   jobStatusText: (s) => s,
   displayJobError: (e) => e || '',
   admStateEmpty: () => {{}},
+  admFmtYangon: () => '1m',
+  admFmtSecs: (s) => String(s),
+  _adminFleetData: {{}},
+  renderAdminFleetUI: () => {{}},
+  _admQueueActiveCount: 0,
   wireAdminMediaButtons: () => {{}},
-  adminQueueStatusFilter: 'all',
-  adminHistFilter: {{}},
+  admJobsFilter: {{ status: 'active' }},
   setAuthMediaSource: () => Promise.resolve(true),
-  JSON, String, Object,
+  JSON, String, Object, Number,
 }};
 vm.runInNewContext({json.dumps(fns)}, ctx);
 
@@ -426,16 +430,16 @@ const streamUrl = '/api/recap/stream/rc_1794747627_9c69fc/video?t=tokV';
 ctx.openAdminMediaModal('rc_1794747627_9c69fc', 'RECAP', streamUrl, JSON.stringify(deliv), 'Demo');
 const modalHtml = els['admin-media-deliverables'].innerHTML;
 
-ctx.renderAdminQueueData({{
+ctx.renderAdminJobsData({{
   jobs: [{{ id: 'rc_1794747627_9c69fc', status: 'SUCCESS', engine: 'recap', job_type: 'RECAP', user_id: 42, username: 'admin', created_ago: '1m', download_url: streamUrl, deliverables: deliv }}],
   counts: {{}},
 }});
 const queueHtml = els['admin-queue-list'].innerHTML;
 
-ctx.renderAdminHistoryData({{
+ctx.renderAdminJobsData({{
   history: [{{ id: 'rc_1794747627_9c69fc', status: 'SUCCESS', engine: 'recap', job_type: 'RECAP', user_id: 42, username: 'admin', time_ago: '1m', download_url: streamUrl, deliverables: deliv }}],
 }});
-const histHtml = els['admin-global-history-list'].innerHTML;
+const histHtml = els['admin-queue-list'].innerHTML;
 
 const unsigned = ctx.signedAdminHref('/api/recap/download/rc_1/video');
 console.log(JSON.stringify({{ modalHtml, queueHtml, histHtml, unsigned }}));

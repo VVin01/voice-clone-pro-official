@@ -184,16 +184,17 @@ async def test_x1_recap_curated_and_legacy_slugs_accepted(db_session, recap_runn
 # ── X1: admin media buttons no longer build onclick JS strings ───────────
 
 def test_x1_admin_media_buttons_use_data_attributes():
-    # The two vulnerable interpolations are gone entirely.
-    assert 'onclick="openAdminMediaModal(' not in APP_JS
-    assert "• ${j.preset_voice || j.engine}`.replace" not in APP_JS
-    # Both buttons (queue Play + history Preview) now carry data-* …
-    assert APP_JS.count("adm-media-open-btn") == 3  # 2 buttons + wiring selector
-    assert APP_JS.count('data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}"') == 2
-    assert APP_JS.count('data-title="${escapeHtml(') == 2
-    # … and are wired after each render.
-    assert "function wireAdminMediaButtons" in APP_JS
-    assert APP_JS.count("wireAdminMediaButtons(container);") == 2
+    admin_js = (Path(__file__).resolve().parents[2] / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    # The vulnerable onclick JS-string interpolations are gone everywhere.
+    assert 'onclick="openAdminMediaModal(' not in APP_JS and 'onclick="openAdminMediaModal(' not in admin_js
+    assert "• ${j.preset_voice || j.engine}`.replace" not in APP_JS and "• ${j.preset_voice || j.engine}`.replace" not in admin_js
+    # Unified jobs card renders 1 Play button (+ 1 wiring selector = 2 matches) with data-*.
+    assert admin_js.count("adm-media-open-btn") == 2
+    assert admin_js.count('data-deliverables="${escapeHtml(JSON.stringify(j.deliverables || {}))}"') == 1
+    assert admin_js.count('data-title="${escapeHtml(') == 1
+    # … and wired after renderAdminJobsData.
+    assert "function wireAdminMediaButtons" in admin_js
+    assert admin_js.count("wireAdminMediaButtons(container);") == 1
 
 
 # ── V2: sample endpoint auth + personal-model guard ──────────────────────
@@ -357,9 +358,10 @@ def test_r1_active_helper_reflects_poll_timer(tmp_path):
 # ── R4: admin adjust in-flight guard ─────────────────────────────────────
 
 def test_r4_adjust_disables_apply_button_until_finally():
-    start = APP_JS.index("async function adminApplyAdjust()")
-    end = APP_JS.index("window.adminApplyAdjust = adminApplyAdjust;")
-    body = APP_JS[start:end]
+    admin_js = (Path(__file__).resolve().parents[2] / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    start = admin_js.index("async function adminApplyAdjust()")
+    end = admin_js.index("window.adminApplyAdjust = adminApplyAdjust;")
+    body = admin_js[start:end]
     assert 'document.getElementById("adm-adjust-apply-btn")' in body
     assert "applyBtn.disabled = true" in body
     assert "applyBtn.disabled = false" in body

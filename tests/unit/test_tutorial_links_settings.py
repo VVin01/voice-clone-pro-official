@@ -180,10 +180,11 @@ def test_frontend_settings_first_for_non_original_key():
 
 
 def test_admin_settings_ui_has_all_tutorial_fields():
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     for key, el_id in FIELD_IDS.items():
         assert f'id="{el_id}"' in INDEX_HTML, el_id
         # load + save flows both reference the field map entries
-        assert f'"{el_id}", "{key}"' in APP_JS, (el_id, key)
+        assert f'"{el_id}", "{key}"' in admin_js, (el_id, key)
     # the surviving tutorial fields keep their exact ids (Part G retired dead adm-tut-recap-title)
     for el_id in ("adm-set-tutorial-link", "adm-tut-voice-link", "adm-tut-recap-link",
                   "adm-tut-voice-title",
@@ -191,6 +192,6 @@ def test_admin_settings_ui_has_all_tutorial_fields():
         assert f'id="{el_id}"' in INDEX_HTML, el_id
     # the new fields ride the existing settings save (same button/flow)
     assert "saveAdminSettings()" in INDEX_HTML
-    save_body = APP_JS.split("async function saveAdminSettings")[1].split("\n}")[0]
+    save_body = admin_js.split("async function saveAdminSettings")[1].split("\n}")[0]
     assert "...tutExtraLinks" in save_body
-    assert re.search(r"fetch\(\"/api/admin/settings\"", APP_JS)
+    assert re.search(r"fetch\(\"/api/admin/settings\"", admin_js)

@@ -103,57 +103,6 @@ async def test_purchased_user_quota_enforcement(db_session):
     assert err3 == "QUOTA_LIMIT_REACHED"
 
 
-@pytest.mark.asyncio
-async def test_user_custom_voice_menu_callbacks(db_session):
-    from aiogram.types import User as TgUser, Message as TgMsg
-    from app.handlers.custom_voice import handle_custom_voice_menu, handle_cvr_request_start, handle_cvr_cancel
+# Part B3 (2026-11-25): retired unmounted app/handlers/custom_voice.py and its DM handler tests.
 
-    # 1. Free user opens custom voice menu -> sees VIP promo
-    free_u, _ = await get_or_create_user(db_session, telegram_id=8901)
-    cb_free = MagicMock()
-    cb_free.from_user = TgUser(id=free_u.id, is_bot=False, first_name="FreeUser")
-    cb_free.message = MagicMock(spec=TgMsg)
-    cb_free.message.edit_text = AsyncMock()
-    cb_free.answer = AsyncMock()
-
-    await handle_custom_voice_menu(cb_free, session=db_session)
-    cb_free.message.edit_text.assert_called_once()
-    assert "VIP" in cb_free.message.edit_text.call_args[0][0]
-
-    # 2. Purchased user opens custom voice menu -> sees Custom Voice Hub
-    purchased_u, _ = await get_or_create_user(db_session, telegram_id=8902)
-    purchased_u.account_category = AccountCategory.PURCHASED.value
-    await db_session.commit()
-
-    cb_purchased = MagicMock()
-    cb_purchased.from_user = TgUser(id=purchased_u.id, is_bot=False, first_name="VIPUser")
-    cb_purchased.message = MagicMock(spec=TgMsg)
-    cb_purchased.message.edit_text = AsyncMock()
-    cb_purchased.answer = AsyncMock()
-
-    await handle_custom_voice_menu(cb_purchased, session=db_session)
-    cb_purchased.message.edit_text.assert_called_once()
-    assert "Custom Voice Model" in cb_purchased.message.edit_text.call_args[0][0] or "စိတ်ကြိုက် Voice" in cb_purchased.message.edit_text.call_args[0][0]
-
-    # 3. User clicks request start -> prompts for model name
-    state = AsyncMock()
-    cb_start = MagicMock()
-    cb_start.from_user = TgUser(id=purchased_u.id, is_bot=False, first_name="VIPUser")
-    cb_start.message = MagicMock(spec=TgMsg)
-    cb_start.message.edit_text = AsyncMock()
-    cb_start.answer = AsyncMock()
-
-    await handle_cvr_request_start(cb_start, state=state, session=db_session)
-    cb_start.message.edit_text.assert_called_once()
-    assert state.set_state.called
-
-    # 4. User cancels -> returns to hub
-    cb_cancel = MagicMock()
-    cb_cancel.from_user = TgUser(id=purchased_u.id, is_bot=False, first_name="VIPUser")
-    cb_cancel.message = MagicMock(spec=TgMsg)
-    cb_cancel.message.edit_text = AsyncMock()
-    cb_cancel.answer = AsyncMock()
-
-    await handle_cvr_cancel(cb_cancel, state=state, session=db_session)
-    assert state.clear.called
 

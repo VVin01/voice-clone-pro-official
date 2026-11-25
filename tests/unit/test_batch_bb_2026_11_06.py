@@ -65,7 +65,7 @@ def _i18n_values(key: str) -> list[str]:
 # ── Cache token ─────────────────────────────────────────────────────
 
 def test_bb_cache_token_is_r79():
-    assert HTML.count("20261125_admin_r1") == 5
+    assert HTML.count("20261125_admin_r23") == 5
     assert "20261104_r74" not in HTML
 
 
@@ -323,13 +323,14 @@ def test_bb3_history_and_admin_surfaces_label_tts():
     hub = _between(APP_JS, "function hubHistoryRowHtml", "function renderHistoryHub")
     assert 'j.job_type === "TTS"' in hub
     assert '"🎧"' in hub and 't("job_badge_tts")' in hub
-    # Admin: user-detail jobs, history list, media modal, queue tag.
-    assert APP_JS.count("badge-tts") >= 3
-    assert APP_JS.count('job_badge_tts') >= 3
+    # Admin: user-detail jobs & ledger/jobs unified card in admin.js.
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
+    assert APP_JS.count("badge-tts") + admin_js.count("badge-tts") >= 3
+    assert APP_JS.count('job_badge_tts') + admin_js.count('job_badge_tts') >= 3
     assert re.search(r"\.history-item-badge\.badge-tts\s*\{[^}]*var\(--sky-soft\)", CSS)
     assert re.search(r"\.hub-type-icon\.tts\s*\{[^}]*var\(--sky-soft\)", CSS)
     # Voice/recap rendering untouched.
-    assert "'badge-recap' : 'badge-voice'" in APP_JS or "badge-recap" in APP_JS
+    assert "'badge-recap' : 'badge-voice'" in admin_js or "badge-recap" in admin_js
 
 
 # ── BB-4: quota loader resilience + endpoint ────────────────────────

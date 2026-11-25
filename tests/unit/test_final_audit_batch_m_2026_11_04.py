@@ -693,18 +693,19 @@ def test_group_ai_limits_validation_bounds():
 
 
 def test_group_ai_limits_admin_ui_fields():
+    admin_js = (ROOT / "app/webapp/static/js/admin.js").read_text(encoding="utf-8")
     for el_id in (
         "adm-set-group-ai-cooldown",
         "adm-set-group-ai-hourly",
         "adm-set-group-ai-daily",
     ):
         assert f'id="{el_id}"' in INDEX_HTML
-    assert "group_ai_user_cooldown_seconds: groupAiCooldown" in APP_JS
-    assert "group_ai_hourly_budget: groupAiHourly" in APP_JS
-    assert "group_ai_daily_budget: groupAiDaily" in APP_JS
-    assert "s.group_ai_user_cooldown_seconds" in APP_JS
-    assert "s.group_ai_hourly_budget" in APP_JS
-    assert "s.group_ai_daily_budget" in APP_JS
+    assert "group_ai_user_cooldown_seconds: groupAiCooldown" in admin_js
+    assert "group_ai_hourly_budget: groupAiHourly" in admin_js
+    assert "group_ai_daily_budget: groupAiDaily" in admin_js
+    assert "s.group_ai_user_cooldown_seconds" in admin_js
+    assert "s.group_ai_hourly_budget" in admin_js
+    assert "s.group_ai_daily_budget" in admin_js
 
 
 # ── (7) history percent rendering ───────────────────────────────────
@@ -748,5 +749,5 @@ def test_action_fallback_errors_are_localized():
 
 
 def test_cache_bust_version_is_r45():
-    assert INDEX_HTML.count("20261125_admin_r1") == 5
+    assert INDEX_HTML.count("20261125_admin_r23") == 5
     assert "20261103_r44" not in INDEX_HTML
