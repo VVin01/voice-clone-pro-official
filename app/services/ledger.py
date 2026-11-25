@@ -250,9 +250,28 @@ async def get_minute_balance(session: AsyncSession, user_id: int) -> MinuteBalan
     return bal
 
 
+ALLOWANCE_TIMEZONE_NAME = "Asia/Yangon"
+
+
+def _allowance_tz():
+    from zoneinfo import ZoneInfo
+
+    return ZoneInfo(ALLOWANCE_TIMEZONE_NAME)
+
+
+def allowance_day_of(dt: datetime) -> str:
+    """Return the Asia/Yangon calendar day ('YYYY-MM-DD') for ``dt``.
+
+    Naive timestamps are interpreted as UTC to match ``utc_now()`` / SQLite storage.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_allowance_tz()).strftime("%Y-%m-%d")
+
+
 def get_current_daily_period() -> str:
-    """Return the current UTC calendar day as 'YYYY-MM-DD'."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """Return the current Asia/Yangon calendar day as 'YYYY-MM-DD'."""
+    return allowance_day_of(datetime.now(timezone.utc))
 
 
 def get_current_monthly_period() -> str:
@@ -265,16 +284,16 @@ async def grant_daily_free_allowance(
     user_id: int,
     day: str | None = None,
 ) -> tuple[bool, MinuteBalance]:
-    """Grant the non-accumulating daily free voice allowance (default 180s) once per UTC day.
+    """Grant the non-accumulating daily free voice allowance (default 180s) once per Asia/Yangon day.
 
     - Free users receive `settings.free_daily_allowance_seconds` (default 180s = 3 min)
-      once per UTC calendar day (`YYYY-MM-DD`).
+      once per Asia/Yangon calendar day (`YYYY-MM-DD`).
     - Non-accumulating: each day stands alone. Unspent seconds from prior days are
-      never carried over (effective_daily_free_seconds returns 0 once the UTC day rolls
+      never carried over (effective_daily_free_seconds returns 0 once the Asia/Yangon day rolls
       over, and the new day's grant overwrites daily_free_seconds rather than adding).
     - Existing already-granted `monthly_free_seconds` in wallets stay untouched.
     - Admins are exempt; PURCHASED/VIP users are unaffected (they spend purchased balances).
-    - Idempotent within a UTC day via DailyFreeAllowanceGrant unique constraint (user_id, day).
+    - Idempotent within an Asia/Yangon day via DailyFreeAllowanceGrant unique constraint (user_id, day).
     - Fast read-only path avoids acquiring a PostgreSQL `FOR UPDATE` row lock on `users`
       for admins, PURCHASED users, and repeat same-day calls so concurrent `/api/user/me`
       requests never serialize behind a row lock.
@@ -306,7 +325,7 @@ async def grant_daily_free_allowance(
     if (await session.execute(stmt)).scalar_one_or_none() is not None:
         return False, balance
 
-    # Slow path (at most once per UTC day per eligible FREE user): acquire User row lock
+    # Slow path (at most once per Asia/Yangon day per eligible FREE user): acquire User row lock
     # to serialize against concurrent consume_seconds / grant calls.
     _locked_user = (await session.execute(
         select(User).where(User.id == user_id).with_for_update()
@@ -330,7 +349,7 @@ async def grant_daily_free_allowance(
     except IntegrityError:
         return False, balance
 
-    # Non-accumulating overwrite for the new UTC day; monthly_free_seconds is untouched.
+    # Non-accumulating overwrite for the new Asia/Yangon day; monthly_free_seconds is untouched.
     balance.daily_free_seconds = allowance_seconds
     balance.last_daily_grant_date = current_day
     balance.reserved_daily_free_seconds = 0
@@ -806,7 +825,7 @@ async def refund_job_seconds(
     debit_by_source: dict[str, int] = {}
     for debit in debits:
         if debit.source == LedgerSource.DAILY_FREE.value and debit.created_at is not None:
-            if debit.created_at.strftime("%Y-%m-%d") != current_day:
+            if allowance_day_of(debit.created_at) != current_day:
                 continue
         if debit.source == LedgerSource.MONTHLY_FREE.value and debit.created_at is not None:
             if (debit.created_at.year, debit.created_at.month) != current_period:
@@ -1005,7 +1024,7 @@ async def settle_recap_voice_seconds(
         sec = int(debit.seconds or 0)
         debit_all_by_source[debit.source] = debit_all_by_source.get(debit.source, 0) + sec
         if debit.source == LedgerSource.DAILY_FREE.value and debit.created_at is not None:
-            if debit.created_at.strftime("%Y-%m-%d") != current_day:
+            if allowance_day_of(debit.created_at) != current_day:
                 continue
         if debit.source == LedgerSource.MONTHLY_FREE.value and debit.created_at is not None:
             if (debit.created_at.year, debit.created_at.month) != current_period:

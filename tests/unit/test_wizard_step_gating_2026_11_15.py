@@ -36,11 +36,11 @@ APP_JS = (STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
 I18N_JS = (STATIC_DIR / "js" / "i18n.js").read_text(encoding="utf-8")
 
 
-def _run_node(script: str) -> dict:
+def _run_node(script: str, tmp_path: Path) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit/_wizard_gating_tmp.js"
+    tmp = tmp_path / "_wizard_gating_tmp.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -218,7 +218,7 @@ def test_recap_locked_css_states_and_zero_backdrop_filter():
     assert "backdrop-filter" not in STYLE_CSS[p3_start:p3_end]
 
 
-def test_recap_gating_behavior_node():
+def test_recap_gating_behavior_node(tmp_path):
     script = _NODE_DOM_HARNESS + _extract_wizard_slice() + r"""
 initRecapSteps();
 const snapInit = {
@@ -297,7 +297,7 @@ console.log(JSON.stringify({
     afterCiBlock,
 }));
 """
-    out = _run_node(script)
+    out = _run_node(script, tmp_path)
 
     assert out["snapInit"]["step"] == 1
     assert out["snapInit"]["locked"] == [False, True, True, True]

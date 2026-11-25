@@ -435,7 +435,7 @@ def test_key_health_css_fixed_rhythm():
     assert "white-space: nowrap" in STYLE_CSS
 
 
-def test_localize_server_text_closed_set_and_counts():
+def test_localize_server_text_closed_set_and_counts(tmp_path):
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
@@ -464,7 +464,7 @@ def test_localize_server_text_closed_set_and_counts():
         "const enOthers = samples.map(s => localizeServerText(s));\n"
         "console.log(JSON.stringify({ myRes, enRes, enOthers }));\n"
     )
-    tmp = REPO_ROOT / "tests/unit/_tmp_loc_check.js"
+    tmp = tmp_path / "_tmp_loc_check.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=30)
@@ -720,7 +720,7 @@ MY_ENGLISH_ALLOWLIST = {
 }
 
 
-def test_my_i18n_values_have_no_unwanted_english_ui_sentences():
+def test_my_i18n_values_have_no_unwanted_english_ui_sentences(tmp_path):
     """Guard against full English sentences remaining in translations.my for Batch 1 keys."""
     node = shutil.which("node")
     if not node:
@@ -731,7 +731,7 @@ def test_my_i18n_values_have_no_unwanted_english_ui_sentences():
         + I18N_JS
         + "\nconsole.log(JSON.stringify({ my: translations.my, en: translations.en }));\n"
     )
-    tmp = REPO_ROOT / "tests/unit/_tmp_i18n_dump.js"
+    tmp = tmp_path / "_tmp_i18n_dump.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=30)

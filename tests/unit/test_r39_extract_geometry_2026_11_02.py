@@ -787,13 +787,13 @@ def test_srt_full_frame_subtitle_stays_low(tmp_path):
 
 # ── 7. A + C: client honesty + size format (node) ──────────────────
 
-def _run_node(script_body: str, tmp_name: str) -> dict:
+def _run_node(script_body: str, tmp_path: Path, tmp_name: str) -> dict:
     import json
 
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit" / tmp_name
+    tmp = tmp_path / tmp_name
     try:
         tmp.write_text(script_body, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -803,7 +803,7 @@ def _run_node(script_body: str, tmp_name: str) -> dict:
     return json.loads(res.stdout.strip().splitlines()[-1])
 
 
-def test_format_dl_size_units():
+def test_format_dl_size_units(tmp_path):
     start = APP_JS.index("function formatDlSize")
     end = APP_JS.index("function dlRenderDeliveryRow")
     driver = r"""
@@ -818,7 +818,7 @@ const out = {
 };
 console.log(JSON.stringify(out));
 """
-    out = _run_node(APP_JS[start:end] + "\n" + driver, "_r39_dlsize_tmp.js")
+    out = _run_node(APP_JS[start:end] + "\n" + driver, tmp_path, "_r39_dlsize_tmp.js")
     assert out["kb32"] == "32 KB"
     assert out["b500"] == "500 B"
     assert out["mb1"] == "1.0 MB"
@@ -828,7 +828,7 @@ console.log(JSON.stringify(out));
     assert out["zero"] == "0 B"
 
 
-def test_blocked_link_info_recognises_host_refusal_copy():
+def test_blocked_link_info_recognises_host_refusal_copy(tmp_path):
     start = APP_JS.index("function mapErrorToToast")
     end = APP_JS.index("function showStudioInputModal")
     refusal = (
@@ -853,7 +853,7 @@ def test_blocked_link_info_recognises_host_refusal_copy():
         "var localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };\n"
         + I18N_JS + "\n" + APP_JS[start:end] + "\n" + driver
     )
-    out = _run_node(script, "_r39_refusal_tmp.js")
+    out = _run_node(script, tmp_path, "_r39_refusal_tmp.js")
     for lang in ("my", "en"):
         assert out[lang]["blocked"] is True
         assert out[lang]["toast"] != out[lang]["generic"]

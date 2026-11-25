@@ -45,11 +45,11 @@ INDEX_HTML = (ROOT / "app/webapp/static/index.html").read_text(encoding="utf-8")
 API_PY = (ROOT / "app/webapp/api.py").read_text(encoding="utf-8")
 
 
-def _run_node(script_body: str, tmp_name: str) -> dict:
+def _run_node(script_body: str, tmp_path: Path, tmp_name: str) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit" / tmp_name
+    tmp = tmp_path / tmp_name
     try:
         tmp.write_text(script_body, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -67,7 +67,7 @@ def _mapper_slice() -> str:
 
 # ── J1: blocked-source mapper copy ────────────────────────────────────
 
-def _run_blocked_mapper() -> dict:
+def _run_blocked_mapper(tmp_path: Path) -> dict:
     driver = r"""
 const cases = {
   tiktok_noformats: "yt-dlp extract error: ERROR: No video formats found! (tiktok)",
@@ -101,11 +101,11 @@ console.log(JSON.stringify(out));
         "var localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };\n"
         + I18N_JS + "\n" + _mapper_slice() + "\n" + driver
     )
-    return _run_node(script, "_journey_mapper_tmp.js")
+    return _run_node(script, tmp_path, "_journey_mapper_tmp.js")
 
 
-def test_j1_blocked_sources_get_specific_actionable_copy():
-    out = _run_blocked_mapper()
+def test_j1_blocked_sources_get_specific_actionable_copy(tmp_path):
+    out = _run_blocked_mapper(tmp_path)
     for lang in ("my", "en"):
         r = out[lang]
         # Source is NAMED for the user, in both flows.
@@ -181,7 +181,7 @@ NEW_KEYS = (
 )
 
 
-def test_j4_new_i18n_keys_exist_in_both_languages():
+def test_j4_new_i18n_keys_exist_in_both_languages(tmp_path):
     driver = r"""
 const keys = __KEYS__;
 const out = {};
@@ -196,7 +196,7 @@ console.log(JSON.stringify(out));
         "var localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };\n"
         + I18N_JS + "\n" + driver.replace("__KEYS__", json.dumps(list(NEW_KEYS)))
     )
-    out = _run_node(script, "_journey_i18n_tmp.js")
+    out = _run_node(script, tmp_path, "_journey_i18n_tmp.js")
     for key in NEW_KEYS:
         assert out[key]["my"], f"{key} missing in my"
         assert out[key]["en"], f"{key} missing in en"

@@ -189,6 +189,19 @@ def test_ch_concat_wav_files_mixed_rates_keep_first_rate(tmp_path):
         assert abs(wf.getnframes() / wf.getframerate() - 1.0) < 0.05
 
 
+def test_ch_concat_wav_files_voxcpm_24khz_deterministic_across_runs(tmp_path):
+    """B3 regression pin: VoxCPM 24 kHz mono WAV crossfade join is sample-exact across repeated runs."""
+    p1 = _write_wav(tmp_path / "v1.wav", 1.25, rate=24000)
+    p2 = _write_wav(tmp_path / "v2.wav", 0.75, rate=24000)
+    expected_frames = int(round((1.25 + 0.75 - 0.04) * 24000))
+    for i in range(5):
+        out = concat_wav_files([p1, p2], tmp_path / f"joined_24k_{i}.wav")
+        with wave.open(str(out), "rb") as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getframerate() == 24000
+            assert wf.getnframes() == expected_frames
+
+
 # ---------------------------------------------------------------------------
 # Worker path (fake engine)
 # ---------------------------------------------------------------------------

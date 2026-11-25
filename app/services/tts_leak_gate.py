@@ -125,9 +125,10 @@ _WHISPER_FAIL_LOGGED: bool = False
 _RING_LOCK = threading.Lock()
 _RING_SEQ: int = 0
 
+_MISS_SENTINEL = object()
 _MODE_CACHE_LOCK = threading.Lock()
 _MODE_CACHE_TS: float = 0.0
-_MODE_CACHE_VAL: str | None = None
+_MODE_CACHE_VAL: object = None
 _MODE_SYNC_TTL_SECONDS: float = 2.0
 
 
@@ -174,11 +175,13 @@ def get_leak_gate_mode() -> str:
     global _MODE_CACHE_TS, _MODE_CACHE_VAL
     try:
         now = time.monotonic()
+        cached_hit = False
         db_raw: str | None = None
         with _MODE_CACHE_LOCK:
             if _MODE_CACHE_VAL is not None and (now - _MODE_CACHE_TS) < _MODE_SYNC_TTL_SECONDS:
-                db_raw = _MODE_CACHE_VAL
-        if db_raw is None:
+                cached_hit = True
+                db_raw = None if _MODE_CACHE_VAL is _MISS_SENTINEL else str(_MODE_CACHE_VAL)
+        if not cached_hit:
             try:
                 from app.services import key_rotation as _kr
 
@@ -187,7 +190,7 @@ def get_leak_gate_mode() -> str:
                 fetched = None
             with _MODE_CACHE_LOCK:
                 _MODE_CACHE_TS = now
-                _MODE_CACHE_VAL = fetched
+                _MODE_CACHE_VAL = _MISS_SENTINEL if fetched is None else fetched
             db_raw = fetched
         norm_db = _normalize_mode(db_raw)
         if norm_db is not None:

@@ -152,7 +152,7 @@ class MinuteBalance(Base):
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     daily_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    last_daily_grant_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # YYYY-MM-DD (UTC)
+    last_daily_grant_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # YYYY-MM-DD (Asia/Yangon)
     monthly_free_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     last_monthly_grant_period: Mapped[str | None] = mapped_column(String(7), nullable=True)  # YYYY-MM
     welcome_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -177,7 +177,7 @@ class MinuteBalance(Base):
 
     @property
     def effective_daily_free_seconds(self) -> int:
-        """Today's non-accumulating free daily allowance (0 once the UTC day rolls over)."""
+        """Today's non-accumulating free daily allowance (0 once the Asia/Yangon day rolls over)."""
         from app.services.ledger import get_current_daily_period
 
         if getattr(self, "last_daily_grant_date", None) != get_current_daily_period():

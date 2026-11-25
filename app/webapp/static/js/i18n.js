@@ -1602,6 +1602,7 @@ const translations = {
         tts_key_prompt_title_paid: "✨ ဒီနေ့ Gemini Pool စမ်းသုံးခွင့် ကုန်သွားပါပြီ",
         tts_key_prompt_body_paid: "ဒီနေ့အတွက် VIP Gemini Pool 10 မိနစ် ကုန်သွားပါပြီ။ Profile ထဲမှာ ကိုယ်ပိုင် Gemini Key (Google AI Studio ကနေ အခမဲ့ ရယူနိုင်ပါတယ်) ထည့်ထားရင် Gemini အသံ ဆက်သုံးနိုင်ပါတယ်။ Key မထည့်ရင် ဒီအလုပ်ကို Edge အသံနဲ့ လုပ်ပေးပါမယ်။",
         admin_bal_daily: "နေ့စဉ် အခမဲ့",
+        admin_daily_free_pending: "မပေးရသေး",
         admin_bal_referral_voice: "မိတ်ဆက် Voice",
         // ── 2026-11-23 Part II: Pricing v3 & Buy Tab (MY) ──
         buy_pkg_amount: "Voice Clone {minutes} မိနစ် + Recap Credit {credits} ခု",
@@ -3221,6 +3222,7 @@ const translations = {
         tts_key_prompt_title_paid: "✨ Today's Gemini pool share is used up",
         tts_key_prompt_body_paid: "Today's 10 min VIP Gemini pool taste is finished. Add your own Gemini key in Profile (free from Google AI Studio) to keep the Gemini voice, or this generation will use the Edge voice instead.",
         admin_bal_daily: "Daily free",
+        admin_daily_free_pending: "Not granted yet",
         admin_bal_referral_voice: "Referral voice",
         // ── 2026-11-23 Part II: Pricing v3 & Buy Tab (EN) ──
         buy_pkg_amount: "Voice Clone {minutes} min + Recap {credits} Credits",

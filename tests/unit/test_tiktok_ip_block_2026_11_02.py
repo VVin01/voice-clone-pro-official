@@ -164,11 +164,11 @@ def test_downloader_source_carries_the_needles():
 
 # ── B + C: client detector + stored-error display mapping ───────────
 
-def _run_node(script_body: str, tmp_name: str) -> dict:
+def _run_node(script_body: str, tmp_path: Path, tmp_name: str) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit" / tmp_name
+    tmp = tmp_path / tmp_name
     try:
         tmp.write_text(script_body, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -184,7 +184,7 @@ def _mapper_slice() -> str:
     return APP_JS[start:end]
 
 
-def _run_display_cases() -> dict:
+def _run_display_cases(tmp_path: Path) -> dict:
     driver = r"""
 const cases = {
   raw_ip_block: "ERROR: [TikTok] 7391505677920816389: Your IP address is blocked from accessing this post",
@@ -211,19 +211,19 @@ console.log(JSON.stringify(out));
         "const SERVER_CLASSIFIED = " + json.dumps(SERVER_CLASSIFIED_TIKTOK) + ";\n"
         + I18N_JS + "\n" + _mapper_slice() + "\n" + driver
     )
-    return _run_node(script, "_tiktok_block_tmp.js")
+    return _run_node(script, tmp_path, "_tiktok_block_tmp.js")
 
 
-def test_b_server_classified_copy_still_detected_blocked():
-    out = _run_display_cases()
+def test_b_server_classified_copy_still_detected_blocked(tmp_path):
+    out = _run_display_cases(tmp_path)
     for lang in ("my", "en"):
         assert out[lang]["classified_info"] == {"blocked": True, "source": "TikTok"}
         toast = out[lang]["classified_recap_toast"]
         assert "TikTok" in toast and toast != out[lang]["generic_recap"]
 
 
-def test_c_display_raw_ip_block_maps_to_clean_burmese():
-    out = _run_display_cases()
+def test_c_display_raw_ip_block_maps_to_clean_burmese(tmp_path):
+    out = _run_display_cases(tmp_path)
     for lang in ("my", "en"):
         disp = out[lang]["raw_ip_block_display"]
         assert "TikTok" in disp
@@ -231,15 +231,15 @@ def test_c_display_raw_ip_block_maps_to_clean_burmese():
         assert "ERROR" not in disp
 
 
-def test_c_display_classified_passthrough_strips_prefix():
-    out = _run_display_cases()
+def test_c_display_classified_passthrough_strips_prefix(tmp_path):
+    out = _run_display_cases(tmp_path)
     expected = SERVER_CLASSIFIED_TIKTOK.replace("⚠️ ", "", 1)
     for lang in ("my", "en"):
         assert out[lang]["server_classified_display"] == expected
 
 
-def test_c_display_other_raw_errors_unchanged():
-    out = _run_display_cases()
+def test_c_display_other_raw_errors_unchanged(tmp_path):
+    out = _run_display_cases(tmp_path)
     for lang in ("my", "en"):
         assert out[lang]["unrelated_raw_display"] == "'NoneType' object has no attribute 'setdefault'"
         assert out[lang]["empty_display"] == ""

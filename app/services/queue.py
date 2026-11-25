@@ -492,8 +492,14 @@ def is_job_voxcpm_bound(job: Job) -> bool:
 
 async def count_active_voxcpm_jobs(session: AsyncSession) -> int:
     """Count currently `RUNNING` VoxCPM jobs across standalone clone and recap."""
+    from sqlalchemy.orm import defer
+
     running_rows = (
-        await session.execute(select(Job).where(Job.status == JobStatus.RUNNING.value))
+        await session.execute(
+            select(Job)
+            .options(defer(Job.input_text), defer(Job.final_script))
+            .where(Job.status == JobStatus.RUNNING.value)
+        )
     ).scalars().all()
     return sum(1 for row in running_rows if is_job_voxcpm_bound(row))
 
@@ -623,6 +629,75 @@ async def claim_job_for_running(session: AsyncSession, job_id: str) -> bool:
     return res.rowcount == 1
 
 
+def _queued_job_eligibility_predicates(
+    *,
+    engine_filter: str | None = None,
+    skip_local_source: bool | None = None,
+    allow_recap: bool | None = None,
+) -> list:
+    """Build the exact SQL-level eligibility predicates shared by pre-probe and claim."""
+    if skip_local_source is None:
+        skip_local_source = not getattr(settings, "worker_claim_local_files", True)
+    if allow_recap is None:
+        allow_recap = getattr(settings, "recap_on_queue", False)
+
+    preds: list = [
+        Job.status == JobStatus.QUEUED.value,
+        # Batch AW: TTS jobs execute in the webapp process (their own
+        # background runner), never in the voice-clone worker — keep
+        # them out of this queue even for an engine_filter=None caller.
+        Job.job_type != JobType.TTS.value,
+    ]
+    if not allow_recap:
+        preds.extend(
+            [
+                Job.job_type != JobType.RECAP.value,
+                Job.engine != "recap",
+                ~Job.id.startswith("rc_"),
+            ]
+        )
+    if engine_filter:
+        if allow_recap:
+            preds.append(
+                (Job.engine == engine_filter)
+                | (Job.job_type == JobType.RECAP.value)
+                | (Job.engine == "recap")
+                | (Job.id.startswith("rc_"))
+            )
+        else:
+            preds.append(Job.engine == engine_filter)
+
+    if skip_local_source:
+        preds.append(
+            (Job.source_audio_path.is_(None))
+            | (Job.source_audio_path == "")
+            | (Job.source_audio_path.startswith("http://"))
+            | (Job.source_audio_path.startswith("https://"))
+        )
+        preds.append(
+            (Job.recap_ref_audio_path.is_(None))
+            | (Job.recap_ref_audio_path == "")
+        )
+    return preds
+
+
+async def has_queued_job_probe(
+    session: AsyncSession,
+    engine_filter: str | None = None,
+    *,
+    skip_local_source: bool | None = None,
+    allow_recap: bool | None = None,
+) -> bool:
+    """Lightweight ``SELECT 1 ... LIMIT 1`` existence probe mirroring claim SQL filters."""
+    preds = _queued_job_eligibility_predicates(
+        engine_filter=engine_filter,
+        skip_local_source=skip_local_source,
+        allow_recap=allow_recap,
+    )
+    stmt = select(1).select_from(Job).where(*preds).limit(1)
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+
 async def claim_next_queued_job(
     session: AsyncSession,
     engine_filter: str | None = None,
@@ -647,37 +722,12 @@ async def claim_next_queued_job(
     if allow_recap is None:
         allow_recap = getattr(settings, "recap_on_queue", False)
 
-    query = select(Job).where(
-        Job.status == JobStatus.QUEUED.value,
-        # Batch AW: TTS jobs execute in the webapp process (their own
-        # background runner), never in the voice-clone worker — keep
-        # them out of this queue even for an engine_filter=None caller.
-        Job.job_type != JobType.TTS.value,
+    preds = _queued_job_eligibility_predicates(
+        engine_filter=engine_filter,
+        skip_local_source=skip_local_source,
+        allow_recap=allow_recap,
     )
-    if not allow_recap:
-        query = query.where(
-            Job.job_type != JobType.RECAP.value,
-            Job.engine != "recap",
-            ~Job.id.startswith("rc_"),
-        )
-    if engine_filter:
-        if allow_recap:
-            query = query.where(
-                (Job.engine == engine_filter)
-                | (Job.job_type == JobType.RECAP.value)
-                | (Job.engine == "recap")
-                | (Job.id.startswith("rc_"))
-            )
-        else:
-            query = query.where(Job.engine == engine_filter)
-
-    if skip_local_source:
-        query = query.where(
-            (Job.source_audio_path.is_(None))
-            | (Job.source_audio_path == "")
-            | (Job.source_audio_path.startswith("http://"))
-            | (Job.source_audio_path.startswith("https://"))
-        )
+    query = select(Job).where(*preds)
 
     candidate_stmt = query.order_by(Job.created_at).limit(25)
     candidates = list((await session.execute(candidate_stmt)).scalars().all())

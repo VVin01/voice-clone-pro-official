@@ -13708,12 +13708,15 @@ function admUserRowHtml(u) {
     // First grapheme, not charAt(0): names starting with an emoji or a
     const initial = escapeHtml((Array.from((u.first_name || "?").trim())[0] || "?").toUpperCase());
     const balFmt = Math.floor((u.balance_seconds || 0) / 60) + "m";
+    const pendingBadge = Number(u.daily_free_pending_seconds || 0) > 0
+        ? ` <span class="mini-tag text-muted">${escapeHtml(t("admin_daily_free_pending"))}</span>`
+        : "";
     // Sub-line as segments (same pattern as D-1): the "•" separators
     const segs = [];
     if (u.username) segs.push(`@${escapeHtml(u.username)}`);
     segs.push(`ID: ${u.id}`);
     segs.push(escapeHtml(u.account_category || "FREE"));
-    segs.push(`\u23f1 ${balFmt}`);
+    segs.push(`\u23f1 ${balFmt}${pendingBadge}`);
     segs.push(`\ud83c\udfac ${u.recap_credits ?? 0}`);
     if (u.is_banned) segs.push("\ud83d\udeab");
     const subHtml = segs.map(s => `<span class="adm-sub-seg">${s}</span>`).join("");
@@ -13925,9 +13928,13 @@ function admFmtSecs(total) {
 function renderAdminDetailExtras(u) {
     const row = (label, val) => `<div class="adm-bc-row"><span>${label}</span><strong>${val}</strong></div>`;
     const bb = u.balance_breakdown || {};
+    const dailyPending = Number(bb.daily_free_pending_seconds || 0);
+    const dailyVal = dailyPending > 0
+        ? `${admFmtSecs(bb.daily_free_seconds)} · ${admFmtSecs(dailyPending)} (${escapeHtml(t("admin_daily_free_pending"))})`
+        : admFmtSecs(bb.daily_free_seconds);
     const bd = document.getElementById("adm-detail-breakdown");
     if (bd) bd.innerHTML =
-        row(t("admin_bal_daily"), admFmtSecs(bb.daily_free_seconds)) +
+        row(t("admin_bal_daily"), dailyVal) +
         row(t("admin_bal_monthly"), admFmtSecs(bb.monthly_free_seconds)) +
         row(t("admin_bal_welcome"), admFmtSecs(bb.welcome_seconds)) +
         row(t("admin_bal_referral_voice"), admFmtSecs(bb.referral_voice_seconds)) +

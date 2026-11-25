@@ -165,11 +165,11 @@ def test_language_repaint_renders_the_gate():
 
 # ── Behaviour: the pure decision helper (node) ────────────────────
 
-def _run_node(script: str) -> dict:
+def _run_node(script: str, tmp_path: Path) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit/_ci_harness_tmp.js"
+    tmp = tmp_path / "_ci_harness_tmp.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -179,7 +179,7 @@ def _run_node(script: str) -> dict:
     return json.loads(res.stdout.strip().splitlines()[-1])
 
 
-def test_gate_state_matrix_node():
+def test_gate_state_matrix_node(tmp_path):
     script = (
         _gate_slice()
         + "\nconst cases = {"
@@ -197,7 +197,7 @@ def test_gate_state_matrix_node():
         + " dur_text_pad: recapGateDurationText(65),"
         + " };\nconsole.log(JSON.stringify(cases));\n"
     )
-    out = _run_node(script)
+    out = _run_node(script, tmp_path)
     assert out["free_over"] == "free-blocked"
     assert out["free_at"] == "clear"
     assert out["free_under"] == "clear"
@@ -248,11 +248,11 @@ function refreshStickyCtas() { STICKY_CALLS++; }
 """
 
 
-def _paint(script_tail: str) -> dict:
-    return _run_node(_DOM_STUB + _gate_slice() + script_tail)
+def _paint(script_tail: str, tmp_path: Path) -> dict:
+    return _run_node(_DOM_STUB + _gate_slice() + script_tail, tmp_path)
 
 
-def test_painter_free_blocked_then_cleared_node():
+def test_painter_free_blocked_then_cleared_node(tmp_path):
     out = _paint(r"""
 state.user = { is_vip: false, is_admin: false };
 state.recapSourceDuration = 121;
@@ -276,7 +276,7 @@ const snap2 = {
     btn_flag: ELS["btn-start-recap"].getAttribute("data-ci-gate-disabled"),
 };
 console.log(JSON.stringify({ snap1, snap2 }));
-""")
+""", tmp_path)
     s1, s2 = out["snap1"], out["snap2"]
     assert s1["gate"] == "free-blocked"
     assert s1["s1_hidden"] is False and s1["s4_hidden"] is False
@@ -289,7 +289,7 @@ console.log(JSON.stringify({ snap1, snap2 }));
     assert s2["btn_disabled"] is False and s2["btn_flag"] is None
 
 
-def test_painter_vip_notice_only_and_admin_exempt_node():
+def test_painter_vip_notice_only_and_admin_exempt_node(tmp_path):
     out = _paint(r"""
 state.user = { is_vip: true, is_admin: false };
 state.recapSourceDuration = 601;
@@ -310,7 +310,7 @@ const adm = {
     btn_disabled: ELS["btn-start-recap"].disabled,
 };
 console.log(JSON.stringify({ vip, adm }));
-""")
+""", tmp_path)
     vip, adm = out["vip"], out["adm"]
     assert vip["gate"] == "vip-notice"
     assert vip["s1_hidden"] is False and "HINT_VIP" in vip["s1_text"]
@@ -319,7 +319,7 @@ console.log(JSON.stringify({ vip, adm }));
     assert adm["s1_hidden"] is True and adm["btn_disabled"] is False
 
 
-def test_painter_submit_rejection_persists_until_cleared_node():
+def test_painter_submit_rejection_persists_until_cleared_node(tmp_path):
     out = _paint(r"""
 state.user = { is_vip: false, is_admin: false };
 state.recapSourceDuration = 0;  // duration never learned (link source)
@@ -336,14 +336,14 @@ const cleared = {
     s4_hidden: ELS["recap-overlimit-notice-step4"].classList.contains("hidden"),
 };
 console.log(JSON.stringify({ shown, cleared }));
-""")
+""", tmp_path)
     assert out["shown"]["s4_hidden"] is False
     assert out["shown"]["s4_text"] == "SERVER OVER-LIMIT MESSAGE"
     assert out["shown"]["btn_disabled"] is False  # rejection note never blocks by itself
     assert out["cleared"]["s4_hidden"] is True
 
 
-def test_painter_never_undoes_another_owners_disable_node():
+def test_painter_never_undoes_another_owners_disable_node(tmp_path):
     out = _paint(r"""
 state.user = { is_vip: false, is_admin: false };
 ELS["btn-start-recap"].disabled = true;  // another owner (e.g. upload error)
@@ -354,7 +354,7 @@ state.recapSourceDuration = 60;
 updateRecapDurationGate();               // gate clears — must NOT re-enable
 console.log(JSON.stringify({ during,
     btn_disabled: ELS["btn-start-recap"].disabled }));
-""")
+""", tmp_path)
     assert out["during"]["flag"] is None
     assert out["btn_disabled"] is True
 

@@ -72,11 +72,11 @@ async def _make_user(db_session, telegram_id, **fields):
     return user
 
 
-def _run_node(script_body: str, tmp_name: str) -> dict:
+def _run_node(script_body: str, tmp_path: Path, tmp_name: str) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit" / tmp_name
+    tmp = tmp_path / tmp_name
     try:
         tmp.write_text(script_body, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -105,7 +105,7 @@ VOICE_DAILY = "ယနေ့ အခမဲ့ ကန့်သတ်ချက် �
 VOICE_CONCURRENT = "တစ်ပြိုင်တည်း လုပ်ဆောင်နေသော အလုပ်များနေပါသည်။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။"
 
 
-def _run_mapper_e2() -> dict:
+def _run_mapper_e2(tmp_path: Path) -> dict:
     start = APP_JS.index("function mapErrorToToast")
     end = APP_JS.index("function showStudioInputModal")
     mapper_src = APP_JS[start:end]
@@ -146,15 +146,15 @@ console.log(JSON.stringify(out));
         "var localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };\n"
         + I18N_JS + "\n" + mapper_src + "\n" + driver
     )
-    return _run_node(script, "_minifix_mapper_tmp.js")
+    return _run_node(script, tmp_path, "_minifix_mapper_tmp.js")
 
 
 def _assert_no_myanmar(text: str):
     assert not any(0x1000 <= ord(ch) <= 0x109F for ch in text), f"Unexpected Myanmar chars in: {text!r}"
 
 
-def test_e2_shortfall_message_survives_with_its_number():
-    out = _run_mapper_e2()
+def test_e2_shortfall_message_survives_with_its_number(tmp_path):
+    out = _run_mapper_e2(tmp_path)
     r_my = out["my"]
     # The Myanmar shortfall copy passes through VERBATIM — the
     # exact part count the user must top up is preserved.
@@ -176,8 +176,8 @@ def test_e2_shortfall_message_survives_with_its_number():
     assert r_en["shortfall_wrong_flow"] == r_en["voice_failed_generic"]
 
 
-def test_e2_precharge_voice_rejections_make_no_refund_claim():
-    out = _run_mapper_e2()
+def test_e2_precharge_voice_rejections_make_no_refund_claim(tmp_path):
+    out = _run_mapper_e2(tmp_path)
     r_my = out["my"]
     assert r_my["voice_insufficient"] == VOICE_INSUFFICIENT
     assert r_my["voice_daily"] == VOICE_DAILY
@@ -195,8 +195,8 @@ def test_e2_precharge_voice_rejections_make_no_refund_claim():
         assert r_en[key] != r_en["voice_failed_generic"]
 
 
-def test_e2_raw_strings_still_never_pass():
-    out = _run_mapper_e2()
+def test_e2_raw_strings_still_never_pass(tmp_path):
+    out = _run_mapper_e2(tmp_path)
     for lang in ("my", "en"):
         r = out[lang]
         for name, val in r.items():
@@ -259,7 +259,7 @@ def _auth_slice() -> str:
     return APP_JS[start:end]
 
 
-def _run_auth_harness(driver: str) -> dict:
+def _run_auth_harness(driver: str, tmp_path: Path) -> dict:
     prelude = (
         "var window = {};\n"
         "var localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };\n"
@@ -269,10 +269,10 @@ def _run_auth_harness(driver: str) -> dict:
         "var state = { tg: null };\n"
     )
     script = prelude + I18N_JS + "\n" + _auth_slice() + "\n" + driver
-    return _run_node(script, "_minifix_auth_tmp.js")
+    return _run_node(script, tmp_path, "_minifix_auth_tmp.js")
 
 
-def test_e1_stale_initdata_401_shows_session_expired_not_modal():
+def test_e1_stale_initdata_401_shows_session_expired_not_modal(tmp_path):
     driver = r"""
 currentLang = "my";
 const stale = Math.floor(Date.now() / 1000) - 25 * 3600;
@@ -291,7 +291,7 @@ out.ret3 = isAuthFailure({ status: 401 });
 out.modalAfterFresh = openViaTelegramShown;
 console.log(JSON.stringify(out));
 """
-    out = _run_auth_harness(driver)
+    out = _run_auth_harness(driver, tmp_path)
     assert out["ret1"] is True
     assert out["toastsAfterFirst"] == 1
     assert out["firstToast"] == out["expected"]
@@ -304,7 +304,7 @@ console.log(JSON.stringify(out));
     assert out["modalAfterFresh"] is True
 
 
-def test_e1_fresh_401_keeps_modal_and_non401_untouched():
+def test_e1_fresh_401_keeps_modal_and_non401_untouched(tmp_path):
     driver = r"""
 currentLang = "en";
 state.tg = { initData: "", initDataUnsafe: { auth_date: Math.floor(Date.now() / 1000) } };
@@ -315,14 +315,14 @@ out.modalShown = openViaTelegramShown;
 out.toastCount = toastCalls.length;
 console.log(JSON.stringify(out));
 """
-    out = _run_auth_harness(driver)
+    out = _run_auth_harness(driver, tmp_path)
     assert out["ret500"] is False
     assert out["ret401"] is True
     assert out["modalShown"] is True
     assert out["toastCount"] == 0
 
 
-def test_e1_auth_date_parsed_from_raw_initdata_and_missing_is_not_expired():
+def test_e1_auth_date_parsed_from_raw_initdata_and_missing_is_not_expired(tmp_path):
     driver = r"""
 currentLang = "my";
 const stale = Math.floor(Date.now() / 1000) - 30 * 3600;
@@ -338,7 +338,7 @@ state.tg = { initData: "query_id=AAE&hash=abc", initDataUnsafe: {} };
 out.expiredMissing = initDataExpired();
 console.log(JSON.stringify(out));
 """
-    out = _run_auth_harness(driver)
+    out = _run_auth_harness(driver, tmp_path)
     assert out["expiredFromRaw"] is True
     assert out["retStale"] is True
     assert out["toastCount"] == 1
@@ -364,7 +364,7 @@ def test_e1_session_expired_key_in_both_locales():
 
 # ── E8: SCRIPT_READY counts as active ─────────────────────────────────
 
-def test_e8_client_helper_counts_script_ready():
+def test_e8_client_helper_counts_script_ready(tmp_path):
     start = APP_JS.index("function recapJobIsActive()")
     end = APP_JS.index("async function handleStartRecap()")
     helper_src = APP_JS[start:end]
@@ -378,7 +378,7 @@ def test_e8_client_helper_counts_script_ready():
         + "out.polling = recapJobIsActive();\n"
         + "console.log(JSON.stringify(out));\n"
     )
-    out = _run_node(script, "_minifix_e8_tmp.js")
+    out = _run_node(script, tmp_path, "_minifix_e8_tmp.js")
     assert out == {"idle": False, "scriptReady": True, "polling": True}
 
 

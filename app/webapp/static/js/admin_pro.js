@@ -825,14 +825,19 @@ html[data-theme="dark"] .admp-bar-bg{background:rgba(255,255,255,0.12)}
                 box.innerHTML = `<p class="text-muted text-xs">${esc(L("ကိုက်ညီသော အသုံးပြုသူ မတွေ့ပါ", "No matching users"))}</p>`;
                 return;
             }
-            box.innerHTML = users.map(u => `<div class="admp-card-item admp-between" style="cursor:pointer" onclick="openAdminUserDetail(${Number(u.id)})">
+            box.innerHTML = users.map(u => {
+                const pendBadge = Number(u.daily_free_pending_seconds || 0) > 0
+                    ? ` <span class="mini-tag text-muted">${esc(L("မပေးရသေး", "Not granted yet"))}</span>`
+                    : "";
+                return `<div class="admp-card-item admp-between" style="cursor:pointer" onclick="openAdminUserDetail(${Number(u.id)})">
                 <div>
                     <strong class="text-xs">${esc(u.first_name || ("User " + u.id))}</strong>
                     <span class="text-xs text-muted">${u.username ? ` @${esc(u.username)}` : ""} · ${esc(u.id)}</span>
-                    <div class="text-xs text-muted">🎙️ ${Number(u.balance_minutes || 0).toFixed(1)}m · 🎬 ${Number(u.recap_credits || 0).toFixed(1)}c</div>
+                    <div class="text-xs text-muted">🎙️ ${Number(u.balance_minutes || 0).toFixed(1)}m${pendBadge} · 🎬 ${Number(u.recap_credits || 0).toFixed(1)}c</div>
                 </div>
                 <span class="admp-badge ${u.account_category === "PURCHASED" ? "admp-badge-ok" : ""}">${esc(u.account_category || "FREE")}</span>
-            </div>`).join("");
+            </div>`;
+            }).join("");
         } catch (e) {}
     }
 

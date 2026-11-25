@@ -61,11 +61,11 @@ API_PY = (ROOT / "app/webapp/api.py").read_text(encoding="utf-8")
 PIPELINE_PY = (ROOT / "app/services/recap_engine/recap_pipeline.py").read_text(encoding="utf-8")
 
 
-def _run_node(script_body: str, tmp_name: str) -> dict:
+def _run_node(script_body: str, tmp_path: Path, tmp_name: str) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit" / tmp_name
+    tmp = tmp_path / tmp_name
     try:
         tmp.write_text(script_body, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -83,7 +83,7 @@ def _mapper_slice() -> str:
 
 # ── F-A: blockedLinkInfo covers the yt-dlp refusal families ─────────
 
-def _run_blocked_cases() -> dict:
+def _run_blocked_cases(tmp_path: Path) -> dict:
     driver = r"""
 const cases = {
   round3_ip_blocked: "ERROR: [TikTok] 7391505677920816389: Your IP address is blocked from accessing this post",
@@ -111,11 +111,11 @@ console.log(JSON.stringify(out));
         "var localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };\n"
         + I18N_JS + "\n" + _mapper_slice() + "\n" + driver
     )
-    return _run_node(script, "_round4_blocked_tmp.js")
+    return _run_node(script, tmp_path, "_round4_blocked_tmp.js")
 
 
-def test_fa_round3_real_error_is_blocked_and_names_tiktok():
-    out = _run_blocked_cases()
+def test_fa_round3_real_error_is_blocked_and_names_tiktok(tmp_path):
+    out = _run_blocked_cases(tmp_path)
     for lang in ("my", "en"):
         info = out[lang]["round3_ip_blocked_info"]
         assert info == {"blocked": True, "source": "TikTok"}
@@ -124,8 +124,8 @@ def test_fa_round3_real_error_is_blocked_and_names_tiktok():
         assert toast != out[lang]["generic_recap"]
 
 
-def test_fa_refusal_families_all_blocked():
-    out = _run_blocked_cases()
+def test_fa_refusal_families_all_blocked(tmp_path):
+    out = _run_blocked_cases(tmp_path)
     for name in ("login_required", "age_gate", "region", "private_vid", "removed"):
         for lang in ("my", "en"):
             assert out[lang][name + "_info"]["blocked"] is True, (name, lang)

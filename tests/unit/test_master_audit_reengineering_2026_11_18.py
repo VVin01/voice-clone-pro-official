@@ -116,7 +116,7 @@ def test_subtitle_method2_ass_effects_and_3line_plate(tmp_path):
     assert "\\kf" in ass_kara.read_text(encoding="utf-8")
 
 
-def test_subtitle_method3_karaoke_spans_and_renderer():
+def test_subtitle_method3_karaoke_spans_and_renderer(tmp_path):
     from PIL import features as pil_features
 
     spans = recap_core._karaoke_cue_spans(["မင်္ဂလာပါ", "ခင်ဗျာ"], 1.0, 3.0)
@@ -127,13 +127,15 @@ def test_subtitle_method3_karaoke_spans_and_renderer():
 
     font_path = recap_core.subtitle_font_file("padauk")
     if pil_features.check("raqm"):
-        renderer = png_subs.PngSubtitleRenderer()
+        renderer = png_subs.PngSubtitleRenderer(tmp_path / "karaoke_png_cache")
         img_res = renderer.render_karaoke_lines(
             ["မင်္ဂလာပါ ခင်ဗျာ"],
             spans[0][0],
             36,
             font_path,
-            recap_core.resolve_subtitle_visuals({"sub_style": "yellow"}),
+            recap_core.build_subtitle_visuals(
+                recap_core.SUBTITLE_STYLE_PRESETS["yellow"], None, 1920, 36
+            ),
         )
         assert img_res is not None and img_res[1] > 0 and img_res[2] > 0
 

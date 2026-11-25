@@ -328,7 +328,7 @@ def test_r1_reenable_sites_are_guarded():
     assert APP_JS.count("btnStartRecap && !recapJobIsActive()") == 2
 
 
-def test_r1_active_helper_reflects_poll_timer():
+def test_r1_active_helper_reflects_poll_timer(tmp_path):
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
@@ -343,7 +343,7 @@ def test_r1_active_helper_reflects_poll_timer():
         + "out.active = recapJobIsActive();\n"
         + "console.log(JSON.stringify(out));\n"
     )
-    tmp = ROOT / "tests/unit/_hunt2_harness_tmp.js"
+    tmp = tmp_path / "_hunt2_harness_tmp.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)

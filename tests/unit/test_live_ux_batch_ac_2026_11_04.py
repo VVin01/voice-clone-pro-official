@@ -475,7 +475,7 @@ def test_submit_guard_wiring_pins():
     assert 'studioSubmitFailure("recap")' in recap_submit
 
 
-def test_submit_guard_behaviour_node():
+def test_submit_guard_behaviour_node(tmp_path):
     start = APP_JS.index("function createSubmitGuard()")
     end = APP_JS.index("const voiceSubmitGuard")
     core = APP_JS[start:end]
@@ -495,7 +495,7 @@ def test_submit_guard_behaviour_node():
         + "const afterFailure = guardBegin(g, 'fp-B');\n"
         + "console.log(JSON.stringify({ first, doubleTap, unchanged, rearmed, afterChange, afterFailure }));\n"
     )
-    out = _run_node(script)
+    out = _run_node(script, tmp_path)
     assert out["first"] == "ok"
     assert out["doubleTap"] == "in-flight"
     assert out["unchanged"] == "unchanged"
@@ -533,11 +533,11 @@ def test_cache_bump_r62():
 
 # ── LiveJobs manager: node behaviour harness ──────────────────────────
 
-def _run_node(script: str) -> dict:
+def _run_node(script: str, tmp_path: Path) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit/_ac_harness_tmp.js"
+    tmp = tmp_path / "_ac_harness_tmp.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -553,7 +553,7 @@ def _livejobs_slice() -> str:
     return APP_JS[start:end]
 
 
-def test_livejobs_merge_monotonic_and_terminal_sticky_node():
+def test_livejobs_merge_monotonic_and_terminal_sticky_node(tmp_path):
     script = (
         "const window = {};\nconst document = { hidden:false, addEventListener(){} };\n"
         "function getAuthHeaders(){return {};}\n"
@@ -566,7 +566,7 @@ def test_livejobs_merge_monotonic_and_terminal_sticky_node():
         + "const d = liveJobsMergeJob(c, {id:'1', status:'RUNNING', progress_percent:20, stage_index:1, stage_total:4});\n"
         + "console.log(JSON.stringify({b_pct:b.progress_percent, b_stage:b.stage_index, c_status:c.status, d_status:d.status, d_pct:d.progress_percent, term:liveJobsIsTerminal('SUCCESS'), act:liveJobsIsActive('SCRIPT_READY')}));\n"
     )
-    out = _run_node(script)
+    out = _run_node(script, tmp_path)
     # The reconnect reset (40%/step2 -> 15%/step1) never renders.
     assert out["b_pct"] == 40 and out["b_stage"] == 2
     assert out["c_status"] == "SUCCESS"
@@ -575,7 +575,7 @@ def test_livejobs_merge_monotonic_and_terminal_sticky_node():
     assert out["term"] is True and out["act"] is True
 
 
-def test_livejobs_manager_hidden_pause_catchup_terminal_once_node():
+def test_livejobs_manager_hidden_pause_catchup_terminal_once_node(tmp_path):
     script = (
         "let fetchCalls = 0;\n"
         "let snapshot = [{id:'j1', kind:'voice', status:'RUNNING', progress_percent:50, stage_index:0, stage_total:1}];\n"
@@ -605,7 +605,7 @@ def test_livejobs_manager_hidden_pause_catchup_terminal_once_node():
         + "  console.log(JSON.stringify({ afterStart, pausedTimer, noFetchWhileHidden, catchUpFetched, terminalOnce, status: LiveJobs.jobs.get('j1').status }));\n"
         + "})().catch(e => { console.error(e); process.exit(1); });\n"
     )
-    out = _run_node(script)
+    out = _run_node(script, tmp_path)
     assert out["afterStart"] >= 1
     assert out["pausedTimer"] is True
     assert out["noFetchWhileHidden"] is True
@@ -615,7 +615,7 @@ def test_livejobs_manager_hidden_pause_catchup_terminal_once_node():
     assert out["status"] == "SUCCESS"
 
 
-def test_back_to_studio_restores_workspace_node():
+def test_back_to_studio_restores_workspace_node(tmp_path):
     start = APP_JS.index("state.voiceDetailOpen = false;")
     end = APP_JS.index("function showLiveSubmitLimit")
     section = APP_JS[start:end]
@@ -630,7 +630,7 @@ def test_back_to_studio_restores_workspace_node():
         + "\nwindow.backToStudio('recap'); window.backToStudio('voice');\n"
         + "console.log(JSON.stringify({ recapRatio: state.recapRatio, recapFontSize: state.recapFontSize, selectedPersona: state.selectedPersona, recapBoxHidden: els['recap-progress-box'].classList.contains('hidden'), voiceBoxHidden: els['voice-progress-box'].classList.contains('hidden'), recapDetailOpen: state.recapDetailOpen }));\n"
     )
-    out = _run_node(script)
+    out = _run_node(script, tmp_path)
     # (c) Returning from the detail view restores the workspace exactly:
     # every control value is untouched, only the detail box closes.
     assert out["recapRatio"] == "16:9"

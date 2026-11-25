@@ -144,7 +144,7 @@ class Settings(BaseSettings):
     data_root: Path = ROOT / "data"
 
     # User Account Policies
-    free_daily_allowance_seconds: int = Field(default=180, alias="FREE_DAILY_ALLOWANCE_SECONDS")  # 3 minutes/UTC day, non-accumulating
+    free_daily_allowance_seconds: int = Field(default=180, alias="FREE_DAILY_ALLOWANCE_SECONDS")  # 3 minutes/Asia/Yangon day, non-accumulating
     free_monthly_allowance_seconds: int = Field(default=180, alias="FREE_MONTHLY_ALLOWANCE_SECONDS")  # Retired (no longer grants)
     welcome_bonus_seconds: int = Field(default=0, alias="WELCOME_BONUS_SECONDS")  # Retired in V2 (default 0)
     character_limit_free: int = Field(default=3000, alias="CHARACTER_LIMIT_FREE")  # Free tier: 3000 chars/generation

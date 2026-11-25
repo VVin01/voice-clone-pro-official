@@ -183,6 +183,7 @@ async def test_cd_detail_payload_completed(db_session):
     bb = detail["balance_breakdown"]
     assert bb == {
         "daily_free_seconds": 0,
+        "daily_free_pending_seconds": 180,
         "monthly_free_seconds": 600, "welcome_seconds": 60,
         "referral_seconds": 120, "referral_voice_seconds": 0,
         "purchased_seconds": 3600,

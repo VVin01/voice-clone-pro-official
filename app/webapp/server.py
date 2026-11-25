@@ -103,6 +103,11 @@ async def reset_stale_running_recap_jobs(
     )
 
     async def _sweep(sess: AsyncSession) -> int:
+        probe_id = (
+            await sess.execute(select(Job.id).where(*stranded_predicate).limit(1))
+        ).scalar_one_or_none()
+        if probe_id is None:
+            return 0
         handled = 0
         rows = (
             await sess.execute(select(Job).where(*stranded_predicate))
@@ -276,13 +281,22 @@ async def _dispatch_oldest_queued_recap() -> bool:
     )
 
     _log = logging.getLogger("RecapWorker")
+    _recap_queued_preds = (
+        Job.status == JobStatus.QUEUED.value,
+        (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap"),
+    )
     async with AsyncSessionLocal() as session:
+        probe = (
+            await session.execute(
+                select(1).select_from(Job).where(*_recap_queued_preds).limit(1)
+            )
+        ).scalar_one_or_none()
+        if probe is None:
+            return False
+
         stmt = (
             select(Job)
-            .where(
-                Job.status == JobStatus.QUEUED.value,
-                (Job.job_type == JobType.RECAP.value) | (Job.id.startswith("rc_")) | (Job.engine == "recap"),
-            )
+            .where(*_recap_queued_preds)
             .order_by(Job.created_at)
             .limit(15)
         )
@@ -603,42 +617,50 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
 
-    # Background Movie Recap queue processor loop
+    # Background Movie Recap queue processor loop (Design 2 A3: stepped 3 -> 10 s idle backoff, 300 s orphan sweep)
     async def _recap_queue_worker():
         """Continuously check for any QUEUED Movie Recap jobs in DB and auto-process them."""
         import logging
         import time as _time
+        from app.worker import WorkerPollBackoff
 
         _log = logging.getLogger("RecapWorker")
         _worker_started = _time.monotonic()
         _last_orphan_check = 0.0
+        _recap_backoff = WorkerPollBackoff(idle_steps=(3.0, 10.0), warm_window_s=20.0)
         while True:
+            _sleep_s = 3.0
             try:
-                await _dispatch_oldest_queued_recap()
+                dispatched = await _dispatch_oldest_queued_recap()
+                _now_m = _time.monotonic()
                 # Orphan sweep (hunt #7): once this process has been up
                 # 10 minutes — past any deploy overlap, so the old
                 # instance is certainly gone — a RUNNING row started
                 # BEFORE this process booted cannot be rendering
                 # anywhere; reset it to QUEUED so the dispatcher above
                 # re-runs it with its persisted config/credit state.
-                # Rows this process claimed have a post-boot
-                # started_at and are never touched. Checked once a
-                # minute; the UPDATE matches nothing in steady state.
-                _now_m = _time.monotonic()
+                # Checked every 300 s and gated by a SELECT Job.id LIMIT 1 pre-probe.
                 if (
                     _SERVER_BOOT_AT is not None
                     and _now_m - _worker_started >= 600
-                    and _now_m - _last_orphan_check >= 60
+                    and _now_m - _last_orphan_check >= 300
                 ):
                     _last_orphan_check = _now_m
                     orphans = await reset_stale_running_recap_jobs(absolute_cutoff=_SERVER_BOOT_AT)
                     if orphans:
                         _log.info("Periodic orphan sweep reset %d stranded RUNNING recap jobs", orphans)
+                if dispatched:
+                    _recap_backoff.on_job_claimed()
+                    _recap_backoff.on_job_completed(_now_m)
+                    _sleep_s = 3.0
+                else:
+                    _sleep_s = _recap_backoff.on_empty_tick(_now_m)
             except Exception:
                 # Keep the loop alive, but never silently (hunt #5):
                 # a swallowed cycle error here used to be invisible.
-                _log.warning("Recap queue worker cycle failed", exc_info=True)
-            await asyncio.sleep(3)
+                _sleep_s = _recap_backoff.on_db_error()
+                _log.warning("Recap queue worker cycle failed (backing off %.0fs)", _sleep_s, exc_info=True)
+            await asyncio.sleep(_sleep_s)
 
     # Batch DP: park-and-ask resumer loop — resumes WAITING_CHOICE
     # jobs (edge-choice backstop + capacity-driven wait resumes) and

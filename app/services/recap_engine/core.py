@@ -4545,15 +4545,58 @@ def grapheme_count(text: str) -> int:
     return len(myanmar_grapheme_clusters(flat))
 
 
+_SEG_WIDTH_FONT_LOCK = threading.Lock()
+_SEG_WIDTH_FONTS: dict[tuple[str, int], Any] = {}
+_SEG_WIDTH_FONTS_CAP = 64
+
+
+def _cached_segmentation_font(font_path: Path, font_px: int):
+    """Load bundled static font with unshaped FreeType metrics (``Layout.BASIC``)
+    so cue-segmentation width budgets make pixel-identical split decisions on
+    Linux (where libraqm is installed for PNG rendering) and Windows."""
+    from PIL import ImageFont
+
+    key = (str(font_path), int(font_px))
+    with _SEG_WIDTH_FONT_LOCK:
+        font = _SEG_WIDTH_FONTS.get(key)
+        if font is None:
+            if len(_SEG_WIDTH_FONTS) >= _SEG_WIDTH_FONTS_CAP:
+                oldest = next(iter(_SEG_WIDTH_FONTS), None)
+                if oldest is not None:
+                    _SEG_WIDTH_FONTS.pop(oldest, None)
+            font = ImageFont.truetype(
+                str(font_path),
+                int(font_px),
+                layout_engine=ImageFont.Layout.BASIC,
+            )
+            _SEG_WIDTH_FONTS[key] = font
+        return font
+
+
 def _measure_text_width_px(
     line: str,
     font_px: int = 54,
     font_path: Path | None = None,
     stroke_px: int = 2,
 ) -> int:
-    """Measure rendered ink width (px) of a single line using actual font metrics."""
+    """Measure rendered ink width (px) of a single line using deterministic font metrics."""
+    from PIL import Image, ImageDraw
+
+    text = unicodedata.normalize("NFC", str(line or ""))
+    if not text:
+        return 0
     fp = Path(font_path) if font_path is not None else subtitle_font_file(DEFAULT_SUBTITLE_FONT, bold=True)
-    return _png_subs.measure_line_width_px(str(line or ""), max(8, int(font_px)), fp, max(0, int(stroke_px)))
+    dummy = Image.new("RGBA", (1, 1))
+    d = ImageDraw.Draw(dummy)
+    _, bbox, _ = _png_subs._measure_runs_with_loader(
+        _cached_segmentation_font,
+        d,
+        text,
+        max(8, int(font_px)),
+        fp,
+        max(0, int(stroke_px)),
+    )
+    return max(0, int(bbox[2] - bbox[0]))
 
 
 def canonicalize_burmese_text(text: str) -> str:

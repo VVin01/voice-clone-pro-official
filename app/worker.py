@@ -2021,12 +2021,12 @@ async def claim_and_process_next_job(
     A caller that passes a session (direct callers, tests) keeps the
     old single-session behaviour exactly.
     """
-    from app.services.queue import claim_next_queued_job
-
-    if allow_recap is None:
-        allow_recap = getattr(settings, "recap_on_queue", False)
+    from app.services.dynamic_settings import refresh_dynamic_settings_if_changed
+    from app.services.queue import claim_next_queued_job, has_queued_job_probe
 
     if session is not None:
+        if allow_recap is None:
+            allow_recap = getattr(settings, "recap_on_queue", False)
         job = await claim_next_queued_job(
             session,
             engine_filter=engine_filter,
@@ -2060,14 +2060,35 @@ async def claim_and_process_next_job(
             return False
 
     async with AsyncSessionLocal() as claim_session:
+        await refresh_dynamic_settings_if_changed(claim_session)
+        eff_allow_recap = (
+            allow_recap
+            if allow_recap is not None
+            else (
+                bool(getattr(settings, "recap_on_queue", False))
+                and (
+                    active_recap_tasks is None
+                    or len(active_recap_tasks) < getattr(settings, "recap_worker_concurrency", 1)
+                )
+            )
+        )
+        if not await has_queued_job_probe(
+            claim_session,
+            engine_filter=engine_filter,
+            skip_local_source=skip_local_source,
+            allow_recap=eff_allow_recap,
+        ):
+            return False
         job = await claim_next_queued_job(
             claim_session,
             engine_filter=engine_filter,
             skip_local_source=skip_local_source,
-            allow_recap=allow_recap,
+            allow_recap=eff_allow_recap,
         )
         if not job:
             return False
+        await refresh_dynamic_settings_if_changed(claim_session, min_interval_s=0.0)
+        _note_worker_job_claimed()
         job_id = str(job.id)
         is_recap = (
             job.job_type == JobType.RECAP.value
@@ -2103,6 +2124,155 @@ async def claim_and_process_next_job(
                 logger.error("Voice job %s exceeded the %ss worker deadline; failing it.", job_id, timeout_seconds)
                 await _fail_timed_out_job(job_id)
             return False
+
+
+WORKER_IDLE_BACKOFF_STEPS: tuple[float, ...] = (2.0, 5.0, 10.0)
+WORKER_WARM_WINDOW_SECONDS: float = 20.0
+WORKER_DB_ERROR_BACKOFF_STEPS: tuple[float, ...] = (5.0, 15.0, 30.0)
+WORKER_HEARTBEAT_INTERVAL_SECONDS: float = 60.0
+
+_LAST_JOB_CLAIMED_FLAG: bool = False
+_LAST_WRITTEN_HEARTBEAT_META: dict[str, str] = {}
+
+
+def _note_worker_job_claimed() -> None:
+    global _LAST_JOB_CLAIMED_FLAG
+    _LAST_JOB_CLAIMED_FLAG = True
+
+
+def _consume_worker_job_claimed() -> bool:
+    global _LAST_JOB_CLAIMED_FLAG
+    claimed = _LAST_JOB_CLAIMED_FLAG
+    _LAST_JOB_CLAIMED_FLAG = False
+    return claimed
+
+
+def reset_worker_heartbeat_cache() -> None:
+    """Clear cached secondary-worker engine/host values (used by unit tests)."""
+    _LAST_WRITTEN_HEARTBEAT_META.clear()
+
+
+async def _upsert_bot_setting_single_roundtrip(
+    session: AsyncSession,
+    key: str,
+    value: str,
+    *,
+    now_dt=None,
+) -> None:
+    """Upsert one ``bot_settings`` row in a single ``INSERT ... ON CONFLICT DO UPDATE``."""
+    from app.models.schema import BotSetting
+    from app.services.dynamic_settings import invalidate_dynamic_settings_cache
+
+    ts = now_dt if now_dt is not None else utc_now()
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "") if bind is not None else ""
+    if dialect_name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as _dialect_insert
+    else:
+        from sqlalchemy.dialects.postgresql import insert as _dialect_insert
+
+    stmt = (
+        _dialect_insert(BotSetting)
+        .values(key=key, value=value, updated_at=ts)
+        .on_conflict_do_update(
+            index_elements=[BotSetting.key],
+            set_={"value": value, "updated_at": ts},
+        )
+    )
+    await session.execute(stmt)
+    invalidate_dynamic_settings_cache(key)
+    if hasattr(settings, key):
+        setattr(settings, key, value)
+
+
+async def record_secondary_worker_heartbeat(
+    session: AsyncSession,
+    *,
+    engine_filter: str | None = "voxcpm",
+    host_override: str | None = None,
+    now_dt=None,
+) -> list[str]:
+    """Write secondary-worker heartbeat (single upsert) + engine/host only on change."""
+    import socket
+
+    ts = now_dt if now_dt is not None else utc_now()
+    hb_iso = ts.isoformat()
+    engine_val = str(engine_filter or "all")
+    host_val = (
+        (host_override or "").strip()
+        or os.getenv("VPS_PUBLIC_HOST", "").strip()
+        or socket.gethostname()
+        or "vps-worker"
+    )
+
+    written_keys: list[str] = ["worker_laptop_heartbeat"]
+    await _upsert_bot_setting_single_roundtrip(
+        session, "worker_laptop_heartbeat", hb_iso, now_dt=ts
+    )
+    pending_meta: dict[str, str] = {}
+    if _LAST_WRITTEN_HEARTBEAT_META.get("worker_laptop_engine") != engine_val:
+        await _upsert_bot_setting_single_roundtrip(
+            session, "worker_laptop_engine", engine_val, now_dt=ts
+        )
+        written_keys.append("worker_laptop_engine")
+        pending_meta["worker_laptop_engine"] = engine_val
+    if host_val and _LAST_WRITTEN_HEARTBEAT_META.get("worker_laptop_host") != host_val:
+        await _upsert_bot_setting_single_roundtrip(
+            session, "worker_laptop_host", host_val, now_dt=ts
+        )
+        written_keys.append("worker_laptop_host")
+        pending_meta["worker_laptop_host"] = host_val
+
+    await session.commit()
+    _LAST_WRITTEN_HEARTBEAT_META.update(pending_meta)
+    return written_keys
+
+
+class WorkerPollBackoff:
+    """Pure stepped idle + warm-window + DB-error backoff state machine (Design 2 A2)."""
+
+    def __init__(
+        self,
+        *,
+        idle_steps: tuple[float, ...] = WORKER_IDLE_BACKOFF_STEPS,
+        warm_window_s: float = WORKER_WARM_WINDOW_SECONDS,
+        error_steps: tuple[float, ...] = WORKER_DB_ERROR_BACKOFF_STEPS,
+    ) -> None:
+        self.idle_steps = tuple(float(x) for x in idle_steps) or (2.0,)
+        self.warm_window_s = float(warm_window_s)
+        self.error_steps = tuple(float(x) for x in error_steps) or (5.0,)
+        self.empty_streak: int = 0
+        self.error_streak: int = 0
+        self.last_job_completed_at: float | None = None
+
+    def on_job_claimed(self) -> None:
+        self.empty_streak = 0
+        self.error_streak = 0
+
+    def on_job_completed(self, now_monotonic: float) -> None:
+        self.empty_streak = 0
+        self.error_streak = 0
+        self.last_job_completed_at = float(now_monotonic)
+
+    def on_empty_tick(self, now_monotonic: float, *, active: bool = False) -> float:
+        self.error_streak = 0
+        in_warm = (
+            self.last_job_completed_at is not None
+            and (float(now_monotonic) - self.last_job_completed_at) < self.warm_window_s
+        )
+        if active or in_warm:
+            self.empty_streak = 0
+            return self.idle_steps[0]
+        idx = min(self.empty_streak, len(self.idle_steps) - 1)
+        delay = self.idle_steps[idx]
+        self.empty_streak += 1
+        return delay
+
+    def on_db_error(self) -> float:
+        idx = min(self.error_streak, len(self.error_steps) - 1)
+        delay = self.error_steps[idx]
+        self.error_streak += 1
+        return delay
 
 
 def _boot_cutoff_sweep_due(
@@ -2165,9 +2335,14 @@ async def run_worker_loop(
     _loop_started = _time.monotonic()
     _last_stale_sweep = 0.0
     _last_heartbeat = 0.0
-    _last_settings_refresh = 0.0
     _last_hf_reconcile = 0.0
     _active_recap_tasks: set[asyncio.Task] = set()
+    _idle_steps = (
+        WORKER_IDLE_BACKOFF_STEPS
+        if poll_interval == 2.0
+        else (float(poll_interval),)
+    )
+    _backoff = WorkerPollBackoff(idle_steps=_idle_steps)
 
     while True:
         try:
@@ -2182,46 +2357,62 @@ async def run_worker_loop(
                         await asyncio.to_thread(_hf_ledger.reconcile_if_env_changed, _hf_toks)
                 except Exception as hf_exc:
                     logger.debug("HF pool ledger env-change check skipped in worker: %s", hf_exc)
-            if _now_m - _last_settings_refresh >= 5.0:
-                _last_settings_refresh = _now_m
-                try:
-                    from app.services.dynamic_settings import load_dynamic_settings
-                    async with AsyncSessionLocal() as ds_session:
-                        await load_dynamic_settings(ds_session, quiet=True)
-                except Exception as ds_exc:
-                    logger.debug("Failed to refresh dynamic settings in worker: %s", ds_exc)
 
             is_vps_worker = not bool(getattr(settings, "instance_primary", True))
-            if is_vps_worker and _now_m - _last_heartbeat >= 15.0:
-                _last_heartbeat = _now_m
+            if is_vps_worker and str(getattr(settings, "worker_laptop_status", "ONLINE")).upper() == "PAUSED":
+                from app.services.dynamic_settings import refresh_dynamic_settings_if_changed
+
+                async with AsyncSessionLocal() as paused_session:
+                    await refresh_dynamic_settings_if_changed(paused_session)
+                if str(getattr(settings, "worker_laptop_status", "ONLINE")).upper() == "PAUSED":
+                    if _last_heartbeat == 0.0 or (_now_m - _last_heartbeat >= WORKER_HEARTBEAT_INTERVAL_SECONDS):
+                        _last_heartbeat = _now_m
+                        try:
+                            async with AsyncSessionLocal() as hb_session:
+                                await record_secondary_worker_heartbeat(
+                                    hb_session, engine_filter=engine_filter
+                                )
+                        except Exception as hb_exc:
+                            logger.debug("Failed to record worker heartbeat while paused: %s", hb_exc)
+                    await asyncio.sleep(_backoff.on_empty_tick(_now_m))
+                    continue
+
+            # Concurrency: maintain active recap task set (per-instance limit = RECAP_WORKER_CONCURRENCY)
+            _active_recap_tasks = {t for t in _active_recap_tasks if not t.done()}
+            recap_concurrency = getattr(settings, "recap_worker_concurrency", 1)
+            can_claim_recap = (
+                (allow_recap and len(_active_recap_tasks) < recap_concurrency)
+                if allow_recap is not None
+                else None
+            )
+
+            # Shared idle-tick session inside claim_and_process_next_job:
+            # runs watermark settings refresh (15 s gated) -> SELECT 1 pre-probe -> claim.
+            # Any DB exception here short-circuits the tick into 5 -> 15 -> 30 s backoff.
+            _consume_worker_job_claimed()
+            processed = await claim_and_process_next_job(
+                bot=bot,
+                engine_filter=engine_filter,
+                skip_local_source=skip_local_source,
+                allow_recap=can_claim_recap,
+                background_recap=True,
+                active_recap_tasks=_active_recap_tasks,
+            )
+            claimed_in_tick = _consume_worker_job_claimed()
+
+            _now_after = _time.monotonic()
+            if is_vps_worker and (_last_heartbeat == 0.0 or (_now_after - _last_heartbeat >= WORKER_HEARTBEAT_INTERVAL_SECONDS)):
+                _last_heartbeat = _now_after
                 try:
-                    from app.services.dynamic_settings import set_dynamic_setting
                     async with AsyncSessionLocal() as hb_session:
-                        await set_dynamic_setting(
-                            hb_session, "worker_laptop_heartbeat", utc_now().isoformat()
+                        await record_secondary_worker_heartbeat(
+                            hb_session, engine_filter=engine_filter
                         )
-                        await set_dynamic_setting(
-                            hb_session, "worker_laptop_engine", str(engine_filter or "all")
-                        )
-                        import os as _os
-                        import socket
-                        host_str = (
-                            _os.getenv("VPS_PUBLIC_HOST", "").strip()
-                            or socket.gethostname()
-                            or "vps-worker"
-                        )
-                        if host_str and host_str != getattr(settings, "worker_laptop_host", ""):
-                            await set_dynamic_setting(hb_session, "worker_laptop_host", host_str)
-                        await hb_session.commit()
                 except Exception as hb_exc:
                     logger.debug("Failed to record worker heartbeat: %s", hb_exc)
 
-            if is_vps_worker and str(getattr(settings, "worker_laptop_status", "ONLINE")).upper() == "PAUSED":
-                await asyncio.sleep(poll_interval)
-                continue
-
-            if settings.instance_primary and _boot_cutoff_sweep_due(_loop_started, _last_stale_sweep, _now_m):
-                _last_stale_sweep = _now_m
+            if settings.instance_primary and _boot_cutoff_sweep_due(_loop_started, _last_stale_sweep, _now_after):
+                _last_stale_sweep = _now_after
                 try:
                     async with AsyncSessionLocal() as session:
                         recovered = await recover_stale_running_jobs(
@@ -2235,32 +2426,17 @@ async def run_worker_loop(
                 except Exception as e:
                     logger.warning("Error during periodic stale job recovery sweep: %s", e)
 
-            # Concurrency: maintain active recap task set (per-instance limit = RECAP_WORKER_CONCURRENCY)
             _active_recap_tasks = {t for t in _active_recap_tasks if not t.done()}
-            recap_concurrency = getattr(settings, "recap_worker_concurrency", 1)
-            base_recap_allowed = (
-                allow_recap
-                if allow_recap is not None
-                else getattr(settings, "recap_on_queue", False)
-            )
-            can_claim_recap = base_recap_allowed and len(_active_recap_tasks) < recap_concurrency
-
-            # No loop-owned session (audit fix 2026-11-03):
-            # claim_and_process_next_job scopes its own short-lived
-            # claim session and a fresh processing session.
-            processed = await claim_and_process_next_job(
-                bot=bot,
-                engine_filter=engine_filter,
-                skip_local_source=skip_local_source,
-                allow_recap=can_claim_recap,
-                background_recap=True,
-                active_recap_tasks=_active_recap_tasks,
-            )
-            if not processed:
-                await asyncio.sleep(poll_interval)
+            if processed or claimed_in_tick:
+                _backoff.on_job_claimed()
+                _backoff.on_job_completed(_now_after)
+            else:
+                sleep_s = _backoff.on_empty_tick(_now_after, active=bool(_active_recap_tasks))
+                await asyncio.sleep(sleep_s)
         except asyncio.CancelledError:
             logger.info("Worker loop cancelled, shutting down.")
             break
         except Exception as e:
-            logger.error("Error in worker loop: %s", e)
-            await asyncio.sleep(poll_interval)
+            err_sleep = _backoff.on_db_error()
+            logger.error("Error in worker loop (backing off %.0fs): %s", err_sleep, e)
+            await asyncio.sleep(err_sleep)

@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from typing import Iterable, Mapping
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -190,15 +190,84 @@ RETIRED_GEMINI_TTS_PREVIEW_MODELS: set[str] = {
 
 _LAST_LOGGED_SETTINGS: dict[str, object] = {}
 
+# Heartbeat rows are written every 60 s by secondary workers and read only by
+# _get_laptop_worker_status(); excluding them from both the config allowlist
+# and the watermark probe ensures periodic heartbeats never trigger full reloads.
+HEARTBEAT_SETTING_KEYS: frozenset[str] = frozenset(
+    {
+        "worker_laptop_heartbeat",
+        "worker_laptop_engine",
+        "worker_laptop_host",
+    }
+)
+
+# Keys writable through set_dynamic_setting (hunt C5): exactly the
+# registered dynamic settings — every one is a real Settings
+# attribute (verified), and secrets like bot_token / API keys are
+# NOT in SETTING_TYPES, so no admin surface (least of all the
+# callback-data-driven preset handler, whose key comes from the
+# callback string itself) can write or overwrite them here.
+DYNAMIC_SETTING_KEYS: frozenset[str] = frozenset(SETTING_TYPES)
+
+# Strict 78-key config allowlist for load_dynamic_settings() (Design 2 A1):
+# excludes state blobs (bn_key_health_v1, aj_hf:*, aj_kh:*, aj_gai:*,
+# user_history_cleared_at:*) and the 3 heartbeat keys by construction.
+CONFIG_SETTING_KEYS: frozenset[str] = DYNAMIC_SETTING_KEYS - HEARTBEAT_SETTING_KEYS
+
+DEFAULT_WATERMARK_MIN_INTERVAL_SECONDS = 15.0
+_WATERMARK_STATE: dict[tuple[int, str], tuple[float, tuple[str | None, int] | None]] = {}
+
+
+def _watermark_bind_key(session: AsyncSession) -> tuple[int, str]:
+    try:
+        bind = session.get_bind()
+    except Exception:
+        bind = None
+    if bind is None:
+        return (0, "unbound")
+    sync_engine = getattr(bind, "engine", bind)
+    url_str = str(getattr(sync_engine, "url", "") or "")
+    return (id(sync_engine), url_str)
+
+
+def reset_dynamic_settings_watermark() -> None:
+    """Clear per-process watermark check timestamps and tuples (used by tests)."""
+    _WATERMARK_STATE.clear()
+
+
+def _normalize_watermark_ts(val: object) -> str | None:
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
+async def _probe_settings_watermark(session: AsyncSession) -> tuple[str | None, int]:
+    stmt = (
+        select(func.max(BotSetting.updated_at), func.count())
+        .select_from(BotSetting)
+        .where(
+            ~BotSetting.key.like("aj_%"),
+            BotSetting.key != "bn_key_health_v1",
+            ~BotSetting.key.like("user_history_cleared_at:%"),
+            BotSetting.key.notin_(HEARTBEAT_SETTING_KEYS),
+        )
+    )
+    row = (await session.execute(stmt)).one()
+    return (_normalize_watermark_ts(row[0]), int(row[1] or 0))
+
 
 async def load_dynamic_settings(session: AsyncSession, *, quiet: bool = False) -> dict[str, str]:
-    """Load persistent settings from database into in-memory settings configuration."""
-    stmt = select(BotSetting)
+    """Load persistent config settings (allowlisted) from database into in-memory settings."""
+    stmt = select(BotSetting).where(BotSetting.key.in_(CONFIG_SETTING_KEYS))
     res = await session.execute(stmt)
     rows = res.scalars().all()
-    loaded = {}
+    loaded: dict[str, str] = {}
     for row in rows:
         key = row.key
+        if key not in CONFIG_SETTING_KEYS:
+            continue
         raw_val = row.value
         norm_val = str(raw_val or "").strip().lower()
         if key in DEPRECATED_GEMINI_SETTING_DEFAULTS and norm_val in DEPRECATED_OR_SLOW_GEMINI_MODELS:
@@ -229,13 +298,39 @@ async def load_dynamic_settings(session: AsyncSession, *, quiet: bool = False) -
     return loaded
 
 
-# Keys writable through set_dynamic_setting (hunt C5): exactly the
-# registered dynamic settings — every one is a real Settings
-# attribute (verified), and secrets like bot_token / API keys are
-# NOT in SETTING_TYPES, so no admin surface (least of all the
-# callback-data-driven preset handler, whose key comes from the
-# callback string itself) can write or overwrite them here.
-DYNAMIC_SETTING_KEYS = frozenset(SETTING_TYPES)
+async def refresh_dynamic_settings_if_changed(
+    session: AsyncSession,
+    min_interval_s: float = DEFAULT_WATERMARK_MIN_INTERVAL_SECONDS,
+    *,
+    quiet: bool = True,
+) -> bool:
+    """Reload allowlisted dynamic settings only when the DB watermark tuple changes.
+
+    - Per-process time gate: skips SQL if checked within ``min_interval_s`` seconds.
+    - First call on a process/bind always loads (watermark tuple starts empty).
+    - Subsequent calls run a 1-row ``(MAX(updated_at), COUNT(*))`` watermark probe
+      excluding non-config blobs and worker heartbeats, reloading and invalidating
+      ``_DYNAMIC_SETTINGS_CACHE`` only when the tuple changed.
+    Returns True if ``load_dynamic_settings()`` ran, False otherwise.
+    """
+    bind_key = _watermark_bind_key(session)
+    now = time.monotonic()
+    prior = _WATERMARK_STATE.get(bind_key)
+    if prior is not None:
+        last_checked_at, last_tuple = prior
+        if last_tuple is not None and min_interval_s > 0.0 and (now - last_checked_at) < min_interval_s:
+            return False
+    else:
+        last_tuple = None
+
+    probe_tuple = await _probe_settings_watermark(session)
+    if last_tuple is None or probe_tuple != last_tuple:
+        await load_dynamic_settings(session, quiet=quiet)
+        _WATERMARK_STATE[bind_key] = (now, probe_tuple)
+        return True
+
+    _WATERMARK_STATE[bind_key] = (now, last_tuple)
+    return False
 
 
 async def set_dynamic_setting(
@@ -295,22 +390,23 @@ async def set_dynamic_setting(
 
 
 async def get_dynamic_setting(session: AsyncSession, key: str, default: str | None = None) -> str | None:
-    """Retrieve setting value directly from database or fallback to in-memory setting."""
-    row = (await session.execute(select(BotSetting).where(BotSetting.key == key))).scalar_one_or_none()
-    if row is not None:
-        return row.value
-    return getattr(settings, key, default)
+    """Retrieve setting value via the short-TTL in-process cache or fallback to settings."""
+    batch = await get_dynamic_settings_batch(session, (key,), defaults={key: default})
+    return batch.get(key, default)
 
 
 async def get_dynamic_settings_batch(
     session: AsyncSession,
     keys: Iterable[str],
     defaults: Mapping[str, str | None] | None = None,
+    *,
+    use_settings_fallback: bool = True,
 ) -> dict[str, str | None]:
     """Fetch multiple BotSetting keys in ONE SQL query (with short-TTL in-process cache).
 
     Preserves exact ``get_dynamic_setting`` fallback semantics for every key:
-    DB ``BotSetting.value`` wins if a row exists, otherwise ``getattr(settings, key, default)``.
+    DB ``BotSetting.value`` wins if a row exists, otherwise ``getattr(settings, key, default)``
+    (or ``defaults[key]`` directly when ``use_settings_fallback=False``).
     """
     key_list = list(dict.fromkeys(str(k) for k in keys))
     if not key_list:
@@ -350,7 +446,9 @@ async def get_dynamic_settings_batch(
         raw = db_values.get(k, _CACHE_MISS_SENTINEL)
         if raw is not _CACHE_MISS_SENTINEL and raw is not None:
             result[k] = raw
-        else:
+        elif use_settings_fallback:
             result[k] = getattr(settings, k, fallback_map.get(k))
+        else:
+            result[k] = fallback_map.get(k)
     return result
 

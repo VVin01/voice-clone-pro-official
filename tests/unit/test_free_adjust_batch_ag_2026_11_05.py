@@ -573,11 +573,11 @@ def test_cache_version_r58():
 
 # ── 13. Client preview mirror: node behaviour ──────────────────────
 
-def _run_node(script: str) -> dict:
+def _run_node(script: str, tmp_path: Path) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
-    tmp = ROOT / "tests/unit/_ag_harness_tmp.js"
+    tmp = tmp_path / "_ag_harness_tmp.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -593,7 +593,7 @@ def _geom_slice() -> str:
     return APP_JS[start:end]
 
 
-def test_client_geometry_matches_engine_node():
+def test_client_geometry_matches_engine_node(tmp_path):
     script = (
         "const canvasVideo = null;\n"
         "let state = { recapRatio:'9:16', recapRatioFill:'blur', recapSourceWidth:1920, recapSourceHeight:1080,"
@@ -606,7 +606,7 @@ def test_client_geometry_matches_engine_node():
         + "const pb = { g: blurBoxCanvasGeom(85, 7, 20, 50), cx: subtitleCentreXCanvasFrac(30) };\n"
         + "console.log(JSON.stringify({ lb, pb }));\n"
     )
-    out = _run_node(script)
+    out = _run_node(script, tmp_path)
     # Letterbox (picture spans the full width): identity basis.
     assert out["lb"]["g"]["left"] == pytest.approx(0.20, abs=0.001)
     assert out["lb"]["g"]["width"] == pytest.approx(0.50, abs=0.001)

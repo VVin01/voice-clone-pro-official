@@ -218,6 +218,56 @@ def is_wav_edge_clipped(
         return False
 
 
+def _decode_wav_part_mono_i16(part_path: Path, target_rate: int):
+    """Decode one audio file to mono 16-bit PCM samples at ``target_rate``.
+
+    Fast-paths standard 16-bit PCM WAVs directly via ``wave`` + ``numpy`` (with
+    channel downmix and linear resampling when needed) and falls back to a
+    single-input ``ffmpeg -f s16le`` decode for non-standard WAV/audio formats.
+    """
+    import numpy as np
+
+    arr_i16 = None
+    try:
+        with wave.open(str(part_path), "rb") as wf:
+            ch = wf.getnchannels()
+            sw = wf.getsampwidth()
+            sr = wf.getframerate() or target_rate
+            raw = wf.readframes(wf.getnframes())
+        if sw == 2 and ch >= 1 and len(raw) >= 2 * ch:
+            s = np.frombuffer(raw, dtype="<i2").astype(np.float32)
+            if ch > 1:
+                s = s[: (s.size // ch) * ch].reshape(-1, ch).mean(axis=1)
+            if sr != target_rate and s.size > 1:
+                t_len = max(1, int(round(s.size * (float(target_rate) / float(sr)))))
+                s = np.interp(
+                    np.linspace(0.0, float(s.size - 1), num=t_len),
+                    np.arange(s.size, dtype=np.float64),
+                    s,
+                ).astype(np.float32)
+            arr_i16 = np.clip(s, -32768.0, 32767.0).astype("<i2").copy()
+    except Exception:
+        arr_i16 = None
+
+    if arr_i16 is None:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
+                "-hide_banner", "-loglevel", "error",
+                "-i", str(part_path.resolve()),
+                "-ar", str(target_rate), "-ac", "1", "-f", "s16le", "pipe:1",
+            ],
+            capture_output=True,
+            timeout=NORMALIZE_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            raise RuntimeError(f"WAV concat failed reading part {part_path}")
+        arr_i16 = np.frombuffer(proc.stdout, dtype="<i2").copy()
+
+    return arr_i16
+
+
 def concat_wav_files(
     parts: list[Path],
     output_wav: Path,
@@ -229,10 +279,13 @@ def concat_wav_files(
 
     When ``boundary_pauses_sec`` (per-seam pause durations in seconds) or
     ``boundary_pause_sec > 0`` is supplied, inserts clean digital silence between
-    parts with a 10 ms anti-click micro-fade. Otherwise joins with a short
-    crossfade (acrossfade) when multiple parts exist, falling back to the
-    concat-demuxer. Keeps MONO and the first part's sample rate.
+    parts with a 10 ms anti-click micro-fade. Otherwise joins with a deterministic
+    sample-accurate triangular crossfade (avoiding FFmpeg 7.1's multi-input
+    ``ffmpeg_sched`` + ``acrossfade`` premature-EOF truncation race on Linux).
+    Keeps MONO and the first part's sample rate.
     """
+    import numpy as np
+
     part_paths = [Path(p) for p in parts]
     if not part_paths:
         raise ValueError("concat_wav_files needs at least one part")
@@ -250,51 +303,12 @@ def concat_wav_files(
 
     has_per_seam_pauses = bool(boundary_pauses_sec) and any(float(x) > 0.0 for x in boundary_pauses_sec)
     if has_per_seam_pauses or (boundary_pause_sec and float(boundary_pause_sec) > 0.0):
-        import numpy as np
-
         default_pause_s = max(0.0, float(boundary_pause_sec or 0.0))
         fade_frames = max(1, int(round(rate * 0.010)))  # 10 ms anti-click fade
         rendered_chunks: list[np.ndarray] = []
 
         for idx, p in enumerate(part_paths):
-            arr_i16: np.ndarray | None = None
-            try:
-                with wave.open(str(p), "rb") as wf:
-                    ch = wf.getnchannels()
-                    sw = wf.getsampwidth()
-                    sr = wf.getframerate() or rate
-                    raw = wf.readframes(wf.getnframes())
-                if sw == 2 and ch >= 1 and len(raw) >= 2 * ch:
-                    s = np.frombuffer(raw, dtype="<i2").astype(np.float32)
-                    if ch > 1:
-                        s = s[: (s.size // ch) * ch].reshape(-1, ch).mean(axis=1)
-                    if sr != rate and s.size > 1:
-                        t_len = max(1, int(round(s.size * (float(rate) / float(sr)))))
-                        s = np.interp(
-                            np.linspace(0.0, float(s.size - 1), num=t_len),
-                            np.arange(s.size, dtype=np.float64),
-                            s,
-                        ).astype(np.float32)
-                    arr_i16 = np.clip(s, -32768.0, 32767.0).astype("<i2")
-            except Exception:
-                arr_i16 = None
-
-            if arr_i16 is None:
-                proc = subprocess.run(
-                    [
-                        "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST,
-                        "-hide_banner", "-loglevel", "error",
-                        "-i", str(p.resolve()), "-ar", str(rate), "-ac", "1", "-f", "s16le", "pipe:1",
-                    ],
-                    capture_output=True,
-                    timeout=NORMALIZE_TIMEOUT_SECONDS,
-                    check=False,
-                )
-                if proc.returncode != 0 or not proc.stdout:
-                    raise RuntimeError(f"WAV pause-concat failed reading part {p}")
-                arr_i16 = np.frombuffer(proc.stdout, dtype="<i2").copy()
-            else:
-                arr_i16 = arr_i16.copy()
+            arr_i16 = _decode_wav_part_mono_i16(p, rate)
 
             if arr_i16.size > 2 * fade_frames:
                 ramp = np.linspace(0.0, 1.0, fade_frames, dtype=np.float32)
@@ -321,81 +335,33 @@ def concat_wav_files(
             out_wf.writeframes(joined.tobytes())
         return output_wav
 
-    min_dur = 9999.0
-    for p in part_paths:
-        try:
-            with wave.open(str(p), "rb") as wf:
-                r = wf.getframerate() or 48000
-                dur = wf.getnframes() / float(r)
-                if dur < min_dur:
-                    min_dur = dur
-        except Exception:
-            pass
+    decoded_parts = [_decode_wav_part_mono_i16(p, rate) for p in part_paths]
+    min_dur = min((arr.size / float(rate) for arr in decoded_parts), default=0.0)
+    req_xfade = float(crossfade_sec or 0.0)
+    actual_xfade = min(req_xfade, min_dur / 2.0) if (req_xfade > 0.0 and min_dur > 0.02) else 0.0
+    xfade_frames = int(round(rate * actual_xfade)) if actual_xfade >= 0.005 else 0
 
-    # Try acrossfade join when crossfade_sec > 0
-    actual_xfade = min(crossfade_sec, min_dur / 2.0) if min_dur > 0.02 else 0.0
-    if actual_xfade >= 0.005:
-        filter_chains = []
-        prev_label = "[0:a]"
-        for idx in range(1, len(part_paths)):
-            next_label = f"[{idx}:a]"
-            out_label = "[out]" if idx == len(part_paths) - 1 else f"[a{idx}]"
-            filter_chains.append(
-                f"{prev_label}{next_label}acrossfade=d={actual_xfade:.3f}:c1=tri:c2=tri{out_label}"
-            )
-            prev_label = out_label
-        filter_complex = ";".join(filter_chains)
+    if xfade_frames >= 1:
+        acc = decoded_parts[0].astype(np.float32)
+        for nxt in decoded_parts[1:]:
+            nxt_f = nxt.astype(np.float32)
+            n_ov = min(xfade_frames, acc.size, nxt_f.size)
+            if n_ov >= 1:
+                fade_out = np.linspace(1.0, 0.0, n_ov, dtype=np.float32)
+                fade_in = np.linspace(0.0, 1.0, n_ov, dtype=np.float32)
+                blended = acc[-n_ov:] * fade_out + nxt_f[:n_ov] * fade_in
+                acc = np.concatenate([acc[:-n_ov], blended, nxt_f[n_ov:]])
+            else:
+                acc = np.concatenate([acc, nxt_f])
+        joined = np.clip(np.round(acc), -32768.0, 32767.0).astype("<i2")
+    else:
+        joined = np.concatenate(decoded_parts) if decoded_parts else np.zeros(0, dtype="<i2")
 
-        cmd = [
-            "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
-            "-hide_banner", "-loglevel", "error",
-        ]
-        for p in part_paths:
-            cmd.extend(["-i", str(p.resolve())])
-        cmd.extend([
-            "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-ar", str(rate), "-ac", "1", "-c:a", "pcm_s16le",
-            str(output_wav),
-        ])
-        try:
-            res = subprocess.run(
-                cmd, capture_output=True, text=True,
-                timeout=NORMALIZE_TIMEOUT_SECONDS,
-            )
-            if res.returncode == 0 and output_wav.is_file() and output_wav.stat().st_size > 0:
-                return output_wav
-        except Exception:
-            pass
-
-    # Fallback to concat demuxer
-    list_file = output_wav.parent / f"{output_wav.stem}.parts.txt"
-    lines = []
-    for p in part_paths:
-        escaped = str(p.resolve()).replace("'", "'\\''")
-        lines.append(f"file '{escaped}'")
-    list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    cmd = [
-        "ffmpeg", "-protocol_whitelist", MEDIA_PROTOCOL_WHITELIST, "-y",
-        "-hide_banner", "-loglevel", "error",
-        "-f", "concat", "-safe", "0", "-i", str(list_file),
-        "-ar", str(rate), "-ac", "1", "-c:a", "pcm_s16le",
-        str(output_wav),
-    ]
-    try:
-        res = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=NORMALIZE_TIMEOUT_SECONDS,
-        )
-    finally:
-        try:
-            list_file.unlink(missing_ok=True)
-        except Exception:
-            pass
-    if res.returncode != 0:
-        raise RuntimeError(
-            f"WAV concat failed (exit {res.returncode}): {(res.stderr or '')[-500:]}"
-        )
+    with wave.open(str(output_wav), "wb") as out_wf:
+        out_wf.setnchannels(1)
+        out_wf.setsampwidth(2)
+        out_wf.setframerate(rate)
+        out_wf.writeframes(joined.tobytes())
     if not output_wav.is_file() or output_wav.stat().st_size == 0:
         raise RuntimeError(f"WAV concat produced no output at {output_wav}")
     return output_wav

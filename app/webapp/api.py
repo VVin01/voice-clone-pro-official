@@ -1280,15 +1280,18 @@ def _recap_row_shape(job) -> tuple:
     return engine, duration
 
 
+RECAP_ETA_MEDIAN_CACHE_TTL_SECONDS = 300
+
+
 async def _recap_median_buckets() -> dict:
-    """Shape-conditioned recap duration medians, 60 s-cached.
+    """Shape-conditioned recap duration medians, 300 s-cached.
 
     Returns {"buckets": {(engine, band): (median, count)},
              "engines": {engine: (median, count)},
              "global": (median, count) | None}.
     """
     now = time.time()
-    if now - float(_RECAP_ETA_MEDIAN_CACHE.get("at") or 0.0) < 60:
+    if now - float(_RECAP_ETA_MEDIAN_CACHE.get("at") or 0.0) < RECAP_ETA_MEDIAN_CACHE_TTL_SECONDS:
         cached = _RECAP_ETA_MEDIAN_CACHE.get("medians")
         if cached is not None:
             return cached
@@ -1298,7 +1301,13 @@ async def _recap_median_buckets() -> dict:
 
         async with AsyncSessionLocal() as session:
             res = await session.execute(
-                select(Job)
+                select(
+                    Job.id,
+                    Job.started_at,
+                    Job.finished_at,
+                    Job.recap_config,
+                    Job.seconds_estimated,
+                )
                 .where(
                     (Job.job_type == JobType.RECAP.value)
                     | (Job.id.startswith("rc_"))
@@ -1310,7 +1319,7 @@ async def _recap_median_buckets() -> dict:
                 .order_by(Job.finished_at.desc())
                 .limit(100)
             )
-            rows = list(res.scalars().all())
+            rows = list(res.all())
         usable = []
         for job in rows:
             try:
@@ -1981,6 +1990,14 @@ def _load_persisted_recap_state(job) -> Optional[dict]:
     """Parse a Job row's persisted recap state, or None when the row
     predates persistence (or the blob is unusable) — callers then fall
     back to the historical reconstruction."""
+    try:
+        from sqlalchemy import inspect as _sa_inspect
+
+        insp = _sa_inspect(job, raiseerr=False)
+        if insp is not None and "recap_config" in insp.unloaded:
+            return None
+    except Exception:
+        pass
     raw = getattr(job, "recap_config", None)
     if not raw:
         return None
@@ -5599,10 +5616,14 @@ async def get_live_jobs(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Bulk live state for ALL the calling user's jobs (Batch AC)."""
+    from sqlalchemy.orm import defer
+    from sqlalchemy.orm.attributes import set_committed_value
+
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=LIVE_JOBS_RECENT_TERMINAL_MINUTES)
     stmt = (
         select(Job)
+        .options(defer(Job.final_script), defer(Job.recap_config))
         .where(
             Job.user_id == user.id,
             or_(
@@ -5617,7 +5638,36 @@ async def get_live_jobs(
         .limit(LIVE_JOBS_LIMIT)
     )
     res = await db.execute(stmt)
-    jobs = res.scalars().all()
+    jobs = list(res.scalars().all())
+
+    def _live_row_needs_recap_cfg(j: Job) -> bool:
+        is_rc = (
+            j.job_type == JobType.RECAP.value
+            or str(j.id).startswith("rc_")
+            or j.engine == "recap"
+        )
+        if not is_rc:
+            return False
+        reg_ent = RECAP_JOBS_REGISTRY.get(j.id)
+        if reg_ent is not None:
+            return (
+                j.status in _LIVE_TERMINAL_STATUSES
+                and str(reg_ent.get("status") or "") not in _LIVE_TERMINAL_STATUSES
+            )
+        return j.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
+
+    need_cfg_jobs = [j for j in jobs if _live_row_needs_recap_cfg(j)]
+    if need_cfg_jobs:
+        cfg_rows = (
+            await db.execute(
+                select(Job.id, Job.recap_config).where(
+                    Job.id.in_([j.id for j in need_cfg_jobs])
+                )
+            )
+        ).all()
+        cfg_by_id = {str(jid): cfg for jid, cfg in cfg_rows}
+        for j in need_cfg_jobs:
+            set_committed_value(j, "recap_config", cfg_by_id.get(str(j.id)))
 
     seen_ids = {j.id for j in jobs}
     out = []
@@ -5664,12 +5714,27 @@ async def get_live_jobs(
     ]
     if unseen_reg_ids:
         rec_res = await db.execute(
-            select(Job).where(
+            select(Job)
+            .options(defer(Job.final_script), defer(Job.recap_config))
+            .where(
                 Job.id.in_(unseen_reg_ids),
                 Job.user_id == user.id,
             )
         )
-        for db_job in rec_res.scalars().all():
+        rec_jobs = list(rec_res.scalars().all())
+        rec_need_cfg = [j for j in rec_jobs if _live_row_needs_recap_cfg(j)]
+        if rec_need_cfg:
+            rcfg_rows = (
+                await db.execute(
+                    select(Job.id, Job.recap_config).where(
+                        Job.id.in_([j.id for j in rec_need_cfg])
+                    )
+                )
+            ).all()
+            rcfg_by_id = {str(jid): cfg for jid, cfg in rcfg_rows}
+            for j in rec_need_cfg:
+                set_committed_value(j, "recap_config", rcfg_by_id.get(str(j.id)))
+        for db_job in rec_jobs:
             seen_ids.add(db_job.id)
             reconciled_entry = _reconcile_recap_registry_with_db_job(db_job.id, db_job)
             if db_job.status in _LIVE_ACTIVE_STATUSES and len(out) < LIVE_JOBS_LIMIT:
@@ -12055,23 +12120,41 @@ async def get_recap_status(
         if not _recap_registry_owner_ok(job_id, user):
             raise HTTPException(status_code=404, detail="Recap job not found")
         if entry.get("status") not in _LIVE_TERMINAL_STATUSES:
-            # Round 6 Item 5: reconcile non-terminal RAM entry against the
-            # shared ``jobs`` table so a job finished on a worker process
-            # (RECAP_ON_QUEUE=1) or DB-only path immediately reports its true
-            # terminal state instead of staying stuck at QUEUED / 0/4.
+            # Round 6 Item 5 + Design 2 A5.2: probe only scalar reconcile columns
+            # during active status polls; hydrate the full Job row only once terminal.
+            from types import SimpleNamespace
+
             _rec_db_job = None
+            _rec_probe = None
+            _probe_stmt = select(Job.status, Job.error_message, Job.finished_at).where(Job.id == job_id)
             try:
                 if db is not None:
-                    _rec_db_job = await db.get(Job, job_id)
+                    _rec_probe = (await db.execute(_probe_stmt)).first()
+                    if _rec_probe is not None and _rec_probe[0] in _LIVE_TERMINAL_STATUSES:
+                        _rec_db_job = await db.get(Job, job_id)
                 else:
                     async with AsyncSessionLocal() as _rec_session:
-                        _rec_db_job = await _rec_session.get(Job, job_id)
+                        _rec_probe = (await _rec_session.execute(_probe_stmt)).first()
+                        if _rec_probe is not None and _rec_probe[0] in _LIVE_TERMINAL_STATUSES:
+                            _rec_db_job = await _rec_session.get(Job, job_id)
             except Exception:
+                _rec_probe = None
                 _rec_db_job = None
             if _rec_db_job is not None:
                 _reconcile_recap_registry_with_db_job(job_id, _rec_db_job)
                 if _rec_db_job.status in _LIVE_TERMINAL_STATUSES:
                     _reconciled_terminal_job = _rec_db_job
+            elif _rec_probe is not None:
+                _reconcile_recap_registry_with_db_job(
+                    job_id,
+                    SimpleNamespace(
+                        id=job_id,
+                        status=_rec_probe[0],
+                        error_message=_rec_probe[1],
+                        finished_at=_rec_probe[2],
+                        recap_config=None,
+                    ),
+                )
 
     if entry and _reconciled_terminal_job is None:
         # Same over-50MB rule as the DB branch below: only a completed
@@ -14475,16 +14558,45 @@ async def get_receipt_image(
 
 
 # ── 7. Role-Gated Admin Console ───────────────────────────────────────────
-async def _get_laptop_worker_status(db: AsyncSession) -> dict:
-    from app.models.schema import BotSetting
-    hb_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_heartbeat"))).scalar_one_or_none()
-    eng_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_engine"))).scalar_one_or_none()
-    host_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_host"))).scalar_one_or_none()
-    stat_row = (await db.execute(select(BotSetting).where(BotSetting.key == "worker_laptop_status"))).scalar_one_or_none()
-    rq_row = (await db.execute(select(BotSetting).where(BotSetting.key == "recap_on_queue"))).scalar_one_or_none()
-    recap_queue_enabled = bool(rq_row.value.lower() in ("true", "1", "yes")) if rq_row and rq_row.value else bool(getattr(settings, "recap_on_queue", False))
+WORKER_LAPTOP_STANDBY_SECONDS = 150
+WORKER_LAPTOP_OFFLINE_SECONDS = 300
 
-    if not hb_row or not hb_row.value:
+
+async def _get_laptop_worker_status(
+    db: AsyncSession,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> dict:
+    from app.services.dynamic_settings import get_dynamic_settings_batch
+
+    vals = await get_dynamic_settings_batch(
+        db,
+        (
+            "worker_laptop_heartbeat",
+            "worker_laptop_engine",
+            "worker_laptop_host",
+            "worker_laptop_status",
+            "recap_on_queue",
+        ),
+        defaults={
+            "worker_laptop_heartbeat": None,
+            "worker_laptop_engine": "all",
+            "worker_laptop_host": "VPS Worker",
+            "worker_laptop_status": "ONLINE",
+            "recap_on_queue": None,
+        },
+        use_settings_fallback=False,
+    )
+    rq_raw = vals.get("recap_on_queue")
+    if isinstance(rq_raw, bool):
+        recap_queue_enabled = rq_raw
+    elif rq_raw is not None and str(rq_raw).strip() != "":
+        recap_queue_enabled = str(rq_raw).strip().lower() in ("true", "1", "yes")
+    else:
+        recap_queue_enabled = bool(getattr(settings, "recap_on_queue", False))
+
+    hb_val = str(vals.get("worker_laptop_heartbeat") or "").strip()
+    if not hb_val:
         return {
             "is_online": False,
             "status_code": "OFFLINE",
@@ -14496,18 +14608,21 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
         }
 
     try:
-        hb_time = datetime.fromisoformat(hb_row.value)
+        hb_time = datetime.fromisoformat(hb_val)
         if hb_time.tzinfo is None:
             hb_time = hb_time.replace(tzinfo=timezone.utc)
-        now_utc = datetime.now(timezone.utc)
-        diff_sec = max(0, (now_utc - hb_time).total_seconds())
+        ref_now = now_utc if now_utc is not None else datetime.now(timezone.utc)
+        diff_sec = max(0, (ref_now - hb_time).total_seconds())
 
         last_seen_str = f"{int(diff_sec)}s ago" if diff_sec < 60 else f"{int(diff_sec // 60)}m ago"
-        engine_mode = (eng_row.value if eng_row else "all").upper()
-        host_name = host_row.value if host_row else "VPS Worker"
-        explicit_status = (stat_row.value if stat_row else "ONLINE").upper()
+        eng_val = str(vals.get("worker_laptop_engine") or "").strip()
+        host_val = str(vals.get("worker_laptop_host") or "").strip()
+        stat_val = str(vals.get("worker_laptop_status") or "").strip()
+        engine_mode = (eng_val or "all").upper()
+        host_name = host_val or "VPS Worker"
+        explicit_status = (stat_val or "ONLINE").upper()
 
-        if explicit_status == "OFFLINE" or diff_sec > 120:
+        if explicit_status == "OFFLINE" or diff_sec > WORKER_LAPTOP_OFFLINE_SECONDS:
             return {
                 "is_online": False,
                 "status_code": "OFFLINE",
@@ -14527,7 +14642,7 @@ async def _get_laptop_worker_status(db: AsyncSession) -> dict:
                 "last_seen_ago": last_seen_str,
                 "recap_on_queue": recap_queue_enabled,
             }
-        elif diff_sec > 45:
+        elif diff_sec > WORKER_LAPTOP_STANDBY_SECONDS:
             return {
                 "is_online": True,
                 "status_code": "STANDBY",
@@ -15205,6 +15320,29 @@ def _admin_category_filter(category: str = "") -> str:
     return cat if cat in (AccountCategory.FREE.value, AccountCategory.PURCHASED.value) else ""
 
 
+def _compute_daily_free_pending_seconds(u: User, bal: Optional[MinuteBalance]) -> int:
+    """Read-only projection of today's un-granted daily free allowance (Part D1).
+
+    Mirrors ``grant_daily_free_allowance()`` eligibility exactly without writing:
+    non-admin, non-PURCHASED, positive ``free_daily_allowance_seconds``, and no
+    grant recorded on ``MinuteBalance.last_daily_grant_date`` for the current
+    Asia/Yangon allowance day.
+    """
+    from app.services.ledger import get_current_daily_period
+
+    if settings.is_admin(u.id):
+        return 0
+    if (u.account_category or "") == AccountCategory.PURCHASED.value:
+        return 0
+    allowance_seconds = max(0, int(getattr(settings, "free_daily_allowance_seconds", 180) or 0))
+    if allowance_seconds <= 0:
+        return 0
+    current_day = get_current_daily_period()
+    if bal is not None and getattr(bal, "last_daily_grant_date", None) == current_day:
+        return 0
+    return allowance_seconds
+
+
 def _format_admin_user_dict(u: User, bal: Optional[MinuteBalance]) -> dict:
     """Serialize one User + MinuteBalance pair into canonical admin user row JSON."""
     return {
@@ -15218,6 +15356,7 @@ def _format_admin_user_dict(u: User, bal: Optional[MinuteBalance]) -> dict:
         "is_test_account": bool(getattr(u, "is_test_account", False)),
         "recap_credits": getattr(u, "recap_credits", 0) or 0,
         "balance_seconds": int(bal.total_usable_seconds) if bal else 0,
+        "daily_free_pending_seconds": _compute_daily_free_pending_seconds(u, bal),
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
 
@@ -15395,6 +15534,7 @@ async def get_admin_user_detail(
     bal = await db.get(MinuteBalance, user_id)
     payload["balance_breakdown"] = {
         "daily_free_seconds": int(bal.effective_daily_free_seconds) if bal else 0,
+        "daily_free_pending_seconds": _compute_daily_free_pending_seconds(target, bal),
         "monthly_free_seconds": int(bal.monthly_free_seconds or 0) if bal else 0,
         "welcome_seconds": int(bal.welcome_seconds or 0) if bal else 0,
         "referral_voice_seconds": int(getattr(bal, "referral_voice_seconds", 0) or 0) if bal else 0,

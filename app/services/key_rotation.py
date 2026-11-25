@@ -234,7 +234,13 @@ def _sync_engine():
         try:
             from sqlalchemy import create_engine
 
-            _SYNC_ENGINE = create_engine(sync_url, pool_pre_ping=True)
+            _SYNC_ENGINE = create_engine(
+                sync_url,
+                pool_pre_ping=True,
+                pool_size=1,
+                max_overflow=1,
+                pool_recycle=1800,
+            )
             _SYNC_ENGINE_URL = sync_url
         except Exception as exc:
             logger.warning(

@@ -311,7 +311,7 @@ def test_api_admin_messages_localized():
 
 # ── B1: mapper behaviour, executed in node against the real i18n ─────
 
-def _run_mapper():
+def _run_mapper(tmp_path: Path):
     node = shutil.which("node")
     if not node:
         pytest.skip("node not available")
@@ -352,7 +352,7 @@ console.log(JSON.stringify(out));
         "var localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };\n"
         + I18N_JS + "\n" + mapper_src + "\n" + driver
     )
-    tmp = ROOT / "tests/unit/_mapper_harness_tmp.js"
+    tmp = tmp_path / "_mapper_harness_tmp.js"
     try:
         tmp.write_text(script, encoding="utf-8")
         res = subprocess.run([node, str(tmp)], capture_output=True, text=True, timeout=60)
@@ -362,8 +362,8 @@ console.log(JSON.stringify(out));
     return json.loads(res.stdout.strip().splitlines()[-1])
 
 
-def test_mapper_families_and_no_raw_leak():
-    out = _run_mapper()
+def test_mapper_families_and_no_raw_leak(tmp_path):
+    out = _run_mapper(tmp_path)
     for lang in ("my", "en"):
         r = out[lang]
         # raw marker must never survive into any mapped output
