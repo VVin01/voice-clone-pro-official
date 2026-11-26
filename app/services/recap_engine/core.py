@@ -8346,8 +8346,19 @@ class EdgeSmartSync:
                 _job_sp_tos = getattr(vox_engine, "space_timeouts", None)
                 if callable(_job_sp_tos):
                     _job_sp_tos = _job_sp_tos()
-                if isinstance(_job_sp_tos, dict) and _job_sp_tos and vox_err is not None:
-                    self.log(f"📊 VoxCPM 2 per-job Space timeouts so far: {_job_sp_tos}")
+                if vox_err is not None:
+                    _q_refusals = int(getattr(vox_engine, "quota_refusals", 0) or 0)
+                    _q_wall = float(getattr(vox_engine, "refusal_wall_s", 0.0) or 0.0)
+                    _c_skips = int(getattr(vox_engine, "ceiling_skips", 0) or 0)
+                    _mf_jumps = int(getattr(vox_engine, "max_fit_jumps", 0) or 0)
+                    if isinstance(_job_sp_tos, dict) and _job_sp_tos:
+                        self.log(f"📊 VoxCPM 2 per-job Space timeouts so far: {_job_sp_tos}")
+                    if _q_refusals or _c_skips or _mf_jumps or (isinstance(_job_sp_tos, dict) and _job_sp_tos):
+                        self.log(
+                            f"recap_voxcpm_tts_summary status=aborted quota_refusals={_q_refusals} "
+                            f"refusal_wall_s={_q_wall:.2f} ceiling_skips={_c_skips} "
+                            f"max_fit_jumps={_mf_jumps} space_timeouts={dict(_job_sp_tos or {})}"
+                        )
                 if vox_err is not None:
                     _done_units = len(checkpoint.get("audio") or {})
                     _pinned_sp = getattr(vox_engine, "pinned_space", None)
@@ -9473,6 +9484,17 @@ class EdgeSmartSync:
                     for _fut in as_completed(_futures):
                         _fut.result()
             fallback_segments.sort()
+            if use_voxcpm and not use_gemini and vox_job_memory is not None and hasattr(vox_job_memory, "telemetry_counters"):
+                _tc = vox_job_memory.telemetry_counters()
+                _sp_tos = vox_job_memory.space_timeouts() if hasattr(vox_job_memory, "space_timeouts") else {}
+                self.log(
+                    f"recap_voxcpm_tts_summary segments={len(segments)} "
+                    f"quota_refusals={int(_tc.get('quota_refusals', 0))} "
+                    f"refusal_wall_s={float(_tc.get('refusal_wall_s', 0.0)):.2f} "
+                    f"ceiling_skips={int(_tc.get('ceiling_skips', 0))} "
+                    f"max_fit_jumps={int(_tc.get('max_fit_jumps', 0))} "
+                    f"space_timeouts={dict(_sp_tos or {})}"
+                )
             if _tts_errors:
                 _stop_part_renderer()
                 _shutdown_prewarm(wait=False)

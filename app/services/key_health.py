@@ -264,8 +264,10 @@ def compute_refill_estimate(history, account_key, remaining_s, base_s, now_ts) -
 
 
 def _overlay_space_ledger_telemetry(payload: dict, now_ts: float | None = None) -> dict:
-    """Part C4: attach live `space_timeouts` and `space_cooldowns` from `aj_hf:pool_state`
-    onto `providers.spaces` so chronically slow Spaces are visible in the Admin Key Health panel."""
+    """Part C4 + Part Q4.3: attach live Space timeout/cooldown AND HF pool ledger metrics
+    (`ledger_effective_s`, `session_ready_tokens`, `refusal_capped_tokens`, `quota_probe_errors`,
+    `last_drift_s`, and per-account `ledger_remaining_s` / `refused_gate_s`) onto BOTH fresh
+    and cached `/api/admin/key-health` responses (display-only, zero key material)."""
     try:
         from app.services import hf_pool_ledger as _hf_ledger
 
@@ -288,8 +290,82 @@ def _overlay_space_ledger_telemetry(payload: dict, now_ts: float | None = None) 
                     cooling_cnt += 1
             spaces_prov["cooling_down"] = cooling_cnt
             spaces_prov["space_timeouts"] = dict(to_counts)
+
+        hf_prov = (payload.get("providers") or {}).get("hf")
+        if isinstance(hf_prov, dict):
+            hf_tokens, _, _, _ = _load_pools()
+            accounts = hf_prov.get("accounts") or []
+            tokens_map = st.get("tokens") if isinstance(st, dict) else None
+            has_ledger_tokens = bool(isinstance(tokens_map, dict) and tokens_map)
+
+            ledger_eff_total = 0.0
+            session_ready_cnt = 0
+            refusal_capped_cnt = 0
+
+            for idx, acct_row in enumerate(accounts):
+                if not isinstance(acct_row, dict):
+                    continue
+                tok = hf_tokens[idx] if idx < len(hf_tokens) else None
+                lrow = None
+                if tok and has_ledger_tokens:
+                    _d, lrow = _hf_ledger.lookup_token_entry(st, tok)
+
+                if lrow is not None and str(lrow.get("status") or "ok") != "auth_dead":
+                    l_rem = float(lrow.get("remaining_s") if lrow.get("remaining_s") is not None else 0.0)
+                    rg = _hf_ledger.get_token_refused_gate_s(lrow, now_ts=now)
+                    ru = _hf_ledger.get_token_refused_until(lrow, now_ts=now)
+                    acct_row["ledger_remaining_s"] = round(l_rem, 1)
+                    acct_row["refused_gate_s"] = round(rg, 1) if rg is not None else None
+                    acct_row["refused_until"] = ru
+                    if rg is not None:
+                        refusal_capped_cnt += 1
+                        # Effective usable capacity under ceiling (`<= 60s` gate refusal blocks all standard calls)
+                        eff_rem = (
+                            min(l_rem, max(0.0, rg - 1.0))
+                            if rg > _hf_ledger.DEFAULT_SPACE_GATE_S
+                            else 0.0
+                        )
+                    else:
+                        eff_rem = l_rem
+                    if eff_rem >= _hf_ledger.MIN_USABLE_DUST_GATE_S:
+                        ledger_eff_total += eff_rem
+                    if rg is None and eff_rem >= _hf_ledger.SESSION_READY_MIN_GPU_S:
+                        session_ready_cnt += 1
+                elif lrow is not None and str(lrow.get("status") or "ok") == "auth_dead":
+                    acct_row["ledger_remaining_s"] = 0.0
+                    acct_row["refused_gate_s"] = None
+                    acct_row["refused_until"] = None
+                else:
+                    # Fallback when pool ledger has no entry for this slot yet
+                    p_rem = acct_row.get("remaining_s")
+                    acct_row["ledger_remaining_s"] = round(float(p_rem), 1) if p_rem is not None else None
+                    acct_row["refused_gate_s"] = None
+                    acct_row["refused_until"] = None
+                    if p_rem is not None and float(p_rem) >= _hf_ledger.MIN_USABLE_DUST_GATE_S:
+                        ledger_eff_total += float(p_rem)
+                    if p_rem is not None and float(p_rem) >= _hf_ledger.SESSION_READY_MIN_GPU_S:
+                        session_ready_cnt += 1
+
+            in_flight_s = max(0.0, float((st or {}).get("in_flight_gpu_s") or 0.0))
+            drift_stats = _hf_ledger.get_drift_stats(state=st, now_ts=now) or {}
+            probe_err_fallback = sum(
+                1
+                for r in accounts
+                if isinstance(r, dict)
+                and r.get("status") == "ok"
+                and (r.get("quota_error") is not None or r.get("remaining_s") is None)
+            )
+            hf_prov["ledger_effective_s"] = round(max(0.0, ledger_eff_total - in_flight_s), 1)
+            hf_prov["session_ready_tokens"] = int(session_ready_cnt)
+            hf_prov["refusal_capped_tokens"] = int(refusal_capped_cnt)
+            hf_prov["quota_probe_errors"] = int(
+                drift_stats.get("quota_probe_errors")
+                if "quota_probe_errors" in drift_stats
+                else probe_err_fallback
+            )
+            hf_prov["last_drift_s"] = round(float(drift_stats.get("positive_drift_s") or 0.0), 1)
     except Exception:
-        logger.debug("key_health: space timeout telemetry overlay skipped", exc_info=True)
+        logger.debug("key_health: ledger telemetry overlay skipped", exc_info=True)
     return payload
 
 

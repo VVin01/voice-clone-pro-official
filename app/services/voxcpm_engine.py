@@ -99,6 +99,8 @@ MAX_REPIN_SPACE_TOKENS = 3
 PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS = 45.0
 SEGMENT_BUDGET_FREE_SECONDS = 120.0
 SEGMENT_BUDGET_PAID_SECONDS = 240.0
+# Part P2.3: 20 s Tier-0 Best-Fit bucket width so round-robin spreads concurrent workers.
+TOKEN_BALANCE_BUCKET_SECONDS = 20.0
 
 # Batch AT (AT-3): per-space Gradio endpoint mapping. Every space
 # defaults to the openbmb-style "/generate" endpoint.
@@ -371,12 +373,15 @@ def has_solvent_voxcpm_tokens(engine: Any, *, gate_s: Optional[float] = None) ->
         mem = getattr(engine, "job_memory", None)
         pin = getattr(engine, "pinned_space", None)
         gate = float(gate_s) if (gate_s is not None and gate_s > 0) else VoxCPMEngine._known_space_gate(pin, ledger_state=st)
+        ceil_gate = float(gate) if (gate is not None and gate > 0) else float(_hf_ledger.DEFAULT_SPACE_GATE_S)
         for tok in tokens:
             if not tok:
                 continue
             if _hf_ledger.is_token_auth_dead(tok, state=st, now_ts=now):
                 continue
-            if mem is not None and mem.token_dead(tok):
+            if _hf_ledger.is_token_refusal_capped(tok, ceil_gate, state=st, now_ts=now):
+                continue
+            if mem is not None and (mem.token_dead(tok) or mem.token_refusal_capped(tok, ceil_gate)):
                 continue
             bal = VoxCPMEngine._known_token_balance(tok, ledger_state=st)
             if bal is not None and (bal <= 0 or (gate is not None and gate > 0 and bal < gate)):
@@ -460,7 +465,12 @@ class JobQuotaMemory:
         self._lock = threading.Lock()
         self._gate_pairs: set[tuple[str, str]] = set()
         self._dead_tokens: set[str] = set()
+        self._refused_gates: dict[str, float] = {}
         self._space_timeouts: dict[str, int] = {}
+        self._quota_refusals: int = 0
+        self._refusal_wall_s: float = 0.0
+        self._ceiling_skips: int = 0
+        self._max_fit_jumps: int = 0
 
     def gate_blocked(self, space_name: str, token: Optional[str]) -> bool:
         with self._lock:
@@ -470,6 +480,13 @@ class JobQuotaMemory:
         with self._lock:
             return _job_token_key(token) in self._dead_tokens
 
+    def token_refusal_capped(self, token: Optional[str], req_gate_s: Optional[float]) -> bool:
+        if not token or req_gate_s is None:
+            return False
+        with self._lock:
+            rg = self._refused_gates.get(_job_token_key(token))
+            return rg is not None and float(req_gate_s) >= float(rg)
+
     def record_gate(self, space_name: str, token: Optional[str]) -> None:
         with self._lock:
             self._gate_pairs.add((str(space_name), _job_token_key(token)))
@@ -477,6 +494,37 @@ class JobQuotaMemory:
     def record_dead_token(self, token: Optional[str]) -> None:
         with self._lock:
             self._dead_tokens.add(_job_token_key(token))
+
+    def record_refused_gate(self, token: Optional[str], gate_s: float) -> None:
+        if not token or gate_s is None or float(gate_s) <= 0:
+            return
+        key = _job_token_key(token)
+        g = round(float(gate_s), 2)
+        with self._lock:
+            prev = self._refused_gates.get(key)
+            self._refused_gates[key] = round(min(prev, g), 2) if prev is not None else g
+
+    def record_quota_refusal(self, wall_s: float) -> None:
+        with self._lock:
+            self._quota_refusals += 1
+            self._refusal_wall_s += max(0.0, float(wall_s or 0.0))
+
+    def record_ceiling_skip(self, count: int = 1) -> None:
+        with self._lock:
+            self._ceiling_skips += max(0, int(count))
+
+    def record_max_fit_jump(self) -> None:
+        with self._lock:
+            self._max_fit_jumps += 1
+
+    def telemetry_counters(self) -> dict[str, int | float]:
+        with self._lock:
+            return {
+                "quota_refusals": int(self._quota_refusals),
+                "refusal_wall_s": round(self._refusal_wall_s, 2),
+                "ceiling_skips": int(self._ceiling_skips),
+                "max_fit_jumps": int(self._max_fit_jumps),
+            }
 
     def record_space_timeout(self, space_name: str) -> int:
         sp = str(space_name or "").strip()
@@ -493,12 +541,19 @@ class JobQuotaMemory:
 
     def snapshot(self) -> dict:
         with self._lock:
-            out = {
+            out: dict[str, Any] = {
                 "gate_pairs": sorted(f"{sp}::{tok}" for sp, tok in self._gate_pairs),
                 "dead_tokens": sorted(self._dead_tokens),
             }
+            if self._refused_gates:
+                out["refused_gates"] = dict(self._refused_gates)
             if self._space_timeouts:
                 out["space_timeouts"] = dict(self._space_timeouts)
+            if self._quota_refusals or self._ceiling_skips or self._max_fit_jumps:
+                out["quota_refusals"] = self._quota_refusals
+                out["refusal_wall_s"] = round(self._refusal_wall_s, 2)
+                out["ceiling_skips"] = self._ceiling_skips
+                out["max_fit_jumps"] = self._max_fit_jumps
             return out
 
 
@@ -898,7 +953,9 @@ class VoxCPMEngine:
         eff_gate = gate if gate is not None else cls._known_space_gate(None, ledger_state=ledger_state)
         if bal <= 0 or (eff_gate is not None and bal < eff_gate):
             return (2, -bal)
-        return (0, float(bal))
+        bucket_w = int(TOKEN_BALANCE_BUCKET_SECONDS)
+        bucket_floor = float((int(bal) // bucket_w) * bucket_w)
+        return (0, bucket_floor)
 
     # Round 15 Part F (owner direction 2026-11-23): SINGLE-POOL RULE.
     # The paid-only HF token reserve (Batch DP / DR) is permanently retired.
@@ -1074,6 +1131,30 @@ class VoxCPMEngine:
         mem = self.job_memory
         return mem.space_timeouts() if mem is not None else {}
 
+    @property
+    def quota_refusals(self) -> int:
+        """Part Q4.1: per-job ZeroGPU quota refusal count."""
+        mem = self.job_memory
+        return int(mem.telemetry_counters()["quota_refusals"]) if mem is not None else 0
+
+    @property
+    def refusal_wall_s(self) -> float:
+        """Part Q4.1: per-job wall-clock seconds burned on refused pairs."""
+        mem = self.job_memory
+        return float(mem.telemetry_counters()["refusal_wall_s"]) if mem is not None else 0.0
+
+    @property
+    def ceiling_skips(self) -> int:
+        """Part Q4.1: per-job count of refusal-ceiling token skips."""
+        mem = self.job_memory
+        return int(mem.telemetry_counters()["ceiling_skips"]) if mem is not None else 0
+
+    @property
+    def max_fit_jumps(self) -> int:
+        """Part Q4.1: per-job count of pinned-walk jumps from Best-Fit tail to Max-Fit head."""
+        mem = self.job_memory
+        return int(mem.telemetry_counters()["max_fit_jumps"]) if mem is not None else 0
+
     def _log(self, msg: str) -> None:
         logger.info(msg)
         if self.log_fn:
@@ -1082,14 +1163,20 @@ class VoxCPMEngine:
             except Exception:
                 pass
 
-    def _pair_blocked_by_job(self, space_name: str, token: Optional[str]) -> bool:
+    def _pair_blocked_by_job(
+        self, space_name: str, token: Optional[str], req_gate_s: Optional[float] = None
+    ) -> bool:
         """True when this job's quota memory has ruled the pair out:
-        the token is quota-dead (every space) or this exact
-        (space, token) pair was refused at the admission gate."""
+        the token is quota-dead (every space), this exact (space, token) pair was refused
+        at the admission gate, or `req_gate_s` meets/exceeds the token's refused ceiling."""
         mem = self.job_memory
         if mem is None:
             return False
-        return mem.token_dead(token) or mem.gate_blocked(space_name, token)
+        return (
+            mem.token_dead(token)
+            or mem.gate_blocked(space_name, token)
+            or (req_gate_s is not None and mem.token_refusal_capped(token, req_gate_s))
+        )
 
     def _adapt_reference_for_clone(self, ref_path: Path) -> Path:
         """Batch BU: return the reference path this call should use.
@@ -1316,30 +1403,60 @@ class VoxCPMEngine:
                 shift = (bind + advance) % len(healthy_auth)
             else:
                 with self._lock:
-                    shift = self._token_rr_counter % len(healthy_auth)
-                    self._token_rr_counter += 1
+                    shift = VoxCPMEngine._token_rr_counter % len(healthy_auth)
+                    VoxCPMEngine._token_rr_counter += 1
             rotated_auth = healthy_auth[shift:] + healthy_auth[:shift]
             other_toks = [t for t in tokens_pool if t not in healthy_auth]
             ordered_toks = rotated_auth + other_toks
 
-        session_gate_s: Optional[float] = (
+        # Part P2: keep x1.0 `session_call_gate_s` for post-success debits, and use the
+        # x1.5 `session_admission_gate_s` (capped at 180 s) ONLY for session solvency checks.
+        session_debit_s: Optional[float] = (
             _hf_ledger.session_call_gate_s(len(clean_text)) if session_mode else None
+        )
+        session_adm_gate_s: Optional[float] = (
+            _hf_ledger.session_admission_gate_s(len(clean_text)) if session_mode else None
         )
         eff_pin_enabled = (
             self.pin_space_enabled if pin_space_override is None else bool(pin_space_override)
         )
+        walk_ceiling_skipped: set[str] = set()
+
+        def _effective_req_gate(sp: str) -> float:
+            if session_mode and session_adm_gate_s is not None:
+                return float(session_adm_gate_s)
+            known_g = VoxCPMEngine._known_space_gate(sp, ledger_state=ledger_state)
+            return (
+                float(known_g)
+                if (known_g is not None and known_g > 0)
+                else float(_hf_ledger.DEFAULT_SPACE_GATE_S)
+            )
 
         def _solvent_tokens_for_space(sp: str) -> tuple[List[Optional[str]], int]:
-            """Return Best-Fit ordered solvent tokens for `sp` plus count of sub-gate tokens skipped."""
+            """Return Best-Fit ordered solvent tokens for `sp` plus count of sub-gate/ceiling tokens skipped."""
             sp_gate = (
-                session_gate_s
+                session_adm_gate_s
                 if session_mode
                 else VoxCPMEngine._known_space_gate(sp, ledger_state=ledger_state)
+            )
+            ceil_req_gate = (
+                float(sp_gate)
+                if (sp_gate is not None and sp_gate > 0)
+                else float(_hf_ledger.DEFAULT_SPACE_GATE_S)
             )
             kept: List[tuple[int, Optional[str]]] = []
             sub_gate_skipped = 0
             for pos, tok in enumerate(ordered_toks):
                 if tok is not None:
+                    if _hf_ledger.is_token_refusal_capped(
+                        tok, ceil_req_gate, state=ledger_state, now_ts=now
+                    ):
+                        if tok not in walk_ceiling_skipped:
+                            walk_ceiling_skipped.add(tok)
+                            if self.job_memory is not None:
+                                self.job_memory.record_ceiling_skip(1)
+                        sub_gate_skipped += 1
+                        continue
                     bal = VoxCPMEngine._known_token_balance(tok, ledger_state=ledger_state)
                     if bal is not None and (bal <= 0 or (sp_gate is not None and sp_gate > 0 and bal < sp_gate)):
                         sub_gate_skipped += 1
@@ -1354,6 +1471,26 @@ class VoxCPMEngine:
             )
             return [tok for _pos, tok in kept], sub_gate_skipped
 
+        pos_index = {tok: idx for idx, tok in enumerate(ordered_toks)}
+
+        def _pinned_best_then_max_order(toks: List[Optional[str]]) -> List[Optional[str]]:
+            """Part P3.2: Best-Fit for the first 2 attempts, then Max-Fit (descending `remaining_s`
+            head tokens) so drift costs at most ~2 instant refusals before landing on a fresh token."""
+            if len(toks) <= 2:
+                return list(toks)
+            head_two = list(toks[:2])
+            tail = list(toks[2:])
+
+            def _max_fit_key(t: Optional[str]) -> tuple[int, int, float, int]:
+                tsk = _token_sort_key(t)
+                bal = VoxCPMEngine._known_token_balance(t, ledger_state=ledger_state) if t is not None else None
+                has_bal = 0 if bal is not None else 1
+                neg_bal = -(float(bal) if bal is not None else 0.0)
+                return (tsk, has_bal, neg_bal, pos_index.get(t, 0))
+
+            tail.sort(key=_max_fit_key)
+            return head_two + tail
+
         def _is_space_cooling_now(sp: str) -> bool:
             return _hf_ledger.is_space_cooling(sp, state=ledger_state)
 
@@ -1366,18 +1503,13 @@ class VoxCPMEngine:
         cur_pin = self.pinned_space
         if eff_pin_enabled and cur_pin and cur_pin in candidate_spaces:
             is_pinned_walk = True
-            pin_toks, skipped_pin = _solvent_tokens_for_space(cur_pin)
+            pin_best_toks, skipped_pin = _solvent_tokens_for_space(cur_pin)
             sub_gate_filtered_total += skipped_pin
+            pin_ordered = _pinned_best_then_max_order(pin_best_toks)
             pin_is_cooling = _is_space_cooling_now(cur_pin)
-            if not pin_is_cooling:
-                for tok in pin_toks[:MAX_PINNED_SPACE_TOKENS]:
-                    pairs.append((cur_pin, tok))
-            else:
-                for tok in pin_toks[:1]:
-                    last_resort_pairs.append((cur_pin, tok))
 
-            # Part 2 (#3b) + Part C1: controlled re-pin to a non-cooling alternate v2 space
-            # (allowed whenever repin_used is False OR the pinned Space itself is cooling down).
+            alt_space: Optional[str] = None
+            alt_ordered: List[Optional[str]] = []
             if (not self.space_pin.repin_used) or pin_is_cooling:
                 healthy_alt = next(
                     (sp for sp in candidate_spaces if sp != cur_pin and not _is_space_cooling_now(sp)),
@@ -1385,16 +1517,60 @@ class VoxCPMEngine:
                 )
                 alt_space = healthy_alt or next((sp for sp in candidate_spaces if sp != cur_pin), None)
                 if alt_space is not None:
-                    alt_toks, skipped_alt = _solvent_tokens_for_space(alt_space)
+                    alt_best_toks, skipped_alt = _solvent_tokens_for_space(alt_space)
                     sub_gate_filtered_total += skipped_alt
+                    alt_ordered = _pinned_best_then_max_order(alt_best_toks)
                     repin_candidate = alt_space
+
+            if not pin_is_cooling:
+                # Part P3.1 & P3.3: build `repin_candidate` tokens EXCLUDING tokens queued on `cur_pin`
+                # (disjoint sets whenever >=2 solvent tokens exist) while keeping `[best0, best1, max0, ...]`
+                # intact on `cur_pin` so quota refusals continue to healthy tokens on the SAME pinned Space.
+                alt_queue: List[Optional[str]] = []
+                if alt_space is not None and not _is_space_cooling_now(alt_space):
+                    if len(alt_ordered) > 3:
+                        # Preserve `pin_ordered[:3]` (Best-Fit #1, Best-Fit #2, Max-Fit #1) on `cur_pin`
+                        # and allocate up to `MAX_REPIN_SPACE_TOKENS` disjoint head tokens to `alt_space`.
+                        protected = set(pin_ordered[:3])
+                        disjoint_pool = [t for t in alt_ordered if t not in protected]
+                        alt_queue = disjoint_pool[:MAX_REPIN_SPACE_TOKENS]
+                    elif len(alt_ordered) >= 2:
+                        alt_queue = [alt_ordered[-1]]
+                    elif len(alt_ordered) == 1:
+                        alt_queue = list(alt_ordered)
+
+                alt_set = set(alt_queue) if len(pin_ordered) >= 2 else set()
+                pin_queue = [t for t in pin_ordered if t not in alt_set]
+                for tok in pin_queue:
+                    pairs.append((cur_pin, tok))
+                if alt_space is not None:
                     if not _is_space_cooling_now(alt_space):
-                        cap_alt = MAX_PINNED_SPACE_TOKENS if pin_is_cooling else MAX_REPIN_SPACE_TOKENS
-                        for tok in alt_toks[:cap_alt]:
+                        for tok in alt_queue:
                             pairs.append((alt_space, tok))
                     else:
-                        for tok in alt_toks[:1]:
-                            last_resort_pairs.append((alt_space, tok))
+                        lr_tok = next(
+                            (t for t in alt_ordered if t not in set(pin_queue)),
+                            alt_ordered[0] if alt_ordered else None,
+                        )
+                        if lr_tok is not None or (None in alt_ordered):
+                            last_resort_pairs.append((alt_space, lr_tok))
+            else:
+                pin_lr = pin_ordered[:1]
+                for tok in pin_lr:
+                    last_resort_pairs.append((cur_pin, tok))
+                if alt_space is not None:
+                    if not _is_space_cooling_now(alt_space):
+                        disjoint_alt = [t for t in alt_ordered if t not in set(pin_lr)]
+                        chosen_alt = disjoint_alt if disjoint_alt else alt_ordered
+                        for tok in chosen_alt[:MAX_PINNED_SPACE_TOKENS]:
+                            pairs.append((alt_space, tok))
+                    else:
+                        lr_tok = next(
+                            (t for t in alt_ordered if t not in set(pin_lr)),
+                            alt_ordered[0] if alt_ordered else None,
+                        )
+                        if lr_tok is not None or (None in alt_ordered):
+                            last_resort_pairs.append((alt_space, lr_tok))
         else:
             healthy_spaces = [sp for sp in candidate_spaces if not _is_space_cooling_now(sp)]
             cooling_spaces = [sp for sp in candidate_spaces if _is_space_cooling_now(sp)]
@@ -1422,11 +1598,11 @@ class VoxCPMEngine:
         total_pairs = len(pairs) + len(last_resort_pairs) + sub_gate_filtered_total
         pairs = [
             (sp, tok) for sp, tok in pairs
-            if not self._pair_blocked_by_job(sp, tok)
+            if not self._pair_blocked_by_job(sp, tok, _effective_req_gate(sp))
         ]
         last_resort_pairs = [
             (sp, tok) for sp, tok in last_resort_pairs
-            if not self._pair_blocked_by_job(sp, tok)
+            if not self._pair_blocked_by_job(sp, tok, _effective_req_gate(sp))
         ]
         if not pairs and last_resort_pairs:
             self._log(
@@ -1479,19 +1655,31 @@ class VoxCPMEngine:
         attempt_cap_sec = max(0.05, min(base_timeout_sec, float(PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS)))
 
         space_attempts: dict[str, int] = {}
+        cur_pin_attempts = 0
+        pinned_quota_refusals = 0
+        pinned_non_quota_failures = 0
         for attempt, (space_name, active_token) in enumerate(pairs, 1):
             if time.time() > synth_deadline:
                 deadline_cut = True
                 self._log(f"⏱️ VoxCPM total failover budget ({total_budget:.0f}s) exhausted; stopping further space attempts")
                 break
-            if self._pair_blocked_by_job(space_name, active_token):
+            req_gate_s = _effective_req_gate(space_name)
+            if self._pair_blocked_by_job(space_name, active_token, req_gate_s):
+                continue
+            if active_token is not None and _hf_ledger.is_token_refusal_capped(
+                active_token, req_gate_s, state=ledger_state
+            ):
+                if active_token not in walk_ceiling_skipped:
+                    walk_ceiling_skipped.add(active_token)
+                    if self.job_memory is not None:
+                        self.job_memory.record_ceiling_skip(1)
                 continue
             # Part C1: if `space_name` cooled down earlier in this walk (or concurrently),
             # skip it immediately whenever any non-cooling unblocked pair remains ahead.
             if _hf_ledger.is_space_cooling(space_name, state=ledger_state):
                 has_non_cooling_ahead = any(
                     (not _hf_ledger.is_space_cooling(rem_sp, state=ledger_state))
-                    and (not self._pair_blocked_by_job(rem_sp, rem_tok))
+                    and (not self._pair_blocked_by_job(rem_sp, rem_tok, _effective_req_gate(rem_sp)))
                     for rem_sp, rem_tok in pairs[attempt:]
                 )
                 if has_non_cooling_ahead:
@@ -1502,9 +1690,22 @@ class VoxCPMEngine:
             if not is_pinned_walk:
                 if space_attempts.get(space_name, 0) >= MAX_ATTEMPTS_PER_SPACE:
                     continue
-            elif repin_candidate is not None and space_name == repin_candidate and not self.space_pin.repin_used:
-                self.space_pin.repin_used = True
-                self._log(f"🔀 VoxCPM 2 controlled one-time re-pin attempt: '{cur_pin}' -> '{repin_candidate}'")
+            else:
+                if space_name == cur_pin:
+                    # Part P3.1: strict cap applies to non-quota Space errors; fast quota refusals continue on `cur_pin`.
+                    if pinned_non_quota_failures >= MAX_PINNED_SPACE_TOKENS:
+                        continue
+                    cur_pin_attempts += 1
+                    if cur_pin_attempts == 3 and pinned_quota_refusals >= 2:
+                        if self.job_memory is not None:
+                            self.job_memory.record_max_fit_jump()
+                        self._log(
+                            f"🚀 VoxCPM 2 Max-Fit jump on pinned Space '{cur_pin}' "
+                            f"after {pinned_quota_refusals} Best-Fit quota refusals"
+                        )
+                elif repin_candidate is not None and space_name == repin_candidate and not self.space_pin.repin_used:
+                    self.space_pin.repin_used = True
+                    self._log(f"🔀 VoxCPM 2 controlled one-time re-pin attempt: '{cur_pin}' -> '{repin_candidate}'")
 
             space_attempts[space_name] = space_attempts.get(space_name, 0) + 1
             attempts_made += 1
@@ -1690,7 +1891,7 @@ class VoxCPMEngine:
                     VoxCPMEngine._record_success_balance(
                         space_name,
                         active_token,
-                        debit_s=session_gate_s if session_mode else None,
+                        debit_s=session_debit_s if session_mode else None,
                     )
                     self._log(f"✅ VoxCPM 2 Success [{tok_masked}]: {out_path.name} ({out_path.stat().st_size} bytes)")
                     return out_path
@@ -1699,13 +1900,19 @@ class VoxCPMEngine:
 
             except Exception as e_pair:
                 last_err = e_pair
+                attempt_wall_s = max(0.0, time.time() - attempt_start)
                 err_lower = str(e_pair).lower()
                 quota_kind = _quota_failure_kind(err_lower)
                 if quota_kind is not None:
                     quota_failures += 1
-                if quota_kind == "gate":
+                    if is_pinned_walk and space_name == cur_pin and attempt_wall_s < 15.0:
+                        pinned_quota_refusals += 1
+                    else:
+                        if is_pinned_walk and space_name == cur_pin:
+                            pinned_non_quota_failures += 1
                     if self.job_memory is not None:
-                        self.job_memory.record_gate(space_name, active_token)
+                        self.job_memory.record_quota_refusal(attempt_wall_s)
+
                     _adm = _parse_admission_refusal(str(e_pair))
                     if _adm is not None:
                         VoxCPMEngine._record_admission_refusal(
@@ -1715,21 +1922,44 @@ class VoxCPMEngine:
                             _adm[1],
                             update_space_gate=(not session_mode),
                         )
-                        ledger_state = _hf_ledger.load_pool_state()
-                    self._log(f"⚠️ Token {tok_masked} refused at '{space_name}' admission gate (GPU-seconds requested > balance); pair memoised for this job, rotating...")
-                elif quota_kind == "dead":
-                    if self.job_memory is not None:
-                        self.job_memory.record_dead_token(active_token)
+                        refused_gate = float(_adm[0])
+                    else:
+                        refused_gate = float(req_gate_s)
+
+                    # Part P1.2 & P1.3: record scoped `refused_gate_s` ceiling without hard-zeroing `remaining_s`.
                     if active_token:
-                        self._token_cooldowns[active_token] = time.time() + 1800
-                        self._schedule_cooldown_persist()
                         try:
-                            _hf_ledger.record_quota_dead(active_token)
-                            ledger_state = _hf_ledger.load_pool_state()
+                            updated_st = _hf_ledger.record_refusal_ceiling(active_token, refused_gate)
+                            ledger_state = (
+                                updated_st if isinstance(updated_st, dict) else _hf_ledger.load_pool_state()
+                            )
                         except Exception:
                             pass
-                    self._log(f"⚠️ Token {tok_masked} hit ZeroGPU quota on '{space_name}'; rotating...")
+
+                    if self.job_memory is not None:
+                        if quota_kind == "gate":
+                            self.job_memory.record_gate(space_name, active_token)
+                        self.job_memory.record_refused_gate(active_token, refused_gate)
+
+                    if quota_kind == "gate":
+                        self._log(
+                            f"⚠️ Token {tok_masked} refused at '{space_name}' admission gate "
+                            f"(ceiling<{refused_gate:g}s for 1h); rotating..."
+                        )
+                    else:
+                        if refused_gate <= 65.0:
+                            if self.job_memory is not None:
+                                self.job_memory.record_dead_token(active_token)
+                            if active_token:
+                                self._token_cooldowns[active_token] = time.time() + 1800
+                                self._schedule_cooldown_persist()
+                        self._log(
+                            f"⚠️ Token {tok_masked} hit ZeroGPU quota/runs limit on '{space_name}' "
+                            f"(ceiling<{refused_gate:g}s for 1h); rotating..."
+                        )
                 elif active_token and _is_hf_token_auth_failure(err_lower):
+                    if is_pinned_walk and space_name == cur_pin:
+                        pinned_non_quota_failures += 1
                     # Part 5 (#3): confirm once via whoami-v2; if still failing (401/403),
                     # mark `auth_dead` for 24 h and exclude from all walks.
                     quarantined = False
@@ -1766,6 +1996,9 @@ class VoxCPMEngine:
                         f"🛑 Space '{space_name}' timed out (job_timeouts={job_to_cnt}, "
                         f"ledger_timeouts={ledger_to_cnt}); Space cooled down for 10m (token {tok_masked} kept active)"
                     )
+                else:
+                    if is_pinned_walk and space_name == cur_pin:
+                        pinned_non_quota_failures += 1
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {_format_pair_error(e_pair)}")
                 time.sleep(0.5)
 
@@ -1827,4 +2060,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TOKEN_BALANCE_BUCKET_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]

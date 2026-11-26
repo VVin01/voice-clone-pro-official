@@ -517,9 +517,11 @@ async def test_part6_session_gate_pricing_solvency_bestfit_and_reservations(sess
         assert hf_ledger.session_call_gate_s(chars) == expected
         assert hf_ledger.get_space_gate("awints001/voxcpm2-a", call_type="session", chars=chars) == expected
 
-    # 2. Legacy space gate stays untouched; session solvency & Best-Fit use session gate
+    # 2. Legacy space gate stays untouched; session solvency uses x1.5 door gate (137s for 850 chars)
+    #    while success debit still deducts the x1.0 session_call_gate_s (91s)!
     tok_70 = "hf_tok_70s"
     tok_95 = "hf_tok_95s"
+    tok_145 = "hf_tok_145s"
     tok_300 = "hf_tok_300s"
     now = time.time()
     hf_ledger.save_pool_state(
@@ -527,10 +529,10 @@ async def test_part6_session_gate_pricing_solvency_bestfit_and_reservations(sess
             "tokens": {
                 hf_ledger.token_digest(tok_70): {"status": "ok", "remaining_s": 70, "base_s": 300, "resets_at": "", "cooldown_until": "", "updated_at": ""},
                 hf_ledger.token_digest(tok_95): {"status": "ok", "remaining_s": 95, "base_s": 300, "resets_at": "", "cooldown_until": "", "updated_at": ""},
+                hf_ledger.token_digest(tok_145): {"status": "ok", "remaining_s": 145, "base_s": 300, "resets_at": "", "cooldown_until": "", "updated_at": ""},
                 hf_ledger.token_digest(tok_300): {"status": "ok", "remaining_s": 300, "base_s": 300, "resets_at": "", "cooldown_until": "", "updated_at": ""},
             },
-            # Legacy `/generate` gate recorded as 110s -> tok_95 would be skipped on legacy,
-            # but for an 850-char `/generate_session` call (gate = 91s) tok_95 IS solvent and Best-Fit!
+            # Legacy `/generate` gate recorded as 110s -> legacy space_gate must remain 110!
             "space_gates": {"awints001/voxcpm2-a": 110},
             "in_flight_gpu_s": 0,
         },
@@ -558,11 +560,11 @@ async def test_part6_session_gate_pricing_solvency_bestfit_and_reservations(sess
         classmethod(lambda cls, sp, hf_token=None: _FakeClient(hf_token)),
     )
 
-    text_850 = "က" * 850  # gate = min(120, 18 + ceil(850 * 0.085)) = 91.0s
+    text_850 = "က" * 850  # runtime gate = 91.0s; Part P2 x1.5 door gate = ceil(91 * 1.5) = 137.0s
     eng = vox_mod.VoxCPMEngine(
         work_dir=tmp_path / "w",
         spaces=["awints001/voxcpm2-a"],
-        hf_tokens=[tok_70, tok_300, tok_95],
+        hf_tokens=[tok_70, tok_95, tok_300, tok_145],
     )
     eng.synthesize(
         text_850,
@@ -571,11 +573,12 @@ async def test_part6_session_gate_pricing_solvency_bestfit_and_reservations(sess
         allow_fallback=False,
         session_mode=True,
     )
-    # tok_70 (<91s) skipped; tok_95 (>=91s, smallest sufficient) picked over tok_300; debited by 91s -> 4s left; legacy space_gate still 110!
-    assert used_tokens == [tok_95]
+    # tok_70 & tok_95 (<137s door gate) skipped; tok_145 (>=137s, smallest sufficient) picked over tok_300;
+    # debited by x1.0 runtime gate (91s) -> 54s left; legacy space_gate still 110!
+    assert used_tokens == [tok_145]
     st_after = hf_ledger.load_pool_state()
     assert st_after["space_gates"]["awints001/voxcpm2-a"] == 110
-    assert hf_ledger.get_token_remaining_s(tok_95, state=st_after) == pytest.approx(4.0)
+    assert hf_ledger.get_token_remaining_s(tok_145, state=st_after) == pytest.approx(54.0)
 
     # 3. Pre-job estimation & reservation toggle cleanly between Flag OFF (legacy) and Flag ON (session)
     monkeypatch.setattr(settings, "clone_session_slices_enabled", False)

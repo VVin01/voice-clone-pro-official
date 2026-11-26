@@ -345,8 +345,21 @@ function renderAdminKeyHealth() {
         let pills = admKeyPill(p.hf.ok === p.hf.total ? "ok" : "dead", `${p.hf.ok}/${p.hf.total} ${t("adm_keys_working")}`);
         if (p.hf.dead > 0) pills += " " + admKeyPill("dead", `${p.hf.dead} ${t("adm_keys_dead")}`);
         if (p.hf.error > 0) pills += " " + admKeyPill("dead", `${p.hf.error} ${t("adm_keys_error")}`);
-        const sub = `${t("adm_keys_quota_left")}: ${Math.round(p.hf.quota_remaining_s || 0).toLocaleString()} ${t("adm_keys_unit_s")}` +
-            (p.hf.quota_exhausted > 0 ? ` · ${p.hf.quota_exhausted} ${t("adm_keys_exhausted")}` : "");
+        if (p.hf.refusal_capped_tokens > 0) pills += " " + admKeyPill("limit", `${p.hf.refusal_capped_tokens} ${t("adm_keys_capped")}`);
+        if (p.hf.quota_probe_errors > 0) pills += " " + admKeyPill("limit", `${p.hf.quota_probe_errors} ${t("adm_keys_probe_err")}`);
+        let sub = `${t("adm_keys_quota_left")}: ${Math.round(p.hf.quota_remaining_s || 0).toLocaleString()} ${t("adm_keys_unit_s")}`;
+        if (p.hf.ledger_effective_s != null) {
+            sub += ` · ${t("adm_keys_ledger_eff")}: ${Math.round(p.hf.ledger_effective_s).toLocaleString()} ${t("adm_keys_unit_s")}`;
+        }
+        if (p.hf.session_ready_tokens != null) {
+            sub += ` · ${t("adm_keys_session_ready")}: ${p.hf.session_ready_tokens}`;
+        }
+        if (p.hf.quota_exhausted > 0) {
+            sub += ` · ${p.hf.quota_exhausted} ${t("adm_keys_exhausted")}`;
+        }
+        if (p.hf.last_drift_s > 0) {
+            sub += ` · ${t("adm_keys_drift")}: ${Math.round(p.hf.last_drift_s).toLocaleString()} ${t("adm_keys_unit_s")}`;
+        }
         rows.push(admKeyProviderRow("adm_keys_hf", pills, sub));
     }
     const keyRow = (prov, nameKey) => {
@@ -386,9 +399,15 @@ function renderAdminKeyHealthAccounts() {
     const accounts = (admKeyHealthData.providers?.hf?.accounts) || [];
     host.innerHTML = accounts.map(row => {
         const name = row.account || ("#" + row.index);
-        const remain = row.remaining_s == null ? "—"
+        let remain = row.remaining_s == null ? "—"
             : `${Math.round(row.remaining_s).toLocaleString()} / ${Math.round(row.base_s || 0).toLocaleString()} ${t("adm_keys_unit_s")}`;
-        const pill = admKeyPill(row.status === "ok" ? "ok" : "dead", row.status === "ok" ? t("adm_keys_working") : (row.status === "dead" ? t("adm_keys_dead") : t("adm_keys_error")));
+        if (row.ledger_remaining_s != null && row.remaining_s != null && Math.abs(row.ledger_remaining_s - row.remaining_s) > 15) {
+            remain += ` (${t("adm_keys_ledger_short")}: ${Math.round(row.ledger_remaining_s).toLocaleString()} ${t("adm_keys_unit_s")})`;
+        }
+        let pill = admKeyPill(row.status === "ok" ? "ok" : "dead", row.status === "ok" ? t("adm_keys_working") : (row.status === "dead" ? t("adm_keys_dead") : t("adm_keys_error")));
+        if (row.refused_gate_s != null) {
+            pill = admKeyPill("limit", `Gate-capped (<${Math.round(row.refused_gate_s)}s)`) + " " + pill;
+        }
         return `<div class="adm-key-row">` +
             `<div class="adm-key-main">` +
             `<span class="adm-key-name" title="${escapeHtml(name)}" onclick="this.classList.toggle('is-expanded')">${escapeHtml(name)}</span>` +

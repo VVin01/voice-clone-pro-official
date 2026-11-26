@@ -62,6 +62,9 @@ ENV_HASH_STORE_KEY = "aj_hf:env_hash"
 CACHE_TTL_SECONDS = 30.0
 AUTH_DEAD_QUARANTINE_SECONDS = 86400.0  # 24 hours
 QUOTA_DEAD_COOLDOWN_SECONDS = 1800.0    # 30 minutes
+REFUSAL_CEILING_TTL_SECONDS = 3600.0    # 60 minutes per-token scoped refusal ceiling (Part P1)
+REFUSAL_REFILL_CLEAR_DELTA_S = 25.0     # >= 25 s probed increase clears refusal ceiling (Part P1.4)
+SESSION_READY_MIN_GPU_S = 145.0         # Admin key-health session-ready threshold (Part Q4.3)
 SPACE_TIMEOUT_COOLDOWN_SECONDS = 600.0  # 10 minutes per-Space timeout circuit breaker (Part C1)
 IN_FLIGHT_STALE_SECONDS = 7200.0        # 2 hours safety GC
 MIN_USABLE_DUST_GATE_S = 25.0           # <25 s "quota dust" never counts as capacity
@@ -71,18 +74,29 @@ PRE_JOB_SAFETY_MULTIPLIER = 1.20
 RESUMER_SAFETY_MULTIPLIER = 1.25
 
 # Session-slice `/generate_session` dynamic GPU gate pricing (2026-11-26):
-# `min(120, 18 + ceil(chars * 0.085))` GPU-seconds.
+# Runtime / reservation debit: `min(120, 18 + ceil(chars * 0.085))` GPU-seconds (x1.0).
+# Admission door check (Part P2): `min(180.0, ceil(session_call_gate_s(chars) * 1.5))` GPU-seconds.
 SESSION_CALL_BASE_GPU_S = 18
 SESSION_CALL_PER_CHAR_GPU_S = 0.085
 SESSION_CALL_MAX_GPU_S = 120
+SESSION_ADMISSION_GATE_MULTIPLIER = 1.5
+SESSION_ADMISSION_MAX_GPU_S = 180.0
 
 
 def session_call_gate_s(chars: int) -> float:
-    """Return the GPU-second gate for a `/generate_session` call of `chars` characters:
+    """Return the GPU-second runtime/debit gate for a `/generate_session` call of `chars` characters:
     `min(120, 18 + ceil(chars * 0.085))`."""
     n = max(0, int(chars or 0))
     added = int(math.ceil(round(n * SESSION_CALL_PER_CHAR_GPU_S, 9)))
     return float(min(SESSION_CALL_MAX_GPU_S, SESSION_CALL_BASE_GPU_S + added))
+
+
+def session_admission_gate_s(chars: int) -> float:
+    """Part P2: return the x1.5 HF ZeroGPU door admission gate (capped at 180.0 s)
+    used strictly for `/generate_session` token solvency selection."""
+    raw_gate = session_call_gate_s(chars)
+    door_s = int(math.ceil(round(raw_gate * SESSION_ADMISSION_GATE_MULTIPLIER, 9)))
+    return float(min(SESSION_ADMISSION_MAX_GPU_S, door_s))
 
 WATERMARK_NORMAL_MIN = 0.40             # > 40%
 WATERMARK_CONSERVATION_MIN = 0.20       # 40% -> 20%
@@ -102,6 +116,7 @@ _lock = threading.RLock()
 _mem_state: dict[str, Any] | None = None
 _mem_loaded_mono: float = 0.0
 _mem_in_flight_jobs: dict[str, dict[str, float]] = {}
+_refusal_rem_baseline: dict[str, float] = {}
 _last_seen_env_hash: str | None = None
 _known_token_digests: set[str] = set()
 
@@ -190,15 +205,35 @@ def _normalize_token_row(raw: Any, now_ts: float | None = None) -> dict[str, Any
     elif status == "ok" and cd_ts is not None and cd_ts <= now:
         cooldown_str = ""
 
-    # Auto-refill rolling window once resets_at has passed.
-    rst_ts = _parse_ts(resets_str)
-    if status == "ok" and rst_ts is not None and rst_ts <= now and base > 0 and rem < base:
-        rem = base
-        resets_str = ""
+    # Part P1.5c: ZeroGPU uses a rolling 24 h window where `resets_at` marks only when
+    # the oldest usage ages out — NEVER snap `remaining_s` back to full `base_s` here;
+    # leave the measured value intact and let the 15-min probe reconcile true recovery.
+
+    # Part P1.1: optional scoped refusal ceiling (`refused_gate_s`, `refused_until`).
+    # Omitted whenever unset, expired, or `auth_dead` so untouched rows keep exact shape.
+    rg_val: float | None = None
+    ru_str: str = ""
+    if status == "ok":
+        raw_rg = raw.get("refused_gate_s")
+        raw_ru = raw.get("refused_until")
+        if raw_rg is not None and raw_ru not in (None, ""):
+            try:
+                cand_rg = float(raw_rg)
+            except (TypeError, ValueError):
+                cand_rg = 0.0
+            cand_ru = (
+                _iso_utc(float(raw_ru))
+                if isinstance(raw_ru, (int, float)) and float(raw_ru) > 0
+                else str(raw_ru).strip()
+            )
+            ru_ts = _parse_ts(cand_ru)
+            if cand_rg > 0 and ru_ts is not None and ru_ts > now:
+                rg_val = round(cand_rg, 2)
+                ru_str = cand_ru
 
     updated_raw = raw.get("updated_at")
     updated_str = str(updated_raw) if updated_raw not in (None, "") else _iso_utc(now)
-    return {
+    row_out: dict[str, Any] = {
         "status": status,
         "remaining_s": round(max(0.0, rem), 2),
         "base_s": round(max(0.0, base), 2),
@@ -206,6 +241,10 @@ def _normalize_token_row(raw: Any, now_ts: float | None = None) -> dict[str, Any
         "cooldown_until": cooldown_str,
         "updated_at": updated_str,
     }
+    if rg_val is not None and ru_str:
+        row_out["refused_gate_s"] = rg_val
+        row_out["refused_until"] = ru_str
+    return row_out
 
 
 def normalize_pool_state(raw: Any, *, now_ts: float | None = None) -> dict[str, Any]:
@@ -270,6 +309,23 @@ def normalize_pool_state(raw: Any, *, now_ts: float | None = None) -> dict[str, 
             if cnt > 0:
                 space_tos_out[sp_key] = cnt
 
+    raw_drift = raw.get("drift_stats")
+    drift_out: dict[str, int | float] | None = None
+    if isinstance(raw_drift, Mapping) and raw_drift:
+        try:
+            pos_d = round(max(0.0, float(raw_drift.get("positive_drift_s") or 0.0)), 2)
+            over_cnt = max(0, int(raw_drift.get("overestimated_tokens") or 0))
+            max_d = round(max(0.0, float(raw_drift.get("max_token_drift_s") or 0.0)), 2)
+            err_cnt = max(0, int(raw_drift.get("quota_probe_errors") or 0))
+            drift_out = {
+                "positive_drift_s": pos_d,
+                "overestimated_tokens": over_cnt,
+                "max_token_drift_s": max_d,
+                "quota_probe_errors": err_cnt,
+            }
+        except (TypeError, ValueError):
+            drift_out = None
+
     out: dict[str, Any] = {
         "tokens": tokens_out,
         "space_gates": gates_out,
@@ -279,6 +335,8 @@ def normalize_pool_state(raw: Any, *, now_ts: float | None = None) -> dict[str, 
         out["space_cooldowns"] = space_cds_out
     if space_tos_out:
         out["space_timeouts"] = space_tos_out
+    if drift_out is not None:
+        out["drift_stats"] = drift_out
     return out
 
 
@@ -373,11 +431,12 @@ def save_pool_state(state: Mapping[str, Any], *, now_ts: float | None = None) ->
 
 def reset_ledger_for_tests(*, clear_store: bool = False) -> None:
     """Reset in-memory cache (and optionally persisted KV keys) between unit tests."""
-    global _mem_state, _mem_loaded_mono, _mem_in_flight_jobs, _last_seen_env_hash, _known_token_digests
+    global _mem_state, _mem_loaded_mono, _mem_in_flight_jobs, _refusal_rem_baseline, _last_seen_env_hash, _known_token_digests
     with _lock:
         _mem_state = None
         _mem_loaded_mono = 0.0
         _mem_in_flight_jobs = {}
+        _refusal_rem_baseline = {}
         _last_seen_env_hash = None
         _known_token_digests = set()
         if clear_store:
@@ -492,6 +551,144 @@ def get_space_gate(
     return float(default)
 
 
+def _extract_active_ceiling(
+    row: Mapping[str, Any] | None, now_ts: float
+) -> tuple[float | None, str | None]:
+    """Return `(refused_gate_s, refused_until)` if `row` has an active refusal ceiling, else `(None, None)`."""
+    if not isinstance(row, Mapping):
+        return None, None
+    if str(row.get("status") or "ok").strip().lower() == "auth_dead":
+        return None, None
+    rg_raw = row.get("refused_gate_s")
+    ru_raw = row.get("refused_until")
+    if rg_raw is None or ru_raw in (None, ""):
+        return None, None
+    try:
+        rg = float(rg_raw)
+    except (TypeError, ValueError):
+        return None, None
+    ru_str = (
+        _iso_utc(float(ru_raw))
+        if isinstance(ru_raw, (int, float)) and float(ru_raw) > 0
+        else str(ru_raw).strip()
+    )
+    ru_ts = _parse_ts(ru_str)
+    if rg > 0 and ru_ts is not None and ru_ts > now_ts:
+        return round(rg, 2), ru_str
+    return None, None
+
+
+def _copy_active_ceiling(
+    src_row: Mapping[str, Any] | None, dst_row: dict[str, Any], now_ts: float
+) -> None:
+    rg, ru = _extract_active_ceiling(src_row, now_ts)
+    if rg is not None and ru:
+        dst_row["refused_gate_s"] = rg
+        dst_row["refused_until"] = ru
+
+
+def get_token_refused_gate_s(
+    token_or_row: str | Mapping[str, Any] | None,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> float | None:
+    """Part P1: return active `refused_gate_s` for `token_or_row` if `refused_until > now`, else None."""
+    if not token_or_row:
+        return None
+    now = time.time() if now_ts is None else float(now_ts)
+    if isinstance(token_or_row, Mapping):
+        rg, _ru = _extract_active_ceiling(token_or_row, now)
+        return rg
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    _d, row = lookup_token_entry(st, str(token_or_row))
+    rg, _ru = _extract_active_ceiling(row, now)
+    return rg
+
+
+def get_token_refused_until(
+    token_or_row: str | Mapping[str, Any] | None,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> str | None:
+    """Part P1: return active ISO `refused_until` for `token_or_row` if `> now`, else None."""
+    if not token_or_row:
+        return None
+    now = time.time() if now_ts is None else float(now_ts)
+    if isinstance(token_or_row, Mapping):
+        _rg, ru = _extract_active_ceiling(token_or_row, now)
+        return ru
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    _d, row = lookup_token_entry(st, str(token_or_row))
+    _rg, ru = _extract_active_ceiling(row, now)
+    return ru
+
+
+def is_token_refusal_capped(
+    token: str | None,
+    req_gate_s: float,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> bool:
+    """Part P1.3: True when `token` has an active refusal ceiling and `req_gate_s >= refused_gate_s`."""
+    if not token or req_gate_s is None:
+        return False
+    rg = get_token_refused_gate_s(token, state=state, now_ts=now_ts)
+    if rg is None:
+        return False
+    return float(req_gate_s) >= float(rg)
+
+
+def record_refusal_ceiling(
+    token: str | None,
+    gate_s: float,
+    *,
+    ttl_seconds: float = REFUSAL_CEILING_TTL_SECONDS,
+    now_ts: float | None = None,
+) -> dict[str, Any] | None:
+    """Part P1.2: record a scoped refusal ceiling (`refused_gate_s = min(existing, gate_s)`,
+    `refused_until = now + 3600s`) without hard-zeroing `remaining_s`."""
+    if not token or not str(token).strip() or gate_s is None or float(gate_s) <= 0:
+        return None
+    now = time.time() if now_ts is None else float(now_ts)
+    req_g = round(max(0.01, float(gate_s)), 2)
+    with _lock:
+        st = load_pool_state(force=True, now_ts=now)
+        d_key, existing = lookup_token_entry(st, token)
+        existing_rem = (existing or {}).get("remaining_s")
+        rem_s = float(existing_rem) if existing_rem is not None else DEFAULT_TOKEN_BASE_S
+        base_s = float((existing or {}).get("base_s") or max(DEFAULT_TOKEN_BASE_S, rem_s))
+        existing_rg, _existing_ru = _extract_active_ceiling(existing, now)
+        new_rg = round(min(existing_rg, req_g), 2) if existing_rg is not None else req_g
+        if d_key not in _refusal_rem_baseline or existing_rg is None:
+            _refusal_rem_baseline[d_key] = rem_s
+        else:
+            _refusal_rem_baseline[d_key] = min(_refusal_rem_baseline[d_key], rem_s)
+        st["tokens"][d_key] = {
+            "status": "ok",
+            "remaining_s": round(max(0.0, rem_s), 2),
+            "base_s": round(max(0.0, base_s), 2),
+            "resets_at": (existing or {}).get("resets_at") or _iso_utc(now + 86400.0),
+            "cooldown_until": (existing or {}).get("cooldown_until") or "",
+            "updated_at": _iso_utc(now),
+            "refused_gate_s": new_rg,
+            "refused_until": _iso_utc(now + max(0.0, float(ttl_seconds))),
+        }
+        return save_pool_state(st, now_ts=now)
+
+
+def get_drift_stats(
+    *, state: Mapping[str, Any] | None = None, now_ts: float | None = None
+) -> dict[str, int | float] | None:
+    """Part Q4.2: return persisted reconciler `drift_stats` dict if recorded, else None."""
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    ds = st.get("drift_stats")
+    return dict(ds) if isinstance(ds, Mapping) else None
+
+
 def record_admission_refusal(
     space_name: str,
     token: str | None,
@@ -504,7 +701,7 @@ def record_admission_refusal(
     """Update `space_gates[space_name]` (when `update_space_gate` is True) and `token`'s `remaining_s` from a refusal."""
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
-        st = load_pool_state(now_ts=now)
+        st = load_pool_state(force=True, now_ts=now)
         if update_space_gate and space_name and requested_s > 0:
             st["space_gates"][str(space_name)] = (
                 int(requested_s) if float(requested_s).is_integer() else round(float(requested_s), 2)
@@ -512,7 +709,7 @@ def record_admission_refusal(
         if token and str(token).strip():
             d_key, existing = lookup_token_entry(st, token)
             base_s = float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S) if existing else DEFAULT_TOKEN_BASE_S
-            st["tokens"][d_key] = {
+            row_out: dict[str, Any] = {
                 "status": "ok",
                 "remaining_s": round(max(0.0, float(left_s)), 2),
                 "base_s": round(max(base_s, float(left_s)), 2),
@@ -520,6 +717,9 @@ def record_admission_refusal(
                 "cooldown_until": (existing or {}).get("cooldown_until") or "",
                 "updated_at": _iso_utc(now),
             }
+            _copy_active_ceiling(existing, row_out, now)
+            _refusal_rem_baseline[d_key] = round(max(0.0, float(left_s)), 2)
+            st["tokens"][d_key] = row_out
         return save_pool_state(st, now_ts=now)
 
 
@@ -535,10 +735,17 @@ def record_success_debit(
         return None
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
-        st = load_pool_state(now_ts=now)
+        st = load_pool_state(force=True, now_ts=now)
         d_key, existing = lookup_token_entry(st, token)
-        gate = float(debit_s) if (debit_s is not None and debit_s > 0) else get_space_gate(space_name, state=st, default=0.0)
-        if existing is None and gate <= 0:
+        # Part P1.5b: default unknown-Space legacy/recap gate to DEFAULT_SPACE_GATE_S (60.0 s) instead of 0.0.
+        known_gate = (
+            float(debit_s)
+            if (debit_s is not None and debit_s > 0)
+            else get_space_gate(space_name, state=st, default=0.0)
+        )
+        is_fallback_gate = known_gate <= 0.0
+        gate = DEFAULT_SPACE_GATE_S if is_fallback_gate else known_gate
+        if existing is None and (not st.get("tokens") or gate <= 0):
             return st
         if existing is None:
             base_s = max(DEFAULT_TOKEN_BASE_S, gate)
@@ -546,10 +753,16 @@ def record_success_debit(
             resets_at = _iso_utc(now + 86400.0)
         else:
             base_s = float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S)
-            old_rem = float(existing.get("remaining_s") or 0.0)
-            new_rem = max(0.0, old_rem - gate) if gate > 0 else old_rem
+            existing_rem = existing.get("remaining_s")
+            old_rem = float(existing_rem) if existing_rem is not None else 0.0
+            eff_debit = (
+                round(old_rem * 0.5, 2)
+                if (is_fallback_gate and 0.0 < old_rem < gate)
+                else gate
+            )
+            new_rem = max(0.0, old_rem - eff_debit) if eff_debit > 0 else old_rem
             resets_at = existing.get("resets_at") or _iso_utc(now + 86400.0)
-        st["tokens"][d_key] = {
+        row_out: dict[str, Any] = {
             "status": "ok",
             "remaining_s": round(new_rem, 2),
             "base_s": round(base_s, 2),
@@ -557,6 +770,8 @@ def record_success_debit(
             "cooldown_until": "",
             "updated_at": _iso_utc(now),
         }
+        _copy_active_ceiling(existing, row_out, now)
+        st["tokens"][d_key] = row_out
         return save_pool_state(st, now_ts=now)
 
 
@@ -699,11 +914,13 @@ def handle_auth_failure(
     probe = whoami_fn or probe_whoami_status
     status_code, _acct = probe(str(token).strip())
     with _lock:
-        st = load_pool_state(now_ts=now)
+        st = load_pool_state(force=True, now_ts=now)
         d_key, existing = lookup_token_entry(st, token)
         base_s = float((existing or {}).get("base_s") or DEFAULT_TOKEN_BASE_S)
         resets_at = (existing or {}).get("resets_at") or ""
+        existing_rem = (existing or {}).get("remaining_s")
         if status_code in (401, 403):
+            _refusal_rem_baseline.pop(d_key, None)
             st["tokens"][d_key] = {
                 "status": "auth_dead",
                 "remaining_s": 0.0,
@@ -715,8 +932,8 @@ def handle_auth_failure(
             save_pool_state(st, now_ts=now)
             return True
         if status_code == 200:
-            rem_s = float((existing or {}).get("remaining_s") or base_s)
-            st["tokens"][d_key] = {
+            rem_s = float(existing_rem) if existing_rem is not None else base_s
+            row_ok: dict[str, Any] = {
                 "status": "ok",
                 "remaining_s": round(rem_s, 2),
                 "base_s": round(base_s, 2),
@@ -724,11 +941,13 @@ def handle_auth_failure(
                 "cooldown_until": "",
                 "updated_at": _iso_utc(now),
             }
+            _copy_active_ceiling(existing, row_ok, now)
+            st["tokens"][d_key] = row_ok
             save_pool_state(st, now_ts=now)
             return False
         # Transport error on confirmation probe: conservative 30m cooldown, status stays ok.
-        rem_s = float((existing or {}).get("remaining_s") or 0.0)
-        st["tokens"][d_key] = {
+        rem_s = float(existing_rem) if existing_rem is not None else 0.0
+        row_cd: dict[str, Any] = {
             "status": "ok",
             "remaining_s": round(rem_s, 2),
             "base_s": round(base_s, 2),
@@ -736,6 +955,8 @@ def handle_auth_failure(
             "cooldown_until": _iso_utc(now + QUOTA_DEAD_COOLDOWN_SECONDS),
             "updated_at": _iso_utc(now),
         }
+        _copy_active_ceiling(existing, row_cd, now)
+        st["tokens"][d_key] = row_cd
         save_pool_state(st, now_ts=now)
         return False
 
@@ -746,11 +967,18 @@ def reconcile_from_probe_rows(
     *,
     now_ts: float | None = None,
 ) -> dict[str, Any]:
-    """Reconcile exact `remaining_s` / `base_s` / `resets_at` / `auth_dead` from probes."""
+    """Reconcile exact `remaining_s` / `base_s` / `resets_at` / `auth_dead` from probes,
+    preserving active refusal ceilings unless probed balance rose >= 25 s (Part P1.4)
+    and recording additive `drift_stats` (Part Q4.2)."""
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
         st = load_pool_state(force=True, now_ts=now)
         active_digests: set[str] = set()
+        positive_drift_s = 0.0
+        overestimated_tokens = 0
+        max_token_drift_s = 0.0
+        quota_probe_errors = 0
+
         for idx, tok in enumerate(tokens):
             if not tok or not str(tok).strip():
                 continue
@@ -762,7 +990,10 @@ def reconcile_from_probe_rows(
             active_digests.add(full_d)
             row = rows[idx] if idx < len(rows) and isinstance(rows[idx], Mapping) else {}
             probe_status = str(row.get("status") or "").lower()
+            existing_rem = (existing or {}).get("remaining_s")
+
             if probe_status == "dead":
+                _refusal_rem_baseline.pop(full_d, None)
                 base_s = float(row.get("base_s") or (existing or {}).get("base_s") or 0.0)
                 st["tokens"][full_d] = {
                     "status": "auth_dead",
@@ -775,13 +1006,45 @@ def reconcile_from_probe_rows(
             elif probe_status == "ok":
                 rem_val = row.get("remaining_s")
                 base_val = row.get("base_s")
-                rem_s = float(rem_val) if rem_val is not None else float((existing or {}).get("remaining_s") or DEFAULT_TOKEN_BASE_S)
-                base_s = float(base_val) if base_val is not None else float((existing or {}).get("base_s") or max(DEFAULT_TOKEN_BASE_S, rem_s))
+                if row.get("quota_error") is not None or rem_val is None:
+                    quota_probe_errors += 1
+
+                # Part Q4.2: measure pre-overwrite ledger drift against probed ground truth.
+                if (
+                    rem_val is not None
+                    and existing is not None
+                    and str(existing.get("status") or "ok") != "auth_dead"
+                    and existing_rem is not None
+                ):
+                    delta = float(existing_rem) - float(rem_val)
+                    if delta > 0.0:
+                        positive_drift_s += delta
+                        if delta > max_token_drift_s:
+                            max_token_drift_s = delta
+                        if delta > 25.0:
+                            overestimated_tokens += 1
+
+                # Part P1.5a: explicit `is not None` check so `0.0` survives `rem_val=None` probe errors!
+                if rem_val is not None:
+                    rem_s = float(rem_val)
+                elif existing_rem is not None:
+                    rem_s = float(existing_rem)
+                else:
+                    rem_s = DEFAULT_TOKEN_BASE_S
+
+                base_s = (
+                    float(base_val)
+                    if base_val is not None
+                    else float((existing or {}).get("base_s") or max(DEFAULT_TOKEN_BASE_S, rem_s))
+                )
                 resets_at = str(row.get("quota_resets_at") or (existing or {}).get("resets_at") or "")
                 cd_until = ""
                 if rem_s <= 0:
                     cd_until = (existing or {}).get("cooldown_until") or _iso_utc(now + QUOTA_DEAD_COOLDOWN_SECONDS)
-                st["tokens"][full_d] = {
+                elif rem_val is None:
+                    cd_until = str((existing or {}).get("cooldown_until") or "")
+
+                new_row: dict[str, Any] = {
                     "status": "ok",  # probe 200 auto-clears any prior auth_dead
                     "remaining_s": round(max(0.0, rem_s), 2),
                     "base_s": round(max(0.0, base_s), 2),
@@ -789,6 +1052,30 @@ def reconcile_from_probe_rows(
                     "cooldown_until": cd_until,
                     "updated_at": _iso_utc(now),
                 }
+
+                # Part P1.4: preserve active refusal ceiling UNLESS probed balance rose >= 25 s
+                # over the balance recorded at refusal time (genuine rolling refill).
+                existing_rg, existing_ru = _extract_active_ceiling(existing, now)
+                if existing_rg is not None and existing_ru:
+                    baseline_rem = _refusal_rem_baseline.get(full_d)
+                    if baseline_rem is None and existing_rem is not None:
+                        baseline_rem = float(existing_rem)
+                    refilled = (
+                        rem_val is not None
+                        and baseline_rem is not None
+                        and (float(rem_val) - float(baseline_rem)) >= REFUSAL_REFILL_CLEAR_DELTA_S
+                    )
+                    if refilled:
+                        _refusal_rem_baseline.pop(full_d, None)
+                    else:
+                        new_row["refused_gate_s"] = existing_rg
+                        new_row["refused_until"] = existing_ru
+                        if baseline_rem is None and rem_val is not None:
+                            _refusal_rem_baseline[full_d] = float(rem_val)
+                else:
+                    _refusal_rem_baseline.pop(full_d, None)
+
+                st["tokens"][full_d] = new_row
             else:
                 if existing is not None:
                     st["tokens"][full_d] = existing
@@ -798,6 +1085,23 @@ def reconcile_from_probe_rows(
             st["tokens"] = {
                 k: v for k, v in st["tokens"].items() if k in active_digests
             }
+
+        drift_stats = {
+            "positive_drift_s": round(positive_drift_s, 2),
+            "overestimated_tokens": int(overestimated_tokens),
+            "max_token_drift_s": round(max_token_drift_s, 2),
+            "quota_probe_errors": int(quota_probe_errors),
+        }
+        st["drift_stats"] = drift_stats
+        logger.info(
+            "hf_pool_reconcile_summary tokens=%d positive_drift_s=%.1f overestimated_tokens=%d "
+            "max_token_drift_s=%.1f quota_probe_errors=%d",
+            len(active_digests),
+            drift_stats["positive_drift_s"],
+            drift_stats["overestimated_tokens"],
+            drift_stats["max_token_drift_s"],
+            drift_stats["quota_probe_errors"],
+        )
         return save_pool_state(st, now_ts=now)
 
 
@@ -1283,11 +1587,16 @@ __all__ = [
     "MIN_USABLE_DUST_GATE_S",
     "POOL_STATE_STORE_KEY",
     "PRE_JOB_SAFETY_MULTIPLIER",
-    " PoolMetrics" if False else "PoolMetrics",
+    "PoolMetrics",
+    "REFUSAL_CEILING_TTL_SECONDS",
+    "REFUSAL_REFILL_CLEAR_DELTA_S",
     "RESUMER_SAFETY_MULTIPLIER",
+    "SESSION_ADMISSION_GATE_MULTIPLIER",
+    "SESSION_ADMISSION_MAX_GPU_S",
     "SESSION_CALL_BASE_GPU_S",
     "SESSION_CALL_MAX_GPU_S",
     "SESSION_CALL_PER_CHAR_GPU_S",
+    "SESSION_READY_MIN_GPU_S",
     "SPACE_TIMEOUT_COOLDOWN_SECONDS",
     "acquire_in_flight_gpu",
     "compute_env_tokens_hash",
@@ -1295,15 +1604,19 @@ __all__ = [
     "estimate_refill_eta_label",
     "estimate_voxcpm_units_and_budget",
     "evaluate_voxcpm_admission",
+    "get_drift_stats",
     "get_space_cooldown_until",
     "get_space_gate",
     "get_space_timeout_counts",
-    " get_token_remaining_s".strip(),
+    "get_token_refused_gate_s",
+    "get_token_refused_until",
+    "get_token_remaining_s",
     "handle_auth_failure",
     "has_resumer_capacity",
     "is_space_cooling",
     "is_token_auth_dead",
     "is_token_cooling",
+    "is_token_refusal_capped",
     "load_pool_state",
     "lookup_token_entry",
     "normalize_pool_state",
@@ -1312,11 +1625,13 @@ __all__ = [
     "reconcile_if_env_changed",
     "record_admission_refusal",
     "record_quota_dead",
+    "record_refusal_ceiling",
     "record_space_timeout",
     "record_success_debit",
     "release_in_flight_gpu",
     "reset_ledger_for_tests",
     "save_pool_state",
+    "session_admission_gate_s",
     "session_call_gate_s",
     "token_digest",
     "watermark_band_for_fraction",

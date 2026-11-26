@@ -886,7 +886,7 @@ def _synthesize_voxcpm_voice_job(
                             continue
 
                 part_s = output_wav.parent / f"{output_wav.stem}.slice{idx:02d}.wav"
-                slice_gate_s = _hf_ledger.session_call_gate_s(len(slice_text))
+                slice_gate_s = _hf_ledger.session_admission_gate_s(len(slice_text))
                 sess_kw: dict[str, Any] = {
                     "text": slice_text,
                     "output_wav": part_s,
@@ -1057,7 +1057,7 @@ def _synthesize_voxcpm_voice_job(
                     "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
                     "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
                     "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
-                    "space_timeouts=%s",
+                    "space_timeouts=%s quota_refusals=%d refusal_wall_s=%.2f ceiling_skips=%d max_fit_jumps=%d",
                     job_id,
                     len(assembled_parts),
                     0,
@@ -1077,6 +1077,10 @@ def _synthesize_voxcpm_voice_job(
                     False,
                     pinned_sp_str,
                     dict(getattr(engine, "space_timeouts", None) or {}),
+                    int(getattr(engine, "quota_refusals", 0) or 0),
+                    float(getattr(engine, "refusal_wall_s", 0.0) or 0.0),
+                    int(getattr(engine, "ceiling_skips", 0) or 0),
+                    int(getattr(engine, "max_fit_jumps", 0) or 0),
                 )
             else:
                 # Part 5: ANY slice fell back -> run prosody pass over assembled audio as legacy path does today.
@@ -1129,7 +1133,7 @@ def _synthesize_voxcpm_voice_job(
                     "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
                     "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
                     "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
-                    "space_timeouts=%s",
+                    "space_timeouts=%s quota_refusals=%d refusal_wall_s=%.2f ceiling_skips=%d max_fit_jumps=%d",
                     job_id,
                     len(assembled_parts),
                     0,
@@ -1149,6 +1153,10 @@ def _synthesize_voxcpm_voice_job(
                     True,
                     pinned_sp_str,
                     dict(getattr(engine, "space_timeouts", None) or {}),
+                    int(getattr(engine, "quota_refusals", 0) or 0),
+                    float(getattr(engine, "refusal_wall_s", 0.0) or 0.0),
+                    int(getattr(engine, "ceiling_skips", 0) or 0),
+                    int(getattr(engine, "max_fit_jumps", 0) or 0),
                 )
         finally:
             stitched_wav_sess.unlink(missing_ok=True)
@@ -1505,7 +1513,7 @@ def _synthesize_voxcpm_voice_job(
             "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
             "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
             "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
-            "space_timeouts=%s",
+            "space_timeouts=%s quota_refusals=%d refusal_wall_s=%.2f ceiling_skips=%d max_fit_jumps=%d",
             job_id,
             len(chunks),
             job_prosody_retries,
@@ -1525,6 +1533,10 @@ def _synthesize_voxcpm_voice_job(
             False,
             legacy_pinned_sp,
             dict(getattr(engine, "space_timeouts", None) or {}),
+            int(getattr(engine, "quota_refusals", 0) or 0),
+            float(getattr(engine, "refusal_wall_s", 0.0) or 0.0),
+            int(getattr(engine, "ceiling_skips", 0) or 0),
+            int(getattr(engine, "max_fit_jumps", 0) or 0),
         )
     finally:
         stitched_wav.unlink(missing_ok=True)
