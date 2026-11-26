@@ -39,6 +39,12 @@ def _bind_cache_key(session: AsyncSession) -> tuple[int, str] | None:
 
 def invalidate_dynamic_settings_cache(key: str | None = None) -> None:
     """Invalidate cached BotSetting entries (one key or all keys across binds)."""
+    if key in (None, "gemini_tts_prompt_shape"):
+        import sys as _sys
+
+        _gtts_mod = _sys.modules.get("app.services.recap_engine.gemini_tts_engine")
+        if _gtts_mod is not None and hasattr(_gtts_mod, "reset_prompt_shape_cache"):
+            _gtts_mod.reset_prompt_shape_cache()
     if key is None:
         _DYNAMIC_SETTINGS_CACHE.clear()
         return
@@ -136,6 +142,7 @@ SETTING_TYPES: dict[str, type] = {
     "gemini_tts_lite_model": str,
     "gemini_tts_fallback_2": str,
     "gemini_tts_leak_gate_mode": str,
+    "gemini_tts_prompt_shape": str,
     "clone_prosody_phase3_enabled": bool,
     "chunk_balancing_v2_enabled": bool,
     "clone_session_slices_enabled": bool,

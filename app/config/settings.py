@@ -359,6 +359,7 @@ class Settings(BaseSettings):
     gemini_tts_lite_model: str = Field(default="gemini-3.8-flash-lite-tts", alias="GEMINI_TTS_LITE_MODEL")
     gemini_tts_fallback_2: str = Field(default="", alias="GEMINI_TTS_FALLBACK_2")
     gemini_tts_leak_gate_mode: str = Field(default="shadow", alias="GEMINI_TTS_LEAK_GATE_MODE")
+    gemini_tts_prompt_shape: str = Field(default="c1", alias="GEMINI_TTS_PROMPT_SHAPE")
 
     # Clone Prosody Phase 3 kill switches (default ON; False restores Phase 2 behavior byte-for-byte)
     clone_prosody_phase3_enabled: bool = Field(default=True, alias="CLONE_PROSODY_PHASE3_ENABLED")

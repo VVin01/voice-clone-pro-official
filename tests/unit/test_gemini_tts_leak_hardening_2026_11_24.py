@@ -107,11 +107,11 @@ def test_23_key_pool_escalates_to_lite_after_two_leak_rejects(tmp_path, monkeypa
     assert seen_calls[1][1] == "gemini-3.8-flash-tts"
     assert seen_calls[2][1] == "gemini-3.8-flash-lite-tts"
 
-    # Attempt 1 used narrator_prompt_short; attempts 2 & 3 stripped to bare cleaned transcript!
-    assert "storyteller" in seen_calls[0][2].lower()
+    # Attempt 1 used default prompt shape c1 ([warm, lively storytelling]); attempts 2 & 3 stripped to bare cleaned transcript!
+    assert seen_calls[0][2] == f"[warm, lively storytelling] {cleaned}"
     assert seen_calls[1][2] == cleaned
     assert seen_calls[2][2] == cleaned
-    assert "storyteller" not in seen_calls[1][2].lower()
+    assert "storytelling" not in seen_calls[1][2].lower()
     assert "[" not in seen_calls[1][2]
 
 

@@ -124,6 +124,12 @@ class _Recorder:
 
 
 def _engine(tmp_path, monkeypatch, recorder, keys=("k1",)):
+    from app.config import settings
+
+    # Pin legacy Arm 'a' (Batch DO's two-line narrator_prompt_short shape) for these
+    # historical Batch DO tests; Leak Phase 2 flipped the default to 'c1'.
+    monkeypatch.setattr(settings, "gemini_tts_prompt_shape", "a")
+    gte.reset_prompt_shape_cache()
     monkeypatch.setattr(gte, "_client", recorder.client)
     return gte.GeminiTTSEngine(
         ffmpeg="ffmpeg", work_dir=tmp_path, keys=list(keys),

@@ -147,21 +147,8 @@ PROBE_CHUNKS: tuple[dict[str, Any], ...] = (
 
 
 def build_arm_request(arm: str, text: str, voice: str) -> tuple[str | None, str]:
-    """Return ``(system_instruction, contents)`` for the given arm."""
-    arm_u = arm.strip().upper()
-    cleaned = gte._clean_tts_text(text)
-    short_full = gte.narrator_prompt_short(text, voice)
-    line1 = short_full.split("\n", 1)[0].strip()
-
-    if arm_u == "A":
-        return None, short_full
-    if arm_u == "B":
-        return line1, f"[expressive storytelling] {cleaned}"
-    if arm_u == "C1":
-        return None, f"[warm, lively storytelling] {cleaned}"
-    if arm_u == "C2":
-        return None, cleaned
-    raise ValueError(f"Unknown arm '{arm}'. Valid arms: {', '.join(DEFAULT_ARMS)}")
+    """Return ``(system_instruction, contents)`` via the canonical engine builder."""
+    return gte.build_gemini_tts_payload(text, voice, shape=arm, strict_shape=True)
 
 
 def _write_wav(path: Path, pcm: bytes, channels: int, sampwidth: int, framerate: int) -> None:
@@ -248,8 +235,6 @@ def main(argv: list[str] | None = None) -> int:
         _print_usage_footer()
         return 1
 
-    from google.genai import types
-
     max_calls = max(1, min(HARD_MAX_API_CALLS, int(args.max_calls)))
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -284,23 +269,16 @@ def main(argv: list[str] | None = None) -> int:
                 raw_text = str(item["text"])
                 cleaned_text = gte._clean_tts_text(raw_text)
                 cleaned_chars = len(cleaned_text)
-                sys_inst, contents = build_arm_request(arm, raw_text, voice)
+                contents, config = gte.build_gemini_tts_request(
+                    raw_text,
+                    voice,
+                    shape=arm,
+                    strict_shape=True,
+                )
 
                 chosen_key = ordered_keys[key_cursor % len(ordered_keys)]
                 key_cursor += 1
                 key_digest = kr.key_id(chosen_key)
-
-                cfg_kwargs: dict[str, Any] = {
-                    "response_modalities": ["AUDIO"],
-                    "speech_config": types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
-                        )
-                    ),
-                }
-                if sys_inst is not None:
-                    cfg_kwargs["system_instruction"] = sys_inst
-                config = types.GenerateContentConfig(**cfg_kwargs)
 
                 t0 = time.monotonic()
                 rec: dict[str, Any] = {

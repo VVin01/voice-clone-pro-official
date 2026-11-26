@@ -458,30 +458,111 @@ TRANSCRIPT:
 [expressive storytelling] {text}"""
 
 
-def narrator_prompt_short(text: str, voice: str) -> str:
-    """Batch DO: the SHORT prompt shape for the gemini-3.8 TTS family.
+EXPRESSIVE_STORYTELLING_TAG: str = "[expressive storytelling]"
+WARM_LIVELY_STORYTELLING_TAG: str = "[warm, lively storytelling]"
+VALID_GEMINI_TTS_PROMPT_SHAPES: tuple[str, ...] = ("a", "b", "c1", "c2")
+DEFAULT_GEMINI_TTS_PROMPT_SHAPE: str = "c1"
 
-    Proven firsthand 2026-11-11: both GA 3.8 models READ the full
-    ``narrator_prompt`` AUDIO-PROFILE aloud instead of following it
-    (130+ s of profile-reading per line, ASR-verified), while the
-    preview models follow the same profile correctly. This compact
-    two-line shape — one instruction line carrying the narrator
-    essence, then the tagged transcript — is ASR-verified on both
-    3.8 models (short and long texts) to speak ONLY the transcript.
-    The long direction text is intentionally absent: it is part of
-    what leaks, and the compact line carries its essence."""
+_SHAPE_MISS_SENTINEL = object()
+_SHAPE_CACHE_LOCK = threading.Lock()
+_SHAPE_CACHE_TS: float = 0.0
+_SHAPE_CACHE_VAL: object = None
+_SHAPE_SYNC_TTL_SECONDS: float = 2.0
+
+
+def reset_prompt_shape_cache() -> None:
+    """Reset the short-TTL sync-store prompt-shape cache (used on dynamic-settings updates & tests)."""
+    global _SHAPE_CACHE_TS, _SHAPE_CACHE_VAL
+    with _SHAPE_CACHE_LOCK:
+        _SHAPE_CACHE_TS = 0.0
+        _SHAPE_CACHE_VAL = None
+
+
+def _normalize_prompt_shape_opt(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    val = str(raw).strip().lower()
+    if val in VALID_GEMINI_TTS_PROMPT_SHAPES:
+        return val
+    return None
+
+
+def normalize_gemini_tts_prompt_shape(raw: Any) -> str:
+    """Normalize ``gemini_tts_prompt_shape`` to ``('a', 'b', 'c1', 'c2')``; default ``'c1'``."""
+    norm = _normalize_prompt_shape_opt(raw)
+    return norm if norm is not None else DEFAULT_GEMINI_TTS_PROMPT_SHAPE
+
+
+def get_gemini_tts_prompt_shape() -> str:
+    """Resolve ``gemini_tts_prompt_shape`` per call without restart.
+
+    Precedence:
+      1. Persisted ``BotSetting`` row via sync store (2 s TTL cache when active)
+      2. In-memory ``settings.gemini_tts_prompt_shape`` (updated by dynamic_settings)
+      3. ``GEMINI_TTS_PROMPT_SHAPE`` env var
+      4. Default ``'c1'`` (tag-only winner from 2026-11-27 confirmation probe)
+    """
+    global _SHAPE_CACHE_TS, _SHAPE_CACHE_VAL
+    if _key_rotation is not None:
+        try:
+            now = time.monotonic()
+            cached_hit = False
+            db_raw: str | None = None
+            with _SHAPE_CACHE_LOCK:
+                if _SHAPE_CACHE_VAL is not None and (now - _SHAPE_CACHE_TS) < _SHAPE_SYNC_TTL_SECONDS:
+                    cached_hit = True
+                    db_raw = None if _SHAPE_CACHE_VAL is _SHAPE_MISS_SENTINEL else str(_SHAPE_CACHE_VAL)
+            if not cached_hit:
+                try:
+                    fetched = _key_rotation.botsetting_sync_read("gemini_tts_prompt_shape")
+                except Exception:
+                    fetched = None
+                with _SHAPE_CACHE_LOCK:
+                    _SHAPE_CACHE_TS = now
+                    _SHAPE_CACHE_VAL = _SHAPE_MISS_SENTINEL if fetched is None else fetched
+                db_raw = fetched
+            norm_db = _normalize_prompt_shape_opt(db_raw)
+            if norm_db is not None:
+                return norm_db
+        except Exception:
+            pass
+
+    try:
+        from app.config import settings as _settings
+
+        cfg_raw = getattr(_settings, "gemini_tts_prompt_shape", None)
+        if cfg_raw is not None and str(cfg_raw).strip():
+            norm_cfg = _normalize_prompt_shape_opt(cfg_raw)
+            return norm_cfg if norm_cfg is not None else DEFAULT_GEMINI_TTS_PROMPT_SHAPE
+    except Exception:
+        pass
+
+    norm_env = _normalize_prompt_shape_opt(os.getenv("GEMINI_TTS_PROMPT_SHAPE"))
+    if norm_env is not None:
+        return norm_env
+    return DEFAULT_GEMINI_TTS_PROMPT_SHAPE
+
+
+def _short_instruction_line(voice: str) -> str:
+    """Exact English narrator direction sentence shared across instruction-bearing arms."""
     name = str(voice or "").removeprefix("gemini:")
     gender = GEMINI_VOICE_GENDER.get(name, "male")
-    text = _clean_tts_text(text)
     return (
         f"Narrate as ONE adult {gender} Burmese storyteller — warm, lively, varied pace, "
-        "the same voice throughout. Read only the transcript below, exactly once, adding nothing.\n"
-        f"[expressive storytelling] {text}"
+        "the same voice throughout. Read only the transcript below, exactly once, adding nothing."
     )
 
 
+def narrator_prompt_short(text: str, voice: str) -> str:
+    """Batch DO / Arm A: legacy two-line prompt shape for the gemini-3.8 TTS family.
+
+    Preserved byte-for-byte as ``gemini_tts_prompt_shape='a'`` for instant revert."""
+    cleaned = _clean_tts_text(text)
+    return f"{_short_instruction_line(voice)}\n{EXPRESSIVE_STORYTELLING_TAG} {cleaned}"
+
+
 def _uses_short_prompt(model: str) -> bool:
-    """Default to leak-resistant short prompts for all GA and custom models;
+    """Default to compact GA prompt shapes for all GA and custom models;
     only legacy 2.5/3.1 preview models take the full AUDIO PROFILE."""
     m = str(model or "").strip().lower()
     if "preview" in m or m.startswith(("gemini-2.5", "gemini-3.1")):
@@ -489,12 +570,99 @@ def _uses_short_prompt(model: str) -> bool:
     return True
 
 
+def build_gemini_tts_payload(
+    text: str,
+    voice: str,
+    *,
+    shape: str | None = None,
+    model: str | None = None,
+    direction: str = "",
+    strict_shape: bool = False,
+) -> tuple[str | None, str]:
+    """Single canonical builder returning ``(system_instruction, contents)`` for Gemini TTS.
+
+    Arms for GA / custom TTS models:
+      - ``a``  : ``(None, narrator_prompt_short(text, voice))`` — legacy byte-for-byte shape
+      - ``b``  : ``(_short_instruction_line(voice), "[expressive storytelling] {cleaned}")``
+      - ``c1`` : ``(None, "[warm, lively storytelling] {cleaned}")`` — production default
+      - ``c2`` : ``(None, "{cleaned}")`` — bare cleaned transcript
+    Explicit legacy preview models (``not _uses_short_prompt(model)``) retain ``narrator_prompt``.
+    """
+    if model is not None and not _uses_short_prompt(model):
+        return None, narrator_prompt(text, voice, direction)
+
+    if shape is None:
+        eff_shape = get_gemini_tts_prompt_shape()
+    else:
+        norm = _normalize_prompt_shape_opt(shape)
+        if norm is None:
+            if strict_shape:
+                valid_csv = ", ".join(s.upper() for s in VALID_GEMINI_TTS_PROMPT_SHAPES)
+                raise ValueError(f"Unknown arm '{shape}'. Valid arms: {valid_csv}")
+            eff_shape = DEFAULT_GEMINI_TTS_PROMPT_SHAPE
+        else:
+            eff_shape = norm
+
+    if eff_shape == "a":
+        return None, narrator_prompt_short(text, voice)
+
+    cleaned = _clean_tts_text(text)
+    if eff_shape == "b":
+        return _short_instruction_line(voice), f"{EXPRESSIVE_STORYTELLING_TAG} {cleaned}"
+    if eff_shape == "c1":
+        return None, f"{WARM_LIVELY_STORYTELLING_TAG} {cleaned}"
+    return None, cleaned
+
+
+def build_gemini_tts_request(
+    text: str,
+    voice: str,
+    *,
+    shape: str | None = None,
+    model: str | None = None,
+    direction: str = "",
+    strict_shape: bool = False,
+) -> tuple[str, Any]:
+    """Build ``(contents, GenerateContentConfig)`` for ``client.models.generate_content``."""
+    from google.genai import types
+
+    voice_name = str(voice or "").removeprefix("gemini:")
+    sys_inst, contents = build_gemini_tts_payload(
+        text,
+        voice_name,
+        shape=shape,
+        model=model,
+        direction=direction,
+        strict_shape=strict_shape,
+    )
+    speech_cfg = types.SpeechConfig(
+        voice_config=types.VoiceConfig(
+            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name)
+        )
+    )
+    if sys_inst is not None:
+        config = types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=speech_cfg,
+            system_instruction=sys_inst,
+        )
+    else:
+        config = types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=speech_cfg,
+        )
+    return contents, config
+
+
 def _prompt_for_model(model: str, text: str, voice: str, direction: str = "") -> str:
-    """The prompt for ONE model: short leak-resistant shape for GA models,
-    full narrator profile only for explicit preview models."""
-    if _uses_short_prompt(model):
-        return narrator_prompt_short(text, voice)
-    return narrator_prompt(text, voice, direction)
+    """Return ``contents`` string for ``model`` under the active prompt shape."""
+    _sys_inst, contents = build_gemini_tts_payload(
+        text,
+        voice,
+        model=model,
+        direction=direction,
+    )
+    return contents
 
 
 def collect_gemini_keys(environ: Optional[dict] = None) -> list[str]:
@@ -660,13 +828,10 @@ class GeminiTTSEngine:
             return order
 
     def _ask(self, text: str, voice_name: str) -> bytes:
-        # Batch DO: callers pass the RAW transcript; the prompt is
-        # built PER MODEL inside the model loop (short shape for the
-        # 3.8 family, full narrator profile for the previews).
-        from google.genai import types
-
-        config = types.GenerateContentConfig(response_modalities=["AUDIO"], speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name))))
+        # Batch DO + Leak Phase 2: callers pass the RAW transcript; the
+        # request (contents + GenerateContentConfig) is built per model
+        # through build_gemini_tts_request using the active dynamic shape.
+        active_shape = get_gemini_tts_prompt_shape()
         # TTS keeps its OWN registry ("gemini_tts"): the TTS models'
         # per-key quota is separate from the text models', so a
         # TTS-dead key must not sideline the planner.
@@ -729,12 +894,22 @@ class GeminiTTSEngine:
                                 f"line) — remaining lines will use the persona engine "
                                 f"instead. ({last})"
                             )
-                        # Phase 1 B2: attempt 1 uses configured prompt; after any leak reject
-                        # on this chunk, stay stripped to bare cleaned transcript only.
+                        # Phase 1 B2: attempt 1 uses configured prompt shape; after any leak reject
+                        # on this chunk, stay stripped to bare cleaned transcript only (c2, no sys_inst).
                         if strip_prompt_for_chunk:
-                            prompt = cleaned_text
+                            prompt, config = build_gemini_tts_request(
+                                cleaned_text,
+                                voice_name,
+                                shape="c2",
+                            )
                         else:
-                            prompt = _prompt_for_model(model, text, voice_name, self.direction)
+                            prompt, config = build_gemini_tts_request(
+                                text,
+                                voice_name,
+                                shape=active_shape,
+                                model=model,
+                                direction=self.direction,
+                            )
                         try:
                             self._wait_byok_stagger()
                             client = _client(self.keys[i])  # kept in a variable: a dropped genai Client closes itself
