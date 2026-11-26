@@ -382,12 +382,13 @@ def test_prosody_gate_outlier_retry_caps_rubberband_clamps_and_flip_anchor(tmp_p
     )
     assert st_small == 0.0 and tp_small == 1.0
 
+    # Updated in Clone Prosody Phase 3 (§5.3, 2026-11-25): tempo clamp softened from [0.90, 1.12] -> [0.93, 1.07]
     st_big, tp_big = cp.compute_rubberband_params(
         cp.ProsodyStats(2.0, 2.0, 2.0, 240.0, 0.4, 10, 3.0),
         anchor_f0_hz=150.0,
         anchor_rate=5.0,
     )
-    assert st_big == -2.0 and tp_big == 1.12
+    assert st_big == -2.0 and tp_big == 1.07
 
     # Cross-gender (`m2f`) anchor check: ignores male 120 Hz reference, anchors to female ~240 Hz job median!
     male_ref = _write_tone_wav(tmp_path / "male120.wav", [(120.0, 6.0)])

@@ -136,6 +136,8 @@ SETTING_TYPES: dict[str, type] = {
     "gemini_tts_lite_model": str,
     "gemini_tts_fallback_2": str,
     "gemini_tts_leak_gate_mode": str,
+    "clone_prosody_phase3_enabled": bool,
+    "chunk_balancing_v2_enabled": bool,
     "ai_prompt_profile": str,
     "voxcpm_timeout": int,
     "groq_whisper_model": str,
@@ -209,7 +211,7 @@ HEARTBEAT_SETTING_KEYS: frozenset[str] = frozenset(
 # callback string itself) can write or overwrite them here.
 DYNAMIC_SETTING_KEYS: frozenset[str] = frozenset(SETTING_TYPES)
 
-# Strict 78-key config allowlist for load_dynamic_settings() (Design 2 A1):
+# Strict 80-key config allowlist for load_dynamic_settings() (Design 2 A1):
 # excludes state blobs (bn_key_health_v1, aj_hf:*, aj_kh:*, aj_gai:*,
 # user_history_cleared_at:*) and the 3 heartbeat keys by construction.
 CONFIG_SETTING_KEYS: frozenset[str] = DYNAMIC_SETTING_KEYS - HEARTBEAT_SETTING_KEYS

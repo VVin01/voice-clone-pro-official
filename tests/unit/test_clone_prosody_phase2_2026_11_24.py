@@ -106,25 +106,25 @@ def _slice_iqr_st(wav_path: Path, t0_s: float, t1_s: float) -> float:
 
 
 def test_phase2_constants_and_soft_knee_body_deadbands():
-    """Verify §5 Phase 2 constants verbatim, preserved Phase 1B constants, and continuous soft-knee."""
+    """Verify Phase 2/3 constants (updated for Clone Prosody Phase 3 §2–§5 tightened pins, 2026-11-25)."""
     assert cp.CUSTOM_REF_JOB_BLEND_WEIGHT == 0.35
-    assert cp.BODY_DEADBAND_PITCH_ST == 0.60
-    assert cp.BODY_EXPRESSIVE_DEADBAND_ST == 1.10
+    assert cp.BODY_DEADBAND_PITCH_ST == 0.25
+    assert cp.BODY_EXPRESSIVE_DEADBAND_ST == 0.55
     assert cp.BODY_MAX_SHIFT_ST == 1.50
     assert cp.ENV_WINDOW_SEC == 3.50
-    assert cp.ENV_DEADZONE_ST == 1.35
-    assert cp.ENV_EXPRESSIVE_DEADZONE_ST == 1.75
+    assert cp.ENV_DEADZONE_ST == 0.85
+    assert cp.ENV_EXPRESSIVE_DEADZONE_ST == 1.15
     assert cp.ENV_TETHER_GAIN == 0.65
     assert cp.ENV_HARD_CEIL_ST == 1.85
     assert cp.EDGE_HEAD_GUARD_FRAMES == 4
-    assert cp.EDGE_TAIL_GUARD_FRAMES == 12
-    assert cp.EDGE_VOICED_TARGET_FRAMES == 65
-    assert cp.EDGE_VOICED_WIDEN_FRAMES == 110
+    assert cp.EDGE_TAIL_GUARD_FRAMES == 6
+    assert cp.EDGE_VOICED_TARGET_FRAMES == 32
+    assert cp.EDGE_VOICED_WIDEN_FRAMES == 45
     assert cp.EDGE_MIN_SHRINK_FRAMES == 8
-    assert cp.STEP_MAX_MID_PHRASE_ST == 0.65
-    assert cp.STEP_MAX_CLAUSE_ST == 0.90
-    assert cp.STEP_MAX_SENTENCE_ST == 1.35
-    assert cp.STEP_MAX_PARAGRAPH_ST == 1.80
+    assert cp.STEP_MAX_MID_PHRASE_ST == 0.35
+    assert cp.STEP_MAX_CLAUSE_ST == 0.45
+    assert cp.STEP_MAX_SENTENCE_ST == 0.65
+    assert cp.STEP_MAX_PARAGRAPH_ST == 1.05
     assert cp.RAMP_HEAD_SEC == 2.40
     assert cp.RAMP_TAIL_SEC == 1.80
     assert cp.RAMP_CMD_STEP_SEC == 0.050
@@ -133,21 +133,20 @@ def test_phase2_constants_and_soft_knee_body_deadbands():
     assert cp.OUTLIER_MAX_CHUNK_IQR_ST == 3.60
     assert cp.OUTLIER_MAX_INTERNAL_SPAN_ST == 4.20
 
-    # Preserved Phase 1B constants
+    # Preserved Phase 1B constants + Phase 3 §5.3 softened tempo clamp [0.93, 1.07]
     assert cp.OUTLIER_MAX_F0_ST == 2.5
     assert cp.MAX_PROSODY_RETRIES_PER_JOB == 2
     assert cp.RUBBERBAND_MAX_PITCH_ST == 2.0
-    assert cp.RUBBERBAND_TEMPO_MIN == 0.90
-    assert cp.RUBBERBAND_TEMPO_MAX == 1.12
+    assert cp.RUBBERBAND_TEMPO_MIN == 0.93
+    assert cp.RUBBERBAND_TEMPO_MAX == 1.07
 
-    # Soft-knee continuity check (zero hard cliff around ±0.60 st)
+    # Soft-knee continuity check around Phase 3 ±0.25 st deadband (and ±0.55 st expressive)
     anchor = 120.0
-    s_below = cp.compute_soft_knee_body_shift(anchor * (2.0 ** (0.59 / 12.0)), anchor)
-    s_above = cp.compute_soft_knee_body_shift(anchor * (2.0 ** (0.65 / 12.0)), anchor)
+    s_below = cp.compute_soft_knee_body_shift(anchor * (2.0 ** (0.24 / 12.0)), anchor)
+    s_above = cp.compute_soft_knee_body_shift(anchor * (2.0 ** (0.30 / 12.0)), anchor)
     assert s_below == 0.0
     assert -0.06 <= s_above <= -0.04
-    # Expressive chunk widens deadband to 1.10 st
-    assert cp.compute_soft_knee_body_shift(anchor * (2.0 ** (1.05 / 12.0)), anchor, expressive=True) == 0.0
+    assert cp.compute_soft_knee_body_shift(anchor * (2.0 ** (0.50 / 12.0)), anchor, expressive=True) == 0.0
     assert cp.compute_soft_knee_body_shift(anchor * (2.0 ** (3.50 / 12.0)), anchor) == -1.50
 
 
@@ -266,9 +265,11 @@ def test_pin2_mid_chunk_plus_2p7_st_arch_tether(tmp_path):
     assert res.anchor.f0_anchor_hz is not None
     arch_st = cp.semitone_diff(float(np.median(v_arch)), float(res.anchor.f0_anchor_hz))
     max_win_st = max(float(w["dev_st"]) for w in bench["windows"] if w["dev_st"] is not None)
-    assert 1.50 <= arch_st <= 1.85
-    assert 1.50 <= max_win_st <= 1.85
-    assert arch_st > 1.40
+    # Updated in Clone Prosody Phase 3 (§3.2, 2026-11-25): ENV_DEADZONE_ST tightened 1.35 -> 0.85 st,
+    # so 2.70 - 0.65*(2.70 - 0.85) = 1.4975 st (~1.40 st across the 5 s bench window, still not flattened).
+    assert 1.38 <= arch_st <= 1.85
+    assert 1.35 <= max_win_st <= 1.85
+    assert arch_st > 1.38
 
 
 def test_pin3_curated_persona_komin_chunk1_anchor_and_post_telemetry(tmp_path, monkeypatch, caplog):
@@ -370,9 +371,10 @@ def test_pin4_boundary_classifier_adaptive_pauses_and_question_guard(tmp_path):
     ]
     specs = cp.classify_chunk_boundaries(full_text, chunks, speed_tempo=1.0)
     assert [s.kind for s in specs] == ["MID_PHRASE", "CLAUSE", "PARAGRAPH", "SENTENCE", "SENTENCE"]
-    assert specs[0].s_max_st == 0.65 and specs[0].base_pause_sec == 0.065
-    assert specs[1].s_max_st == 0.90 and specs[1].base_pause_sec == 0.095
-    assert specs[2].s_max_st == 1.80 and specs[2].base_pause_sec == 0.220
+    # Updated in Clone Prosody Phase 3 (§4, 2026-11-25): s_max tightened to 0.35 / 0.45 / 1.05 / 0.65 st
+    assert specs[0].s_max_st == 0.35 and specs[0].base_pause_sec == 0.065
+    assert specs[1].s_max_st == 0.45 and specs[1].base_pause_sec == 0.095
+    assert specs[2].s_max_st == 1.05 and specs[2].base_pause_sec == 0.220
     # Question guard on `?` and `လား။`: 160 ms pause + question_tail=True
     assert specs[3].question_tail is True and specs[3].base_pause_sec == 0.160
     assert specs[4].question_tail is True and specs[4].base_pause_sec == 0.160
@@ -738,7 +740,10 @@ def test_pin7_bench_gates_and_expressiveness_floor_across_fixtures(tmp_path):
         rep_wav = evaluate_wav_prosody(delivered)
 
         assert rep_chunks["PDS"] <= 1.20, f"{label}: {rep_chunks}"
-        assert 0.45 <= rep_chunks["F0_win_IQR_st"] <= 1.35, f"{label}: {rep_chunks}"
+        # Updated in Clone Prosody Phase 3 (§3.2, 2026-11-25): BODY_DEADBAND_PITCH_ST tightened 0.60 -> 0.25 st,
+        # tightening cross-chunk 5 s window IQR on ±0.50 st offsets from ~0.80 st down to ~0.22-0.55 st
+        # while intra-chunk expressiveness (post_mean_iqr_st >= 0.85 * raw_mean_iqr_st below) stays intact!
+        assert 0.20 <= rep_chunks["F0_win_IQR_st"] <= 1.35, f"{label}: {rep_chunks}"
         assert rep_chunks["F0_win_max_jump_st"] <= 1.75, f"{label}: {rep_chunks}"
         assert rep_chunks["F0_outlier_ratio"] == 0.0, f"{label}: {rep_chunks}"
         assert rep_chunks["Pace_CV"] <= 0.085, f"{label}: {rep_chunks}"

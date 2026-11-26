@@ -49,6 +49,11 @@ REFERENCE_MAX_SECONDS = 45.0
 MIN_CHUNK_CHARS = 120
 # Soft sentence-packing ceiling for prosodic stability (~4-6 chunks on a 122 s job).
 MAX_CHUNK_CHARS = 425
+# Clone Prosody Phase 3 (Part 1): sweet-spot target ceiling (~16-20 s uniform chunks)
+# and minimum syllable floor to prevent short runt final chunks on jobs >= 140 syllables.
+TARGET_CHUNK_CHARS = 385
+MIN_TAIL_SYLLABLES = 65
+MIN_JOB_SYLLABLES_FOR_TAIL_GUARD = 140
 # Clone Prosody Phase 2 (Part 5): prefer breaking at a paragraph separator (`\n\n`)
 # once the current packed chunk has reached at least this many characters.
 PARAGRAPH_BREAK_MIN_CHARS = 220
@@ -61,6 +66,27 @@ _CLAUSE_MARK = "၊"
 BURMESE_SYLLABLE_BREAK = re.compile(
     r'(?<![္])(?=[က-အ\u1023-\u102A\u104E](?![\u1037\u1038]?[်္]))'
 )
+_ASCII_SYLLABLE_FALLBACK_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _count_syllables(text: str) -> int:
+    s = str(text or "").strip()
+    if not s:
+        return 0
+    return len(BURMESE_SYLLABLE_BREAK.findall(s)) + len(_ASCII_SYLLABLE_FALLBACK_RE.findall(s))
+
+
+def is_chunk_balancing_v2_enabled() -> bool:
+    """True when dynamic setting ``chunk_balancing_v2_enabled`` is active (default True)."""
+    try:
+        from app.config import settings as _settings
+
+        val = getattr(_settings, "chunk_balancing_v2_enabled", True)
+        if isinstance(val, str):
+            return val.strip().lower() not in ("0", "false", "no", "off")
+        return bool(val)
+    except Exception:
+        return True
 
 
 def _is_combining_or_stack(ch: str) -> bool:
@@ -248,31 +274,8 @@ def _hard_split(sentence: str, budget_chars: int) -> list[str]:
     return [p for p in pieces if p]
 
 
-def plan_text_chunks(
-    text: str,
-    *,
-    reference_transcript: str = "",
-    control_instruction: str = "",
-    reference_seconds: float = 0.0,
-    max_chunk_chars: int = MAX_CHUNK_CHARS,
-) -> list[str]:
-    """Plan synthesis chunks for a voice-clone job's target text.
-
-    Returns [text] unchanged when the whole text fits in one call
-    (the common case — no behaviour change). Otherwise returns >= 2
-    chunks, each within the character budget derived from the token
-    budget minus the reference/control overhead (soft-capped at
-    ``max_chunk_chars``), packed from whole sentences wherever possible.
-    """
-    text = str(text or "")
-    if not text.strip():
-        return [text]
-    budget_chars = chunk_char_budget(
-        reference_transcript=reference_transcript,
-        control_instruction=control_instruction,
-        reference_seconds=reference_seconds,
-    )
-    effective_cap = min(budget_chars, max(MIN_CHUNK_CHARS, int(max_chunk_chars)))
+def _plan_text_chunks_greedy_v1(text: str, effective_cap: int) -> list[str]:
+    """Phase 2 greedy left-to-right sentence packer (used for single-chunk checks and kill-switch fallback)."""
     norm_check = text.replace("\r\n", "\n").replace("\r", "\n")
     if len(text) <= effective_cap and "\n\n" not in norm_check:
         return [text]
@@ -297,6 +300,177 @@ def plan_text_chunks(
     return chunks or [text]
 
 
+def _plan_text_chunks_balanced_dp(
+    text: str,
+    effective_cap: int,
+    greedy_chunks: list[str],
+) -> list[str]:
+    """Phase 3 sentence-level DP balanced partitioning minimizing Σ(syls_i - target_syls)^2."""
+    units: list[tuple[str, int, int, int, bool, str]] = []
+    for sentence, starts_new_para in _split_sentences_with_para(text):
+        pieces = _hard_split(sentence, effective_cap)
+        unspaced_hard = len(pieces) > 1 and (" " not in sentence)
+        for p_idx, piece in enumerate(pieces):
+            if not piece:
+                continue
+            raw_s = _count_syllables(piece)
+            eff_s = max(1, raw_s)
+            is_para = bool(starts_new_para and p_idx == 0 and len(units) > 0)
+            sep = "" if (p_idx > 0 and unspaced_hard) else " "
+            units.append((piece, len(piece), raw_s, eff_s, is_para, sep))
+
+    n_u = len(units)
+    if n_u <= 1:
+        return greedy_chunks
+
+    total_raw_syls = sum(u[2] for u in units)
+    total_eff_syls = sum(u[3] for u in units)
+    total_chars = sum(u[1] for u in units) + sum(len(units[k][5]) for k in range(1, n_u))
+
+    if effective_cap >= MAX_CHUNK_CHARS:
+        target_max_chars = min(effective_cap, TARGET_CHUNK_CHARS)
+    else:
+        target_max_chars = min(
+            effective_cap,
+            max(MIN_CHUNK_CHARS, int(round(effective_cap * (TARGET_CHUNK_CHARS / float(MAX_CHUNK_CHARS))))),
+        )
+
+    suffix_raw_syls = [0] * (n_u + 1)
+    for k in range(n_u - 1, -1, -1):
+        suffix_raw_syls[k] = suffix_raw_syls[k + 1] + units[k][2]
+
+    # Precompute all valid spans [i..j) with joined length <= effective_cap.
+    valid_spans: list[list[tuple[int, int, int, int]]] = [[] for _ in range(n_u)]
+    for i in range(n_u):
+        c_len = 0
+        r_syl = 0
+        e_syl = 0
+        for j in range(i + 1, n_u + 1):
+            u_txt, u_len, u_rs, u_es, _u_para, u_sep = units[j - 1]
+            add_len = u_len if j - 1 == i else (len(u_sep) + u_len)
+            if j - 1 > i and c_len + add_len > effective_cap:
+                break
+            c_len += add_len
+            r_syl += u_rs
+            e_syl += u_es
+            if c_len <= effective_cap or j == i + 1:
+                valid_spans[i].append((j, c_len, r_syl, e_syl))
+
+    m_lo = max(2, int(math.ceil(total_chars / float(max(1, effective_cap)))))
+    # Never plan more chunks than the Phase 2 greedy pass (guarantees 0 extra synthesis calls, §0.1)
+    m_greedy = max(m_lo, len(greedy_chunks))
+    m_pref = min(m_greedy, max(m_lo, int(math.ceil(total_chars / float(max(1, target_max_chars))))))
+    m_hi = min(n_u, m_greedy)
+    enforce_tail_guard = total_raw_syls >= MIN_JOB_SYLLABLES_FOR_TAIL_GUARD
+
+    best_overall_cost = float("inf")
+    best_breaks: list[tuple[int, int]] | None = None
+
+    for m_cand in range(m_lo, m_hi + 1):
+        t_syl = total_eff_syls / float(m_cand)
+        para_bonus = (0.45 * t_syl) ** 2
+        dp = [[float("inf")] * (n_u + 1) for _ in range(m_cand + 1)]
+        parent = [[-1] * (n_u + 1) for _ in range(m_cand + 1)]
+        dp[0][0] = 0.0
+
+        for step in range(1, m_cand + 1):
+            rem_chunks_after = m_cand - step
+            # Prune unreachable states
+            i_max = n_u - rem_chunks_after
+            for i in range(step - 1, i_max):
+                base_c = dp[step - 1][i]
+                if not math.isfinite(base_c):
+                    continue
+                for j, sp_chars, sp_raw_syls, sp_eff_syls in valid_spans[i]:
+                    if n_u - j < rem_chunks_after:
+                        continue
+                    if step == m_cand and j != n_u:
+                        continue
+                    if step < m_cand and j == n_u:
+                        continue
+
+                    cost = (sp_eff_syls - t_syl) ** 2
+                    if sp_chars > target_max_chars:
+                        over_syl_eq = (sp_chars - target_max_chars) * (t_syl / max(1.0, float(target_max_chars)))
+                        cost += 0.10 * (over_syl_eq ** 2)
+
+                    if enforce_tail_guard and sp_raw_syls < MIN_TAIL_SYLLABLES:
+                        deficit = MIN_TAIL_SYLLABLES - sp_raw_syls
+                        if j == n_u:
+                            cost += 1e7 + 1e4 * (deficit ** 2)
+                        else:
+                            cost += 5e6 + 5e3 * (deficit ** 2)
+
+                    # Soft paragraph break bonus ONLY when remaining text >= MIN_TAIL_SYLLABLES (lookahead guard)
+                    if j < n_u and units[j][4]:
+                        rem_syls = suffix_raw_syls[j]
+                        if rem_syls >= MIN_TAIL_SYLLABLES and (
+                            not enforce_tail_guard or sp_raw_syls >= MIN_TAIL_SYLLABLES
+                        ):
+                            cost -= para_bonus
+
+                    cand_total = base_c + cost
+                    if cand_total < dp[step][j]:
+                        dp[step][j] = cand_total
+                        parent[step][j] = i
+
+        if math.isfinite(dp[m_cand][n_u]):
+            total_m_cost = dp[m_cand][n_u] + ((0.18 * t_syl) ** 2) * abs(m_cand - m_pref)
+            if total_m_cost < best_overall_cost:
+                best_overall_cost = total_m_cost
+                spans_rev: list[tuple[int, int]] = []
+                cur_j = n_u
+                for st_back in range(m_cand, 0, -1):
+                    prev_i = parent[st_back][cur_j]
+                    spans_rev.append((prev_i, cur_j))
+                    cur_j = prev_i
+                spans_rev.reverse()
+                best_breaks = spans_rev
+
+    if not best_breaks:
+        return greedy_chunks
+
+    out_chunks: list[str] = []
+    for i, j in best_breaks:
+        buf = units[i][0]
+        for k in range(i + 1, j):
+            buf = f"{buf}{units[k][5]}{units[k][0]}"
+        out_chunks.append(buf)
+    return out_chunks or greedy_chunks
+
+
+def plan_text_chunks(
+    text: str,
+    *,
+    reference_transcript: str = "",
+    control_instruction: str = "",
+    reference_seconds: float = 0.0,
+    max_chunk_chars: int = MAX_CHUNK_CHARS,
+) -> list[str]:
+    """Plan synthesis chunks for a voice-clone job's target text.
+
+    Returns [text] unchanged when the whole text fits in one call
+    (the common case — no behaviour change). Otherwise returns >= 2
+    chunks, each within the character budget derived from the token
+    budget minus the reference/control overhead (soft-capped at
+    ``max_chunk_chars``), packed via balanced sentence DP when
+    ``chunk_balancing_v2_enabled`` is True (or Phase 2 greedy packing when False).
+    """
+    text = str(text or "")
+    if not text.strip():
+        return [text]
+    budget_chars = chunk_char_budget(
+        reference_transcript=reference_transcript,
+        control_instruction=control_instruction,
+        reference_seconds=reference_seconds,
+    )
+    effective_cap = min(budget_chars, max(MIN_CHUNK_CHARS, int(max_chunk_chars)))
+    greedy_chunks = _plan_text_chunks_greedy_v1(text, effective_cap)
+    if len(greedy_chunks) <= 1 or not is_chunk_balancing_v2_enabled():
+        return greedy_chunks
+    return _plan_text_chunks_balanced_dp(text, effective_cap, greedy_chunks)
+
+
 __all__ = [
     "INPUT_TOKEN_BUDGET",
     "MODEL_TOKEN_CAP",
@@ -306,6 +480,9 @@ __all__ = [
     "REFERENCE_MAX_SECONDS",
     "MIN_CHUNK_CHARS",
     "MAX_CHUNK_CHARS",
+    "TARGET_CHUNK_CHARS",
+    "MIN_TAIL_SYLLABLES",
+    "is_chunk_balancing_v2_enabled",
     "estimate_tokens",
     "estimate_control_tokens",
     "input_overhead_tokens",

@@ -215,6 +215,16 @@ def space_api_endpoints(space_name: str) -> dict:
     return dict(_DEFAULT_SPACE_ENDPOINTS)
 
 
+def space_endpoint_family(space_name: str) -> str:
+    """Return canonical endpoint/denoise family for Space-switch prosody telemetry (Phase 3 Part 8)."""
+    endpoints = space_api_endpoints(space_name)
+    if endpoints.get("clone") == "/generate_clone":
+        return "generate_clone"
+    if "chenchenaoyang" in str(space_name or "").lower():
+        return "chenchenaoyang_generate"
+    return "generate"
+
+
 def _format_pair_error(exc: BaseException) -> str:
     """Batch AT (AT-4): pair-failure log detail — exception TYPE plus
     its message, truncated to 300 chars. Pre-AT the pair line carried
@@ -465,6 +475,7 @@ class JobSpacePin:
         self._lock = threading.Lock()
         self._pinned_space: Optional[str] = initial_space
         self._repin_used: bool = False
+        self._space_family_switched: bool = False
 
     @property
     def pinned_space(self) -> Optional[str]:
@@ -486,6 +497,16 @@ class JobSpacePin:
         with self._lock:
             self._repin_used = bool(value)
 
+    @property
+    def space_family_switched(self) -> bool:
+        with self._lock:
+            return self._space_family_switched
+
+    @space_family_switched.setter
+    def space_family_switched(self, value: bool) -> None:
+        with self._lock:
+            self._space_family_switched = bool(value)
+
     def pin_if_unset(self, space_name: str) -> bool:
         with self._lock:
             if self._pinned_space is None and space_name:
@@ -497,6 +518,7 @@ class JobSpacePin:
         with self._lock:
             self._pinned_space = None
             self._repin_used = False
+            self._space_family_switched = False
 
 
 def _cancel_gradio_job(job: Any) -> bool:
@@ -984,6 +1006,14 @@ class VoxCPMEngine:
     def pinned_space(self, value: Optional[str]) -> None:
         self.space_pin.pinned_space = value
 
+    @property
+    def space_family_switched(self) -> bool:
+        return self.space_pin.space_family_switched
+
+    @space_family_switched.setter
+    def space_family_switched(self, value: bool) -> None:
+        self.space_pin.space_family_switched = value
+
     def reset_pinned_space(self) -> None:
         """Clear per-job pinned Space state between jobs."""
         self.space_pin.reset()
@@ -1459,8 +1489,17 @@ class VoxCPMEngine:
                         if self.space_pin.pin_if_unset(space_name):
                             self._log(f"📌 VoxCPM 2 Space pinned for job: '{space_name}'")
                         elif repin_candidate is not None and space_name == repin_candidate:
+                            prev_fam = space_endpoint_family(cur_pin or "")
+                            new_fam = space_endpoint_family(space_name)
                             self.pinned_space = space_name
-                            self._log(f"📌 VoxCPM 2 Space re-pinned for job: '{space_name}'")
+                            if cur_pin and prev_fam != new_fam:
+                                self.space_family_switched = True
+                                self._log(
+                                    f"📌 VoxCPM 2 Space re-pinned for job: '{space_name}' "
+                                    f"(space_family_switched=True: {prev_fam} -> {new_fam})"
+                                )
+                            else:
+                                self._log(f"📌 VoxCPM 2 Space re-pinned for job: '{space_name}'")
 
                     if skip_mastering:
                         shutil.copy2(result_path_str, out_path)
@@ -1591,4 +1630,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]

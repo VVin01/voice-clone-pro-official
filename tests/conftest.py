@@ -83,6 +83,8 @@ def restore_settings():
     orig_voice_daily_paid = settings.voice_daily_limit_minutes_paid
     orig_recap_on_queue = getattr(settings, "recap_on_queue", False)
     orig_prompt_profile = getattr(settings, "ai_prompt_profile", "v2")
+    orig_prosody_p3 = getattr(settings, "clone_prosody_phase3_enabled", True)
+    orig_chunk_bal_v2 = getattr(settings, "chunk_balancing_v2_enabled", True)
     settings.required_channel_id = ""
     settings.required_group_id = ""
     settings.character_limit_free = 3000
@@ -94,6 +96,8 @@ def restore_settings():
     settings.voice_daily_limit_minutes_paid = 0
     settings.recap_on_queue = False
     settings.ai_prompt_profile = "v2"
+    settings.clone_prosody_phase3_enabled = True
+    settings.chunk_balancing_v2_enabled = True
     try:
         from app.services.hf_pool_ledger import reset_ledger_for_tests
         from app.services.queue import reset_fairness_for_tests
@@ -121,6 +125,8 @@ def restore_settings():
     settings.voice_daily_limit_minutes_paid = orig_voice_daily_paid
     settings.recap_on_queue = orig_recap_on_queue
     settings.ai_prompt_profile = orig_prompt_profile
+    settings.clone_prosody_phase3_enabled = orig_prosody_p3
+    settings.chunk_balancing_v2_enabled = orig_chunk_bal_v2
     settings.bot_mode = orig_bot_mode
     settings.telegram_webhook_secret = orig_webhook_secret
     settings.bot_webhook_path = orig_webhook_path

@@ -29,7 +29,7 @@ import wave
 
 import numpy as np
 
-from app.services.voice_chunking import BURMESE_SYLLABLE_BREAK
+from app.services.voice_chunking import BURMESE_SYLLABLE_BREAK, split_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ REFERENCE_SLICE_SECONDS: float = 10.0
 ASR_MIN_CHARS_PER_SEC: float = 8.0
 ASR_MAX_CHARS_PER_SEC: float = 22.0
 
-# Phase 1B base constants (kept intact)
+# Phase 1B base constants (retry caps strictly unchanged in Phase 3)
 OUTLIER_MAX_F0_ST: float = 2.5
 OUTLIER_RATE_MIN_RATIO: float = 0.78
 OUTLIER_RATE_MAX_RATIO: float = 1.28
@@ -54,34 +54,93 @@ MAX_PROSODY_RETRIES_PER_JOB: int = 2
 
 RUBBERBAND_MAX_PITCH_ST: float = 2.0
 RUBBERBAND_DEADBAND_PITCH_ST: float = 0.5
-RUBBERBAND_TEMPO_MIN: float = 0.90
-RUBBERBAND_TEMPO_MAX: float = 1.12
-RUBBERBAND_DEADBAND_TEMPO: float = 0.03
+# Phase 3 (§5.3): softened tempo clamp & deadband (Phase 2 fallback values preserved below)
+RUBBERBAND_TEMPO_MIN: float = 0.93
+RUBBERBAND_TEMPO_MAX: float = 1.07
+RUBBERBAND_DEADBAND_TEMPO: float = 0.045
+_P2_RUBBERBAND_TEMPO_MIN: float = 0.90
+_P2_RUBBERBAND_TEMPO_MAX: float = 1.12
+_P2_RUBBERBAND_DEADBAND_TEMPO: float = 0.03
 
 CLONE_BOUNDARY_PAUSE_SEC: float = 0.135  # legacy default sentence-boundary pause
 
-# Phase 2 (§5) constants — Option (e): Post-Loop Bilateral Seam Ramp + Envelope Tether
+# Phase 2 + Phase 3 (§2–§7) constants (Phase 2 values preserved as _P2_* for kill-switch fallback)
 CUSTOM_REF_JOB_BLEND_WEIGHT: float = 0.35      # max ±0.35 st job-median accommodation vs custom ref slice
-BODY_DEADBAND_PITCH_ST: float = 0.60           # soft-knee deadband (1.10 st on quoted/expressive chunks)
-BODY_EXPRESSIVE_DEADBAND_ST: float = 1.10
+BODY_DEADBAND_PITCH_ST: float = 0.25           # Phase 3 (§3.2): tightened from 0.60 -> 0.25 st
+BODY_EXPRESSIVE_DEADBAND_ST: float = 0.55      # Phase 3 (§3.2): tightened from 1.10 -> 0.55 st
 BODY_MAX_SHIFT_ST: float = 1.50                # leave headroom inside ±2.0 st total cap for edge ramps
+_P2_BODY_DEADBAND_PITCH_ST: float = 0.60
+_P2_BODY_EXPRESSIVE_DEADBAND_ST: float = 1.10
 
 ENV_WINDOW_SEC: float = 3.50
-ENV_DEADZONE_ST: float = 1.35                  # 0.0 st touch inside ±1.35 st (1.75 st expressive)
-ENV_EXPRESSIVE_DEADZONE_ST: float = 1.75
+ENV_DEADZONE_ST: float = 0.85                  # Phase 3 (§3.2): tightened from 1.35 -> 0.85 st
+ENV_EXPRESSIVE_DEADZONE_ST: float = 1.15       # Phase 3 (§3.2): tightened from 1.75 -> 1.15 st
 ENV_TETHER_GAIN: float = 0.65                  # soft compression above deadzone
 ENV_HARD_CEIL_ST: float = 1.85                 # guarantees 3.5 s envelope stays <= ±1.85 st
+_P2_ENV_DEADZONE_ST: float = 1.35
+_P2_ENV_EXPRESSIVE_DEADZONE_ST: float = 1.75
 
+# Phase 3 (§2): Subharmonic repair widening & 0.40 s modal edge estimator
+SUBHARMONIC_LO_RATIO: float = 0.45
+SUBHARMONIC_HI_RATIO: float = 0.60
+_P2_SUBHARMONIC_LO_RATIO: float = 0.46
+_P2_SUBHARMONIC_HI_RATIO: float = 0.54
+
+EDGE_MODAL_FLOOR_RATIO: float = 0.62           # Phase 3 (§2.2): 0.62x modal floor (was 0.72x)
+_P2_EDGE_MODAL_FLOOR_RATIO: float = 0.72
 EDGE_HEAD_GUARD_FRAMES: int = 4                # 40 ms onset aspiration guard
-EDGE_TAIL_GUARD_FRAMES: int = 12               # 120 ms Burmese phrase-final creak guard
-EDGE_VOICED_TARGET_FRAMES: int = 65            # 0.65 s voiced speech (~1.0 s wall-clock)
-EDGE_VOICED_WIDEN_FRAMES: int = 110            # Tier-1 widen fallback
+EDGE_TAIL_GUARD_FRAMES: int = 6                # Phase 3 (§2.2): 6-frame creak-aware tail guard (was 12)
+_P2_EDGE_TAIL_GUARD_FRAMES: int = 12
+EDGE_VOICED_TARGET_SEC: float = 0.40           # Phase 3 (§2.2): 0.40 s modal voiced edge window
+EDGE_VOICED_TARGET_FRAMES: int = 32            # ~25-35 modal voiced frames (~0.40 s)
+_P2_EDGE_VOICED_TARGET_FRAMES: int = 65
+EDGE_VOICED_WIDEN_FRAMES: int = 45             # Tier-1 widen fallback
+_P2_EDGE_VOICED_WIDEN_FRAMES: int = 110
 EDGE_MIN_SHRINK_FRAMES: int = 8                # <8 voiced frames -> skip edge ramp
 
-STEP_MAX_MID_PHRASE_ST: float = 0.65           # pause = 0.065 s
-STEP_MAX_CLAUSE_ST: float = 0.90               # pause = 0.095 s
-STEP_MAX_SENTENCE_ST: float = 1.35             # pause = 0.135 s
-STEP_MAX_PARAGRAPH_ST: float = 1.80            # pause = 0.220 s
+# Phase 3 (§3.1): Macro linear de-sagging constants
+DESAG_MIN_DURATION_SEC: float = 10.0
+DESAG_BORDERLINE_MIN_SEC: float = 8.0
+DESAG_MIN_SENTENCES: int = 2
+DESAG_SLOPE_DEADBAND_ST_PER_SEC: float = 0.030
+DESAG_THIRDS_DEADBAND_ST: float = 0.55
+DESAG_GAIN: float = 0.72
+DESAG_BORDERLINE_GAIN: float = 0.36
+DESAG_MAX_COMP_SLOPE_ST_PER_SEC: float = 0.08
+
+# Phase 3 (§4): Tightened seam step maxima & 30/70 asymmetric continuation split
+STEP_MAX_MID_PHRASE_ST: float = 0.35           # was 0.65 (pause = 0.065 s)
+STEP_MAX_CLAUSE_ST: float = 0.45               # was 0.90 (pause = 0.095 s)
+STEP_MAX_SENTENCE_ST: float = 0.65             # was 1.35 (pause = 0.135 s)
+STEP_MAX_PARAGRAPH_ST: float = 1.05            # was 1.80 (pause = 0.220 s)
+_P2_STEP_MAX_MID_PHRASE_ST: float = 0.65
+_P2_STEP_MAX_CLAUSE_ST: float = 0.90
+_P2_STEP_MAX_SENTENCE_ST: float = 1.35
+_P2_STEP_MAX_PARAGRAPH_ST: float = 1.80
+
+SEAM_TAIL_SHARE: float = 0.30
+SEAM_HEAD_SHARE: float = 0.70
+SEAM_SENTENCE_NATURAL_FALL_FLOOR_ST: float = -0.80
+
+# Phase 3 (§5.4): Post-rubberband Voiced LTAS Tilt EQ constants
+TILT_LOW_BAND_HZ: tuple[float, float] = (120.0, 900.0)
+TILT_PRES_BAND_HZ: tuple[float, float] = (800.0, 2000.0)
+TILT_HIGH_BAND_HZ: tuple[float, float] = (1600.0, 5500.0)
+TILT_EQ_DEADBAND_DB: float = 0.40
+TILT_HIGHSHELF_FREQ_HZ: float = 2200.0
+TILT_HIGHSHELF_Q: float = 0.60
+TILT_HIGHSHELF_MAX_DB: float = 3.00
+TILT_PRESENCE_FREQ_HZ: float = 1000.0
+TILT_PRESENCE_Q: float = 0.80
+TILT_PRESENCE_MAX_DB: float = 1.80
+
+# Phase 3 (§7): Option C tilt/sag-aware retry scoring terms
+OUTLIER_SCORE_TILT_THRESH_DB: float = 1.80
+OUTLIER_SCORE_TILT_WEIGHT: float = 0.30
+OUTLIER_MAX_TILT_DELTA_DB: float = 2.20
+OUTLIER_SCORE_SAG_THRESH_ST: float = 1.60
+OUTLIER_SCORE_SAG_WEIGHT: float = 0.25
+OUTLIER_MAX_LINEAR_SAG_ST: float = 2.20
 
 PAUSE_MID_PHRASE_SEC: float = 0.065
 PAUSE_CLAUSE_SEC: float = 0.095
@@ -91,12 +150,25 @@ PAUSE_PARAGRAPH_SEC: float = 0.220
 
 RAMP_HEAD_SEC: float = 2.40                    # raised-cosine head decay
 RAMP_TAIL_SEC: float = 1.80                    # raised-cosine tail lift
-RAMP_CMD_STEP_SEC: float = 0.050               # 50 ms asendcmd grid
+RAMP_CMD_STEP_SEC: float = 0.050               # 50 ms sendcmd grid
 MAX_TOTAL_INSTANT_SHIFT_ST: float = 2.00       # hard ceiling on |Δp_k(t)| everywhere
 MAX_RAMP_SLOPE_ST_PER_SEC: float = 0.85        # perceptual imperceptibility bound
 
 OUTLIER_MAX_CHUNK_IQR_ST: float = 3.60
 OUTLIER_MAX_INTERNAL_SPAN_ST: float = 4.20     # |raw_head_st - raw_tail_st|
+
+
+def is_clone_prosody_phase3_enabled() -> bool:
+    """True when dynamic setting ``clone_prosody_phase3_enabled`` is active (default True)."""
+    try:
+        from app.config import settings as _settings
+
+        val = getattr(_settings, "clone_prosody_phase3_enabled", True)
+        if isinstance(val, str):
+            return val.strip().lower() not in ("0", "false", "no", "off")
+        return bool(val)
+    except Exception:
+        return True
 
 _ASCII_SYLLABLE_FALLBACK_RE = re.compile(r"[A-Za-z0-9]+")
 _MEDIA_WHITELIST = "file,pipe"
@@ -142,6 +214,12 @@ class ChunkProsodyAnalysis:
     tail_fallback: bool
     head_skipped: bool
     tail_skipped: bool
+    voiced_tilt_db: float = 0.0
+    voiced_presence_db: float = 0.0
+    voiced_centroid_hz: float = 0.0
+    linear_sag_st: float = 0.0
+    linear_slope_st_per_s: float = 0.0
+    sentence_count: int = 1
 
     @property
     def internal_span_st(self) -> float:
@@ -166,6 +244,8 @@ class GlobalProsodyAnchor:
     f0_job_median_hz: float | None
     rate_job_median: float | None
     anchor_source: str      # "ref_blend" | "job_median"
+    voiced_tilt_anchor_db: float | None = None
+    voiced_presence_anchor_db: float | None = None
 
 
 @dataclass
@@ -180,6 +260,9 @@ class PostLoopProsodyResult:
     boundary_steps: list[dict[str, Any]]
     raw_mean_iqr_st: float
     post_mean_iqr_st: float
+    desag_corrections: int = 0
+    tilt_eq_corrections: int = 0
+    space_family_switched: bool = False
 
 
 def semitone_diff(f0_hz: float, anchor_hz: float) -> float:
@@ -247,6 +330,12 @@ def classify_chunk_boundaries(
         spans.append((idx_h, end_p))
         pos = end_p
 
+    p3 = is_clone_prosody_phase3_enabled()
+    s_para = STEP_MAX_PARAGRAPH_ST if p3 else _P2_STEP_MAX_PARAGRAPH_ST
+    s_sent = STEP_MAX_SENTENCE_ST if p3 else _P2_STEP_MAX_SENTENCE_ST
+    s_clau = STEP_MAX_CLAUSE_ST if p3 else _P2_STEP_MAX_CLAUSE_ST
+    s_midp = STEP_MAX_MID_PHRASE_ST if p3 else _P2_STEP_MAX_MID_PHRASE_ST
+
     specs: list[BoundarySpec] = []
     for k in range(n_c - 1):
         c_end = str(chunks[k] or "").rstrip()
@@ -254,19 +343,19 @@ def classify_chunk_boundaries(
         q_tail = is_question_ending(c_end)
         if "\n\n" in sep or sep.count("\n") >= 2:
             kind = "PARAGRAPH"
-            s_max = STEP_MAX_PARAGRAPH_ST
+            s_max = s_para
             base_pause = PAUSE_PARAGRAPH_SEC
         elif c_end.endswith(("။", "?", "!")):
             kind = "SENTENCE"
-            s_max = STEP_MAX_SENTENCE_ST
+            s_max = s_sent
             base_pause = PAUSE_QUESTION_SEC if q_tail else PAUSE_SENTENCE_SEC
         elif c_end.endswith(("၊", ",", ";", ":")):
             kind = "CLAUSE"
-            s_max = STEP_MAX_CLAUSE_ST
+            s_max = s_clau
             base_pause = PAUSE_QUESTION_SEC if q_tail else PAUSE_CLAUSE_SEC
         else:
             kind = "MID_PHRASE"
-            s_max = STEP_MAX_MID_PHRASE_ST
+            s_max = s_midp
             base_pause = PAUSE_QUESTION_SEC if q_tail else PAUSE_MID_PHRASE_SEC
 
         specs.append(
@@ -401,6 +490,92 @@ def _yin_frame_f0(frame: np.ndarray, sr: int, tau_min: int, tau_max: int) -> tup
     return float(sr) / interp_tau, cmnd
 
 
+def repair_subharmonic_f0_contour(
+    f0_arr: np.ndarray,
+    *,
+    sr: int = ANALYSIS_SAMPLE_RATE,
+    cmnd_cache: dict[int, np.ndarray] | None = None,
+    tau_min: int = 38,
+) -> np.ndarray:
+    """Part 2.1 widened subharmonic / creak-diplophonia repair ([0.45, 0.60] * local_median).
+
+    Uses a ±0.60 s modal neighborhood median (widening to ±1.80 s / global modal median when
+    sparse) so abrupt phrase-final creak/diplophonia at 0.56-0.60x median is repaired cleanly
+    without flattening genuine multi-second pitch glides.
+    """
+    out = f0_arr.astype(np.float32, copy=True)
+    voiced_idx = np.where(~np.isnan(out) & (out > 0.0))[0]
+    if voiced_idx.size < 5:
+        return out
+
+    voiced_vals = out[voiced_idx]
+    global_med = float(np.median(voiced_vals))
+    if global_med <= 0.0:
+        return out
+
+    if not is_clone_prosody_phase3_enabled():
+        for idx in voiced_idx:
+            fi = float(out[idx])
+            cmnd = cmnd_cache.get(int(idx)) if cmnd_cache is not None else None
+            if 1.85 * global_med <= fi <= 2.15 * global_med and cmnd is not None:
+                sub_tau = int(round(sr / (fi * 0.5)))
+                if sub_tau < cmnd.size and cmnd[sub_tau] < 0.26:
+                    out[idx] = fi * 0.5
+            elif _P2_SUBHARMONIC_LO_RATIO * global_med <= fi <= _P2_SUBHARMONIC_HI_RATIO * global_med and cmnd is not None:
+                har_tau = int(round(sr / (fi * 2.0)))
+                if tau_min <= har_tau < cmnd.size and cmnd[har_tau] < 0.20:
+                    out[idx] = fi * 2.0
+        return out
+
+    modal_mask = (~np.isnan(out)) & (out >= EDGE_MODAL_FLOOR_RATIO * global_med) & (out <= 1.65 * global_med)
+    modal_indices = np.where(modal_mask)[0]
+    global_modal_med = float(np.median(out[modal_indices])) if modal_indices.size >= 5 else global_med
+
+    n_total = out.size
+    for idx in voiced_idx:
+        i_int = int(idx)
+        fi = float(out[i_int])
+        # Compute local modal median in ±60 frames (±0.60 s), fallback ±180 frames, else global_modal_med
+        lo_1 = max(0, i_int - 60)
+        hi_1 = min(n_total, i_int + 61)
+        loc_v = out[lo_1:hi_1][modal_mask[lo_1:hi_1]]
+        if loc_v.size >= 5:
+            local_med = float(np.median(loc_v))
+        else:
+            lo_2 = max(0, i_int - 180)
+            hi_2 = min(n_total, i_int + 181)
+            loc_v2 = out[lo_2:hi_2][modal_mask[lo_2:hi_2]]
+            local_med = float(np.median(loc_v2)) if loc_v2.size >= 5 else global_modal_med
+
+        cmnd = cmnd_cache.get(i_int) if cmnd_cache is not None else None
+        if 1.85 * local_med <= fi <= 2.15 * local_med:
+            if cmnd is not None:
+                sub_tau = int(round(sr / (fi * 0.5)))
+                if sub_tau < cmnd.size and cmnd[sub_tau] < 0.26:
+                    out[i_int] = fi * 0.5
+            else:
+                out[i_int] = fi * 0.5
+        elif SUBHARMONIC_LO_RATIO * local_med <= fi <= SUBHARMONIC_HI_RATIO * local_med:
+            repaired_hz: float | None = None
+            if cmnd is not None:
+                har_tau = int(round(sr / (fi * 2.0)))
+                if 0.45 * local_med <= fi <= 0.55 * local_med and tau_min <= har_tau < cmnd.size and cmnd[har_tau] < 0.26:
+                    repaired_hz = fi * 2.0
+                else:
+                    m_tau_lo = max(tau_min, int(round(sr / (1.25 * local_med))))
+                    m_tau_hi = min(cmnd.size - 1, int(round(sr / (0.78 * local_med))))
+                    if m_tau_lo <= m_tau_hi:
+                        sub_c = cmnd[m_tau_lo : m_tau_hi + 1]
+                        rel_min = int(np.argmin(sub_c))
+                        if float(sub_c[rel_min]) < 0.30:
+                            repaired_hz = float(sr) / float(m_tau_lo + rel_min)
+            if repaired_hz is None:
+                repaired_hz = local_med
+            out[i_int] = float(repaired_hz)
+
+    return out
+
+
 def extract_frame_contours(
     samples_16k: np.ndarray,
     sr: int = ANALYSIS_SAMPLE_RATE,
@@ -445,21 +620,7 @@ def extract_frame_contours(
             f0_arr[idx] = f0
             cmnd_cache[idx] = cmnd
 
-    voiced_vals = f0_arr[~np.isnan(f0_arr)]
-    if voiced_vals.size >= 5:
-        med = float(np.median(voiced_vals))
-        for idx in np.where(~np.isnan(f0_arr))[0]:
-            fi = float(f0_arr[idx])
-            cmnd = cmnd_cache.get(int(idx))
-            if 1.85 * med <= fi <= 2.15 * med and cmnd is not None:
-                sub_tau = int(round(sr / (fi * 0.5)))
-                if sub_tau < cmnd.size and cmnd[sub_tau] < 0.26:
-                    f0_arr[idx] = fi * 0.5
-            elif 0.46 * med <= fi <= 0.54 * med and cmnd is not None:
-                har_tau = int(round(sr / (fi * 2.0)))
-                if tau_min <= har_tau < cmnd.size and cmnd[har_tau] < 0.20:
-                    f0_arr[idx] = fi * 2.0
-
+    f0_arr = repair_subharmonic_f0_contour(f0_arr, sr=sr, cmnd_cache=cmnd_cache, tau_min=tau_min)
     return rms_arr, f0_arr
 
 
@@ -523,6 +684,115 @@ def _trimmed_iqm(vals: np.ndarray) -> float:
     return float(np.mean(inner)) if inner.size > 0 else float(np.median(vals))
 
 
+def measure_voiced_spectral_stats(
+    samples: np.ndarray,
+    sr: int,
+    f0_arr: np.ndarray,
+) -> tuple[float, float, float]:
+    """Measure voiced-frame-only ``(tilt_hi_db, presence_db, voiced_power_centroid_hz)``.
+
+    Strictly gates on frames with valid F0 (``~np.isnan(f0_arr) & (f0_arr > 0)``) so unvoiced
+    fricatives, English sibilants, aspirates, and pauses NEVER drive the EQ detector.
+    - ``tilt_hi_db = 10 * log10(E[1.6-5.5 kHz] / E[120-900 Hz])``
+    - ``presence_db = 10 * log10(E[0.8-2.0 kHz] / E[120-900 Hz])``
+    - ``voiced_power_centroid_hz = mean_voiced(sum(f * |X|^2) / sum(|X|^2))``
+    """
+    if samples.size == 0 or sr <= 0 or f0_arr.size == 0:
+        return 0.0, 0.0, 0.0
+
+    voiced_idx = np.where(~np.isnan(f0_arr) & (f0_arr > 0.0))[0]
+    if voiced_idx.size < 3:
+        return 0.0, 0.0, 0.0
+
+    win = max(64, int(round(FRAME_WIN_SEC * sr)))
+    hop = max(1, int(round(FRAME_STEP_SEC * sr)))
+    if samples.size < win:
+        return 0.0, 0.0, 0.0
+
+    window = np.hanning(win).astype(np.float64)
+    freqs = np.fft.rfftfreq(win, d=1.0 / float(sr))
+    nyq_hi = min(TILT_HIGH_BAND_HZ[1], 0.48 * float(sr))
+    lo_mask = (freqs >= TILT_LOW_BAND_HZ[0]) & (freqs <= TILT_LOW_BAND_HZ[1])
+    pr_mask = (freqs >= TILT_PRES_BAND_HZ[0]) & (freqs <= min(TILT_PRES_BAND_HZ[1], nyq_hi))
+    hi_mask = (freqs >= TILT_HIGH_BAND_HZ[0]) & (freqs <= nyq_hi)
+
+    e_lo = 0.0
+    e_pr = 0.0
+    e_hi = 0.0
+    cents: list[float] = []
+
+    for fi in voiced_idx:
+        st = int(fi) * hop
+        if st + win > samples.size:
+            break
+        seg = samples[st : st + win].astype(np.float64) * window
+        pwr = np.abs(np.fft.rfft(seg)) ** 2
+        tot_p = float(np.sum(pwr))
+        if tot_p <= 1e-12:
+            continue
+        e_lo += float(np.sum(pwr[lo_mask]))
+        e_pr += float(np.sum(pwr[pr_mask]))
+        e_hi += float(np.sum(pwr[hi_mask]))
+        cents.append(float(np.sum(freqs * pwr) / tot_p))
+
+    # Guard band-limited synthetic test tones where >1.6 kHz holds only 16-bit quantization dust (< -38 dB)
+    if e_lo > 1e-12 and e_hi > 1e-12 and (e_hi / e_lo) >= 1.58e-4:
+        tilt_hi = 10.0 * math.log10(e_hi / e_lo)
+    else:
+        tilt_hi = 0.0
+    if e_lo > 1e-12 and e_pr > 1e-12 and (e_pr / e_lo) >= 1.58e-4:
+        tilt_pr = 10.0 * math.log10(e_pr / e_lo)
+    else:
+        tilt_pr = 0.0
+    cent_hz = float(np.mean(cents)) if cents else 0.0
+    return round(tilt_hi, 4), round(tilt_pr, 4), round(cent_hz, 2)
+
+
+def measure_chunk_sag_and_slope(
+    f0_arr: np.ndarray,
+    *,
+    anchor_hz: float | None = None,
+) -> tuple[float, float]:
+    """Return ``(sag_thirds_st, theil_sen_slope_st_per_s)`` over modal voiced frames."""
+    if f0_arr.size == 0:
+        return 0.0, 0.0
+    cleaned = repair_subharmonic_f0_contour(f0_arr) if is_clone_prosody_phase3_enabled() else f0_arr
+    valid_idx = np.where(~np.isnan(cleaned) & (cleaned > 0.0))[0]
+    if valid_idx.size < 9:
+        return 0.0, 0.0
+
+    v_all = cleaned[valid_idx]
+    med_hz = float(np.median(v_all))
+    if med_hz <= 0.0:
+        return 0.0, 0.0
+
+    modal_keep = (v_all >= EDGE_MODAL_FLOOR_RATIO * med_hz) & (v_all <= 1.60 * med_hz)
+    if int(np.sum(modal_keep)) >= 9:
+        valid_idx = valid_idx[modal_keep]
+        v_all = v_all[modal_keep]
+
+    ref_hz = float(anchor_hz) if (anchor_hz is not None and anchor_hz > 0.0) else med_hz
+    st_vals = 12.0 * np.log2(v_all.astype(np.float64) / ref_hz)
+    t_vals = valid_idx.astype(np.float64) * FRAME_STEP_SEC
+
+    n3 = max(3, st_vals.size // 3)
+    head_med = float(np.median(st_vals[:n3]))
+    tail_med = float(np.median(st_vals[-n3:]))
+    sag_thirds_st = tail_med - head_med
+
+    t_span = float(t_vals[-1] - t_vals[0])
+    if t_span < 1.0:
+        return round(sag_thirds_st, 4), 0.0
+
+    # Trimmed-thirds robust linear slope (§3.1): exact on linear ramps and strictly sign-consistent
+    # with (tail_third_median - head_third_median) across multi-sentence Burmese intonation waves.
+    t_head_med = float(np.median(t_vals[:n3]))
+    t_tail_med = float(np.median(t_vals[-n3:]))
+    dt_thirds = max(1.0, t_tail_med - t_head_med)
+    slope = sag_thirds_st / dt_thirds
+    return round(sag_thirds_st, 4), round(slope, 5)
+
+
 def estimate_chunk_edge_f0_st(
     f0_arr: np.ndarray,
     *,
@@ -532,16 +802,16 @@ def estimate_chunk_edge_f0_st(
     body_st_vs_anchor: float,
     side: str,
 ) -> tuple[float, bool, bool]:
-    """Part 7 Burmese-safe voiced-frame edge F0 estimator.
+    """Burmese-safe voiced-frame edge F0 estimator (Phase 3 §2.2 modal 0.40 s window, Phase 2 fallback).
 
     Returns ``(edge_st_vs_anchor, used_fallback, skipped_edge)``:
-    - Guard trim: skips first 4 voiced frames (head) and last 12 voiced frames (tail creak/aukmyit).
-    - Primary window: 65 voiced frames capped at 35% of chunk voiced frames (non-overlapping).
-    - Creak/glitch filter: keeps frames in ``[0.72 * chunk_median, 1.50 * chunk_median]``, P20-P80 IQM.
-    - Fallbacks:
-      (a) widen to 110 voiced frames (max 40% of chunk);
-      (b) for ``8 <= n < 20``, Bayesian shrinkage ``(n/20)*e_raw + (1 - n/20)*e_body``;
-      (c) for ``n < 8`` or ``duration_sec < 2.5``, ``skipped_edge=True`` (Δedge = 0, never NaN/crash).
+    - Phase 3 (``clone_prosody_phase3_enabled=True``):
+      - Applies widened ``[0.45, 0.60] * local_median`` subharmonic repair first.
+      - Guard trim: 4-frame head guard / 6-frame creak-aware tail guard.
+      - Primary window: first/last 0.40 s (~32 modal voiced frames, capped at 35% of chunk).
+      - Modal floor ``0.62 * chunk_median`` (ceiling ``1.55 * chunk_median``), P20-P80 IQM.
+    - Phase 2 fallback (``clone_prosody_phase3_enabled=False``):
+      - 4/12 guard frames, 65/110 voiced frames, ``[0.72, 1.50] * chunk_median``.
     """
     if (
         duration_sec < 2.5
@@ -553,18 +823,64 @@ def estimate_chunk_edge_f0_st(
     ):
         return float(body_st_vs_anchor), True, True
 
-    voiced = f0_arr[~np.isnan(f0_arr) & (f0_arr > 0)]
+    p3 = is_clone_prosody_phase3_enabled()
+    work_f0 = repair_subharmonic_f0_contour(f0_arr) if p3 else f0_arr
+    voiced = work_f0[~np.isnan(work_f0) & (work_f0 > 0)]
     n_v = int(voiced.size)
     if n_v < EDGE_MIN_SHRINK_FRAMES:
         return float(body_st_vs_anchor), True, True
 
-    lo_hz = 0.72 * float(chunk_median_hz)
-    hi_hz = 1.50 * float(chunk_median_hz)
+    floor_ratio = EDGE_MODAL_FLOOR_RATIO if p3 else _P2_EDGE_MODAL_FLOOR_RATIO
+    ceil_ratio = 1.55 if p3 else 1.50
+    lo_hz = floor_ratio * float(chunk_median_hz)
+    hi_hz = ceil_ratio * float(chunk_median_hz)
     is_head = (side == "head")
-    guard = EDGE_HEAD_GUARD_FRAMES if is_head else EDGE_TAIL_GUARD_FRAMES
+    tail_guard = EDGE_TAIL_GUARD_FRAMES if p3 else _P2_EDGE_TAIL_GUARD_FRAMES
+    guard = EDGE_HEAD_GUARD_FRAMES if is_head else tail_guard
+    tgt_frames = EDGE_VOICED_TARGET_FRAMES if p3 else _P2_EDGE_VOICED_TARGET_FRAMES
+    widen_frames = EDGE_VOICED_WIDEN_FRAMES if p3 else _P2_EDGE_VOICED_WIDEN_FRAMES
+
+    # Creak-aware tail trim in Phase 3: if trailing frames beyond the 6-frame guard sit below
+    # the 0.62x modal floor, advance the effective tail end past that trailing creak cluster
+    # (up to 25% of voiced frames) so the 0.40 s window measures true modal phrase-end pitch.
+    eff_end_v = n_v - guard
+    if p3 and not is_head and eff_end_v > EDGE_MIN_SHRINK_FRAMES:
+        min_end = max(EDGE_MIN_SHRINK_FRAMES, int(round(0.75 * n_v)))
+        while eff_end_v > min_end and voiced[eff_end_v - 1] < lo_hz:
+            eff_end_v -= 1
+
+    # Slice modal voiced frames within the first/last 0.40 s wall-clock window (~25-35 frames) in Phase 3
+    if p3:
+        v_indices = np.where(~np.isnan(work_f0) & (work_f0 > 0))[0]
+        modal_idx = v_indices[(work_f0[v_indices] >= lo_hz) & (work_f0[v_indices] <= hi_hz)]
+        if modal_idx.size >= EDGE_MIN_SHRINK_FRAMES:
+            g_use = min(guard, max(0, modal_idx.size - EDGE_MIN_SHRINK_FRAMES))
+            trimmed_idx = modal_idx[g_use:] if is_head else (modal_idx[: modal_idx.size - g_use] if g_use > 0 else modal_idx)
+            win_wall = int(round(0.45 / FRAME_STEP_SEC))  # 0.45 s wall-clock (~25-35 voiced frames)
+            if is_head:
+                anchor_i = int(trimmed_idx[0])
+                sel = trimmed_idx[trimmed_idx <= anchor_i + win_wall]
+                if sel.size < 20:
+                    sel = trimmed_idx[: min(tgt_frames, trimmed_idx.size)]
+            else:
+                anchor_i = int(trimmed_idx[-1])
+                sel = trimmed_idx[trimmed_idx >= anchor_i - win_wall]
+                if sel.size < 20:
+                    sel = trimmed_idx[max(0, trimmed_idx.size - tgt_frames) :]
+            clean_p3 = work_f0[sel]
+            if clean_p3.size >= 20:
+                est_hz = _trimmed_iqm(clean_p3)
+                if est_hz > 0.0 and math.isfinite(est_hz):
+                    return semitone_diff(est_hz, float(anchor_hz)), False, False
+            elif clean_p3.size >= EDGE_MIN_SHRINK_FRAMES:
+                est_hz = _trimmed_iqm(clean_p3)
+                if est_hz > 0.0 and math.isfinite(est_hz):
+                    raw_st = semitone_diff(est_hz, float(anchor_hz))
+                    alpha = float(clean_p3.size) / 20.0
+                    return float(alpha * raw_st + (1.0 - alpha) * float(body_st_vs_anchor)), True, False
 
     def _slice_clean(target_frames: int, max_frac: float) -> np.ndarray:
-        avail = max(0, n_v - guard)
+        avail = max(0, (n_v - guard) if is_head else eff_end_v)
         if avail <= 0:
             return np.zeros(0, dtype=np.float32)
         cap = max(min(avail, max(EDGE_MIN_SHRINK_FRAMES, 16)), int(math.floor(n_v * max_frac)))
@@ -572,16 +888,15 @@ def estimate_chunk_edge_f0_st(
         if is_head:
             sub = voiced[guard : guard + win]
         else:
-            end_i = n_v - guard
-            st_i = max(0, end_i - win)
-            sub = voiced[st_i:end_i]
+            st_i = max(0, eff_end_v - win)
+            sub = voiced[st_i:eff_end_v]
         return sub[(sub >= lo_hz) & (sub <= hi_hz)]
 
-    clean = _slice_clean(EDGE_VOICED_TARGET_FRAMES, 0.35)
+    clean = _slice_clean(tgt_frames, 0.35)
     used_fallback = False
     if clean.size < 20:
         used_fallback = True
-        clean = _slice_clean(EDGE_VOICED_WIDEN_FRAMES, 0.40)
+        clean = _slice_clean(widen_frames, 0.40)
 
     if clean.size >= 20:
         est_hz = _trimmed_iqm(clean)
@@ -602,9 +917,10 @@ def estimate_chunk_edge_f0_st(
 
 
 def analyze_chunk_prosody(wav_path: Path, text: str = "") -> ChunkProsodyAnalysis:
-    """Run YIN ONCE on ``wav_path`` and cache both ``ProsodyStats`` and raw contours/edges."""
+    """Run YIN ONCE on ``wav_path`` and cache ``ProsodyStats``, contours/edges, sag, and voiced LTAS."""
     p = Path(wav_path)
     samples, sr = read_wav_mono_float32(p)
+    n_sents = max(1, len(split_sentences(text))) if str(text or "").strip() else 1
     if samples.size == 0 or sr <= 0:
         empty_stats = ProsodyStats(0.0, 0.0, 0.0, None, 0.0, count_burmese_syllables(text), None)
         return ChunkProsodyAnalysis(
@@ -621,12 +937,15 @@ def analyze_chunk_prosody(wav_path: Path, text: str = "") -> ChunkProsodyAnalysi
             tail_fallback=True,
             head_skipped=True,
             tail_skipped=True,
+            sentence_count=n_sents,
         )
 
     duration_sec = samples.size / float(sr)
     s16 = resample_float32(samples, sr, ANALYSIS_SAMPLE_RATE)
     rms_arr, f0_arr = extract_frame_contours(s16, ANALYSIS_SAMPLE_RATE)
     stats = _stats_from_contours(duration_sec, rms_arr, f0_arr, text=text)
+    tilt_hi_db, tilt_pr_db, v_cent_hz = measure_voiced_spectral_stats(samples, sr, f0_arr)
+    sag_st, slope_st_s = measure_chunk_sag_and_slope(f0_arr, anchor_hz=stats.f0_median_hz)
 
     med_hz = stats.f0_median_hz
     if med_hz is not None and med_hz > 0.0:
@@ -664,6 +983,12 @@ def analyze_chunk_prosody(wav_path: Path, text: str = "") -> ChunkProsodyAnalysi
         tail_fallback=t_fb,
         head_skipped=h_sk,
         tail_skipped=t_sk,
+        voiced_tilt_db=tilt_hi_db,
+        voiced_presence_db=tilt_pr_db,
+        voiced_centroid_hz=v_cent_hz,
+        linear_sag_st=sag_st,
+        linear_slope_st_per_s=slope_st_s,
+        sentence_count=n_sents,
     )
 
 
@@ -816,10 +1141,10 @@ def is_prosody_outlier(
     anchor_f0_hz: float | None,
     anchor_rate: float | None,
     internal_span_st: float = 0.0,
+    voiced_tilt_delta_db: float = 0.0,
+    linear_sag_st: float = 0.0,
 ) -> tuple[bool, float, float]:
-    """Part 6 re-scored retry trigger:
-    Outlier iff ``|ΔF0_med| > 2.5 st``, pace ratio ``∉ [0.78, 1.28]``,
-    ``f0_iqr_st > 3.60 st``, or ``|head_st - tail_st| > 4.20 st``."""
+    """Part 6 + Phase 3 (§7) re-scored retry trigger."""
     delta_st = 0.0
     rate_ratio = 1.0
     f0_bad = False
@@ -837,8 +1162,13 @@ def is_prosody_outlier(
 
     iqr_bad = float(stats.f0_iqr_st) > OUTLIER_MAX_CHUNK_IQR_ST
     span_bad = abs(float(internal_span_st)) > OUTLIER_MAX_INTERNAL_SPAN_ST
+    p3_bad = False
+    if is_clone_prosody_phase3_enabled():
+        tilt_bad = abs(float(voiced_tilt_delta_db)) > OUTLIER_MAX_TILT_DELTA_DB
+        sag_bad = abs(float(linear_sag_st)) > OUTLIER_MAX_LINEAR_SAG_ST
+        p3_bad = tilt_bad or sag_bad
 
-    return (f0_bad or rate_bad or iqr_bad or span_bad), delta_st, rate_ratio
+    return (f0_bad or rate_bad or iqr_bad or span_bad or p3_bad), delta_st, rate_ratio
 
 
 def prosody_anchor_distance(
@@ -863,13 +1193,43 @@ def score_prosody_candidate(
     anchor_f0_hz: float | None,
     anchor_rate: float | None,
     internal_span_st: float = 0.0,
+    voiced_tilt_delta_db: float = 0.0,
+    linear_sag_st: float = 0.0,
 ) -> float:
-    """Part 6 composite candidate score:
-    ``anchor_distance + 0.35 * max(0, iqr_st - 2.0) + 0.25 * max(0, |head_st - tail_st| - 2.0)``."""
+    """Part 6 + Phase 3 (§7) composite candidate score:
+    ``anchor_distance + 0.35*max(0, iqr-2.0) + 0.25*max(0, |span|-2.0)``
+    plus Phase 3 Option C terms:
+    ``+ 0.30*max(0, |Δvoiced_tilt_dB|-1.8) + 0.25*max(0, |linear_sag_st|-1.6)``."""
     base = prosody_anchor_distance(stats, anchor_f0_hz=anchor_f0_hz, anchor_rate=anchor_rate)
     iqr_pen = 0.35 * max(0.0, float(stats.f0_iqr_st) - 2.0)
     span_pen = 0.25 * max(0.0, abs(float(internal_span_st)) - 2.0)
-    return base + iqr_pen + span_pen
+    p3_pen = 0.0
+    if is_clone_prosody_phase3_enabled():
+        p3_pen += OUTLIER_SCORE_TILT_WEIGHT * max(
+            0.0, abs(float(voiced_tilt_delta_db)) - OUTLIER_SCORE_TILT_THRESH_DB
+        )
+        p3_pen += OUTLIER_SCORE_SAG_WEIGHT * max(
+            0.0, abs(float(linear_sag_st)) - OUTLIER_SCORE_SAG_THRESH_ST
+        )
+    return base + iqr_pen + span_pen + p3_pen
+
+
+def _weighted_median_signed(values: Sequence[float], weights: Sequence[float]) -> float | None:
+    pairs = [
+        (float(v), max(1e-3, float(w)))
+        for v, w in zip(values, weights)
+        if v is not None and math.isfinite(float(v))
+    ]
+    if not pairs:
+        return None
+    pairs.sort(key=lambda item: item[0])
+    total_w = sum(w for _, w in pairs)
+    acc = 0.0
+    for val, w in pairs:
+        acc += w
+        if acc >= 0.5 * total_w:
+            return val
+    return pairs[-1][0]
 
 
 def _weighted_median(values: Sequence[float], weights: Sequence[float]) -> float | None:
@@ -914,6 +1274,13 @@ def compute_global_prosody_anchor(
     f_job = _weighted_median(f_vals, f_wts)
     r_job = _weighted_median(r_vals, r_wts)
 
+    tilt_vals = [a.voiced_tilt_db for a in analyses if a.stats.voiced_sec >= 0.15 and a.voiced_tilt_db != 0.0]
+    tilt_wts = [max(0.05, a.stats.voiced_sec) for a in analyses if a.stats.voiced_sec >= 0.15 and a.voiced_tilt_db != 0.0]
+    pres_vals = [a.voiced_presence_db for a in analyses if a.stats.voiced_sec >= 0.15 and a.voiced_presence_db != 0.0]
+    pres_wts = [max(0.05, a.stats.voiced_sec) for a in analyses if a.stats.voiced_sec >= 0.15 and a.voiced_presence_db != 0.0]
+    tilt_med = _weighted_median_signed(tilt_vals, tilt_wts)
+    pres_med = _weighted_median_signed(pres_vals, pres_wts)
+
     use_ref_blend = (
         bool(is_custom_clone)
         and not bool(is_gender_flip)
@@ -946,6 +1313,8 @@ def compute_global_prosody_anchor(
             f0_job_median_hz=round(f_job, 3) if f_job is not None else None,
             rate_job_median=round(r_job, 4) if r_job is not None else None,
             anchor_source="ref_blend",
+            voiced_tilt_anchor_db=round(tilt_med, 4) if tilt_med is not None else None,
+            voiced_presence_anchor_db=round(pres_med, 4) if pres_med is not None else None,
         )
 
     return GlobalProsodyAnchor(
@@ -954,6 +1323,8 @@ def compute_global_prosody_anchor(
         f0_job_median_hz=round(f_job, 3) if f_job is not None else None,
         rate_job_median=round(r_job, 4) if r_job is not None else None,
         anchor_source="job_median",
+        voiced_tilt_anchor_db=round(tilt_med, 4) if tilt_med is not None else None,
+        voiced_presence_anchor_db=round(pres_med, 4) if pres_med is not None else None,
     )
 
 
@@ -963,17 +1334,77 @@ def compute_soft_knee_body_shift(
     *,
     expressive: bool = False,
 ) -> float:
-    """Part 3.1 continuous soft-knee whole-chunk centering toward ``F_anchor``."""
+    """Continuous soft-knee whole-chunk centering toward ``F_anchor``."""
     if chunk_f0_hz is None or anchor_f0_hz is None or chunk_f0_hz <= 0.0 or anchor_f0_hz <= 0.0:
         return 0.0
     delta_st = semitone_diff(chunk_f0_hz, anchor_f0_hz)
     needed_st = -delta_st
-    deadband = BODY_EXPRESSIVE_DEADBAND_ST if expressive else BODY_DEADBAND_PITCH_ST
+    p3 = is_clone_prosody_phase3_enabled()
+    if p3:
+        deadband = BODY_EXPRESSIVE_DEADBAND_ST if expressive else BODY_DEADBAND_PITCH_ST
+    else:
+        deadband = _P2_BODY_EXPRESSIVE_DEADBAND_ST if expressive else _P2_BODY_DEADBAND_PITCH_ST
     mag = abs(needed_st)
     if mag <= deadband:
         return 0.0
     eff = min(BODY_MAX_SHIFT_ST, mag - deadband)
     return round(math.copysign(eff, needed_st), 4)
+
+
+def compute_linear_desag_contour(
+    f0_arr: np.ndarray,
+    *,
+    duration_sec: float,
+    sentence_count: int,
+    anchor_f0_hz: float | None = None,
+) -> tuple[np.ndarray, float, bool]:
+    """Phase 3 (§3.1): Macro linear F0 de-sagging on multi-sentence chunks >= 8 s.
+
+    - Skips single-sentence chunks (``sentence_count < 2``) and chunks ``< 8.0 s``.
+    - Full gain ``γ = 0.72`` for chunks ``>= 10.0 s``; halved gain ``0.36`` for ``8.0..10.0 s``.
+    - Triggers when ``|slope| > 0.030 st/s`` or ``|head_third - tail_third| > 0.55 st``.
+    - Compensates ``γ`` of excess slope beyond ``0.030 st/s``, capped at ``±0.08 st/s``,
+      centered on the chunk's voiced median timestamp so chunk median F0 is invariant.
+    Returns ``(delta_slope_frames, comp_slope_st_per_s, applied)``.
+    """
+    n = int(f0_arr.size)
+    if (
+        n == 0
+        or not is_clone_prosody_phase3_enabled()
+        or int(sentence_count) < DESAG_MIN_SENTENCES
+        or float(duration_sec) < DESAG_BORDERLINE_MIN_SEC
+    ):
+        return np.zeros(n, dtype=np.float64), 0.0, False
+
+    sag_thirds_st, slope_st_s = measure_chunk_sag_and_slope(f0_arr, anchor_hz=anchor_f0_hz)
+    if (
+        abs(slope_st_s) <= DESAG_SLOPE_DEADBAND_ST_PER_SEC
+        and abs(sag_thirds_st) <= DESAG_THIRDS_DEADBAND_ST
+    ):
+        return np.zeros(n, dtype=np.float64), 0.0, False
+
+    valid_idx = np.where(~np.isnan(f0_arr) & (f0_arr > 0.0))[0]
+    if valid_idx.size < 9:
+        return np.zeros(n, dtype=np.float64), 0.0, False
+
+    t_voiced = valid_idx.astype(np.float64) * FRAME_STEP_SEC
+    t_span = max(4.0, float(t_voiced[-1] - t_voiced[0]))
+    eff_slope = slope_st_s
+    if abs(eff_slope) <= DESAG_SLOPE_DEADBAND_ST_PER_SEC and abs(sag_thirds_st) > DESAG_THIRDS_DEADBAND_ST:
+        eff_slope = sag_thirds_st / max(4.0, (2.0 / 3.0) * t_span)
+
+    excess_mag = max(0.0, abs(eff_slope) - DESAG_SLOPE_DEADBAND_ST_PER_SEC)
+    if excess_mag <= 1e-6:
+        return np.zeros(n, dtype=np.float64), 0.0, False
+
+    gamma = DESAG_GAIN if float(duration_sec) >= DESAG_MIN_DURATION_SEC else DESAG_BORDERLINE_GAIN
+    raw_comp = -math.copysign(gamma * excess_mag, eff_slope)
+    comp_slope = max(-DESAG_MAX_COMP_SLOPE_ST_PER_SEC, min(DESAG_MAX_COMP_SLOPE_ST_PER_SEC, raw_comp))
+
+    t_mid = float(np.median(t_voiced))
+    t_all = np.arange(n, dtype=np.float64) * FRAME_STEP_SEC
+    delta_frames = comp_slope * (t_all - t_mid)
+    return delta_frames, round(comp_slope, 5), True
 
 
 def compute_envelope_tether(
@@ -982,25 +1413,25 @@ def compute_envelope_tether(
     anchor_f0_hz: float | None,
     body_shift_st: float,
     expressive: bool = False,
+    slope_delta_frames: np.ndarray | None = None,
+    duration_sec: float = 0.0,
+    sentence_count: int = 1,
 ) -> tuple[np.ndarray, bool]:
-    """Part 3.2: 3.5 s sliding voiced-median envelope tether on the 10 ms frame grid.
-
-    - Zero touch inside ``±1.35 st`` (``±1.75 st`` on expressive chunks).
-    - Pulls excess beyond deadzone with gain ``0.65``.
-    - Enforces hard ceiling ``±1.85 st`` so no 3.5 s envelope point remains beyond ``±1.85 st``,
-      and damps rapid opposite-signed 5 s intra-chunk swings while passing ``<3.5 s`` syllable/word
-      contours through at ``1.00x``.
-    """
+    """3.5 s sliding voiced-median envelope tether on the 10 ms frame grid."""
     n = int(f0_arr.size)
     if n == 0 or anchor_f0_hz is None or anchor_f0_hz <= 0.0:
         return np.zeros(n, dtype=np.float64), False
 
+    p3 = is_clone_prosody_phase3_enabled()
+    work_f0 = repair_subharmonic_f0_contour(f0_arr) if p3 else f0_arr
     half_w = max(5, int(round((ENV_WINDOW_SEC * 0.5) / FRAME_STEP_SEC)))  # 175 frames = 1.75 s
     st_arr = np.full(n, np.nan, dtype=np.float64)
-    valid = ~np.isnan(f0_arr) & (f0_arr > 0.0)
+    valid = ~np.isnan(work_f0) & (work_f0 > 0.0)
     if int(np.sum(valid)) < 8:
         return np.zeros(n, dtype=np.float64), False
-    st_arr[valid] = 12.0 * np.log2(f0_arr[valid] / float(anchor_f0_hz)) + float(body_shift_st)
+    st_arr[valid] = 12.0 * np.log2(work_f0[valid] / float(anchor_f0_hz)) + float(body_shift_st)
+    if p3 and slope_delta_frames is not None and slope_delta_frames.size == n:
+        st_arr[valid] += slope_delta_frames[valid]
 
     grid_idx = np.arange(0, n, 5)  # 50 ms centers
     m_g = int(grid_idx.size)
@@ -1020,7 +1451,10 @@ def compute_envelope_tether(
         grid_idx[has_val].astype(np.float64),
         grid_med[has_val],
     )
-    dz = ENV_EXPRESSIVE_DEADZONE_ST if expressive else ENV_DEADZONE_ST
+    if p3:
+        dz = ENV_EXPRESSIVE_DEADZONE_ST if expressive else ENV_DEADZONE_ST
+    else:
+        dz = _P2_ENV_EXPRESSIVE_DEADZONE_ST if expressive else _P2_ENV_DEADZONE_ST
 
     target_g = env_g.copy()
     modified = False
@@ -1034,10 +1468,10 @@ def compute_envelope_tether(
             target_g[gi] = e - math.copysign(pull, e)
             modified = True
 
-    # Damp intra-chunk 5 s bipolar swings (when both <-0.22 and >+0.22 occur within ±6.0 s),
-    # while leaving unipolar +2.7 st expressive arches (w_min >= -0.15) untouched in [+1.50, +1.85 st]!
-    rad = 120  # 6.0 s at 50 ms step
+    # Damp intra-chunk bipolar swings while leaving unipolar +2.7 st expressive arches (w_min >= -0.15) untouched!
+    rad = 120  # ±6.0 s
     max_bipolar_span = 1.18
+    bipolar_trig = 0.22
     damped_g = target_g.copy()
     for _ in range(2):
         cur = damped_g.copy()
@@ -1046,8 +1480,8 @@ def compute_envelope_tether(
             w_min = float(np.min(win))
             w_max = float(np.max(win))
             span = w_max - w_min
-            if w_min < -0.22 and w_max > 0.22 and span > max_bipolar_span:
-                mid = max(-0.22, min(0.22, 0.5 * (w_min + w_max)))
+            if w_min < -bipolar_trig and w_max > bipolar_trig and span > max_bipolar_span:
+                mid = max(-bipolar_trig, min(bipolar_trig, 0.5 * (w_min + w_max)))
                 scale = max_bipolar_span / span
                 damped_g[gi] = mid + (cur[gi] - mid) * scale
                 modified = True
@@ -1116,13 +1550,139 @@ def _project_slope_limit(y: np.ndarray, dt: float, max_slope: float = MAX_RAMP_S
     return out
 
 
+_RUBBERBAND_CAP_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def probe_rubberband_capabilities(ffmpeg_bin: str | None = None) -> dict[str, Any]:
+    """Runtime capability probe for FFmpeg ``rubberband`` (``pitchq=consistency``, ``smoothing=on``)
+    and ``highshelf`` filter support. Cached once per resolved ``ffmpeg_bin`` per process."""
+    ff = ffmpeg_bin or shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+    key = str(ff)
+    cached = _RUBBERBAND_CAP_CACHE.get(key)
+    if cached is not None:
+        return dict(cached)
+
+    info: dict[str, Any] = {
+        "ffmpeg_bin": ff,
+        "available": False,
+        "pitchq_consistency": False,
+        "smoothing": False,
+        "highshelf": False,
+    }
+    if not ff or (not shutil.which(ff) and not Path(ff).is_file()):
+        _RUBBERBAND_CAP_CACHE[key] = info
+        return dict(info)
+
+    try:
+        res_v = subprocess.run(
+            [
+                ff, "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "sine=frequency=200:sample_rate=16000:duration=0.12",
+                "-af", "rubberband=pitch=1.0:tempo=1.0:formant=preserved:pitchq=consistency:smoothing=on,highshelf=f=2200:t=q:w=0.6:g=0.0,equalizer=f=1000:t=q:w=0.8:g=0.0",
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if res_v.returncode == 0:
+            info["available"] = True
+            info["pitchq_consistency"] = True
+            info["smoothing"] = True
+            info["highshelf"] = True
+            _RUBBERBAND_CAP_CACHE[key] = info
+            return dict(info)
+    except Exception:
+        pass
+
+    try:
+        res_h = subprocess.run([ff, "-hide_banner", "-h", "filter=rubberband"], capture_output=True, text=True, timeout=8, check=False)
+        out_h = (res_h.stdout or "") + (res_h.stderr or "")
+        info["available"] = "rubberband" in out_h.lower()
+        info["pitchq_consistency"] = "consistency" in out_h
+        info["smoothing"] = "smoothing" in out_h
+        res_hs = subprocess.run([ff, "-hide_banner", "-h", "filter=highshelf"], capture_output=True, text=True, timeout=8, check=False)
+        info["highshelf"] = res_hs.returncode == 0 and "highshelf" in ((res_hs.stdout or "") + (res_hs.stderr or "")).lower()
+    except Exception:
+        pass
+
+    _RUBBERBAND_CAP_CACHE[key] = info
+    return dict(info)
+
+
+def _rubberband_extra_opts(ffmpeg_bin: str | None = None) -> str:
+    if not is_clone_prosody_phase3_enabled():
+        return ""
+    caps = probe_rubberband_capabilities(ffmpeg_bin)
+    opts = ""
+    if caps.get("pitchq_consistency"):
+        opts += ":pitchq=consistency"
+    if caps.get("smoothing"):
+        opts += ":smoothing=on"
+    return opts
+
+
+def compute_chunk_tilt_eq_gains(
+    chunk_tilt_db: float,
+    chunk_pres_db: float,
+    *,
+    target_tilt_db: float | None,
+    target_pres_db: float | None,
+    mean_pitch_shift_st: float = 0.0,
+) -> tuple[float, float]:
+    """Phase 3 (§5.4): Compute ``(highshelf_2200_db, presence_1000_db)`` toward job voiced median.
+
+    - Deadband: ``±0.40 dB``.
+    - Clamps: ``highshelf`` in ``[-3.0, +3.0] dB`` (2.2 kHz, Q=0.6); ``presence`` in ``[-1.8, +1.8] dB`` (1.0 kHz, Q=0.8).
+    - Accounts for ``rubberband=formant=preserved`` upward-pitch HF rolloff (``-0.55 dB/st`` high, ``-0.20 dB/st`` pres).
+    """
+    if not is_clone_prosody_phase3_enabled() or target_tilt_db is None:
+        return 0.0, 0.0
+
+    rb_hi_shift = -0.55 * max(0.0, float(mean_pitch_shift_st))
+    rb_pr_shift = -0.20 * max(0.0, float(mean_pitch_shift_st))
+
+    err_hi = (float(chunk_tilt_db) + rb_hi_shift) - float(target_tilt_db)
+    err_pr = (
+        ((float(chunk_pres_db) + rb_pr_shift) - float(target_pres_db))
+        if target_pres_db is not None
+        else 0.0
+    )
+
+    tgt_d_hi = 0.0 if abs(err_hi) <= TILT_EQ_DEADBAND_DB else -err_hi
+    tgt_d_pr = 0.0 if abs(err_pr) <= TILT_EQ_DEADBAND_DB else -err_pr
+    if tgt_d_hi == 0.0 and tgt_d_pr == 0.0:
+        return 0.0, 0.0
+
+    # 2x2 speech-band coupling inversion (highshelf@2.2kHz Q=0.6 & bell@1.0kHz Q=0.8).
+    # Voiced speech energy in [1.6-5.5 kHz] concentrates near 1.6-2.4 kHz (around the 2.2 kHz
+    # half-gain corner), yielding ~0.45 dB/dB effective shelf coupling and ~0.22 dB/dB bell overlap.
+    det = 0.45 * 0.65 - 0.16 * 0.22
+    g_hi_raw = (0.65 * tgt_d_hi - 0.16 * tgt_d_pr) / det if abs(tgt_d_hi) > 0.0 else 0.0
+    g_pr_raw = (-0.20 * tgt_d_hi + 0.45 * tgt_d_pr) / det if abs(tgt_d_pr) > 0.0 else 0.0
+
+    g_hi = max(-TILT_HIGHSHELF_MAX_DB, min(TILT_HIGHSHELF_MAX_DB, g_hi_raw))
+    # If highshelf saturates ±3.0 dB on an extreme chunk outlier, let presence assist on the 1.6-2.0 kHz overlap
+    hi_sat_rem = tgt_d_hi - (0.45 * g_hi + 0.22 * max(-TILT_PRESENCE_MAX_DB, min(TILT_PRESENCE_MAX_DB, g_pr_raw)))
+    if abs(g_hi_raw) > TILT_HIGHSHELF_MAX_DB and abs(hi_sat_rem) > 0.15:
+        g_pr_raw += 0.55 * hi_sat_rem
+    g_pr = max(-TILT_PRESENCE_MAX_DB, min(TILT_PRESENCE_MAX_DB, g_pr_raw))
+    return round(g_hi, 3), round(g_pr, 3)
+
+
 def compute_rubberband_params(
     stats: ProsodyStats,
     *,
     anchor_f0_hz: float | None,
     anchor_rate: float | None,
 ) -> tuple[float, float]:
-    """Return ``(pitch_shift_st, tempo_factor)`` clamped to ±2.0 st and [0.90, 1.12]."""
+    """Return ``(pitch_shift_st, tempo_factor)`` clamped per active phase settings."""
+    p3 = is_clone_prosody_phase3_enabled()
+    tp_min = RUBBERBAND_TEMPO_MIN if p3 else _P2_RUBBERBAND_TEMPO_MIN
+    tp_max = RUBBERBAND_TEMPO_MAX if p3 else _P2_RUBBERBAND_TEMPO_MAX
+    tp_db = RUBBERBAND_DEADBAND_TEMPO if p3 else _P2_RUBBERBAND_DEADBAND_TEMPO
+
     shift_st = 0.0
     if stats.f0_median_hz is not None and anchor_f0_hz is not None and anchor_f0_hz > 0:
         delta_st = semitone_diff(stats.f0_median_hz, anchor_f0_hz)
@@ -1133,8 +1693,8 @@ def compute_rubberband_params(
     tempo_factor = 1.0
     if stats.syllable_rate is not None and anchor_rate is not None and anchor_rate > 0 and stats.syllable_rate > 0:
         raw_tempo = anchor_rate / stats.syllable_rate
-        if abs(raw_tempo - 1.0) > RUBBERBAND_DEADBAND_TEMPO:
-            tempo_factor = max(RUBBERBAND_TEMPO_MIN, min(RUBBERBAND_TEMPO_MAX, raw_tempo))
+        if abs(raw_tempo - 1.0) > tp_db:
+            tempo_factor = max(tp_min, min(tp_max, raw_tempo))
 
     return round(shift_st, 4), round(tempo_factor, 4)
 
@@ -1150,8 +1710,12 @@ def apply_rubberband_micro_correction(
     if abs(pitch_shift_st) <= 1e-4 and abs(tempo_factor - 1.0) <= 1e-4:
         return False
 
+    p3 = is_clone_prosody_phase3_enabled()
+    tp_min = RUBBERBAND_TEMPO_MIN if p3 else _P2_RUBBERBAND_TEMPO_MIN
+    tp_max = RUBBERBAND_TEMPO_MAX if p3 else _P2_RUBBERBAND_TEMPO_MAX
+
     clamped_st = max(-RUBBERBAND_MAX_PITCH_ST, min(RUBBERBAND_MAX_PITCH_ST, float(pitch_shift_st)))
-    clamped_tempo = max(RUBBERBAND_TEMPO_MIN, min(RUBBERBAND_TEMPO_MAX, float(tempo_factor)))
+    clamped_tempo = max(tp_min, min(tp_max, float(tempo_factor)))
 
     ff = ffmpeg_bin or shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
     p = Path(wav_path)
@@ -1160,7 +1724,8 @@ def apply_rubberband_micro_correction(
 
     pitch_ratio = 2.0 ** (clamped_st / 12.0)
     tmp_out = p.with_name(f"{p.stem}.rb_tmp.wav")
-    af_expr = f"rubberband=pitch={pitch_ratio:.6f}:tempo={clamped_tempo:.6f}:formant=preserved"
+    extra_rb = _rubberband_extra_opts(ff)
+    af_expr = f"rubberband=pitch={pitch_ratio:.6f}:tempo={clamped_tempo:.6f}:formant=preserved{extra_rb}"
     cmd = [
         ff, "-y", "-hide_banner", "-loglevel", "error",
         "-protocol_whitelist", _MEDIA_WHITELIST,
@@ -1179,6 +1744,9 @@ def apply_rubberband_micro_correction(
     finally:
         tmp_out.unlink(missing_ok=True)
     return False
+
+
+_ORIG_APPLY_RUBBERBAND_MICRO = apply_rubberband_micro_correction
 
 
 def _enforce_exact_pcm_frames(wav_path: Path, target_frames: int) -> None:
@@ -1214,6 +1782,13 @@ def _enforce_exact_pcm_frames(wav_path: Path, target_frames: int) -> None:
         pass
 
 
+def _escape_ffmpeg_filter_path(p: Path) -> str:
+    """Escape a local file path for FFmpeg filter option ``asendcmd=f='...'`` across Windows/Linux."""
+    raw = str(p.resolve()).replace("\\", "/")
+    raw = raw.replace(":", "\\:").replace("'", "\\'")
+    return raw
+
+
 def apply_contour_to_chunk(
     raw_wav: Path,
     out_wav: Path,
@@ -1221,18 +1796,27 @@ def apply_contour_to_chunk(
     grid_t: np.ndarray,
     grid_st: np.ndarray,
     tempo_factor: float = 1.0,
+    highshelf_db: float = 0.0,
+    presence_db: float = 0.0,
+    uniform_chain: bool | None = None,
     ffmpeg_bin: str | None = None,
 ) -> bool:
-    """Part 4: Single-pass `asendcmd + rubberband=formant=preserved` execution.
+    """Single-pass ``asendcmd=f=<tmp> + rubberband + voiced-tilt EQ`` execution.
 
-    Reads ``raw_wav`` without modifying it and writes ``out_wav`` with sample-exact
-    duration matching ``raw_duration / tempo_factor`` within ±5 ms.
+    In Phase 3 (``uniform_chain=True``), EVERY chunk of a multi-chunk job passes through
+    the same single FFmpeg filtergraph (no raw neural vs phase-vocoded bypass toggle).
     """
     src = Path(raw_wav)
     dst = Path(out_wav)
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    clamped_tempo = max(RUBBERBAND_TEMPO_MIN, min(RUBBERBAND_TEMPO_MAX, float(tempo_factor)))
+    p3 = is_clone_prosody_phase3_enabled()
+    if uniform_chain is None:
+        uniform_chain = p3
+    tp_min = RUBBERBAND_TEMPO_MIN if p3 else _P2_RUBBERBAND_TEMPO_MIN
+    tp_max = RUBBERBAND_TEMPO_MAX if p3 else _P2_RUBBERBAND_TEMPO_MAX
+
+    clamped_tempo = max(tp_min, min(tp_max, float(tempo_factor)))
     if grid_t.size == 0 or grid_st.size == 0:
         shutil.copy2(src, dst)
         return False
@@ -1254,8 +1838,11 @@ def apply_contour_to_chunk(
         else 0
     )
 
-    # Uniform contour (including 0.0 st / 1.0x no-op) -> delegate through apply_rubberband_micro_correction
-    if float(np.max(np.abs(clamped_grid - clamped_grid[0]))) <= 1e-3:
+    is_uniform_pitch = float(np.max(np.abs(clamped_grid - clamped_grid[0]))) <= 1e-3
+    rb_monkeypatched = apply_rubberband_micro_correction is not _ORIG_APPLY_RUBBERBAND_MICRO
+
+    # Legacy Phase 2 bypass path OR unit-test spy hook on apply_rubberband_micro_correction
+    if is_uniform_pitch and (not uniform_chain or rb_monkeypatched):
         if src.resolve() != dst.resolve():
             shutil.copy2(src, dst)
         applied = apply_rubberband_micro_correction(
@@ -1269,36 +1856,76 @@ def apply_contour_to_chunk(
         return applied
 
     ff = ffmpeg_bin or shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+    caps = probe_rubberband_capabilities(ff)
+    extra_rb = _rubberband_extra_opts(ff)
     init_ratio = 2.0 ** (float(clamped_grid[0]) / 12.0)
-    cmds = ";".join(
-        f"{float(t):.3f} rubberband pitch {2.0 ** (float(st) / 12.0):.6f}"
-        for t, st in zip(grid_t, clamped_grid)
-    )
-    af_expr = (
-        f"asendcmd=c='{cmds}',"
-        f"rubberband=pitch={init_ratio:.6f}:tempo={clamped_tempo:.6f}:formant=preserved"
-    )
+
+    cmd_file = dst.with_name(f"{dst.stem}.asend.cmd")
     tmp_out = dst.with_name(f"{dst.stem}.asend_tmp.wav")
     ar_args = ["-ar", str(orig_sr)] if orig_sr > 0 else []
-    cmd = [
-        ff, "-y", "-hide_banner", "-loglevel", "error",
-        "-protocol_whitelist", _MEDIA_WHITELIST,
-        "-i", str(src),
-        "-af", af_expr,
-        *ar_args,
-        "-ac", "1", "-c:a", "pcm_s16le",
-        str(tmp_out),
-    ]
+
+    eq_chain_parts: list[str] = []
+    if p3 and uniform_chain:
+        hs_filter = "highshelf" if caps.get("highshelf", True) else "treble"
+        eq_chain_parts.append(
+            f"{hs_filter}=f={TILT_HIGHSHELF_FREQ_HZ:.1f}:t=q:w={TILT_HIGHSHELF_Q:.2f}:g={float(highshelf_db):.3f}"
+        )
+        eq_chain_parts.append(
+            f"equalizer=f={TILT_PRESENCE_FREQ_HZ:.1f}:t=q:w={TILT_PRESENCE_Q:.2f}:g={float(presence_db):.3f}"
+        )
+    elif abs(highshelf_db) > 1e-3 or abs(presence_db) > 1e-3:
+        hs_filter = "highshelf" if caps.get("highshelf", True) else "treble"
+        if abs(highshelf_db) > 1e-3:
+            eq_chain_parts.append(
+                f"{hs_filter}=f={TILT_HIGHSHELF_FREQ_HZ:.1f}:t=q:w={TILT_HIGHSHELF_Q:.2f}:g={float(highshelf_db):.3f}"
+            )
+        if abs(presence_db) > 1e-3:
+            eq_chain_parts.append(
+                f"equalizer=f={TILT_PRESENCE_FREQ_HZ:.1f}:t=q:w={TILT_PRESENCE_Q:.2f}:g={float(presence_db):.3f}"
+            )
+
+    rb_core = f"rubberband=pitch={init_ratio:.6f}:tempo={clamped_tempo:.6f}:formant=preserved{extra_rb}"
+    eq_suffix = ("," + ",".join(eq_chain_parts)) if eq_chain_parts else ""
+
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=90, check=False)
-        if res.returncode == 0 and tmp_out.is_file() and tmp_out.stat().st_size > 256:
-            shutil.move(str(tmp_out), str(dst))
-            if expected_frames > 0:
-                _enforce_exact_pcm_frames(dst, expected_frames)
-            return True
+        af_candidates: list[str] = []
+        if is_uniform_pitch:
+            af_candidates.append(f"{rb_core}{eq_suffix}")
+        else:
+            cmd_lines = "\n".join(
+                f"{float(t):.3f} rubberband pitch {2.0 ** (float(st) / 12.0):.6f};"
+                for t, st in zip(grid_t, clamped_grid)
+            )
+            cmd_file.write_text(cmd_lines + "\n", encoding="utf-8")
+            esc_path = _escape_ffmpeg_filter_path(cmd_file)
+            af_candidates.append(f"asendcmd=f='{esc_path}',{rb_core}{eq_suffix}")
+            inline_cmds = ";".join(
+                f"{float(t):.3f} rubberband pitch {2.0 ** (float(st) / 12.0):.6f}"
+                for t, st in zip(grid_t, clamped_grid)
+            )
+            if len(inline_cmds) < 24000:
+                af_candidates.append(f"asendcmd=c='{inline_cmds}',{rb_core}{eq_suffix}")
+
+        for af_expr in af_candidates:
+            cmd = [
+                ff, "-y", "-hide_banner", "-loglevel", "error",
+                "-protocol_whitelist", _MEDIA_WHITELIST,
+                "-i", str(src),
+                "-af", af_expr,
+                *ar_args,
+                "-ac", "1", "-c:a", "pcm_s16le",
+                str(tmp_out),
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=90, check=False)
+            if res.returncode == 0 and tmp_out.is_file() and tmp_out.stat().st_size > 256:
+                shutil.move(str(tmp_out), str(dst))
+                if expected_frames > 0:
+                    _enforce_exact_pcm_frames(dst, expected_frames)
+                return True
     except Exception as exc:
         logger.debug("clone_prosody: contoured rubberband skipped (%s)", exc)
     finally:
+        cmd_file.unlink(missing_ok=True)
         tmp_out.unlink(missing_ok=True)
 
     if src.resolve() != dst.resolve():
@@ -1313,9 +1940,12 @@ def build_chunk_pitch_contour_grid(
     env_delta_frames: np.ndarray,
     head_ramp_st: float,
     tail_ramp_st: float,
+    slope_delta_frames: np.ndarray | None = None,
+    first_voiced_sec: float = 0.0,
+    last_voiced_sec: float | None = None,
     speed_tempo: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Construct the 50 ms `Δp_k(t)` grid per Part 3 with `|d(Δp)/dt| <= 0.85 st/s`."""
+    """Construct the 50 ms ``Δp_k(t) = clamp[-2, +2](Δbody + Δslope(t) + Δenv(t) + Δhead·w_cos + Δtail·w_cos)`` grid."""
     dur = max(0.05, float(duration_sec))
     n_grid = max(2, int(math.ceil(dur / RAMP_CMD_STEP_SEC)) + 1)
     grid_t = np.linspace(0.0, dur, n_grid)
@@ -1326,14 +1956,16 @@ def build_chunk_pitch_contour_grid(
     else:
         d_env_g = np.zeros(n_grid, dtype=np.float64)
 
+    if slope_delta_frames is not None and slope_delta_frames.size > 0:
+        s_idx = np.clip(grid_t / FRAME_STEP_SEC, 0.0, float(slope_delta_frames.size - 1))
+        d_slope_g = np.interp(s_idx, np.arange(slope_delta_frames.size, dtype=np.float64), slope_delta_frames)
+    else:
+        d_slope_g = np.zeros(n_grid, dtype=np.float64)
+
     tempo_scale = max(0.5, min(2.0, float(speed_tempo or 1.0)))
     base_head_l = RAMP_HEAD_SEC * tempo_scale
     base_tail_l = RAMP_TAIL_SEC * tempo_scale
 
-    # Raised cosine `w_cos(τ, L) = 0.5*(1 + cos(π*τ/L))` has max slope `|Δ| * π / (2*L)`.
-    # Choosing `L >= π * |Δ| / (2 * MAX_RAMP_SLOPE_ST_PER_SEC)` satisfies slope bound by construction;
-    # for large >0.75 st cliffs on long chunks, widen smoothly up to <=4.2 s (<=0.24*dur) so 5 s
-    # window medians transition gently while leaving the mid-chunk [5 s, T-5 s] core 100% untouched.
     req_head_l = (math.pi * abs(float(head_ramp_st))) / (2.0 * MAX_RAMP_SLOPE_ST_PER_SEC)
     req_tail_l = (math.pi * abs(float(tail_ramp_st))) / (2.0 * MAX_RAMP_SLOPE_ST_PER_SEC)
     wide_cap = min(4.20 * tempo_scale, max(base_head_l, 0.24 * dur))
@@ -1343,24 +1975,144 @@ def build_chunk_pitch_contour_grid(
     l_head = min(max(base_head_l, req_head_l, smooth_head_l), max(0.40, 0.48 * dur))
     l_tail = min(max(base_tail_l, req_tail_l, smooth_tail_l), max(0.40, 0.48 * dur))
 
+    t_v0 = max(0.0, min(0.35 * dur, float(first_voiced_sec or 0.0)))
+    t_v1 = dur if last_voiced_sec is None else max(0.65 * dur, min(dur, float(last_voiced_sec)))
+
     if abs(head_ramp_st) > 1e-4 and l_head > 1e-3:
-        w_h = np.where(grid_t < l_head, 0.5 * (1.0 + np.cos(math.pi * grid_t / l_head)), 0.0)
+        tau_h = np.maximum(0.0, grid_t - t_v0 - 0.20)
+        w_h = np.where(tau_h < l_head, 0.5 * (1.0 + np.cos(math.pi * tau_h / l_head)), 0.0)
     else:
         w_h = np.zeros(n_grid, dtype=np.float64)
 
-    tau_tail = dur - grid_t
+    tau_tail = np.maximum(0.0, t_v1 - grid_t - 0.20)
     if abs(tail_ramp_st) > 1e-4 and l_tail > 1e-3:
         w_t = np.where(tau_tail < l_tail, 0.5 * (1.0 + np.cos(math.pi * tau_tail / l_tail)), 0.0)
     else:
         w_t = np.zeros(n_grid, dtype=np.float64)
 
-    # Note: w_h and w_t satisfy |d/dt| <= MAX_RAMP_SLOPE_ST_PER_SEC (0.85 st/s) by construction
-    # of `l_head` and `l_tail` above; avoid eroding `d_env_g` so the ±1.85 st envelope ceiling holds!
     ramp_part = float(head_ramp_st) * w_h + float(tail_ramp_st) * w_t
     ramp_smooth = _project_slope_limit(ramp_part, float(grid_t[1] - grid_t[0]), MAX_RAMP_SLOPE_ST_PER_SEC)
-    raw_grid = float(body_shift_st) + d_env_g + ramp_smooth
+    raw_grid = float(body_shift_st) + d_slope_g + d_env_g + ramp_smooth
     smooth = np.clip(raw_grid, -MAX_TOTAL_INSTANT_SHIFT_ST, MAX_TOTAL_INSTANT_SHIFT_ST)
     return grid_t, smooth
+
+
+def compute_seam_ramps_for_pair(
+    et: float,
+    eh: float,
+    b_spec: BoundarySpec,
+    *,
+    skip_tail: bool = False,
+    skip_head: bool = False,
+) -> tuple[float, float]:
+    """Compute ``(tail_ramp_st, head_ramp_st)`` for seam ``k -> k+1`` (Phase 3 30/70 asymmetric or Phase 2 50/50)."""
+    diff = float(eh) - float(et)
+    s_max = float(b_spec.s_max_st)
+    if skip_tail and skip_head:
+        return 0.0, 0.0
+
+    if not is_clone_prosody_phase3_enabled():
+        if abs(diff) <= s_max:
+            return 0.0, 0.0
+        if b_spec.question_tail and 0.0 <= et <= 2.0 and diff < 0.0:
+            if not skip_head:
+                return 0.0, ((et - s_max) - eh) / 0.92
+            return 0.0, 0.0
+        if skip_tail:
+            return 0.0, (-math.copysign(abs(diff) - s_max, diff)) / 0.92
+        if skip_head:
+            return (math.copysign(abs(diff) - s_max, diff)) / 0.86
+
+        raw_mid = 0.5 * (et + eh)
+        mid = max(-0.5 * s_max, min(0.5 * s_max, raw_mid))
+        half_span = 0.5 * s_max * (1.0 if diff >= 0.0 else -1.0)
+        tgt_tail = mid - half_span
+        tgt_head = mid + half_span
+        if abs(tgt_tail) > abs(et) and (tgt_tail * et > 0.0):
+            tgt_tail = et
+            tgt_head = et + (s_max if diff >= 0.0 else -s_max)
+        elif abs(tgt_head) > abs(eh) and (tgt_head * eh > 0.0):
+            tgt_head = eh
+            tgt_tail = eh - (s_max if diff >= 0.0 else -s_max)
+        act_head = eh + max(-1.80, min(1.80, tgt_head - eh))
+        act_tail = et + max(-1.80, min(1.80, tgt_tail - et))
+        rem_diff = act_head - act_tail
+        if abs(rem_diff) > s_max + 0.05:
+            if abs(tgt_head - eh) > 1.80:
+                ideal_t = act_head - (s_max if diff >= 0.0 else -s_max)
+                act_tail = max(-0.65 * s_max, min(0.65 * s_max, ideal_t))
+            elif abs(tgt_tail - et) > 1.80:
+                ideal_h = act_tail + (s_max if diff >= 0.0 else -s_max)
+                act_head = max(-0.65 * s_max, min(0.65 * s_max, ideal_h))
+        return (act_tail - et) / 0.86, (act_head - eh) / 0.92
+
+    # Phase 3 (§4): Asymmetric 30/70 continuation split + natural sentence-final fall preservation
+    if b_spec.question_tail and 0.0 <= et <= 2.0 and diff < 0.0:
+        if abs(diff) <= s_max or skip_head:
+            return 0.0, 0.0
+        return 0.0, max(-1.80, min(1.80, (et - s_max) - eh)) / 0.96
+
+    if b_spec.kind == "SENTENCE":
+        neg_min = -0.20
+        pos_max = s_max
+    elif b_spec.kind == "PARAGRAPH":
+        neg_min = -0.30
+        pos_max = s_max
+    else:
+        neg_min = -s_max
+        pos_max = s_max
+
+    if neg_min <= diff <= pos_max:
+        return 0.0, 0.0
+
+    # excess > 0 means eh is too high above et (standard utterance-onset reset);
+    # excess < 0 means eh dropped too far below et on a non-question boundary.
+    excess = (diff - pos_max) if diff > pos_max else (diff - neg_min)
+
+    if skip_tail:
+        d_tail = 0.0
+        d_head = -excess
+    elif skip_head:
+        d_tail = excess
+        if b_spec.kind == "SENTENCE" and d_tail > 0.0 and et < 0.0:
+            max_lift = max(0.0, SEAM_SENTENCE_NATURAL_FALL_FLOOR_ST - et)
+            d_tail = min(d_tail, max_lift)
+        d_head = 0.0
+    else:
+        d_tail = SEAM_TAIL_SHARE * excess
+        d_head = -SEAM_HEAD_SHARE * excess
+
+        # Preserve natural Burmese sentence-final falls (-0.45..-0.80 st untouched; lift only excess < -0.80 st)
+        if b_spec.kind == "SENTENCE" and d_tail > 0.0 and et < 0.0:
+            max_lift = max(0.0, SEAM_SENTENCE_NATURAL_FALL_FLOOR_ST - et)
+            if d_tail > max_lift:
+                d_tail = max_lift
+                d_head = -(excess - d_tail)
+
+        # Never push an edge further away from anchor in the same sign
+        if abs(et + d_tail) > abs(et) and ((et + d_tail) * et > 0.0) and (d_tail * et > 0.0):
+            d_tail = 0.0
+            d_head = -excess
+        elif abs(eh + d_head) > abs(eh) and ((eh + d_head) * eh > 0.0) and (d_head * eh > 0.0):
+            d_head = 0.0
+            d_tail = excess
+            if b_spec.kind == "SENTENCE" and d_tail > 0.0 and et < 0.0:
+                d_tail = min(d_tail, max(0.0, SEAM_SENTENCE_NATURAL_FALL_FLOOR_ST - et))
+
+    d_head_c = max(-1.75, min(1.75, d_head))
+    d_tail_c = max(-1.75, min(1.75, d_tail))
+    # If head saturated ±1.75 st, let tail help with remaining step (still honoring -0.80 st natural fall floor)
+    rem = (eh + d_head_c) - (et + d_tail_c)
+    if rem > pos_max + 0.03 and not skip_tail:
+        extra_t = rem - pos_max
+        if b_spec.kind == "SENTENCE" and et + d_tail_c < 0.0:
+            extra_t = min(extra_t, max(0.0, SEAM_SENTENCE_NATURAL_FALL_FLOOR_ST - (et + d_tail_c)))
+        d_tail_c = max(-1.75, min(1.75, d_tail_c + extra_t))
+    elif rem < neg_min - 0.03 and not skip_tail:
+        extra_t = rem - neg_min
+        d_tail_c = max(-1.75, min(1.75, d_tail_c + extra_t))
+
+    return d_tail_c / 0.95, d_head_c / 0.97
 
 
 def run_post_loop_prosody_pass(
@@ -1375,9 +2127,10 @@ def run_post_loop_prosody_pass(
     preset_voice: str | None = None,
     speed_tempo: float = 1.0,
     cached_analyses: Sequence[ChunkProsodyAnalysis | None] | None = None,
+    space_family_switched: bool = False,
     ffmpeg_bin: str | None = None,
 ) -> PostLoopProsodyResult:
-    """Parts 1-7: Execute ONE post-loop bilateral contour + tempo pass over raw chunks.
+    """Execute ONE post-loop contour + de-sag + asymmetric seam + voiced-tilt EQ pass over raw chunks.
 
     Never mutates ``raw_parts``; writes ``chunk{idx:02d}.corr.wav`` into ``out_dir`` so
     park/resume or re-entry is strictly idempotent with zero double-rubberbanding.
@@ -1385,6 +2138,10 @@ def run_post_loop_prosody_pass(
     m = len(raw_parts)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    p3 = is_clone_prosody_phase3_enabled()
+    tp_min = RUBBERBAND_TEMPO_MIN if p3 else _P2_RUBBERBAND_TEMPO_MIN
+    tp_max = RUBBERBAND_TEMPO_MAX if p3 else _P2_RUBBERBAND_TEMPO_MAX
+    tp_db = RUBBERBAND_DEADBAND_TEMPO if p3 else _P2_RUBBERBAND_DEADBAND_TEMPO
 
     analyses: list[ChunkProsodyAnalysis] = []
     for idx in range(m):
@@ -1411,6 +2168,7 @@ def run_post_loop_prosody_pass(
     r_anchor = anchor.rate_anchor
 
     body_shifts: list[float] = []
+    slope_deltas: list[np.ndarray] = []
     env_deltas: list[np.ndarray] = []
     tempos: list[float] = []
     raw_heads_vs_anchor: list[float] = []
@@ -1419,6 +2177,7 @@ def run_post_loop_prosody_pass(
     post_be_tails: list[float] = []
     skip_heads: list[bool] = []
     skip_tails: list[bool] = []
+    desag_corrections = 0
     envelope_corrections = 0
     edge_fallbacks = 0
 
@@ -1428,11 +2187,24 @@ def run_post_loop_prosody_pass(
         b_sh = compute_soft_knee_body_shift(ana.stats.f0_median_hz, f_anchor, expressive=expr)
         body_shifts.append(b_sh)
 
+        d_slope, _comp_sl, sl_used = compute_linear_desag_contour(
+            ana.f0_arr,
+            duration_sec=ana.stats.duration_sec,
+            sentence_count=ana.sentence_count,
+            anchor_f0_hz=f_anchor,
+        )
+        slope_deltas.append(d_slope)
+        if sl_used:
+            desag_corrections += 1
+
         d_env, env_used = compute_envelope_tether(
             ana.f0_arr,
             anchor_f0_hz=f_anchor,
             body_shift_st=b_sh,
             expressive=expr,
+            slope_delta_frames=d_slope,
+            duration_sec=ana.stats.duration_sec,
+            sentence_count=ana.sentence_count,
         )
         env_deltas.append(d_env)
         if env_used:
@@ -1463,9 +2235,10 @@ def run_post_loop_prosody_pass(
         raw_heads_vs_anchor.append(rh_st)
         raw_tails_vs_anchor.append(rt_st)
 
-        # Post-(body + env) edge estimates (Part 3.3 + Part 7) from cached contour
+        # Post-(body + slope + env) edge estimates from cached contour
         if f_anchor and ana.f0_arr.size > 0:
-            f0_be = ana.f0_arr * (2.0 ** ((b_sh + d_env) / 12.0))
+            base_f0 = repair_subharmonic_f0_contour(ana.f0_arr) if p3 else ana.f0_arr
+            f0_be = base_f0 * (2.0 ** ((b_sh + d_slope + d_env) / 12.0))
             v_be = f0_be[~np.isnan(f0_be) & (f0_be > 0)]
             be_med_hz = float(np.median(v_be)) if v_be.size >= 3 else ana.stats.f0_median_hz
             be_body_st = semitone_diff(be_med_hz, f_anchor) if (be_med_hz and f_anchor) else 0.0
@@ -1503,74 +2276,61 @@ def run_post_loop_prosody_pass(
         tp = 1.0
         if ana.stats.syllable_rate and r_anchor and r_anchor > 0.0 and ana.stats.syllable_rate > 0.0:
             raw_tp = float(r_anchor) / float(ana.stats.syllable_rate)
-            if abs(raw_tp - 1.0) > RUBBERBAND_DEADBAND_TEMPO:
-                tp = max(RUBBERBAND_TEMPO_MIN, min(RUBBERBAND_TEMPO_MAX, raw_tp))
+            if abs(raw_tp - 1.0) > tp_db:
+                tp = max(tp_min, min(tp_max, raw_tp))
         tempos.append(round(tp, 4))
 
-    # Part 3.3: Bilateral 50/50 seam sharing across every boundary k -> k+1
+    # Seam sharing across every boundary k -> k+1 (30/70 asymmetric in Phase 3; 50/50 in Phase 2)
     head_ramps = [0.0] * m
     tail_ramps = [0.0] * m
     for k in range(m - 1):
-        b_spec = boundaries[k]
-        et = post_be_tails[k]
-        eh = post_be_heads[k + 1]
-        diff = eh - et
-        s_max = b_spec.s_max_st
-        if abs(diff) <= s_max or (skip_tails[k] and skip_heads[k + 1]):
-            continue
-
-        # Compensate for raised-cosine weight roll-off across the voiced edge window
-        # (tail window center τ ≈ 0.45 s -> w_cos ≈ 0.86; head window center t ≈ 0.37 s -> w_cos ≈ 0.92)
-        if b_spec.question_tail and 0.0 <= et <= 2.0 and diff < 0.0:
-            # Part 5 Question guard: rising question tail is NOT pulled down; head[k+1] absorbs return
-            tail_ramps[k] = 0.0
-            if not skip_heads[k + 1]:
-                head_ramps[k + 1] = ((et - s_max) - eh) / 0.92
-        elif skip_tails[k]:
-            head_ramps[k + 1] = (-math.copysign(abs(diff) - s_max, diff)) / 0.92
-        elif skip_heads[k + 1]:
-            tail_ramps[k] = (math.copysign(abs(diff) - s_max, diff)) / 0.86
-        else:
-            # 50/50 bilateral split around anchor-bounded midpoint [-0.5*s_max, +0.5*s_max]
-            raw_mid = 0.5 * (et + eh)
-            mid = max(-0.5 * s_max, min(0.5 * s_max, raw_mid))
-            half_span = 0.5 * s_max * (1.0 if diff >= 0.0 else -1.0)
-            tgt_tail = mid - half_span
-            tgt_head = mid + half_span
-            if abs(tgt_tail) > abs(et) and (tgt_tail * et > 0.0):
-                tgt_tail = et
-                tgt_head = et + (s_max if diff >= 0.0 else -s_max)
-            elif abs(tgt_head) > abs(eh) and (tgt_head * eh > 0.0):
-                tgt_head = eh
-                tgt_tail = eh - (s_max if diff >= 0.0 else -s_max)
-            # If one side saturates the ±2.0 st cap, avoid pulling the opposite same-sign edge away from it
-            act_head = eh + max(-1.80, min(1.80, tgt_head - eh))
-            act_tail = et + max(-1.80, min(1.80, tgt_tail - et))
-            rem_diff = act_head - act_tail
-            if abs(rem_diff) > s_max + 0.05:
-                if abs(tgt_head - eh) > 1.80:
-                    ideal_t = act_head - (s_max if diff >= 0.0 else -s_max)
-                    act_tail = max(-0.65 * s_max, min(0.65 * s_max, ideal_t))
-                elif abs(tgt_tail - et) > 1.80:
-                    ideal_h = act_tail + (s_max if diff >= 0.0 else -s_max)
-                    act_head = max(-0.65 * s_max, min(0.65 * s_max, ideal_h))
-            tail_ramps[k] = (act_tail - et) / 0.86
-            head_ramps[k + 1] = (act_head - eh) / 0.92
+        tr_k, hr_next = compute_seam_ramps_for_pair(
+            post_be_tails[k],
+            post_be_heads[k + 1],
+            boundaries[k],
+            skip_tail=skip_tails[k],
+            skip_head=skip_heads[k + 1],
+        )
+        tail_ramps[k] = tr_k
+        head_ramps[k + 1] = hr_next
 
     corrected_parts: list[Path] = []
     post_analyses: list[ChunkProsodyAnalysis] = []
     corrections_applied = 0
+    tilt_eq_corrections = 0
+    use_uniform_chain = bool(p3 and m >= 2)
 
     for idx, ana in enumerate(analyses):
         c_txt = str(chunks[idx]) if idx < len(chunks) else ""
+        v_pos = np.where(~np.isnan(ana.f0_arr) & (ana.f0_arr > 0))[0] if ana.f0_arr.size > 0 else np.zeros(0, dtype=int)
+        t_v0 = float(v_pos[0]) * FRAME_STEP_SEC if (p3 and v_pos.size > 0) else 0.0
+        t_v1 = float(v_pos[-1]) * FRAME_STEP_SEC if (p3 and v_pos.size > 0) else ana.stats.duration_sec
         grid_t, grid_st = build_chunk_pitch_contour_grid(
             ana.stats.duration_sec,
             body_shift_st=body_shifts[idx],
             env_delta_frames=env_deltas[idx],
             head_ramp_st=head_ramps[idx],
             tail_ramp_st=tail_ramps[idx],
+            slope_delta_frames=slope_deltas[idx],
+            first_voiced_sec=t_v0,
+            last_voiced_sec=t_v1,
             speed_tempo=speed_tempo,
         )
+        mean_shift_st = float(np.mean(grid_st)) if grid_st.size > 0 else 0.0
+        hs_db, pr_db = (
+            compute_chunk_tilt_eq_gains(
+                ana.voiced_tilt_db,
+                ana.voiced_presence_db,
+                target_tilt_db=anchor.voiced_tilt_anchor_db,
+                target_pres_db=anchor.voiced_presence_anchor_db,
+                mean_pitch_shift_st=mean_shift_st,
+            )
+            if use_uniform_chain
+            else (0.0, 0.0)
+        )
+        if abs(hs_db) > 1e-3 or abs(pr_db) > 1e-3:
+            tilt_eq_corrections += 1
+
         corr_wav = out_dir / f"{Path(raw_parts[idx]).stem}.corr.wav"
         applied = apply_contour_to_chunk(
             Path(raw_parts[idx]),
@@ -1578,6 +2338,9 @@ def run_post_loop_prosody_pass(
             grid_t=grid_t,
             grid_st=grid_st,
             tempo_factor=tempos[idx],
+            highshelf_db=hs_db,
+            presence_db=pr_db,
+            uniform_chain=use_uniform_chain,
             ffmpeg_bin=ffmpeg_bin,
         )
         if applied:
@@ -1585,16 +2348,18 @@ def run_post_loop_prosody_pass(
         corrected_parts.append(corr_wav)
 
         if applied and corr_wav.is_file() and ana.f0_arr.size > 0:
-            # Part 4 (#3): Reuse cached extract_frame_contours arrays instead of running YIN twice per chunk!
-            clamped_tp = max(RUBBERBAND_TEMPO_MIN, min(RUBBERBAND_TEMPO_MAX, float(tempos[idx])))
+            # Reuse cached extract_frame_contours arrays instead of running YIN twice per chunk!
+            clamped_tp = max(tp_min, min(tp_max, float(tempos[idx])))
             clamped_g = np.clip(grid_st, -MAX_TOTAL_INSTANT_SHIFT_ST, MAX_TOTAL_INSTANT_SHIFT_ST)
             t_frames = np.arange(ana.f0_arr.size, dtype=np.float64) * FRAME_STEP_SEC
             f_shifts = np.interp(t_frames, grid_t, clamped_g)
-            shifted_f0 = (ana.f0_arr.astype(np.float64) * (2.0 ** (f_shifts / 12.0))).astype(np.float32)
-            edge_base_f0 = ana.f0_arr.astype(np.float64, copy=True)
+            base_c_f0 = repair_subharmonic_f0_contour(ana.f0_arr) if p3 else ana.f0_arr
+            shifted_f0 = (base_c_f0.astype(np.float64) * (2.0 ** (f_shifts / 12.0))).astype(np.float32)
+            edge_base_f0 = base_c_f0.astype(np.float64, copy=True)
+            floor_r = EDGE_MODAL_FLOOR_RATIO if p3 else _P2_EDGE_MODAL_FLOOR_RATIO
             if ana.stats.f0_median_hz and ana.stats.f0_median_hz > 0.0:
                 rmed = float(ana.stats.f0_median_hz)
-                glitch_mask = (~np.isnan(edge_base_f0)) & ((edge_base_f0 < 0.72 * rmed) | (edge_base_f0 > 1.50 * rmed))
+                glitch_mask = (~np.isnan(edge_base_f0)) & ((edge_base_f0 < floor_r * rmed) | (edge_base_f0 > 1.55 * rmed))
                 edge_base_f0[glitch_mask] = np.nan
             shifted_edge_f0 = (edge_base_f0 * (2.0 ** (f_shifts / 12.0))).astype(np.float32)
             if abs(clamped_tp - 1.0) > 1e-4:
@@ -1620,12 +2385,17 @@ def run_post_loop_prosody_pass(
             else:
                 ph_m, ph_fb, ph_sk = 0.0, True, True
                 pt_m, pt_fb, pt_sk = 0.0, True, True
+
+            c_samples, c_sr = read_wav_mono_float32(corr_wav)
+            p_tilt, p_pres, p_cent = measure_voiced_spectral_stats(c_samples, c_sr, post_f0)
+            p_sag, p_slope = measure_chunk_sag_and_slope(post_f0, anchor_hz=f_anchor)
+
             post_analyses.append(
                 ChunkProsodyAnalysis(
                     wav_path=corr_wav,
                     text=c_txt,
-                    sample_rate=ana.sample_rate,
-                    n_samples=max(1, int(round(ana.n_samples / clamped_tp))),
+                    sample_rate=c_sr or ana.sample_rate,
+                    n_samples=c_samples.size if c_samples.size > 0 else max(1, int(round(ana.n_samples / clamped_tp))),
                     stats=p_stats,
                     rms_arr=post_rms,
                     f0_arr=post_edge_f0,
@@ -1635,12 +2405,18 @@ def run_post_loop_prosody_pass(
                     tail_fallback=pt_fb,
                     head_skipped=ph_sk,
                     tail_skipped=pt_sk,
+                    voiced_tilt_db=p_tilt,
+                    voiced_presence_db=p_pres,
+                    voiced_centroid_hz=p_cent,
+                    linear_sag_st=p_sag,
+                    linear_slope_st_per_s=p_slope,
+                    sentence_count=ana.sentence_count,
                 )
             )
         else:
             post_analyses.append(ana)
 
-    # Compute post-correction boundary steps for Part 8 telemetry
+    # Compute post-correction boundary steps for telemetry
     boundary_steps: list[dict[str, Any]] = []
     for k in range(m - 1):
         b_spec = boundaries[k]
@@ -1697,4 +2473,7 @@ def run_post_loop_prosody_pass(
         boundary_steps=boundary_steps,
         raw_mean_iqr_st=round(raw_mean_iqr, 3),
         post_mean_iqr_st=round(post_mean_iqr, 3),
+        desag_corrections=desag_corrections,
+        tilt_eq_corrections=tilt_eq_corrections,
+        space_family_switched=bool(space_family_switched),
     )

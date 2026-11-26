@@ -658,6 +658,11 @@ def _synthesize_voxcpm_voice_job(
             engine.pinned_space = str(manifest["pinned_space"])
         except Exception:
             pass
+    if manifest.get("space_family_switched"):
+        try:
+            engine.space_family_switched = True
+        except Exception:
+            pass
 
     active_ref_wav = Path(reference_wav) if reference_wav is not None else None
     active_ref_secs = float(reference_seconds or 0.0)
@@ -733,6 +738,7 @@ def _synthesize_voxcpm_voice_job(
                 "completed_units": int(done_units),
                 "total_units": max(1, len(chunks)),
                 "pinned_space": getattr(engine, "pinned_space", None),
+                "space_family_switched": bool(getattr(engine, "space_family_switched", False)),
                 "reference_transcript": reference_transcript,
                 "active_ref_secs": round(float(active_ref_secs or 0.0), 3),
             }
@@ -893,11 +899,19 @@ def _synthesize_voxcpm_voice_job(
             )
             outlier_ranked: list[tuple[float, int]] = []
             for c_idx, ana in enumerate(analyses):
+                tilt_delta = (
+                    (ana.voiced_tilt_db - init_anchor.voiced_tilt_anchor_db)
+                    if (init_anchor.voiced_tilt_anchor_db is not None and ana.stats.voiced_sec >= 0.15)
+                    else 0.0
+                )
+                sag_for_score = ana.linear_sag_st if (ana.sentence_count >= 2 and ana.stats.duration_sec >= 8.0) else 0.0
                 is_out, _df0, _rr = _cp.is_prosody_outlier(
                     ana.stats,
                     anchor_f0_hz=init_anchor.f0_anchor_hz,
                     anchor_rate=init_anchor.rate_anchor,
                     internal_span_st=ana.internal_span_st,
+                    voiced_tilt_delta_db=tilt_delta,
+                    linear_sag_st=sag_for_score,
                 )
                 if is_out:
                     sc = _cp.score_prosody_candidate(
@@ -905,6 +919,8 @@ def _synthesize_voxcpm_voice_job(
                         anchor_f0_hz=init_anchor.f0_anchor_hz,
                         anchor_rate=init_anchor.rate_anchor,
                         internal_span_st=ana.internal_span_st,
+                        voiced_tilt_delta_db=tilt_delta,
+                        linear_sag_st=sag_for_score,
                     )
                     outlier_ranked.append((round(sc, 6), c_idx))
 
@@ -933,17 +949,34 @@ def _synthesize_voxcpm_voice_job(
                     engine.synthesize(**retry_kw)
                     if retry_part.is_file():
                         retry_ana = _cp.analyze_chunk_prosody(retry_part, text=chunk_text)
+                        orig_ana = analyses[c_idx]
+                        o_tilt_d = (
+                            (orig_ana.voiced_tilt_db - init_anchor.voiced_tilt_anchor_db)
+                            if (init_anchor.voiced_tilt_anchor_db is not None and orig_ana.stats.voiced_sec >= 0.15)
+                            else 0.0
+                        )
+                        r_tilt_d = (
+                            (retry_ana.voiced_tilt_db - init_anchor.voiced_tilt_anchor_db)
+                            if (init_anchor.voiced_tilt_anchor_db is not None and retry_ana.stats.voiced_sec >= 0.15)
+                            else 0.0
+                        )
+                        o_sag = orig_ana.linear_sag_st if (orig_ana.sentence_count >= 2 and orig_ana.stats.duration_sec >= 8.0) else 0.0
+                        r_sag = retry_ana.linear_sag_st if (retry_ana.sentence_count >= 2 and retry_ana.stats.duration_sec >= 8.0) else 0.0
                         s_orig = _cp.score_prosody_candidate(
-                            analyses[c_idx].stats,
+                            orig_ana.stats,
                             anchor_f0_hz=init_anchor.f0_anchor_hz,
                             anchor_rate=init_anchor.rate_anchor,
-                            internal_span_st=analyses[c_idx].internal_span_st,
+                            internal_span_st=orig_ana.internal_span_st,
+                            voiced_tilt_delta_db=o_tilt_d,
+                            linear_sag_st=o_sag,
                         )
                         s_retry = _cp.score_prosody_candidate(
                             retry_ana.stats,
                             anchor_f0_hz=init_anchor.f0_anchor_hz,
                             anchor_rate=init_anchor.rate_anchor,
                             internal_span_st=retry_ana.internal_span_st,
+                            voiced_tilt_delta_db=r_tilt_d,
+                            linear_sag_st=r_sag,
                         )
                         if s_retry < s_orig:
                             shutil.move(str(retry_part), str(part))
@@ -963,8 +996,9 @@ def _synthesize_voxcpm_voice_job(
                 finally:
                     retry_part.unlink(missing_ok=True)
 
-        # Parts 1-5 & 7: ONE post-loop bilateral seam ramp + 3.5 s envelope tether + tempo pass
+        # Parts 1-8: ONE post-loop contour + de-sag + seam + voiced-tilt EQ + tempo pass
         speed_tempo = resolve_speed_tempo(speed)
+        space_fam_switched = bool(getattr(engine, "space_family_switched", False))
         prosody_res = _cp.run_post_loop_prosody_pass(
             parts,
             chunks,
@@ -976,6 +1010,7 @@ def _synthesize_voxcpm_voice_job(
             preset_voice=preset_voice,
             speed_tempo=speed_tempo,
             cached_analyses=analyses,
+            space_family_switched=space_fam_switched,
         )
 
         # Stitch corrected chunks with Part 5 boundary-class adaptive pauses
@@ -1008,12 +1043,15 @@ def _synthesize_voxcpm_voice_job(
         post_rate_log = [st.syllable_rate for st in prosody_res.post_stats]
         logger.info(
             "clone_prosody_summary job=%s chunks=%d retries_used=%d corrections=%d "
+            "desag_corrections=%d tilt_eq_corrections=%d "
             "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
-            "f0_hz=%s syl_rate=%s boundary_steps=%s",
+            "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s",
             job_id,
             len(chunks),
             job_prosody_retries,
             prosody_res.corrections_applied,
+            prosody_res.desag_corrections,
+            prosody_res.tilt_eq_corrections,
             prosody_res.envelope_corrections,
             prosody_res.edge_fallbacks,
             prosody_res.anchor.anchor_source,
@@ -1021,6 +1059,7 @@ def _synthesize_voxcpm_voice_job(
             post_f0_log,
             post_rate_log,
             prosody_res.boundary_steps,
+            prosody_res.space_family_switched,
         )
     finally:
         stitched_wav.unlink(missing_ok=True)

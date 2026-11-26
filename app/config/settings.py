@@ -360,6 +360,10 @@ class Settings(BaseSettings):
     gemini_tts_fallback_2: str = Field(default="", alias="GEMINI_TTS_FALLBACK_2")
     gemini_tts_leak_gate_mode: str = Field(default="shadow", alias="GEMINI_TTS_LEAK_GATE_MODE")
 
+    # Clone Prosody Phase 3 kill switches (default ON; False restores Phase 2 behavior byte-for-byte)
+    clone_prosody_phase3_enabled: bool = Field(default=True, alias="CLONE_PROSODY_PHASE3_ENABLED")
+    chunk_balancing_v2_enabled: bool = Field(default=True, alias="CHUNK_BALANCING_V2_ENABLED")
+
     # Versioned AI Prompt Registry profile ("v2" upgraded default, "v1" instant rollback)
     ai_prompt_profile: str = Field(default="v2", alias="AI_PROMPT_PROFILE")
 

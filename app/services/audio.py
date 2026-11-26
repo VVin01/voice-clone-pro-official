@@ -268,6 +268,110 @@ def _decode_wav_part_mono_i16(part_path: Path, target_rate: int):
     return arr_i16
 
 
+ROOM_TONE_TARGET_DBFS: float = -58.0
+SEAM_COSINE_FADE_SEC: float = 0.035
+_LEGACY_SEAM_LINEAR_FADE_SEC: float = 0.010
+_ROOM_TONE_BASE_SEED: int = 20261125
+
+
+def _is_phase3_seam_bed_enabled() -> bool:
+    try:
+        val = getattr(settings, "clone_prosody_phase3_enabled", True)
+        if isinstance(val, str):
+            return val.strip().lower() not in ("0", "false", "no", "off")
+        return bool(val)
+    except Exception:
+        return True
+
+
+def _estimate_job_voiced_envelope(parts_i16: list, rate: int, n_fft: int = 1024):
+    """Estimate smooth speech-band magnitude envelope from decoded chunks for comfort noise."""
+    import numpy as np
+
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / float(rate))
+    # Default smooth studio room-tone tilt (band-limited 75..6200 Hz, ~-6 dB/octave speech shape)
+    default_env = 1.0 / np.maximum(180.0, freqs)
+    default_env[freqs < 75.0] *= np.clip(freqs[freqs < 75.0] / 75.0, 0.0, 1.0) ** 2
+    hi_cut = min(6200.0, 0.45 * float(rate))
+    if hi_cut > 200.0:
+        over = freqs > hi_cut
+        default_env[over] *= np.exp(-((freqs[over] - hi_cut) / max(400.0, 0.12 * rate)) ** 2)
+    default_env[0] = 0.0
+
+    accum = np.zeros_like(freqs, dtype=np.float64)
+    count = 0
+    win = np.hanning(n_fft).astype(np.float64)
+    for arr in parts_i16:
+        if arr.size < n_fft:
+            continue
+        # Sample up to 24 evenly spaced frames per chunk
+        step = max(n_fft // 2, (arr.size - n_fft) // 24)
+        for st in range(0, arr.size - n_fft + 1, step):
+            seg = arr[st : st + n_fft].astype(np.float64) / 32768.0
+            rms = float(np.sqrt(np.mean(seg * seg)))
+            if rms < 0.008:
+                continue
+            spec = np.abs(np.fft.rfft(seg * win))
+            accum += spec / max(1e-6, rms)
+            count += 1
+            if count >= 120:
+                break
+        if count >= 120:
+            break
+
+    if count < 3:
+        return default_env
+
+    mean_env = accum / float(count)
+    # Smooth envelope over ~250 Hz kernel so no tonal harmonic peaks leak into comfort noise
+    k_bins = max(3, int(round(250.0 / max(1.0, float(rate) / n_fft))))
+    if k_bins % 2 == 0:
+        k_bins += 1
+    kernel = np.hanning(k_bins + 2)[1:-1]
+    kernel /= np.sum(kernel)
+    smooth = np.convolve(np.pad(mean_env, (k_bins // 2, k_bins // 2), mode="edge"), kernel, mode="valid")[: freqs.size]
+    smooth[freqs < 75.0] *= np.clip(freqs[freqs < 75.0] / 75.0, 0.0, 1.0) ** 2
+    if hi_cut > 200.0:
+        over = freqs > hi_cut
+        smooth[over] *= np.exp(-((freqs[over] - hi_cut) / max(400.0, 0.12 * rate)) ** 2)
+    smooth[0] = 0.0
+    if float(np.max(smooth)) <= 1e-9:
+        return default_env
+    return smooth
+
+
+def _synthesize_room_tone_bed_i16(
+    n_samples: int,
+    rate: int,
+    spectral_env,
+    *,
+    seed: int,
+    target_dbfs: float = ROOM_TONE_TARGET_DBFS,
+):
+    """Deterministically generate ``n_samples`` of speech-shaped comfort noise at ``target_dbfs``."""
+    import numpy as np
+
+    if n_samples <= 0:
+        return np.zeros(0, dtype="<i2")
+    rng = np.random.default_rng(int(seed))
+    gen_len = max(int(n_samples), 1024)
+    white = rng.standard_normal(gen_len)
+    w_spec = np.fft.rfft(white)
+    env_src_x = np.linspace(0.0, 1.0, spectral_env.size)
+    env_dst_x = np.linspace(0.0, 1.0, w_spec.size)
+    shaped_mag = np.interp(env_dst_x, env_src_x, spectral_env)
+    shaped_mag[0] = 0.0
+    shaped = np.fft.irfft(w_spec * shaped_mag, n=gen_len)[:n_samples]
+
+    cur_rms = float(np.sqrt(np.mean(shaped * shaped)))
+    target_rms = 10.0 ** (float(target_dbfs) / 20.0)
+    if cur_rms > 1e-12:
+        shaped = shaped * (target_rms / cur_rms)
+    else:
+        shaped = rng.standard_normal(n_samples) * target_rms
+    return np.clip(np.round(shaped * 32768.0), -32768.0, 32767.0).astype("<i2")
+
+
 def concat_wav_files(
     parts: list[Path],
     output_wav: Path,
@@ -275,13 +379,16 @@ def concat_wav_files(
     boundary_pause_sec: float = 0.0,
     boundary_pauses_sec: list[float] | tuple[float, ...] | None = None,
 ) -> Path:
-    """Batch CH + Prosody Phase 1 & Phase 2: join WAV parts into one file, in order.
+    """Batch CH + Prosody Phase 1–3: join WAV parts into one file, in order.
 
     When ``boundary_pauses_sec`` (per-seam pause durations in seconds) or
-    ``boundary_pause_sec > 0`` is supplied, inserts clean digital silence between
-    parts with a 10 ms anti-click micro-fade. Otherwise joins with a deterministic
-    sample-accurate triangular crossfade (avoiding FFmpeg 7.1's multi-input
-    ``ffmpeg_sched`` + ``acrossfade`` premature-EOF truncation race on Linux).
+    ``boundary_pause_sec > 0`` is supplied:
+    - Phase 3 (``clone_prosody_phase3_enabled=True``): bridges each pause with
+      35 ms raised-cosine fades over a deterministic -58 dBFS speech-shaped
+      comfort-noise bed (pause durations unchanged).
+    - Phase 2 fallback (``clone_prosody_phase3_enabled=False``): inserts digital
+      silence between parts with a 10 ms linear anti-click micro-fade.
+    Otherwise joins with a deterministic sample-accurate triangular crossfade.
     Keeps MONO and the first part's sample rate.
     """
     import numpy as np
@@ -304,30 +411,76 @@ def concat_wav_files(
     has_per_seam_pauses = bool(boundary_pauses_sec) and any(float(x) > 0.0 for x in boundary_pauses_sec)
     if has_per_seam_pauses or (boundary_pause_sec and float(boundary_pause_sec) > 0.0):
         default_pause_s = max(0.0, float(boundary_pause_sec or 0.0))
-        fade_frames = max(1, int(round(rate * 0.010)))  # 10 ms anti-click fade
-        rendered_chunks: list[np.ndarray] = []
+        use_p3_bed = _is_phase3_seam_bed_enabled()
 
-        for idx, p in enumerate(part_paths):
-            arr_i16 = _decode_wav_part_mono_i16(p, rate)
-
-            if arr_i16.size > 2 * fade_frames:
-                ramp = np.linspace(0.0, 1.0, fade_frames, dtype=np.float32)
-                if idx > 0:
-                    arr_i16[:fade_frames] = (arr_i16[:fade_frames].astype(np.float32) * ramp).astype("<i2")
+        if not use_p3_bed:
+            fade_frames = max(1, int(round(rate * _LEGACY_SEAM_LINEAR_FADE_SEC)))
+            rendered_chunks: list[np.ndarray] = []
+            for idx, p in enumerate(part_paths):
+                arr_i16 = _decode_wav_part_mono_i16(p, rate)
+                if arr_i16.size > 2 * fade_frames:
+                    ramp = np.linspace(0.0, 1.0, fade_frames, dtype=np.float32)
+                    if idx > 0:
+                        arr_i16[:fade_frames] = (arr_i16[:fade_frames].astype(np.float32) * ramp).astype("<i2")
+                    if idx < len(part_paths) - 1:
+                        arr_i16[-fade_frames:] = (arr_i16[-fade_frames:].astype(np.float32) * ramp[::-1]).astype("<i2")
+                rendered_chunks.append(arr_i16)
                 if idx < len(part_paths) - 1:
-                    arr_i16[-fade_frames:] = (arr_i16[-fade_frames:].astype(np.float32) * ramp[::-1]).astype("<i2")
+                    seam_pause_s = (
+                        float(boundary_pauses_sec[idx])
+                        if (boundary_pauses_sec is not None and idx < len(boundary_pauses_sec))
+                        else default_pause_s
+                    )
+                    pause_frames = max(1, int(round(rate * max(0.0, seam_pause_s))))
+                    rendered_chunks.append(np.zeros(pause_frames, dtype="<i2"))
 
-            rendered_chunks.append(arr_i16)
-            if idx < len(part_paths) - 1:
+            joined = np.concatenate(rendered_chunks) if rendered_chunks else np.zeros(0, dtype="<i2")
+            with wave.open(str(output_wav), "wb") as out_wf:
+                out_wf.setnchannels(1)
+                out_wf.setsampwidth(2)
+                out_wf.setframerate(rate)
+                out_wf.writeframes(joined.tobytes())
+            return output_wav
+
+        decoded_all = [_decode_wav_part_mono_i16(p, rate) for p in part_paths]
+        spec_env = _estimate_job_voiced_envelope(decoded_all, rate)
+        target_fade_frames = max(1, int(round(rate * SEAM_COSINE_FADE_SEC)))
+        rendered_p3: list[np.ndarray] = []
+
+        for idx, arr_orig in enumerate(decoded_all):
+            arr_i16 = arr_orig.copy()
+            eff_fade = min(target_fade_frames, max(1, arr_i16.size // 4)) if arr_i16.size >= 8 else 0
+            if eff_fade >= 2:
+                t_norm = np.linspace(0.0, 1.0, eff_fade, dtype=np.float64)
+                w_in = (0.5 * (1.0 - np.cos(np.pi * t_norm))).astype(np.float32)
+                w_out = w_in[::-1]
+                if idx > 0:
+                    bed_head = _synthesize_room_tone_bed_i16(
+                        eff_fade, rate, spec_env, seed=_ROOM_TONE_BASE_SEED + idx * 3 + 1
+                    ).astype(np.float32)
+                    blended_h = arr_i16[:eff_fade].astype(np.float32) * w_in + bed_head * (1.0 - w_in)
+                    arr_i16[:eff_fade] = np.clip(np.round(blended_h), -32768.0, 32767.0).astype("<i2")
+                if idx < len(decoded_all) - 1:
+                    bed_tail = _synthesize_room_tone_bed_i16(
+                        eff_fade, rate, spec_env, seed=_ROOM_TONE_BASE_SEED + idx * 3 + 2
+                    ).astype(np.float32)
+                    blended_t = arr_i16[-eff_fade:].astype(np.float32) * w_out + bed_tail * (1.0 - w_out)
+                    arr_i16[-eff_fade:] = np.clip(np.round(blended_t), -32768.0, 32767.0).astype("<i2")
+
+            rendered_p3.append(arr_i16)
+            if idx < len(decoded_all) - 1:
                 seam_pause_s = (
                     float(boundary_pauses_sec[idx])
                     if (boundary_pauses_sec is not None and idx < len(boundary_pauses_sec))
                     else default_pause_s
                 )
                 pause_frames = max(1, int(round(rate * max(0.0, seam_pause_s))))
-                rendered_chunks.append(np.zeros(pause_frames, dtype="<i2"))
+                bed_pause = _synthesize_room_tone_bed_i16(
+                    pause_frames, rate, spec_env, seed=_ROOM_TONE_BASE_SEED + idx * 3
+                )
+                rendered_p3.append(bed_pause)
 
-        joined = np.concatenate(rendered_chunks) if rendered_chunks else np.zeros(0, dtype="<i2")
+        joined = np.concatenate(rendered_p3) if rendered_p3 else np.zeros(0, dtype="<i2")
         with wave.open(str(output_wav), "wb") as out_wf:
             out_wf.setnchannels(1)
             out_wf.setsampwidth(2)
