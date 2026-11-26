@@ -1056,7 +1056,8 @@ def _synthesize_voxcpm_voice_job(
                     "desag_corrections=%d tilt_eq_corrections=%d "
                     "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
                     "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
-                    "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s",
+                    "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
+                    "space_timeouts=%s",
                     job_id,
                     len(assembled_parts),
                     0,
@@ -1075,6 +1076,7 @@ def _synthesize_voxcpm_voice_job(
                     len(slices),
                     False,
                     pinned_sp_str,
+                    dict(getattr(engine, "space_timeouts", None) or {}),
                 )
             else:
                 # Part 5: ANY slice fell back -> run prosody pass over assembled audio as legacy path does today.
@@ -1126,7 +1128,8 @@ def _synthesize_voxcpm_voice_job(
                     "desag_corrections=%d tilt_eq_corrections=%d "
                     "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
                     "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
-                    "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s",
+                    "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
+                    "space_timeouts=%s",
                     job_id,
                     len(assembled_parts),
                     0,
@@ -1145,6 +1148,7 @@ def _synthesize_voxcpm_voice_job(
                     len(slices),
                     True,
                     pinned_sp_str,
+                    dict(getattr(engine, "space_timeouts", None) or {}),
                 )
         finally:
             stitched_wav_sess.unlink(missing_ok=True)
@@ -1241,6 +1245,9 @@ def _synthesize_voxcpm_voice_job(
         if checkpoint_progress is not None:
             checkpoint_progress["completed_units"] = 1
             checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+        _single_sp_tos = dict(getattr(engine, "space_timeouts", None) or {})
+        if _single_sp_tos:
+            logger.info("clone_space_timeouts job=%s space_timeouts=%s", job_id, _single_sp_tos)
         return output_wav
 
     logger.info(
@@ -1497,7 +1504,8 @@ def _synthesize_voxcpm_voice_job(
             "desag_corrections=%d tilt_eq_corrections=%d "
             "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
             "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
-            "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s",
+            "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
+            "space_timeouts=%s",
             job_id,
             len(chunks),
             job_prosody_retries,
@@ -1516,6 +1524,7 @@ def _synthesize_voxcpm_voice_job(
             0,
             False,
             legacy_pinned_sp,
+            dict(getattr(engine, "space_timeouts", None) or {}),
         )
     finally:
         stitched_wav.unlink(missing_ok=True)

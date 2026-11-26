@@ -263,6 +263,36 @@ def compute_refill_estimate(history, account_key, remaining_s, base_s, now_ts) -
     }
 
 
+def _overlay_space_ledger_telemetry(payload: dict, now_ts: float | None = None) -> dict:
+    """Part C4: attach live `space_timeouts` and `space_cooldowns` from `aj_hf:pool_state`
+    onto `providers.spaces` so chronically slow Spaces are visible in the Admin Key Health panel."""
+    try:
+        from app.services import hf_pool_ledger as _hf_ledger
+
+        now = time.time() if now_ts is None else float(now_ts)
+        st = _hf_ledger.load_pool_state(now_ts=now)
+        to_counts = _hf_ledger.get_space_timeout_counts(state=st, now_ts=now)
+        spaces_prov = (payload.get("providers") or {}).get("spaces")
+        if isinstance(spaces_prov, dict):
+            items = spaces_prov.get("items") or []
+            cooling_cnt = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                sp_name = str(item.get("name") or "")
+                cd_until = _hf_ledger.get_space_cooldown_until(sp_name, state=st, now_ts=now)
+                item["timeouts"] = int(to_counts.get(sp_name, 0))
+                item["cooling_down"] = cd_until is not None
+                item["cooldown_until"] = cd_until
+                if cd_until is not None:
+                    cooling_cnt += 1
+            spaces_prov["cooling_down"] = cooling_cnt
+            spaces_prov["space_timeouts"] = dict(to_counts)
+    except Exception:
+        logger.debug("key_health: space timeout telemetry overlay skipped", exc_info=True)
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # The check itself
 # ---------------------------------------------------------------------------
@@ -402,6 +432,7 @@ def run_key_health_check(history=None) -> dict:
             },
         },
     }
+    _overlay_space_ledger_telemetry(payload, now_ts=now_ts)
     logger.info(
         "key_health: check complete — HF %s/%s ok, Gemini %s/%s ok, Groq %s/%s ok, Spaces %s/%s running",
         hf_counts["ok"], len(accounts),
@@ -478,7 +509,7 @@ def get_key_health(force_refresh: bool = False) -> dict:
                 and now - _mem_ts < CACHE_TTL_SECONDS:
             out = copy.deepcopy(_mem_payload)
             out["cached"] = True
-            return out
+            return _overlay_space_ledger_telemetry(out, now_ts=now)
         history = list(_mem_history)
 
     if not _check_lock.acquire(blocking=False):
@@ -488,14 +519,14 @@ def get_key_health(force_refresh: bool = False) -> dict:
             if _mem_payload is not None:
                 out = copy.deepcopy(_mem_payload)
                 out["cached"] = True
-                return out
+                return _overlay_space_ledger_telemetry(out)
         _check_lock.acquire()  # no cache at all — wait for the checker
         with _state_lock:  # the in-flight check may have just landed
             if _mem_payload is not None and time.time() - _mem_ts < CACHE_TTL_SECONDS:
                 out = copy.deepcopy(_mem_payload)
                 out["cached"] = True
                 _check_lock.release()
-                return out
+                return _overlay_space_ledger_telemetry(out)
             history = list(_mem_history)
     try:
         payload = run_key_health_check(history=history)

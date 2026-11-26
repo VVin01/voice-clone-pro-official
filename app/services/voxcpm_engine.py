@@ -94,8 +94,11 @@ MAX_ATTEMPTS_PER_SPACE = 4
 # HF Pool Phase 1 (Part 2 #3): bounded retry ladder for pinned VoxCPM2 spaces.
 MAX_PINNED_SPACE_TOKENS = 6
 MAX_REPIN_SPACE_TOKENS = 3
+# Part C2 & C3 (2026-11-26): per-attempt wall-clock cap (~45 s) and tier failover budgets
+# (Paid raised to 240 s; Free stays at 120 s).
+PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS = 45.0
 SEGMENT_BUDGET_FREE_SECONDS = 120.0
-SEGMENT_BUDGET_PAID_SECONDS = 180.0
+SEGMENT_BUDGET_PAID_SECONDS = 240.0
 
 # Batch AT (AT-3): per-space Gradio endpoint mapping. Every space
 # defaults to the openbmb-style "/generate" endpoint.
@@ -309,7 +312,25 @@ class VoxCPMQuotaExhaustedError(RuntimeError):
     """
 
 
+class _FailoverBudgetExhaustedError(TimeoutError):
+    """Raised when `synth_deadline` (`total_budget`) cuts off an attempt before the
+    per-attempt timeout cap expires, so congestion handling stays identical while
+    innocent Spaces with <45s remaining budget are not penalized with a 10m cooldown."""
+
+
 TRANSIENT_RETRY_BACKOFF_SECONDS = 5.0
+
+
+def _is_pair_space_timeout(exc: BaseException) -> bool:
+    """True when `exc` indicates the target Space itself timed out (Part C1/C4)."""
+    if isinstance(exc, _FailoverBudgetExhaustedError):
+        return False
+    if isinstance(exc, TimeoutError):
+        return True
+    low = str(exc or "").lower()
+    if "total failover budget" in low:
+        return False
+    return "timed out" in low or "timeout" in low
 
 
 def is_voxcpm_capacity_or_congestion_error(exc: BaseException | None) -> bool:
@@ -439,6 +460,7 @@ class JobQuotaMemory:
         self._lock = threading.Lock()
         self._gate_pairs: set[tuple[str, str]] = set()
         self._dead_tokens: set[str] = set()
+        self._space_timeouts: dict[str, int] = {}
 
     def gate_blocked(self, space_name: str, token: Optional[str]) -> bool:
         with self._lock:
@@ -456,12 +478,28 @@ class JobQuotaMemory:
         with self._lock:
             self._dead_tokens.add(_job_token_key(token))
 
+    def record_space_timeout(self, space_name: str) -> int:
+        sp = str(space_name or "").strip()
+        if not sp:
+            return 0
+        with self._lock:
+            nxt = int(self._space_timeouts.get(sp, 0)) + 1
+            self._space_timeouts[sp] = nxt
+            return nxt
+
+    def space_timeouts(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._space_timeouts)
+
     def snapshot(self) -> dict:
         with self._lock:
-            return {
+            out = {
                 "gate_pairs": sorted(f"{sp}::{tok}" for sp, tok in self._gate_pairs),
                 "dead_tokens": sorted(self._dead_tokens),
             }
+            if self._space_timeouts:
+                out["space_timeouts"] = dict(self._space_timeouts)
+            return out
 
 
 class JobSpacePin:
@@ -1030,6 +1068,12 @@ class VoxCPMEngine:
         """Clear per-job pinned Space state between jobs."""
         self.space_pin.reset()
 
+    @property
+    def space_timeouts(self) -> dict[str, int]:
+        """Part C4: per-job Space timeout counts accumulated across this engine's walks."""
+        mem = self.job_memory
+        return mem.space_timeouts() if mem is not None else {}
+
     def _log(self, msg: str) -> None:
         logger.info(msg)
         if self.log_fn:
@@ -1310,9 +1354,13 @@ class VoxCPMEngine:
             )
             return [tok for _pos, tok in kept], sub_gate_skipped
 
+        def _is_space_cooling_now(sp: str) -> bool:
+            return _hf_ledger.is_space_cooling(sp, state=ledger_state)
+
         is_pinned_walk = False
         repin_candidate: Optional[str] = None
         pairs: List[Tuple[str, Optional[str]]] = []
+        last_resort_pairs: List[Tuple[str, Optional[str]]] = []
         sub_gate_filtered_total = 0
 
         cur_pin = self.pinned_space
@@ -1320,37 +1368,72 @@ class VoxCPMEngine:
             is_pinned_walk = True
             pin_toks, skipped_pin = _solvent_tokens_for_space(cur_pin)
             sub_gate_filtered_total += skipped_pin
-            for tok in pin_toks[:MAX_PINNED_SPACE_TOKENS]:
-                pairs.append((cur_pin, tok))
-            # Part 2 (#3b): ONE controlled re-pin to an alternate v2 space (up to 3 solvent tokens).
-            if not self.space_pin.repin_used:
-                alt_space = next((sp for sp in candidate_spaces if sp != cur_pin), None)
+            pin_is_cooling = _is_space_cooling_now(cur_pin)
+            if not pin_is_cooling:
+                for tok in pin_toks[:MAX_PINNED_SPACE_TOKENS]:
+                    pairs.append((cur_pin, tok))
+            else:
+                for tok in pin_toks[:1]:
+                    last_resort_pairs.append((cur_pin, tok))
+
+            # Part 2 (#3b) + Part C1: controlled re-pin to a non-cooling alternate v2 space
+            # (allowed whenever repin_used is False OR the pinned Space itself is cooling down).
+            if (not self.space_pin.repin_used) or pin_is_cooling:
+                healthy_alt = next(
+                    (sp for sp in candidate_spaces if sp != cur_pin and not _is_space_cooling_now(sp)),
+                    None,
+                )
+                alt_space = healthy_alt or next((sp for sp in candidate_spaces if sp != cur_pin), None)
                 if alt_space is not None:
                     alt_toks, skipped_alt = _solvent_tokens_for_space(alt_space)
                     sub_gate_filtered_total += skipped_alt
                     repin_candidate = alt_space
-                    for tok in alt_toks[:MAX_REPIN_SPACE_TOKENS]:
-                        pairs.append((alt_space, tok))
+                    if not _is_space_cooling_now(alt_space):
+                        cap_alt = MAX_PINNED_SPACE_TOKENS if pin_is_cooling else MAX_REPIN_SPACE_TOKENS
+                        for tok in alt_toks[:cap_alt]:
+                            pairs.append((alt_space, tok))
+                    else:
+                        for tok in alt_toks[:1]:
+                            last_resort_pairs.append((alt_space, tok))
         else:
+            healthy_spaces = [sp for sp in candidate_spaces if not _is_space_cooling_now(sp)]
+            cooling_spaces = [sp for sp in candidate_spaces if _is_space_cooling_now(sp)]
+
             per_space_toks: dict[str, List[Optional[str]]] = {}
             max_len = 0
-            for sp in candidate_spaces:
+            for sp in healthy_spaces:
                 sp_toks, skipped_sp = _solvent_tokens_for_space(sp)
                 sub_gate_filtered_total += skipped_sp
                 per_space_toks[sp] = sp_toks
                 if len(sp_toks) > max_len:
                     max_len = len(sp_toks)
             for round_idx in range(max_len):
-                for sp in candidate_spaces:
+                for sp in healthy_spaces:
                     sp_toks = per_space_toks[sp]
                     if round_idx < len(sp_toks):
                         pairs.append((sp, sp_toks[round_idx]))
 
-        total_pairs = len(pairs) + sub_gate_filtered_total
+            for sp in cooling_spaces:
+                sp_toks, skipped_sp = _solvent_tokens_for_space(sp)
+                sub_gate_filtered_total += skipped_sp
+                if sp_toks:
+                    last_resort_pairs.append((sp, sp_toks[0]))
+
+        total_pairs = len(pairs) + len(last_resort_pairs) + sub_gate_filtered_total
         pairs = [
             (sp, tok) for sp, tok in pairs
             if not self._pair_blocked_by_job(sp, tok)
         ]
+        last_resort_pairs = [
+            (sp, tok) for sp, tok in last_resort_pairs
+            if not self._pair_blocked_by_job(sp, tok)
+        ]
+        if not pairs and last_resort_pairs:
+            self._log(
+                "⚠️ VoxCPM 2: all solvent Spaces are in timeout cooldown; "
+                "attempting last-resort cooled Space pair(s)..."
+            )
+            pairs = list(last_resort_pairs)
         all_pairs_blocked = (
             (total_pairs > 0 and not pairs)
             or (
@@ -1376,12 +1459,24 @@ class VoxCPMEngine:
         _default_budget = (
             SEGMENT_BUDGET_PAID_SECONDS if _tier_norm == "paid" else SEGMENT_BUDGET_FREE_SECONDS
         )
-        if session_mode and not kwargs.get("total_timeout") and not _budget_env and session_gate_s is not None:
-            _default_budget = max(_default_budget, float(math.ceil(session_gate_s)) + 60.0)
         total_budget = float(
             kwargs.get("total_timeout") or (_budget_env if _budget_env else _default_budget)
         )
         synth_deadline = time.time() + total_budget
+
+        _env_timeout = os.getenv("VOXCPM_TIMEOUT", "").strip()
+        if _env_timeout:
+            base_timeout_sec = float(_env_timeout)
+        else:
+            try:
+                from app.config import settings as _settings
+                base_timeout_sec = float(getattr(_settings, "voxcpm_timeout", 60) or 60)
+            except Exception:
+                base_timeout_sec = 60.0
+        if kwargs.get("timeout"):
+            base_timeout_sec = float(kwargs["timeout"])
+        # Part C2: a single pair attempt may consume at most ~45 s of the failover budget.
+        attempt_cap_sec = max(0.05, min(base_timeout_sec, float(PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS)))
 
         space_attempts: dict[str, int] = {}
         for attempt, (space_name, active_token) in enumerate(pairs, 1):
@@ -1391,6 +1486,19 @@ class VoxCPMEngine:
                 break
             if self._pair_blocked_by_job(space_name, active_token):
                 continue
+            # Part C1: if `space_name` cooled down earlier in this walk (or concurrently),
+            # skip it immediately whenever any non-cooling unblocked pair remains ahead.
+            if _hf_ledger.is_space_cooling(space_name, state=ledger_state):
+                has_non_cooling_ahead = any(
+                    (not _hf_ledger.is_space_cooling(rem_sp, state=ledger_state))
+                    and (not self._pair_blocked_by_job(rem_sp, rem_tok))
+                    for rem_sp, rem_tok in pairs[attempt:]
+                )
+                if has_non_cooling_ahead:
+                    self._log(
+                        f"⏭️ Space '{space_name}' is in 10m timeout cooldown; skipping to healthy Space..."
+                    )
+                    continue
             if not is_pinned_walk:
                 if space_attempts.get(space_name, 0) >= MAX_ATTEMPTS_PER_SPACE:
                     continue
@@ -1412,7 +1520,6 @@ class VoxCPMEngine:
                     except Exception:
                         pass
 
-                client = self.get_client(space_name, hf_token=active_token)
                 effective_control = control_instruction or DEFAULT_BURMESE_CONTROL
                 if ref_file and prompt_text:
                     effective_control = ""
@@ -1422,109 +1529,131 @@ class VoxCPMEngine:
                     effective_control = DEFAULT_CLONE_FIDELITY_CONTROL
                 endpoints = space_api_endpoints(space_name)
 
-                if session_mode:
-                    job = client.submit(
-                        text_input=clean_text,
-                        control_instruction=effective_control,
-                        reference_wav_path_input=ref_file,
-                        use_prompt_text=bool(prompt_text),
-                        prompt_text_input=prompt_text or "",
-                        cfg_value_input=float(cfg_value or 2.0),
-                        do_normalize=True,
-                        denoise=True,
-                        api_name="/generate_session",
-                    )
-                elif endpoints["clone"] == "/generate_clone":
-                    if ref_file:
-                        if not prompt_text:
-                            self._log(f"ℹ️ Space '{space_name}' cloning needs the reference transcript; skipping to next space...")
-                            continue
-                        job = client.submit(
-                            ref_audio_path=ref_file,
-                            ref_text=prompt_text,
-                            target_text=clean_text,
-                            api_name=endpoints["clone"],
-                        )
-                    else:
-                        chosen_style = PRESET_MAP_YEYEE.get(preset_voice) if preset_voice else None
-                        job = client.submit(
-                            style=chosen_style or effective_control,
-                            target_text=clean_text,
-                            api_name=endpoints["style"],
-                        )
-                elif "chenchenaoyang" in space_name:
-                    job = client.submit(
-                        text=clean_text,
-                        control_instruction=effective_control,
-                        ref_wav=ref_file,
-                        use_prompt_text=bool(prompt_text),
-                        prompt_text_value=prompt_text or "",
-                        cfg_value=float(cfg_value or 2.0),
-                        do_normalize=True,
-                        denoise=True,
-                        dit_steps=10.0,
-                        api_name="/generate",
-                    )
-                else:
-                    job = client.submit(
-                        text_input=clean_text,
-                        control_instruction=effective_control,
-                        reference_wav_path_input=ref_file,
-                        use_prompt_text=bool(prompt_text),
-                        prompt_text_input=prompt_text or "",
-                        cfg_value_input=float(cfg_value or 2.0),
-                        do_normalize=True,
-                        denoise=True,
-                        api_name=endpoints["clone"],
-                    )
+                if endpoints["clone"] == "/generate_clone" and not session_mode and ref_file and not prompt_text:
+                    self._log(f"ℹ️ Space '{space_name}' cloning needs the reference transcript; skipping to next space...")
+                    continue
 
-                # Poll status with queue tracking
-                poll_start = time.time()
-                _env_timeout = os.getenv("VOXCPM_TIMEOUT", "").strip()
-                if _env_timeout:
-                    timeout_sec = int(_env_timeout)
-                else:
-                    try:
-                        from app.config import settings as _settings
-                        timeout_sec = int(getattr(_settings, "voxcpm_timeout", 60) or 60)
-                    except Exception:
-                        timeout_sec = 60
-                if kwargs.get("timeout"):
-                    timeout_sec = int(kwargs["timeout"])
-                elif session_mode and session_gate_s is not None:
-                    timeout_sec = max(timeout_sec, int(math.ceil(session_gate_s)) + 30)
-                while not job.done():
-                    # Part 4 (#1): cancel orphaned Gradio GPU runs BEFORE raising TimeoutError.
-                    if time.time() - poll_start > timeout_sec:
-                        _cancel_gradio_job(job)
-                        raise TimeoutError(f"VoxCPM 2 Space '{space_name}' queue timed out after {timeout_sec}s")
-                    if time.time() > synth_deadline:
-                        _cancel_gradio_job(job)
-                        raise TimeoutError(f"VoxCPM 2 total failover budget ({total_budget:.0f}s) exhausted on space '{space_name}'")
+                attempt_start = time.time()
+                attempt_holder: dict[str, Any] = {"job": None, "result_path": None, "exc": None}
+                attempt_done_evt = threading.Event()
 
+                def _execute_pair_attempt() -> None:
                     try:
-                        st = job.status()
-                        eta_val = getattr(st, "eta", None)
-                        pos_val = getattr(st, "queue_position", None) or getattr(st, "position", None)
-                        if eta_val is not None and float(eta_val) > 0:
-                            eta_sec = int(round(float(eta_val)))
-                            if pos_val is not None:
-                                msg = f"⏳ စောင့်ဆိုင်းစာရင်းတွင် နံပါတ် {pos_val} — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
+                        client = self.get_client(space_name, hf_token=active_token)
+                        if session_mode:
+                            g_job = client.submit(
+                                text_input=clean_text,
+                                control_instruction=effective_control,
+                                reference_wav_path_input=ref_file,
+                                use_prompt_text=bool(prompt_text),
+                                prompt_text_input=prompt_text or "",
+                                cfg_value_input=float(cfg_value or 2.0),
+                                do_normalize=True,
+                                denoise=True,
+                                api_name="/generate_session",
+                            )
+                        elif endpoints["clone"] == "/generate_clone":
+                            if ref_file:
+                                g_job = client.submit(
+                                    ref_audio_path=ref_file,
+                                    ref_text=prompt_text,
+                                    target_text=clean_text,
+                                    api_name=endpoints["clone"],
+                                )
                             else:
-                                msg = f"⏳ စောင့်ဆိုင်းစာရင်းတွင် စောင့်ဆိုင်းနေပါသည် — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
-                            self._log(msg)
-                            if progress_cb:
-                                try:
-                                    progress_cb(msg)
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-                    remaining_attempt = timeout_sec - (time.time() - poll_start)
-                    time.sleep(max(0.05, min(2.0, remaining_attempt)))
+                                chosen_style = PRESET_MAP_YEYEE.get(preset_voice) if preset_voice else None
+                                g_job = client.submit(
+                                    style=chosen_style or effective_control,
+                                    target_text=clean_text,
+                                    api_name=endpoints["style"],
+                                )
+                        elif "chenchenaoyang" in space_name:
+                            g_job = client.submit(
+                                text=clean_text,
+                                control_instruction=effective_control,
+                                ref_wav=ref_file,
+                                use_prompt_text=bool(prompt_text),
+                                prompt_text_value=prompt_text or "",
+                                cfg_value=float(cfg_value or 2.0),
+                                do_normalize=True,
+                                denoise=True,
+                                dit_steps=10.0,
+                                api_name="/generate",
+                            )
+                        else:
+                            g_job = client.submit(
+                                text_input=clean_text,
+                                control_instruction=effective_control,
+                                reference_wav_path_input=ref_file,
+                                use_prompt_text=bool(prompt_text),
+                                prompt_text_input=prompt_text or "",
+                                cfg_value_input=float(cfg_value or 2.0),
+                                do_normalize=True,
+                                denoise=True,
+                                api_name=endpoints["clone"],
+                            )
 
-                raw_result = job.result()
-                result_path_str = _resolve_result_path(raw_result)
+                        attempt_holder["job"] = g_job
+                        while not g_job.done():
+                            # Part 4 (#1) + Part C2: cancel orphaned Gradio GPU runs BEFORE raising TimeoutError.
+                            if time.time() - attempt_start > attempt_cap_sec:
+                                _cancel_gradio_job(g_job)
+                                raise TimeoutError(
+                                    f"VoxCPM 2 Space '{space_name}' queue timed out after {attempt_cap_sec:g}s"
+                                )
+                            if time.time() > synth_deadline:
+                                _cancel_gradio_job(g_job)
+                                raise _FailoverBudgetExhaustedError(
+                                    f"VoxCPM 2 total failover budget ({total_budget:.0f}s) exhausted on space '{space_name}'"
+                                )
+
+                            try:
+                                st = g_job.status()
+                                eta_val = getattr(st, "eta", None)
+                                pos_val = getattr(st, "queue_position", None) or getattr(st, "position", None)
+                                if eta_val is not None and float(eta_val) > 0:
+                                    eta_sec = int(round(float(eta_val)))
+                                    if pos_val is not None:
+                                        msg = f"⏳ စောင့်ဆိုင်းစာရင်းတွင် နံပါတ် {pos_val} — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
+                                    else:
+                                        msg = f"⏳ စောင့်ဆိုင်းစာရင်းတွင် စောင့်ဆိုင်းနေပါသည် — ခန့်မှန်းကြာချိန် ~{eta_sec}s"
+                                    self._log(msg)
+                                    if progress_cb:
+                                        try:
+                                            progress_cb(msg)
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                            remaining_attempt = attempt_cap_sec - (time.time() - attempt_start)
+                            time.sleep(max(0.05, min(2.0, remaining_attempt)))
+
+                        raw_result = g_job.result()
+                        attempt_holder["result_path"] = _resolve_result_path(raw_result)
+                    except BaseException as inner_exc:
+                        attempt_holder["exc"] = inner_exc
+                    finally:
+                        attempt_done_evt.set()
+
+                worker_th = threading.Thread(
+                    target=_execute_pair_attempt,
+                    name=f"voxcpm-attempt-{attempt}",
+                    daemon=True,
+                )
+                worker_th.start()
+                # Give inner poll loop a tiny 0.25s grace so poll-timeout cancels `g_job`
+                # synchronously before waking; if `get_client`/`submit`/`result` itself hangs,
+                # `wait` still abandons the hung call promptly at ~attempt_cap_sec (Part C2).
+                if not attempt_done_evt.wait(timeout=attempt_cap_sec + 0.25):
+                    if attempt_holder.get("job") is not None:
+                        _cancel_gradio_job(attempt_holder["job"])
+                    raise TimeoutError(
+                        f"VoxCPM 2 Space '{space_name}' attempt timed out after {attempt_cap_sec:g}s"
+                    )
+                if attempt_holder["exc"] is not None:
+                    raise attempt_holder["exc"]
+
+                result_path_str = attempt_holder["result_path"]
 
                 if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
                     if eff_pin_enabled:
@@ -1619,6 +1748,24 @@ class VoxCPMEngine:
                         self._token_cooldowns[active_token] = time.time() + 1800
                         self._schedule_cooldown_persist()
                         self._log(f"⚠️ Token {tok_masked} rejected on '{space_name}'; cooling down for 30m...")
+                elif _is_pair_space_timeout(e_pair):
+                    # Part C1 & C4: Space-level 10-minute circuit breaker + running timeout telemetry
+                    # (tokens are innocent and never cooled down for a hanging Space).
+                    job_to_cnt = self.job_memory.record_space_timeout(space_name) if self.job_memory is not None else 1
+                    ledger_to_cnt = job_to_cnt
+                    try:
+                        updated_st = _hf_ledger.record_space_timeout(space_name)
+                        if isinstance(updated_st, dict):
+                            ledger_state = updated_st
+                            ledger_to_cnt = int((updated_st.get("space_timeouts") or {}).get(space_name) or job_to_cnt)
+                        else:
+                            ledger_state = _hf_ledger.load_pool_state()
+                    except Exception:
+                        pass
+                    self._log(
+                        f"🛑 Space '{space_name}' timed out (job_timeouts={job_to_cnt}, "
+                        f"ledger_timeouts={ledger_to_cnt}); Space cooled down for 10m (token {tok_masked} kept active)"
+                    )
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {_format_pair_error(e_pair)}")
                 time.sleep(0.5)
 
@@ -1680,4 +1827,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]

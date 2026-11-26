@@ -65,7 +65,7 @@ except Exception:  # pragma: no cover - standalone load without the app package
     _JobQuotaMemory = None  # type: ignore[assignment]
     _JobSpacePin = None  # type: ignore[assignment]
     _VOX_SEG_CAP_FREE_S = 120.0
-    _VOX_SEG_CAP_PAID_S = 180.0
+    _VOX_SEG_CAP_PAID_S = 240.0
     _VOX_TRANSIENT_BACKOFF_S = 5.0
     _VoxCPMQuotaExhaustedError = None  # type: ignore[assignment]
     _has_solvent_voxcpm_tokens = lambda _eng: True  # noqa: E731
@@ -8327,6 +8327,11 @@ class EdgeSmartSync:
                     float(seg["video_end"]) - float(seg["video_start"]), len(speak),
                     paid=self.paid_tier,
                 )
+                # Part C3: Paid jobs get the full 240 s failover budget (`_VOX_SEG_CAP_PAID_S`);
+                # Free jobs keep `min(_raw_budget, 120 s)`.
+                _eff_seg_budget = (
+                    _seg_cap_s if self.paid_tier else min(_raw_budget, _seg_cap_s)
+                )
                 produced, vox_err = self._vox_synthesize_with_retry(
                     vox_engine,
                     speak=speak,
@@ -8336,8 +8341,13 @@ class EdgeSmartSync:
                     persona_ref_text=persona_ref_text,
                     preset_v=preset_v,
                     speed_float=voxcpm_speed_float,
-                    budget_seconds=min(_raw_budget, _seg_cap_s),
+                    budget_seconds=_eff_seg_budget,
                 )
+                _job_sp_tos = getattr(vox_engine, "space_timeouts", None)
+                if callable(_job_sp_tos):
+                    _job_sp_tos = _job_sp_tos()
+                if isinstance(_job_sp_tos, dict) and _job_sp_tos and vox_err is not None:
+                    self.log(f"📊 VoxCPM 2 per-job Space timeouts so far: {_job_sp_tos}")
                 if vox_err is not None:
                     _done_units = len(checkpoint.get("audio") or {})
                     _pinned_sp = getattr(vox_engine, "pinned_space", None)

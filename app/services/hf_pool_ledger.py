@@ -62,6 +62,7 @@ ENV_HASH_STORE_KEY = "aj_hf:env_hash"
 CACHE_TTL_SECONDS = 30.0
 AUTH_DEAD_QUARANTINE_SECONDS = 86400.0  # 24 hours
 QUOTA_DEAD_COOLDOWN_SECONDS = 1800.0    # 30 minutes
+SPACE_TIMEOUT_COOLDOWN_SECONDS = 600.0  # 10 minutes per-Space timeout circuit breaker (Part C1)
 IN_FLIGHT_STALE_SECONDS = 7200.0        # 2 hours safety GC
 MIN_USABLE_DUST_GATE_S = 25.0           # <25 s "quota dust" never counts as capacity
 DEFAULT_SPACE_GATE_S = 60.0             # fallback only when space_gates has no entry yet
@@ -241,11 +242,44 @@ def normalize_pool_state(raw: Any, *, now_ts: float | None = None) -> dict[str, 
         in_flight = 0.0
     in_flight_val: int | float = int(in_flight) if in_flight.is_integer() else round(in_flight, 2)
 
-    return {
+    # Part C1 & C4 (additive only): per-Space 10m timeout cooldowns and running timeout counters.
+    # Omitted when empty so untouched states keep the exact 3-key base schema with zero migration.
+    raw_space_cds = raw.get("space_cooldowns")
+    space_cds_out: dict[str, str] = {}
+    if isinstance(raw_space_cds, Mapping):
+        for sp, cd_val in raw_space_cds.items():
+            sp_key = str(sp or "").strip()
+            if not sp_key or cd_val in (None, ""):
+                continue
+            cd_str = _iso_utc(float(cd_val)) if isinstance(cd_val, (int, float)) and float(cd_val) > 0 else str(cd_val).strip()
+            cd_ts = _parse_ts(cd_str)
+            if cd_ts is not None and cd_ts > now:
+                space_cds_out[sp_key] = cd_str
+
+    raw_space_tos = raw.get("space_timeouts")
+    space_tos_out: dict[str, int] = {}
+    if isinstance(raw_space_tos, Mapping):
+        for sp, cnt_val in raw_space_tos.items():
+            sp_key = str(sp or "").strip()
+            if not sp_key:
+                continue
+            try:
+                cnt = int(cnt_val)
+            except (TypeError, ValueError):
+                continue
+            if cnt > 0:
+                space_tos_out[sp_key] = cnt
+
+    out: dict[str, Any] = {
         "tokens": tokens_out,
         "space_gates": gates_out,
         "in_flight_gpu_s": in_flight_val,
     }
+    if space_cds_out:
+        out["space_cooldowns"] = space_cds_out
+    if space_tos_out:
+        out["space_timeouts"] = space_tos_out
+    return out
 
 
 def _read_store_state(now_ts: float | None = None) -> dict[str, Any] | None:
@@ -550,6 +584,78 @@ def record_quota_dead(
             "updated_at": _iso_utc(now),
         }
         return save_pool_state(st, now_ts=now)
+
+
+def record_space_timeout(
+    space_name: str,
+    *,
+    cooldown_seconds: float = SPACE_TIMEOUT_COOLDOWN_SECONDS,
+    now_ts: float | None = None,
+) -> dict[str, Any] | None:
+    """Part C1 & C4: record a 10-minute Space-level timeout cooldown and increment
+    `space_timeouts[space_name]` in `aj_hf:pool_state` (tokens are untouched)."""
+    sp = str(space_name or "").strip()
+    if not sp:
+        return None
+    now = time.time() if now_ts is None else float(now_ts)
+    with _lock:
+        st = load_pool_state(now_ts=now)
+        cds = dict(st.get("space_cooldowns") or {})
+        if float(cooldown_seconds) > 0:
+            cds[sp] = _iso_utc(now + float(cooldown_seconds))
+        st["space_cooldowns"] = cds
+        tos = dict(st.get("space_timeouts") or {})
+        tos[sp] = int(tos.get(sp) or 0) + 1
+        st["space_timeouts"] = tos
+        return save_pool_state(st, now_ts=now)
+
+
+def get_space_cooldown_until(
+    space_name: str,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> str | None:
+    """Return active ISO `cooldown_until` for `space_name` if cooling down, else None."""
+    sp = str(space_name or "").strip()
+    if not sp:
+        return None
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    cds = st.get("space_cooldowns")
+    if not isinstance(cds, Mapping):
+        return None
+    cd_str = cds.get(sp)
+    if not cd_str:
+        return None
+    cd_ts = _parse_ts(cd_str)
+    if cd_ts is not None and cd_ts > now:
+        return str(cd_str)
+    return None
+
+
+def is_space_cooling(
+    space_name: str,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> bool:
+    """Part C1: True when `space_name` has an active timeout circuit-breaker cooldown."""
+    return get_space_cooldown_until(space_name, state=state, now_ts=now_ts) is not None
+
+
+def get_space_timeout_counts(
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> dict[str, int]:
+    """Part C4: running per-Space timeout counts from `aj_hf:pool_state`."""
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    tos = st.get("space_timeouts")
+    if not isinstance(tos, Mapping):
+        return {}
+    return {str(k): int(v) for k, v in tos.items() if int(v or 0) > 0}
 
 
 def probe_whoami_status(token: str, timeout: float = 8.0) -> tuple[int | None, str | None]:
@@ -1182,16 +1288,20 @@ __all__ = [
     "SESSION_CALL_BASE_GPU_S",
     "SESSION_CALL_MAX_GPU_S",
     "SESSION_CALL_PER_CHAR_GPU_S",
+    "SPACE_TIMEOUT_COOLDOWN_SECONDS",
     "acquire_in_flight_gpu",
     "compute_env_tokens_hash",
     "compute_pool_metrics",
     "estimate_refill_eta_label",
     "estimate_voxcpm_units_and_budget",
     "evaluate_voxcpm_admission",
+    "get_space_cooldown_until",
     "get_space_gate",
+    "get_space_timeout_counts",
     " get_token_remaining_s".strip(),
     "handle_auth_failure",
     "has_resumer_capacity",
+    "is_space_cooling",
     "is_token_auth_dead",
     "is_token_cooling",
     "load_pool_state",
@@ -1202,6 +1312,7 @@ __all__ = [
     "reconcile_if_env_changed",
     "record_admission_refusal",
     "record_quota_dead",
+    "record_space_timeout",
     "record_success_debit",
     "release_in_flight_gpu",
     "reset_ledger_for_tests",
