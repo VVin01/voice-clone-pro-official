@@ -15,6 +15,7 @@ Features:
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -336,7 +337,7 @@ def is_voxcpm_capacity_or_congestion_error(exc: BaseException | None) -> bool:
     return False
 
 
-def has_solvent_voxcpm_tokens(engine: Any) -> bool:
+def has_solvent_voxcpm_tokens(engine: Any, *, gate_s: Optional[float] = None) -> bool:
     """True when at least one non-dead token remains solvent for a transient retry (Part 2 #3c)."""
     try:
         from app.services import hf_pool_ledger as _hf_ledger
@@ -348,7 +349,7 @@ def has_solvent_voxcpm_tokens(engine: Any) -> bool:
             return not bool(st.get("tokens"))
         mem = getattr(engine, "job_memory", None)
         pin = getattr(engine, "pinned_space", None)
-        gate = VoxCPMEngine._known_space_gate(pin, ledger_state=st)
+        gate = float(gate_s) if (gate_s is not None and gate_s > 0) else VoxCPMEngine._known_space_gate(pin, ledger_state=st)
         for tok in tokens:
             if not tok:
                 continue
@@ -743,29 +744,40 @@ class VoxCPMEngine:
 
     @classmethod
     def _record_admission_refusal(
-        cls, space_name: str, token: Optional[str], requested: float, left: float
+        cls,
+        space_name: str,
+        token: Optional[str],
+        requested: float,
+        left: float,
+        *,
+        update_space_gate: bool = True,
     ) -> None:
         """Learn from a refusal — exact balance (`left`) and space gate (`requested`),
         persisting through the shared `aj_hf:pool_state` ledger (Part 5)."""
         with cls._lock:
-            cls._space_admission_prices[str(space_name)] = float(requested)
-            cls._last_admission_price = float(requested)
+            if update_space_gate:
+                cls._space_admission_prices[str(space_name)] = float(requested)
+                cls._last_admission_price = float(requested)
             if token:
                 cls._token_balances[str(token)] = float(left)
         try:
             from app.services import hf_pool_ledger as _hf_ledger
 
-            _hf_ledger.record_admission_refusal(space_name, token, requested, left)
+            _hf_ledger.record_admission_refusal(
+                space_name, token, requested, left, update_space_gate=update_space_gate
+            )
         except Exception:
             pass
 
     @classmethod
-    def _record_success_balance(cls, space_name: str, token: Optional[str]) -> None:
-        """Debit the space's gate from the token's balance in memory and `aj_hf:pool_state`."""
+    def _record_success_balance(
+        cls, space_name: str, token: Optional[str], *, debit_s: Optional[float] = None
+    ) -> None:
+        """Debit the space's gate (or explicit `debit_s`) from the token's balance in memory and `aj_hf:pool_state`."""
         if not token:
             return
         with cls._lock:
-            price = cls._space_admission_prices.get(str(space_name))
+            price = float(debit_s) if (debit_s is not None and debit_s > 0) else cls._space_admission_prices.get(str(space_name))
             if price is not None:
                 key = str(token)
                 known = cls._token_balances.get(key)
@@ -1123,6 +1135,8 @@ class VoxCPMEngine:
         fallback_cb: Optional[Callable[[str], None]] = None,
         tier: str = "free",
         skip_mastering: bool = False,
+        session_mode: bool = False,
+        pin_space_override: Optional[bool] = None,
         **kwargs: Any,
     ) -> Path:
         """
@@ -1264,9 +1278,20 @@ class VoxCPMEngine:
             other_toks = [t for t in tokens_pool if t not in healthy_auth]
             ordered_toks = rotated_auth + other_toks
 
+        session_gate_s: Optional[float] = (
+            _hf_ledger.session_call_gate_s(len(clean_text)) if session_mode else None
+        )
+        eff_pin_enabled = (
+            self.pin_space_enabled if pin_space_override is None else bool(pin_space_override)
+        )
+
         def _solvent_tokens_for_space(sp: str) -> tuple[List[Optional[str]], int]:
             """Return Best-Fit ordered solvent tokens for `sp` plus count of sub-gate tokens skipped."""
-            sp_gate = VoxCPMEngine._known_space_gate(sp, ledger_state=ledger_state)
+            sp_gate = (
+                session_gate_s
+                if session_mode
+                else VoxCPMEngine._known_space_gate(sp, ledger_state=ledger_state)
+            )
             kept: List[tuple[int, Optional[str]]] = []
             sub_gate_skipped = 0
             for pos, tok in enumerate(ordered_toks):
@@ -1291,7 +1316,7 @@ class VoxCPMEngine:
         sub_gate_filtered_total = 0
 
         cur_pin = self.pinned_space
-        if self.pin_space_enabled and cur_pin and cur_pin in candidate_spaces:
+        if eff_pin_enabled and cur_pin and cur_pin in candidate_spaces:
             is_pinned_walk = True
             pin_toks, skipped_pin = _solvent_tokens_for_space(cur_pin)
             sub_gate_filtered_total += skipped_pin
@@ -1351,6 +1376,8 @@ class VoxCPMEngine:
         _default_budget = (
             SEGMENT_BUDGET_PAID_SECONDS if _tier_norm == "paid" else SEGMENT_BUDGET_FREE_SECONDS
         )
+        if session_mode and not kwargs.get("total_timeout") and not _budget_env and session_gate_s is not None:
+            _default_budget = max(_default_budget, float(math.ceil(session_gate_s)) + 60.0)
         total_budget = float(
             kwargs.get("total_timeout") or (_budget_env if _budget_env else _default_budget)
         )
@@ -1395,7 +1422,19 @@ class VoxCPMEngine:
                     effective_control = DEFAULT_CLONE_FIDELITY_CONTROL
                 endpoints = space_api_endpoints(space_name)
 
-                if endpoints["clone"] == "/generate_clone":
+                if session_mode:
+                    job = client.submit(
+                        text_input=clean_text,
+                        control_instruction=effective_control,
+                        reference_wav_path_input=ref_file,
+                        use_prompt_text=bool(prompt_text),
+                        prompt_text_input=prompt_text or "",
+                        cfg_value_input=float(cfg_value or 2.0),
+                        do_normalize=True,
+                        denoise=True,
+                        api_name="/generate_session",
+                    )
+                elif endpoints["clone"] == "/generate_clone":
                     if ref_file:
                         if not prompt_text:
                             self._log(f"ℹ️ Space '{space_name}' cloning needs the reference transcript; skipping to next space...")
@@ -1450,7 +1489,10 @@ class VoxCPMEngine:
                         timeout_sec = int(getattr(_settings, "voxcpm_timeout", 60) or 60)
                     except Exception:
                         timeout_sec = 60
-                timeout_sec = int(kwargs.get("timeout") or timeout_sec)
+                if kwargs.get("timeout"):
+                    timeout_sec = int(kwargs["timeout"])
+                elif session_mode and session_gate_s is not None:
+                    timeout_sec = max(timeout_sec, int(math.ceil(session_gate_s)) + 30)
                 while not job.done():
                     # Part 4 (#1): cancel orphaned Gradio GPU runs BEFORE raising TimeoutError.
                     if time.time() - poll_start > timeout_sec:
@@ -1485,7 +1527,7 @@ class VoxCPMEngine:
                 result_path_str = _resolve_result_path(raw_result)
 
                 if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
-                    if self.pin_space_enabled:
+                    if eff_pin_enabled:
                         if self.space_pin.pin_if_unset(space_name):
                             self._log(f"📌 VoxCPM 2 Space pinned for job: '{space_name}'")
                         elif repin_candidate is not None and space_name == repin_candidate:
@@ -1516,7 +1558,11 @@ class VoxCPMEngine:
                             except Exception:
                                 pass
 
-                    VoxCPMEngine._record_success_balance(space_name, active_token)
+                    VoxCPMEngine._record_success_balance(
+                        space_name,
+                        active_token,
+                        debit_s=session_gate_s if session_mode else None,
+                    )
                     self._log(f"✅ VoxCPM 2 Success [{tok_masked}]: {out_path.name} ({out_path.stat().st_size} bytes)")
                     return out_path
                 else:
@@ -1534,7 +1580,11 @@ class VoxCPMEngine:
                     _adm = _parse_admission_refusal(str(e_pair))
                     if _adm is not None:
                         VoxCPMEngine._record_admission_refusal(
-                            space_name, active_token, _adm[0], _adm[1]
+                            space_name,
+                            active_token,
+                            _adm[0],
+                            _adm[1],
+                            update_space_gate=(not session_mode),
                         )
                         ledger_state = _hf_ledger.load_pool_state()
                     self._log(f"⚠️ Token {tok_masked} refused at '{space_name}' admission gate (GPU-seconds requested > balance); pair memoised for this job, rotating...")

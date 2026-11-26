@@ -42,7 +42,11 @@ from app.services.progress import JobProgressTracker, render_stepper_progress, s
 from app.services import hf_pool_ledger as _hf_ledger
 from app.services import voice_choice as _vc
 from app.services.speed import DEFAULT_SPEED, DEFAULT_TEMPO, resolve_speed_tempo
-from app.services.voice_chunking import plan_text_chunks
+from app.services.voice_chunking import (
+    is_clone_session_slices_enabled,
+    plan_session_slices,
+    plan_text_chunks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -613,9 +617,13 @@ def _synthesize_voxcpm_voice_job(
         )
         _accepts_allow_fb = _accepts_var_kw or ("allow_fallback" in _synth_sig.parameters)
         _accepts_tier = _accepts_var_kw or ("tier" in _synth_sig.parameters)
+        _accepts_session = _accepts_var_kw or ("session_mode" in _synth_sig.parameters)
+        _accepts_pin_override = _accepts_var_kw or ("pin_space_override" in _synth_sig.parameters)
     except Exception:
         _accepts_allow_fb = True
         _accepts_tier = True
+        _accepts_session = True
+        _accepts_pin_override = True
 
     _dp_kwargs: dict = {}
     if tier != "free" and _accepts_tier:
@@ -624,7 +632,9 @@ def _synthesize_voxcpm_voice_job(
         # Part 2 (#1): Edge/persona fallback is unconditionally forbidden on clone paths.
         _dp_kwargs["allow_fallback"] = False
 
-    def _call_unit_with_bounded_retry(call_kw: dict[str, Any]) -> Any:
+    def _call_unit_with_bounded_retry(
+        call_kw: dict[str, Any], *, req_gate_s: float | None = None
+    ) -> Any:
         try:
             return engine.synthesize(**call_kw)
         except Exception as exc:
@@ -635,7 +645,17 @@ def _synthesize_voxcpm_voice_job(
                 or is_voxcpm_capacity_or_congestion_error(exc)
             ):
                 raise
-            if not getattr(engine, "hf_tokens", None) or not has_solvent_voxcpm_tokens(engine):
+            if not getattr(engine, "hf_tokens", None):
+                raise
+            try:
+                _has_solvent = (
+                    has_solvent_voxcpm_tokens(engine, gate_s=req_gate_s)
+                    if req_gate_s is not None
+                    else has_solvent_voxcpm_tokens(engine)
+                )
+            except TypeError:
+                _has_solvent = has_solvent_voxcpm_tokens(engine)
+            if not _has_solvent:
                 raise
             backoff_s = float(getattr(_vx_mod, "TRANSIENT_RETRY_BACKOFF_SECONDS", 5.0) or 0.0)
             if backoff_s > 0:
@@ -645,6 +665,11 @@ def _synthesize_voxcpm_voice_job(
     norm_gender = str(gender_preset or "").strip().lower()
     is_gender_flip = norm_gender in ("m2f", "f2m")
     is_custom_clone = bool(reference_wav is not None and not preset_voice)
+    _engine_pin_eligible = (
+        getattr(engine, "token_bind_index", None) is None
+        and bool(getattr(engine, "pin_space_enabled", True))
+    )
+    use_session_mode = bool(is_clone_session_slices_enabled() and _engine_pin_eligible)
 
     manifest: dict[str, Any] = {}
     if checkpoint_dir is not None and (checkpoint_dir / "manifest.json").is_file():
@@ -676,7 +701,8 @@ def _synthesize_voxcpm_voice_job(
             reference_transcript = str(manifest["reference_transcript"])
         if is_custom_clone and not is_gender_flip and not reference_transcript and not control_instruction:
             control_instruction = DEFAULT_CLONE_FIDELITY_CONTROL
-        ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
+        if not use_session_mode:
+            ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
     elif is_custom_clone and active_ref_wav is not None and active_ref_wav.is_file():
         active_ref_wav, sliced_secs, ref_prosody = _cp.select_steady_reference_slice(
             active_ref_wav,
@@ -695,7 +721,7 @@ def _synthesize_voxcpm_voice_job(
             )
         if not is_gender_flip and not reference_transcript and not control_instruction:
             control_instruction = DEFAULT_CLONE_FIDELITY_CONTROL
-    elif active_ref_wav is not None and active_ref_wav.is_file():
+    elif (not use_session_mode) and active_ref_wav is not None and active_ref_wav.is_file():
         ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
 
     effective_ref_arg = active_ref_wav if active_ref_wav is not None else reference_wav
@@ -705,6 +731,430 @@ def _synthesize_voxcpm_voice_job(
     effective_planning_control = (
         "" if (effective_ref_arg and reference_transcript) else (control_instruction or "")
     )
+
+    if use_session_mode:
+        from app.services.speed import resolve_speed_tempo
+
+        if (
+            manifest.get("text") == text
+            and manifest.get("session_mode") is True
+            and isinstance(manifest.get("session_slices"), list)
+            and len(manifest["session_slices"]) >= 1
+        ):
+            slices = [str(s) for s in manifest["session_slices"]]
+            session_fallback_used = bool(manifest.get("session_fallback_used", False))
+            saved_slice_status: dict[int, dict[str, Any]] = {
+                int(item["index"]): dict(item)
+                for item in (manifest.get("slice_status") or [])
+                if isinstance(item, dict) and "index" in item
+            }
+        else:
+            slices = plan_session_slices(text)
+            session_fallback_used = False
+            saved_slice_status = {}
+
+        slice_status_map: dict[int, dict[str, Any]] = dict(saved_slice_status)
+
+        def _rem_session_gpu_s(done_slices: int) -> float:
+            rem_sl = slices[max(0, int(done_slices)) :]
+            if not rem_sl:
+                return 0.0
+            raw_sum = sum(_hf_ledger.session_call_gate_s(len(s)) for s in rem_sl)
+            return round(raw_sum * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER, 2)
+
+        def _persist_session_checkpoint(done_slices: int) -> None:
+            if checkpoint_dir is None:
+                return
+            try:
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                if (
+                    active_ref_wav is not None
+                    and active_ref_wav.is_file()
+                    and ckpt_ref_file is not None
+                    and active_ref_wav.resolve() != ckpt_ref_file.resolve()
+                ):
+                    shutil.copy2(active_ref_wav, ckpt_ref_file)
+                ordered_status = [
+                    slice_status_map.get(
+                        i,
+                        {"index": i, "completed": False, "fell_back": False, "sub_chunks": []},
+                    )
+                    for i in range(1, len(slices) + 1)
+                ]
+                payload = {
+                    "job_id": job_id,
+                    "text": text,
+                    "session_mode": True,
+                    "session_slices": slices,
+                    "slice_status": ordered_status,
+                    "completed_units": int(done_slices),
+                    "total_units": max(1, len(slices)),
+                    "session_fallback_used": bool(session_fallback_used),
+                    "pinned_space": getattr(engine, "pinned_space", None),
+                    "space_family_switched": bool(getattr(engine, "space_family_switched", False)),
+                    "reference_transcript": reference_transcript,
+                    "active_ref_secs": round(float(active_ref_secs or 0.0), 3),
+                }
+                (checkpoint_dir / "manifest.json").write_text(
+                    json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+                )
+            except Exception as ck_exc:
+                logger.debug("Could not persist session clone checkpoint for %s: %s", job_id, ck_exc)
+
+        extra_prompt_kw_sess: dict[str, Any] = {}
+        if is_custom_clone and not is_gender_flip:
+            extra_prompt_kw_sess["prompt_text"] = reference_transcript
+        elif reference_transcript:
+            extra_prompt_kw_sess["prompt_text"] = reference_transcript
+
+        if checkpoint_progress is not None:
+            checkpoint_progress["completed_units"] = 0
+            checkpoint_progress["total_units"] = max(1, len(slices))
+            checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+            checkpoint_progress["session_fallback_used"] = bool(session_fallback_used)
+            checkpoint_progress["remaining_gpu_s"] = _rem_session_gpu_s(0)
+
+        logger.info(
+            "Voice clone session-slice synthesis: job=%s slices=%d", job_id, len(slices)
+        )
+
+        assembled_parts: list[Path] = []
+        assembled_texts: list[str] = []
+        corr_dir_sess = output_wav.parent / f"{output_wav.stem}_prosody_corr"
+        stitched_wav_sess = output_wav.parent / f"{output_wav.stem}.stitched_raw.wav"
+        completed_slices = 0
+
+        try:
+            for idx, slice_text in enumerate(slices, 1):
+                saved_st = saved_slice_status.get(idx)
+                if checkpoint_dir is not None:
+                    ckpt_slice_file = checkpoint_dir / f"slice{idx:02d}.wav"
+                    if (
+                        (saved_st is not None and saved_st.get("completed") and not saved_st.get("fell_back"))
+                        or (saved_st is None and ckpt_slice_file.is_file() and ckpt_slice_file.stat().st_size > 0)
+                    ) and ckpt_slice_file.is_file() and ckpt_slice_file.stat().st_size > 0:
+                        part_s = output_wav.parent / f"{output_wav.stem}.slice{idx:02d}.wav"
+                        shutil.copy2(ckpt_slice_file, part_s)
+                        assembled_parts.append(part_s)
+                        assembled_texts.append(slice_text)
+                        slice_status_map[idx] = {
+                            "index": idx,
+                            "completed": True,
+                            "fell_back": False,
+                            "sub_chunks": [],
+                        }
+                        completed_slices = idx
+                        if checkpoint_progress is not None:
+                            checkpoint_progress["completed_units"] = idx
+                            checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+                            checkpoint_progress["session_fallback_used"] = bool(session_fallback_used)
+                            checkpoint_progress["remaining_gpu_s"] = _rem_session_gpu_s(idx)
+                        logger.info(
+                            "Reused checkpointed session slice %d/%d for voice job %s without re-synthesis",
+                            idx,
+                            len(slices),
+                            job_id,
+                        )
+                        continue
+
+                    if saved_st is not None and saved_st.get("completed") and saved_st.get("fell_back"):
+                        sub_list = [str(x) for x in (saved_st.get("sub_chunks") or [])]
+                        ckpt_fb_files = [
+                            checkpoint_dir / f"slice{idx:02d}_fb{fb_i:02d}.wav"
+                            for fb_i in range(1, len(sub_list) + 1)
+                        ]
+                        if sub_list and all(f.is_file() and f.stat().st_size > 0 for f in ckpt_fb_files):
+                            for fb_i, (ckpt_fb, sub_txt) in enumerate(zip(ckpt_fb_files, sub_list), 1):
+                                part_fb = output_wav.parent / f"{output_wav.stem}.slice{idx:02d}.fb{fb_i:02d}.wav"
+                                shutil.copy2(ckpt_fb, part_fb)
+                                assembled_parts.append(part_fb)
+                                assembled_texts.append(sub_txt)
+                            session_fallback_used = True
+                            slice_status_map[idx] = dict(saved_st)
+                            completed_slices = idx
+                            if checkpoint_progress is not None:
+                                checkpoint_progress["completed_units"] = idx
+                                checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+                                checkpoint_progress["session_fallback_used"] = True
+                                checkpoint_progress["remaining_gpu_s"] = _rem_session_gpu_s(idx)
+                            logger.info(
+                                "Reused checkpointed fallback sub-chunks for session slice %d/%d on voice job %s",
+                                idx,
+                                len(slices),
+                                job_id,
+                            )
+                            continue
+
+                part_s = output_wav.parent / f"{output_wav.stem}.slice{idx:02d}.wav"
+                slice_gate_s = _hf_ledger.session_call_gate_s(len(slice_text))
+                sess_kw: dict[str, Any] = {
+                    "text": slice_text,
+                    "output_wav": part_s,
+                    "reference_wav": effective_ref_arg,
+                    "control_instruction": control_instruction,
+                    "preset_voice": preset_voice,
+                    "speed": speed,
+                    "progress_cb": progress_cb,
+                    "skip_mastering": True,
+                    **extra_prompt_kw_sess,
+                    **_dp_kwargs,
+                    **({"session_mode": True} if _accepts_session else {}),
+                }
+                try:
+                    _call_unit_with_bounded_retry(sess_kw, req_gate_s=slice_gate_s)
+                    if _allow_optional_regen and is_wav_edge_clipped(part_s):
+                        logger.warning(
+                            "VoxCPM session slice %d/%d clipped at edge for job %s; regenerating once",
+                            idx,
+                            len(slices),
+                            job_id,
+                        )
+                        try:
+                            engine.synthesize(**sess_kw)
+                        except Exception as e_regen:
+                            logger.warning(
+                                "VoxCPM session slice %d retry failed (%s); keeping existing slice",
+                                idx,
+                                e_regen,
+                            )
+                    if checkpoint_dir is not None and part_s.is_file():
+                        try:
+                            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(part_s, checkpoint_dir / f"slice{idx:02d}.wav")
+                        except Exception:
+                            pass
+                    slice_status_map[idx] = {
+                        "index": idx,
+                        "completed": True,
+                        "fell_back": False,
+                        "sub_chunks": [],
+                    }
+                    assembled_parts.append(part_s)
+                    assembled_texts.append(slice_text)
+                except Exception as exc_sess:
+                    part_s.unlink(missing_ok=True)
+                    logger.warning(
+                        "Session slice %d/%d exhausted retries for job %s (%s); "
+                        "re-synthesizing slice via <=385-char legacy /generate chunks",
+                        idx,
+                        len(slices),
+                        job_id,
+                        exc_sess,
+                    )
+                    fb_chunks = plan_text_chunks(
+                        slice_text,
+                        reference_transcript=reference_transcript,
+                        control_instruction=effective_planning_control,
+                        reference_seconds=active_ref_secs,
+                        max_chunk_chars=385,
+                    )
+                    fb_parts_for_slice: list[Path] = []
+                    try:
+                        for fb_i, fb_txt in enumerate(fb_chunks, 1):
+                            part_fb = output_wav.parent / f"{output_wav.stem}.slice{idx:02d}.fb{fb_i:02d}.wav"
+                            fb_kw: dict[str, Any] = {
+                                "text": fb_txt,
+                                "output_wav": part_fb,
+                                "reference_wav": effective_ref_arg,
+                                "control_instruction": control_instruction,
+                                "preset_voice": preset_voice,
+                                "speed": speed,
+                                "progress_cb": progress_cb,
+                                "skip_mastering": True,
+                                **extra_prompt_kw_sess,
+                                **_dp_kwargs,
+                                **({"session_mode": False} if _accepts_session else {}),
+                                **({"pin_space_override": False} if _accepts_pin_override else {}),
+                            }
+                            _call_unit_with_bounded_retry(fb_kw)
+                            if _allow_optional_regen and is_wav_edge_clipped(part_fb):
+                                try:
+                                    engine.synthesize(**fb_kw)
+                                except Exception:
+                                    pass
+                            fb_parts_for_slice.append(part_fb)
+                    except Exception:
+                        for p_tmp in fb_parts_for_slice:
+                            p_tmp.unlink(missing_ok=True)
+                        _persist_session_checkpoint(completed_slices)
+                        if checkpoint_progress is not None:
+                            checkpoint_progress["completed_units"] = completed_slices
+                            checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+                            checkpoint_progress["session_fallback_used"] = bool(session_fallback_used)
+                            checkpoint_progress["remaining_gpu_s"] = _rem_session_gpu_s(completed_slices)
+                        raise
+
+                    session_fallback_used = True
+
+                    if checkpoint_dir is not None:
+                        try:
+                            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                            for fb_i, p_fb in enumerate(fb_parts_for_slice, 1):
+                                if p_fb.is_file():
+                                    shutil.copy2(p_fb, checkpoint_dir / f"slice{idx:02d}_fb{fb_i:02d}.wav")
+                        except Exception:
+                            pass
+                    slice_status_map[idx] = {
+                        "index": idx,
+                        "completed": True,
+                        "fell_back": True,
+                        "sub_chunks": list(fb_chunks),
+                    }
+                    assembled_parts.extend(fb_parts_for_slice)
+                    assembled_texts.extend(fb_chunks)
+
+                completed_slices = idx
+                _persist_session_checkpoint(completed_slices)
+                if checkpoint_progress is not None:
+                    checkpoint_progress["completed_units"] = idx
+                    checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
+                    checkpoint_progress["session_fallback_used"] = bool(session_fallback_used)
+                    checkpoint_progress["remaining_gpu_s"] = _rem_session_gpu_s(idx)
+
+            pinned_sp_str = str(getattr(engine, "pinned_space", None) or "none")
+            space_fam_switched = bool(getattr(engine, "space_family_switched", False))
+            speed_tempo = resolve_speed_tempo(speed)
+
+            if not session_fallback_used:
+                # Part 5: NO slice fell back -> SKIP Phase 2 prosody pass entirely (mastering only).
+                if len(assembled_parts) == 1:
+                    master_voxcpm_audio(
+                        assembled_parts[0],
+                        output_wav,
+                        speed=speed,
+                        preset_voice=preset_voice,
+                    )
+                else:
+                    b_specs = _cp.classify_chunk_boundaries(
+                        text, assembled_texts, speed_tempo=speed_tempo
+                    )
+                    slice_pauses = [b.pause_sec for b in b_specs]
+                    try:
+                        concat_wav_files(
+                            assembled_parts,
+                            stitched_wav_sess,
+                            boundary_pause_sec=_cp.CLONE_BOUNDARY_PAUSE_SEC,
+                            boundary_pauses_sec=slice_pauses,
+                        )
+                    except TypeError as te:
+                        if (
+                            "boundary_pause" not in str(te)
+                            and "unexpected keyword" not in str(te)
+                            and "positional" not in str(te)
+                        ):
+                            raise
+                        concat_wav_files(assembled_parts, stitched_wav_sess)
+                    master_voxcpm_audio(
+                        stitched_wav_sess,
+                        output_wav,
+                        speed=speed,
+                        preset_voice=preset_voice,
+                    )
+
+                logger.info(
+                    "clone_prosody_summary job=%s chunks=%d retries_used=%d corrections=%d "
+                    "desag_corrections=%d tilt_eq_corrections=%d "
+                    "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
+                    "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
+                    "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s",
+                    job_id,
+                    len(assembled_parts),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    "skipped",
+                    None,
+                    [],
+                    [],
+                    [],
+                    space_fam_switched,
+                    True,
+                    len(slices),
+                    False,
+                    pinned_sp_str,
+                )
+            else:
+                # Part 5: ANY slice fell back -> run prosody pass over assembled audio as legacy path does today.
+                if ref_prosody is None and active_ref_wav is not None and active_ref_wav.is_file():
+                    ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
+                sess_analyses = [
+                    _cp.analyze_chunk_prosody(p_item, text=t_item)
+                    for p_item, t_item in zip(assembled_parts, assembled_texts)
+                ]
+                prosody_res = _cp.run_post_loop_prosody_pass(
+                    assembled_parts,
+                    assembled_texts,
+                    full_text=text,
+                    out_dir=corr_dir_sess,
+                    ref_prosody=ref_prosody,
+                    is_custom_clone=is_custom_clone,
+                    is_gender_flip=is_gender_flip,
+                    preset_voice=preset_voice,
+                    speed_tempo=speed_tempo,
+                    cached_analyses=sess_analyses,
+                    space_family_switched=space_fam_switched,
+                )
+                try:
+                    concat_wav_files(
+                        prosody_res.corrected_parts,
+                        stitched_wav_sess,
+                        boundary_pause_sec=_cp.CLONE_BOUNDARY_PAUSE_SEC,
+                        boundary_pauses_sec=prosody_res.pauses_sec,
+                    )
+                except TypeError as te:
+                    if (
+                        "boundary_pause" not in str(te)
+                        and "unexpected keyword" not in str(te)
+                        and "positional" not in str(te)
+                    ):
+                        raise
+                    concat_wav_files(prosody_res.corrected_parts, stitched_wav_sess)
+
+                master_voxcpm_audio(
+                    stitched_wav_sess,
+                    output_wav,
+                    speed=speed,
+                    preset_voice=preset_voice,
+                )
+                post_f0_log = [st.f0_median_hz for st in prosody_res.post_stats]
+                post_rate_log = [st.syllable_rate for st in prosody_res.post_stats]
+                logger.info(
+                    "clone_prosody_summary job=%s chunks=%d retries_used=%d corrections=%d "
+                    "desag_corrections=%d tilt_eq_corrections=%d "
+                    "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
+                    "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
+                    "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s",
+                    job_id,
+                    len(assembled_parts),
+                    0,
+                    prosody_res.corrections_applied,
+                    prosody_res.desag_corrections,
+                    prosody_res.tilt_eq_corrections,
+                    prosody_res.envelope_corrections,
+                    prosody_res.edge_fallbacks,
+                    prosody_res.anchor.anchor_source,
+                    prosody_res.anchor.f0_anchor_hz,
+                    post_f0_log,
+                    post_rate_log,
+                    prosody_res.boundary_steps,
+                    prosody_res.space_family_switched,
+                    True,
+                    len(slices),
+                    True,
+                    pinned_sp_str,
+                )
+        finally:
+            stitched_wav_sess.unlink(missing_ok=True)
+            shutil.rmtree(corr_dir_sess, ignore_errors=True)
+            for p_clean in assembled_parts:
+                try:
+                    p_clean.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        return output_wav
     if (
         manifest.get("text") == text
         and isinstance(manifest.get("chunks"), list)
@@ -1041,11 +1491,13 @@ def _synthesize_voxcpm_voice_job(
 
         post_f0_log = [st.f0_median_hz for st in prosody_res.post_stats]
         post_rate_log = [st.syllable_rate for st in prosody_res.post_stats]
+        legacy_pinned_sp = str(getattr(engine, "pinned_space", None) or "none")
         logger.info(
             "clone_prosody_summary job=%s chunks=%d retries_used=%d corrections=%d "
             "desag_corrections=%d tilt_eq_corrections=%d "
             "envelope_corrections=%d edge_fallbacks=%d anchor_source=%s f0_anchor_hz=%s "
-            "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s",
+            "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
+            "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s",
             job_id,
             len(chunks),
             job_prosody_retries,
@@ -1060,6 +1512,10 @@ def _synthesize_voxcpm_voice_job(
             post_rate_log,
             prosody_res.boundary_steps,
             prosody_res.space_family_switched,
+            False,
+            0,
+            False,
+            legacy_pinned_sp,
         )
     finally:
         stitched_wav.unlink(missing_ok=True)
@@ -1434,9 +1890,18 @@ async def process_single_job(
                 )
                 _prev_done = int((_dp_choice_state or {}).get("completed_units") or 0)
                 _rem_units = max(1, _est_units - _prev_done)
-                _rem_needed_gpu_s = round(
-                    _rem_units * _est_gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER, 2
-                )
+                if is_clone_session_slices_enabled():
+                    _sess_slices_est = plan_session_slices(clean_text)
+                    _rem_slices_est = _sess_slices_est[_prev_done:] or _sess_slices_est[-1:]
+                    _rem_needed_gpu_s = round(
+                        sum(_hf_ledger.session_call_gate_s(len(s)) for s in _rem_slices_est)
+                        * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER,
+                        2,
+                    )
+                else:
+                    _rem_needed_gpu_s = round(
+                        _rem_units * _est_gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER, 2
+                    )
                 _ckpt_dir = (
                     (settings.storage_root / "dp_refs" / str(job.id)) if _dp_paid else None
                 )
@@ -1481,10 +1946,13 @@ async def process_single_job(
                     if _dp_paid and _is_cap_err:
                         _done_u = int(_ckpt_progress.get("completed_units") or _prev_done or 0)
                         _tot_u = max(1, int(_ckpt_progress.get("total_units") or _est_units or 1))
-                        _rem_gpu_s = round(
-                            max(1, _tot_u - _done_u) * _est_gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER,
-                            2,
-                        )
+                        if is_clone_session_slices_enabled() and float(_ckpt_progress.get("remaining_gpu_s") or 0.0) > 0:
+                            _rem_gpu_s = round(float(_ckpt_progress["remaining_gpu_s"]), 2)
+                        else:
+                            _rem_gpu_s = round(
+                                max(1, _tot_u - _done_u) * _est_gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER,
+                                2,
+                            )
                         _pinned_sp = _ckpt_progress.get("pinned_space") or getattr(
                             engine_inst, "pinned_space", None
                         )

@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import event, select
@@ -300,8 +301,11 @@ async def test_b3_overview_live_worker_status_and_analytics_yangon_coalesce_no_b
     recent_iso = (datetime.now(timezone.utc) - timedelta(seconds=25)).isoformat()
     hb = BotSetting(key="worker_laptop_heartbeat", value=recent_iso)
 
-    # Slip created 3 days ago, approved at 2026-11-25 18:04 UTC == 2026-11-26 00:34 Asia/Yangon
-    rev_utc = datetime(2026, 11, 25, 18, 4, 0, tzinfo=timezone.utc)
+    # Anchor relative to now (most recent past 18:04 UTC -> 00:34 next day in Asia/Yangon); must stay relative so 30d analytics never rots.
+    _now_utc = datetime.now(timezone.utc)
+    _today_1804 = _now_utc.replace(hour=18, minute=4, second=0, microsecond=0)
+    rev_utc = _today_1804 if _now_utc > _today_1804 else (_today_1804 - timedelta(days=1))
+    expected_rev_yangon_date = rev_utc.astimezone(ZoneInfo("Asia/Yangon")).strftime("%Y-%m-%d")
     slip = PaymentRequest(
         id="PAY-YGN-B3",
         user_id=buyer.id,
@@ -354,7 +358,7 @@ async def test_b3_overview_live_worker_status_and_analytics_yangon_coalesce_no_b
 
     assert an["revenue"]["total_approved_mmk"] == 13500
     daily_dates = [d["date"] for d in an["revenue"]["daily"]]
-    assert "2026-11-26" in daily_dates  # Yangon date for 2026-11-25 18:04 UTC
+    assert expected_rev_yangon_date in daily_dates  # Yangon date (+06:30 next day) for rev_utc (18:04 UTC)
 
 
 @pytest.mark.asyncio
@@ -547,8 +551,15 @@ async def test_b6_b7_yangon_timestamps_and_orders_export_dm_delivery(db_session,
     db_session.add_all([admin, buyer])
     await db_session.flush()
 
-    # 2026-11-25 18:04 UTC -> 2026-11-26 00:34 Asia/Yangon
-    ts_utc = datetime(2026, 11, 25, 18, 4, 0, tzinfo=timezone.utc)
+    # Anchor relative to now (most recent past 18:04 UTC -> 00:34 next day in Asia/Yangon); must stay relative so recency-scoped export never rots.
+    ygn_tz = ZoneInfo("Asia/Yangon")
+    now_utc = datetime.now(timezone.utc)
+    today_1804 = now_utc.replace(hour=18, minute=4, second=0, microsecond=0)
+    ts_utc = today_1804 if now_utc > today_1804 else (today_1804 - timedelta(days=1))
+    expected_csv_yangon = ts_utc.astimezone(ygn_tz).strftime("%Y-%m-%d %H:%M")
+    # Active grant expiry must be a future 18:04 UTC instant so extend_admin_wallet_grant extends from expires_at (not clamped to now_utc).
+    grant_exp_utc = today_1804 + timedelta(days=1)
+    expected_dm_yangon = (grant_exp_utc + timedelta(days=1)).astimezone(ygn_tz).strftime("%Y-%m-%d %H:%M")
     approved_order = PaymentRequest(
         id="PAY-CSV-1",
         user_id=buyer.id,
@@ -579,7 +590,7 @@ async def test_b6_b7_yangon_timestamps_and_orders_export_dm_delivery(db_session,
         package_code="promo",
         validity_days=10,
     )
-    grant.expires_at = ts_utc
+    grant.expires_at = grant_exp_utc
     await db_session.commit()
 
     # B6a: pending-slips returns raw ISO-8601 with UTC offset, never pre-formatted "... UTC"
@@ -588,7 +599,7 @@ async def test_b6_b7_yangon_timestamps_and_orders_export_dm_delivery(db_session,
     assert "T" in slip_row["created_at"] and slip_row["created_at"].endswith("+00:00")
     assert "UTC" not in slip_row["created_at"]
 
-    # B6b: grant-extend customer DM date is formatted in Asia/Yangon (+1 day from 2026-11-26 00:34 -> 2026-11-27 00:34)
+    # B6b: grant-extend customer DM date is formatted in Asia/Yangon (+1 day from grant_exp_utc 00:34 MMT)
     ext_res = await api_mod.extend_admin_wallet_grant(
         grant.id,
         api_mod.AdminExtendGrantRequest(add_days=1, reason="Yangon test", notify_user=True),
@@ -597,7 +608,7 @@ async def test_b6_b7_yangon_timestamps_and_orders_export_dm_delivery(db_session,
     )
     assert ext_res["success"] is True
     assert len(sent_dms) == 1
-    assert "2026-11-27 00:34" in sent_dms[0]["text"]
+    assert expected_dm_yangon in sent_dms[0]["text"]
 
     # B7: POST /api/admin/orders/export-dm sends Yangon CSV document to admin DM + writes AuditLog
     dm_res = await api_mod.export_admin_orders_csv_to_dm(
@@ -610,7 +621,7 @@ async def test_b6_b7_yangon_timestamps_and_orders_export_dm_delivery(db_session,
     assert sent_docs[0]["chat_id"] == admin.id
     csv_text = sent_docs[0]["document"].data.decode("utf-8-sig")
     assert "PAY-CSV-1" in csv_text
-    assert "2026-11-26 00:34" in csv_text  # Yangon timestamp, NOT 2026-11-25 18:04 UTC
+    assert expected_csv_yangon in csv_text  # Yangon timestamp, NOT 18:04 UTC
     assert "18:04" not in csv_text
 
     export_log = (

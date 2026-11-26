@@ -360,16 +360,28 @@ async def create_voice_clone_job(
     est_audio_float = float(
         estimated_seconds or estimate_voice_job_seconds(valid_text or "", speed_preset)
     )
+    from app.services.voice_chunking import is_clone_session_slices_enabled
+
     est_units, _gate_s, needed_gpu_s = _hf_ledger.estimate_voxcpm_units_and_budget(
         kind="clone",
         text=valid_text or text or "",
     )
-    admission = _hf_ledger.evaluate_voxcpm_admission(
-        kind="clone",
-        is_paid=is_paid_tier,
-        units=est_units,
-        est_audio_seconds=est_audio_float,
-    )
+    if is_clone_session_slices_enabled():
+        admission = _hf_ledger.evaluate_voxcpm_admission(
+            kind="clone",
+            is_paid=is_paid_tier,
+            units=est_units,
+            est_audio_seconds=est_audio_float,
+            gate_s=_gate_s,
+            needed_gpu_s=needed_gpu_s,
+        )
+    else:
+        admission = _hf_ledger.evaluate_voxcpm_admission(
+            kind="clone",
+            is_paid=is_paid_tier,
+            units=est_units,
+            est_audio_seconds=est_audio_float,
+        )
     if not admission.admitted and not is_paid_tier:
         # Part 6 (#3): Free submit when pool cannot finish -> 0 deducted, no failed Job row!
         logger.info(

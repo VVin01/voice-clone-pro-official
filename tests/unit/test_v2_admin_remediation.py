@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 import pytest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, User as TgUser
 from sqlalchemy import select
@@ -254,7 +255,8 @@ async def test_repeated_start_and_menu_idempotency_no_duplicate_allowance(db_ses
 async def test_later_daily_period_grants_new_allowance_once(db_session):
     """A subsequent daily period resets the 180-second non-accumulating allowance once (Limits round)."""
     user, _ = await get_or_create_user(db_session, telegram_id=777003)
-    today_dt = datetime.datetime.now(datetime.timezone.utc).date()
+    # The allowance day is the Yangon day; UTC dates break this test for 6.5 hours every day.
+    today_dt = datetime.datetime.now(ZoneInfo("Asia/Yangon")).date()
     day_curr = today_dt.isoformat()
     day_next = (today_dt + datetime.timedelta(days=1)).isoformat()
 

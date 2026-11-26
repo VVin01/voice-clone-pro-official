@@ -58,6 +58,14 @@ MIN_JOB_SYLLABLES_FOR_TAIL_GUARD = 140
 # once the current packed chunk has reached at least this many characters.
 PARAGRAPH_BREAK_MIN_CHARS = 220
 
+# Session-slice clone synthesis (2026-11-26): sentence-boundary slice packing
+# for `/generate_session` calls (~850-char target, 1,050 hard cap, <200-char
+# trailing slice merged into predecessor up to 1,250 hard cap).
+SESSION_SLICE_TARGET_CHARS = 850
+SESSION_SLICE_HARD_CAP_CHARS = 1050
+SESSION_SLICE_TAIL_MERGE_MIN_CHARS = 200
+SESSION_SLICE_TAIL_MERGE_HARD_CAP_CHARS = 1250
+
 _SENTENCE_ENDINGS = "။?!\n"
 _CLAUSE_MARK = "၊"
 
@@ -87,6 +95,19 @@ def is_chunk_balancing_v2_enabled() -> bool:
         return bool(val)
     except Exception:
         return True
+
+
+def is_clone_session_slices_enabled() -> bool:
+    """True when dynamic setting ``clone_session_slices_enabled`` is active (default False)."""
+    try:
+        from app.config import settings as _settings
+
+        val = getattr(_settings, "clone_session_slices_enabled", False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+    except Exception:
+        return False
 
 
 def _is_combining_or_stack(ch: str) -> bool:
@@ -471,6 +492,72 @@ def plan_text_chunks(
     return _plan_text_chunks_balanced_dp(text, effective_cap, greedy_chunks)
 
 
+def plan_session_slices(
+    text: str,
+    *,
+    target_chars: int = SESSION_SLICE_TARGET_CHARS,
+    hard_cap_chars: int = SESSION_SLICE_HARD_CAP_CHARS,
+    min_tail_chars: int = SESSION_SLICE_TAIL_MERGE_MIN_CHARS,
+    tail_merge_hard_cap_chars: int = SESSION_SLICE_TAIL_MERGE_HARD_CAP_CHARS,
+) -> list[str]:
+    """Plan sentence-boundary session slices for `/generate_session` clone synthesis.
+
+    - Packs whole sentences toward ``target_chars`` (850), never exceeding
+      ``hard_cap_chars`` (1,050) and never splitting mid-sentence (unless a single
+      unpunctuated sentence itself exceeds ``hard_cap_chars``).
+    - If the trailing slice is shorter than ``min_tail_chars`` (200), merges it into
+      the preceding slice provided the merged length stays <= ``tail_merge_hard_cap_chars`` (1,250).
+    """
+    raw_text = str(text or "")
+    if not raw_text.strip():
+        return [raw_text]
+
+    t_chars = max(1, int(target_chars))
+    cap_chars = max(t_chars, int(hard_cap_chars))
+    tail_floor = max(0, int(min_tail_chars))
+    merge_cap = max(cap_chars, int(tail_merge_hard_cap_chars))
+
+    sentences = split_sentences(raw_text)
+    if not sentences:
+        return [raw_text.strip()]
+
+    pieces: list[str] = []
+    for sent in sentences:
+        if len(sent) <= cap_chars:
+            pieces.append(sent)
+        else:
+            pieces.extend(_hard_split(sent, cap_chars))
+
+    slices: list[str] = []
+    current = ""
+    for piece in pieces:
+        if not current:
+            current = piece
+            continue
+        cand_len = len(current) + 1 + len(piece)
+        if cand_len <= t_chars or (
+            len(current) < t_chars
+            and cand_len <= cap_chars
+            and (cand_len - t_chars) <= (t_chars - len(current))
+        ):
+            current = f"{current} {piece}"
+        else:
+            slices.append(current)
+            current = piece
+    if current:
+        slices.append(current)
+
+    if (
+        len(slices) >= 2
+        and len(slices[-1]) < tail_floor
+        and (len(slices[-2]) + 1 + len(slices[-1])) <= merge_cap
+    ):
+        tail = slices.pop()
+        slices[-1] = f"{slices[-1]} {tail}"
+
+    return slices or [raw_text.strip()]
+
+
 __all__ = [
     "INPUT_TOKEN_BUDGET",
     "MODEL_TOKEN_CAP",
@@ -482,7 +569,12 @@ __all__ = [
     "MAX_CHUNK_CHARS",
     "TARGET_CHUNK_CHARS",
     "MIN_TAIL_SYLLABLES",
+    "SESSION_SLICE_TARGET_CHARS",
+    "SESSION_SLICE_HARD_CAP_CHARS",
+    "SESSION_SLICE_TAIL_MERGE_MIN_CHARS",
+    "SESSION_SLICE_TAIL_MERGE_HARD_CAP_CHARS",
     "is_chunk_balancing_v2_enabled",
+    "is_clone_session_slices_enabled",
     "estimate_tokens",
     "estimate_control_tokens",
     "input_overhead_tokens",
@@ -490,4 +582,5 @@ __all__ = [
     "chunk_char_budget",
     "split_sentences",
     "plan_text_chunks",
+    "plan_session_slices",
 ]

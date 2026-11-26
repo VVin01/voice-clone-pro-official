@@ -363,6 +363,8 @@ class Settings(BaseSettings):
     # Clone Prosody Phase 3 kill switches (default ON; False restores Phase 2 behavior byte-for-byte)
     clone_prosody_phase3_enabled: bool = Field(default=True, alias="CLONE_PROSODY_PHASE3_ENABLED")
     chunk_balancing_v2_enabled: bool = Field(default=True, alias="CHUNK_BALANCING_V2_ENABLED")
+    # Session-slice clone synthesis flag (default OFF; True uses ~850-char /generate_session slices)
+    clone_session_slices_enabled: bool = Field(default=False, alias="CLONE_SESSION_SLICES_ENABLED")
 
     # Versioned AI Prompt Registry profile ("v2" upgraded default, "v1" instant rollback)
     ai_prompt_profile: str = Field(default="v2", alias="AI_PROMPT_PROFILE")

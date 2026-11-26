@@ -69,6 +69,20 @@ DEFAULT_TOKEN_BASE_S = 300.0            # ~5 min free-account base when unprobed
 PRE_JOB_SAFETY_MULTIPLIER = 1.20
 RESUMER_SAFETY_MULTIPLIER = 1.25
 
+# Session-slice `/generate_session` dynamic GPU gate pricing (2026-11-26):
+# `min(120, 18 + ceil(chars * 0.085))` GPU-seconds.
+SESSION_CALL_BASE_GPU_S = 18
+SESSION_CALL_PER_CHAR_GPU_S = 0.085
+SESSION_CALL_MAX_GPU_S = 120
+
+
+def session_call_gate_s(chars: int) -> float:
+    """Return the GPU-second gate for a `/generate_session` call of `chars` characters:
+    `min(120, 18 + ceil(chars * 0.085))`."""
+    n = max(0, int(chars or 0))
+    added = int(math.ceil(round(n * SESSION_CALL_PER_CHAR_GPU_S, 9)))
+    return float(min(SESSION_CALL_MAX_GPU_S, SESSION_CALL_BASE_GPU_S + added))
+
 WATERMARK_NORMAL_MIN = 0.40             # > 40%
 WATERMARK_CONSERVATION_MIN = 0.20       # 40% -> 20%
 WATERMARK_SHORT_JOB_MIN = 0.08          # 20% -> 8%; < 8% is Dry gate
@@ -408,12 +422,17 @@ def get_space_gate(
     *,
     state: Mapping[str, Any] | None = None,
     default: float = DEFAULT_SPACE_GATE_S,
+    call_type: str = "legacy",
+    chars: int = 0,
 ) -> float:
-    """Return the admission gate (seconds) for `space_name` from `space_gates`.
+    """Return the admission gate (seconds) for `space_name`.
 
-    When `space_name` is None or not yet in `space_gates`, falls back to the
-    minimum recorded gate across `space_gates` (if any), else `default`.
+    - `call_type="session"`: dynamic `/generate_session` gate `min(120, 18 + ceil(chars * 0.085))`.
+    - `call_type="legacy"` (default): looks up `space_gates[space_name]` (falling back to
+      the minimum recorded gate across `space_gates` when `space_name` is None, else `default`).
     """
+    if str(call_type or "legacy").strip().lower() == "session":
+        return session_call_gate_s(chars)
     st = load_pool_state() if state is None else state
     gates = st.get("space_gates") if isinstance(st, Mapping) else None
     if isinstance(gates, Mapping) and gates:
@@ -445,13 +464,14 @@ def record_admission_refusal(
     requested_s: float,
     left_s: float,
     *,
+    update_space_gate: bool = True,
     now_ts: float | None = None,
 ) -> dict[str, Any]:
-    """Update `space_gates[space_name]` and `token`'s `remaining_s` from a refusal."""
+    """Update `space_gates[space_name]` (when `update_space_gate` is True) and `token`'s `remaining_s` from a refusal."""
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
         st = load_pool_state(now_ts=now)
-        if space_name and requested_s > 0:
+        if update_space_gate and space_name and requested_s > 0:
             st["space_gates"][str(space_name)] = (
                 int(requested_s) if float(requested_s).is_integer() else round(float(requested_s), 2)
             )
@@ -970,12 +990,14 @@ def estimate_voxcpm_units_and_budget(
     control_instruction: str = "",
     reference_seconds: float = 0.0,
     gate_s: float | None = None,
+    call_type: str | None = None,
     state: Mapping[str, Any] | None = None,
 ) -> tuple[int, float, float]:
-    """Return `(units, gate_s, needed_gpu_s)` per Part 6 (#2)."""
+    """Return `(units, gate_s, needed_gpu_s)` per Part 6 (#2) and session gate pricing."""
     st = load_pool_state() if state is None else state
-    eff_gate = float(gate_s) if (gate_s is not None and gate_s > 0) else get_space_gate(state=st)
-    if str(kind).lower() == "recap":
+    norm_kind = str(kind).lower()
+    if norm_kind == "recap":
+        eff_gate = float(gate_s) if (gate_s is not None and gate_s > 0) else get_space_gate(state=st)
         if planned_segments is not None and int(planned_segments) > 0:
             units = int(planned_segments)
         else:
@@ -983,16 +1005,40 @@ def estimate_voxcpm_units_and_budget(
             if dur <= 0:
                 dur = 60.0
             units = max(1, int(math.ceil(dur / 12.0)))
-    else:
-        from app.services.voice_chunking import plan_text_chunks
+        needed_gpu_s = round(units * eff_gate * PRE_JOB_SAFETY_MULTIPLIER, 2)
+        return units, eff_gate, needed_gpu_s
 
-        chunks = plan_text_chunks(
-            text or "မင်္ဂလာပါ",
-            reference_transcript=reference_transcript,
-            control_instruction=control_instruction,
-            reference_seconds=reference_seconds,
-        )
-        units = max(1, len(chunks))
+    from app.services.voice_chunking import (
+        is_clone_session_slices_enabled,
+        plan_session_slices,
+        plan_text_chunks,
+    )
+
+    use_session = (
+        (str(call_type).strip().lower() == "session")
+        if call_type is not None
+        else is_clone_session_slices_enabled()
+    )
+    if use_session:
+        slices = plan_session_slices(text or "မင်္ဂလာပါ")
+        units = max(1, len(slices))
+        if gate_s is not None and gate_s > 0:
+            slice_gates = [float(gate_s) for _ in slices]
+        else:
+            slice_gates = [session_call_gate_s(len(s)) for s in slices]
+        total_raw_s = sum(slice_gates)
+        eff_gate = round(total_raw_s / units, 2)
+        needed_gpu_s = round(total_raw_s * PRE_JOB_SAFETY_MULTIPLIER, 2)
+        return units, eff_gate, needed_gpu_s
+
+    eff_gate = float(gate_s) if (gate_s is not None and gate_s > 0) else get_space_gate(state=st)
+    chunks = plan_text_chunks(
+        text or "မင်္ဂလာပါ",
+        reference_transcript=reference_transcript,
+        control_instruction=control_instruction,
+        reference_seconds=reference_seconds,
+    )
+    units = max(1, len(chunks))
     needed_gpu_s = round(units * eff_gate * PRE_JOB_SAFETY_MULTIPLIER, 2)
     return units, eff_gate, needed_gpu_s
 
@@ -1004,6 +1050,7 @@ def evaluate_voxcpm_admission(
     units: int,
     est_audio_seconds: float = 0.0,
     gate_s: float | None = None,
+    needed_gpu_s: float | None = None,
     state: Mapping[str, Any] | None = None,
     force_reload: bool = False,
     now_ts: float | None = None,
@@ -1017,7 +1064,11 @@ def evaluate_voxcpm_admission(
     )
     metrics = compute_pool_metrics(gate_s=gate_s, state=st, now_ts=now)
     eff_units = max(1, int(units))
-    needed_gpu_s = round(eff_units * metrics.gate_s * PRE_JOB_SAFETY_MULTIPLIER, 2)
+    eff_needed_gpu_s = (
+        round(max(0.0, float(needed_gpu_s)), 2)
+        if (needed_gpu_s is not None and needed_gpu_s > 0)
+        else round(eff_units * metrics.gate_s * PRE_JOB_SAFETY_MULTIPLIER, 2)
+    )
 
     if not metrics.seeded:
         return AdmissionDecision(
@@ -1027,13 +1078,13 @@ def evaluate_voxcpm_admission(
             band=BAND_NORMAL,
             units=eff_units,
             gate_s=metrics.gate_s,
-            needed_gpu_s=needed_gpu_s,
+            needed_gpu_s=eff_needed_gpu_s,
             available_gpu_s=0.0,
             solvent_slots=0,
             eta_label="",
         )
 
-    eta = estimate_refill_eta_label(needed_gpu_s, state=st, now_ts=now)
+    eta = estimate_refill_eta_label(eff_needed_gpu_s, state=st, now_ts=now)
     norm_kind = str(kind).lower()
     is_multi_recap = (norm_kind == "recap" and eff_units > 1)
 
@@ -1051,7 +1102,7 @@ def evaluate_voxcpm_admission(
             band=metrics.band,
             units=eff_units,
             gate_s=metrics.gate_s,
-            needed_gpu_s=needed_gpu_s,
+            needed_gpu_s=eff_needed_gpu_s,
             available_gpu_s=metrics.available_gpu_s,
             solvent_slots=metrics.solvent_slots,
             eta_label=eta,
@@ -1073,7 +1124,7 @@ def evaluate_voxcpm_admission(
                 return _deny("watermark_heavy_recap_insufficient_slots")
 
     # 3. Part 6 pre-job capacity + solvent-slot gate:
-    if metrics.available_gpu_s < needed_gpu_s or metrics.solvent_slots < eff_units:
+    if metrics.available_gpu_s < eff_needed_gpu_s or metrics.solvent_slots < eff_units:
         return _deny("insufficient_pool_capacity")
 
     return AdmissionDecision(
@@ -1083,7 +1134,7 @@ def evaluate_voxcpm_admission(
         band=metrics.band,
         units=eff_units,
         gate_s=metrics.gate_s,
-        needed_gpu_s=needed_gpu_s,
+        needed_gpu_s=eff_needed_gpu_s,
         available_gpu_s=metrics.available_gpu_s,
         solvent_slots=metrics.solvent_slots,
         eta_label=eta,
@@ -1128,6 +1179,9 @@ __all__ = [
     "PRE_JOB_SAFETY_MULTIPLIER",
     " PoolMetrics" if False else "PoolMetrics",
     "RESUMER_SAFETY_MULTIPLIER",
+    "SESSION_CALL_BASE_GPU_S",
+    "SESSION_CALL_MAX_GPU_S",
+    "SESSION_CALL_PER_CHAR_GPU_S",
     "acquire_in_flight_gpu",
     "compute_env_tokens_hash",
     "compute_pool_metrics",
@@ -1152,6 +1206,7 @@ __all__ = [
     "release_in_flight_gpu",
     "reset_ledger_for_tests",
     "save_pool_state",
+    "session_call_gate_s",
     "token_digest",
     "watermark_band_for_fraction",
 ]
