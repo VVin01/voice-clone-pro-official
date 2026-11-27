@@ -66,7 +66,7 @@ CURATED_VOICES: Dict[str, Dict[str, Any]] = {
         "pitch": "-3Hz",
         "rate_offset": 10,
         "formant_ratio": 0.96,
-        "sample_text": "မင်္ဂလာပါခင်ဗျာ။ ကျွန်တော်ကတော့ မင်းမင်းပါ။ ရုပ်ရှင်ဇာတ်လမ်းကောင်းတွေကို စိတ်ဝင်စားဖွယ် တင်ဆက်ပေးသွားမှာ ဖြစ်ပါတယ်။",
+        "sample_text": "ညနေခင်း လေပြည်အေးလေး တိုက်ခတ်လာချိန်မှာ တောင်တန်းတွေပေါ် မြူခိုးပါးပါးလေးတွေ ဖုံးလွှမ်းလာပါတယ်။ တိတ်ဆိတ်တဲ့ ပတ်ဝန်းကျင်ထဲမှာ သစ်ရွက်လှုပ်သံကို အတိုင်းသား ကြားနေရပါတယ်။ သဘာဝရဲ့ အလှအပဟာ စိတ်ကို အေးချမ်းစေပါတယ်။",
         "af_filter": (
             "asetrate=42336,aresample=44100,atempo=1.0417,"
             "highpass=f=70,afftdn=nr=10:nf=-50:tn=1,"
@@ -397,7 +397,7 @@ PERSONA_REFERENCE_SOURCES: Dict[str, Dict[str, str]] = {
     # reference.
     "komyat": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
     "machaw": {"dataset": "AI-designed voice (VoxCPM), 2026-11-06", "license": "AI-generated in-house — no third-party recording"},
-    "mahnin": {"dataset": "In-house flagship voice (pause-edited reference, 2026-11-06)", "license": "AI-generated in-house — no third-party recording"},
+    "mahnin": {"dataset": "In-house flagship voice (greeting-free reference, owner pick 2026-11-28)", "license": "AI-generated in-house — no third-party recording"},
 }
 
 

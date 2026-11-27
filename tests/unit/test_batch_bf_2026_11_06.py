@@ -78,7 +78,8 @@ def test_bf_reference_sources_cover_the_eight():
         assert entry["dataset"] == "AI-designed voice (VoxCPM), 2026-11-06", pid
         assert "AI-generated" in entry["license"], pid
     mahnin = PERSONA_REFERENCE_SOURCES["mahnin"]
-    assert "pause-edited" in mahnin["dataset"]
+    # owner pick 2026-11-28 (komin candidate 4 / mahnin candidate 2)
+    assert "greeting-free reference, owner pick 2026-11-28" in mahnin["dataset"]
     koaung = PERSONA_REFERENCE_SOURCES["koaung"]
     assert koaung["dataset"] == "Google FLEURS my_mm"
     assert koaung["license"] == "CC-BY 4.0"
@@ -112,7 +113,12 @@ def test_bf_design_references_resolve_with_passage_transcript():
 def test_bf_mahnin_resolves_to_pause_edited_wav_komin_untouched():
     path, transcript = get_persona_reference("mahnin")
     assert path is not None and path.endswith("mahnin.wav")
-    assert transcript == CURATED_VOICES["mahnin"]["sample_text"]
+    # owner pick 2026-11-28 (komin candidate 4 / mahnin candidate 2)
+    assert transcript == (
+        "ညနေခင်း လေပြည်အေးလေး တိုက်ခတ်လာချိန်မှာ တောင်တန်းတွေပေါ် မြူခိုးပါးပါးလေးတွေ ဖုံးလွှမ်းလာပါတယ်။ "
+        "တိတ်ဆိတ်တဲ့ ပတ်ဝန်းကျင်ထဲမှာ သစ်ရွက်လှုပ်သံကို အတိုင်းသား ကြားနေရပါတယ်။ "
+        "သဘာဝရဲ့ အလှအပဟာ စိတ်ကို အေးချမ်းစေပါတယ်။"
+    )
     # komin keeps the flagship fallback: preview sample + sample_text.
     k_path, k_text = get_persona_reference("komin")
     assert k_path is not None and k_path.endswith("komin.mp3")
