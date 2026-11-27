@@ -2249,9 +2249,15 @@ async def process_single_job(
                         job.finished_at = utc_now()
                         await session.commit()
                         await safe_edit_status(bot, target_chat_id, target_msg_id, quota_msg)
+                        _ff_reason = (
+                            "quota_exhausted"
+                            if isinstance(e_vox, VoxCPMQuotaExhaustedError)
+                            else "space_timeout"
+                        )
                         logger.info(
-                            "Free voice job %s failed-fast on quota/congestion (0s deducted): %s",
+                            "Free voice job %s failed-fast on quota/congestion (reason=%s, 0s deducted): %s",
                             job.id,
+                            _ff_reason,
                             e_vox,
                         )
                         return False

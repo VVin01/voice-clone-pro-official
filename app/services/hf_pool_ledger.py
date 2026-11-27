@@ -91,6 +91,8 @@ DEFAULT_SPACE_GATE_S = 60.0             # fallback only when space_gates has no 
 DEFAULT_TOKEN_BASE_S = 300.0            # ~5 min free-account base when unprobed
 PRE_JOB_SAFETY_MULTIPLIER = 1.20
 RESUMER_SAFETY_MULTIPLIER = 1.25
+REFILL_ETA_MIN_HORIZON_SECONDS = 900.0    # +15 min floor when deficit <= 0 (D2-A)
+REFILL_ETA_MAX_HORIZON_SECONDS = 3600.0   # +60 min horizon cap (D2-A)
 
 # Session-slice `/generate_session` dynamic GPU gate pricing (2026-11-26 / 2026-11-27):
 # Runtime / reservation debit: `min(120, 18 + ceil(chars * 0.085))` GPU-seconds (x1.0, unfloored).
@@ -1861,13 +1863,19 @@ def reconcile_from_probe_rows(
                 elif rem_val is None:
                     cd_until = str((existing or {}).get("cooldown_until") or "")
 
+                preserve_updated_at = (
+                    rem_val is None
+                    and existing is not None
+                    and str(existing.get("status") or "ok").strip().lower() == "ok"
+                    and bool(str(existing.get("updated_at") or "").strip())
+                )
                 new_row: dict[str, Any] = {
                     "status": "ok",  # probe 200 auto-clears any prior auth_dead
                     "remaining_s": round(max(0.0, rem_s), 2),
                     "base_s": round(max(0.0, base_s), 2),
                     "resets_at": resets_at,
                     "cooldown_until": cd_until,
-                    "updated_at": _iso_utc(now),
+                    "updated_at": str(existing["updated_at"]) if preserve_updated_at else _iso_utc(now),
                 }
 
                 # Part P1.4: preserve active refusal ceiling UNLESS probed balance rose >= 25 s
@@ -2189,7 +2197,12 @@ def estimate_refill_eta_label(
 
     if target_ts is None:
         # Fallback rolling-window estimate (~60 min ahead) when no per-token resets_at is recorded.
-        target_ts = now + 3600.0
+        target_ts = now + REFILL_ETA_MAX_HORIZON_SECONDS
+    elif deficit <= 0 or (target_ts - now) > REFILL_ETA_MAX_HORIZON_SECONDS:
+        target_ts = min(
+            now + REFILL_ETA_MAX_HORIZON_SECONDS,
+            max(now + REFILL_ETA_MIN_HORIZON_SECONDS, target_ts),
+        )
 
     try:
         tz = ZoneInfo(tz_name)
