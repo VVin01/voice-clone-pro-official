@@ -73,14 +73,20 @@ DEFAULT_TOKEN_BASE_S = 300.0            # ~5 min free-account base when unprobed
 PRE_JOB_SAFETY_MULTIPLIER = 1.20
 RESUMER_SAFETY_MULTIPLIER = 1.25
 
-# Session-slice `/generate_session` dynamic GPU gate pricing (2026-11-26):
-# Runtime / reservation debit: `min(120, 18 + ceil(chars * 0.085))` GPU-seconds (x1.0).
-# Admission door check (Part P2): `min(180.0, ceil(session_call_gate_s(chars) * 1.5))` GPU-seconds.
+# Session-slice `/generate_session` dynamic GPU gate pricing (2026-11-26 / 2026-11-27):
+# Runtime / reservation debit: `min(120, 18 + ceil(chars * 0.085))` GPU-seconds (x1.0, unfloored).
+# Admission door check (Part P2 + 30 s Space declaration floor):
+#   `declared_s = max(30.0, session_call_gate_s(chars))`
+#   `min(180.0, ceil(declared_s * 1.5))` GPU-seconds.
 SESSION_CALL_BASE_GPU_S = 18
 SESSION_CALL_PER_CHAR_GPU_S = 0.085
 SESSION_CALL_MAX_GPU_S = 120
+SESSION_DECLARED_MIN_GPU_S = 30.0
 SESSION_ADMISSION_GATE_MULTIPLIER = 1.5
 SESSION_ADMISSION_MAX_GPU_S = 180.0
+SESSION_FLOOR_REGIME_MAX_CHARS = 141
+SESSION_STATIC_120_MIN_REQUESTED_S = 175.0
+SESSION_STATIC_120_MAX_FORMULA_S = 150.0
 
 
 def session_call_gate_s(chars: int) -> float:
@@ -92,10 +98,11 @@ def session_call_gate_s(chars: int) -> float:
 
 
 def session_admission_gate_s(chars: int) -> float:
-    """Part P2: return the x1.5 HF ZeroGPU door admission gate (capped at 180.0 s)
-    used strictly for `/generate_session` token solvency selection."""
-    raw_gate = session_call_gate_s(chars)
-    door_s = int(math.ceil(round(raw_gate * SESSION_ADMISSION_GATE_MULTIPLIER, 9)))
+    """Part P2 + 2026-11-27 floor fix: return the x1.5 HF ZeroGPU door admission gate
+    (reconciling the Space's 30.0 s declared floor, capped at 180.0 s) used strictly
+    for `/generate_session` token solvency selection."""
+    declared_s = max(SESSION_DECLARED_MIN_GPU_S, session_call_gate_s(chars))
+    door_s = int(math.ceil(round(declared_s * SESSION_ADMISSION_GATE_MULTIPLIER, 9)))
     return float(min(SESSION_ADMISSION_MAX_GPU_S, door_s))
 
 WATERMARK_NORMAL_MIN = 0.40             # > 40%
@@ -309,6 +316,20 @@ def normalize_pool_state(raw: Any, *, now_ts: float | None = None) -> dict[str, 
             if cnt > 0:
                 space_tos_out[sp_key] = cnt
 
+    raw_sess_floors = raw.get("session_space_floors")
+    sess_floors_out: dict[str, int | float] = {}
+    if isinstance(raw_sess_floors, Mapping):
+        for sp, fl_val in raw_sess_floors.items():
+            sp_key = str(sp or "").strip()
+            if not sp_key:
+                continue
+            try:
+                fl = float(fl_val)
+            except (TypeError, ValueError):
+                continue
+            if fl > 0:
+                sess_floors_out[sp_key] = int(fl) if fl.is_integer() else round(fl, 2)
+
     raw_drift = raw.get("drift_stats")
     drift_out: dict[str, int | float] | None = None
     if isinstance(raw_drift, Mapping) and raw_drift:
@@ -331,6 +352,8 @@ def normalize_pool_state(raw: Any, *, now_ts: float | None = None) -> dict[str, 
         "space_gates": gates_out,
         "in_flight_gpu_s": in_flight_val,
     }
+    if sess_floors_out:
+        out["session_space_floors"] = sess_floors_out
     if space_cds_out:
         out["space_cooldowns"] = space_cds_out
     if space_tos_out:
@@ -351,8 +374,8 @@ def _read_store_state(now_ts: float | None = None) -> dict[str, Any] | None:
     return normalize_pool_state(parsed, now_ts=now_ts)
 
 
-def _write_store_state(state: dict[str, Any]) -> bool:
-    clean = normalize_pool_state(state)
+def _write_store_state(state: dict[str, Any], *, now_ts: float | None = None) -> bool:
+    clean = normalize_pool_state(state, now_ts=now_ts)
     try:
         payload = json.dumps(clean, separators=(",", ":"))
     except Exception:
@@ -425,7 +448,7 @@ def save_pool_state(state: Mapping[str, Any], *, now_ts: float | None = None) ->
         clean = normalize_pool_state(state, now_ts=now)
         _mem_state = clean
         _mem_loaded_mono = time.monotonic()
-        _write_store_state(clean)
+        _write_store_state(clean, now_ts=now)
         return json.loads(json.dumps(clean))
 
 
@@ -641,6 +664,88 @@ def is_token_refusal_capped(
     return float(req_gate_s) >= float(rg)
 
 
+def get_session_space_floor(
+    space_name: str | None,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> float:
+    """Return learned per-Space session door floor (`session_space_floors[space_name]`) if any, else `0.0`."""
+    if not space_name or not str(space_name).strip():
+        return 0.0
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else state
+    floors = st.get("session_space_floors") if isinstance(st, Mapping) else None
+    if isinstance(floors, Mapping) and str(space_name) in floors:
+        try:
+            val = float(floors[str(space_name)])
+            return val if val > 0 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
+
+
+def effective_session_admission_gate_s(
+    chars: int,
+    space_name: str | None = None,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> float:
+    """Return `max(session_admission_gate_s(chars), session_space_floors.get(sp, 0.0))`."""
+    base_gate = session_admission_gate_s(chars)
+    sp_floor = get_session_space_floor(space_name, state=state, now_ts=now_ts)
+    return float(max(base_gate, sp_floor))
+
+
+def _maybe_apply_session_space_floor(
+    st: dict[str, Any],
+    space_name: str,
+    requested_s: float,
+    chars: int,
+) -> bool:
+    """Wrinkle 5a: learn `session_space_floors[sp]` ONLY when `requested_s` exceeds
+    `session_admission_gate_s(chars)` in the <=141-char floor regime OR static-120s regime."""
+    sp_key = str(space_name or "").strip()
+    if not sp_key or requested_s is None or float(requested_s) <= 0:
+        return False
+    n_chars = max(0, int(chars or 0))
+    req_f = float(requested_s)
+    formula_door = session_admission_gate_s(n_chars)
+    if req_f <= formula_door:
+        return False
+    qualifies = (
+        n_chars <= SESSION_FLOOR_REGIME_MAX_CHARS
+        or (
+            n_chars > SESSION_FLOOR_REGIME_MAX_CHARS
+            and req_f >= SESSION_STATIC_120_MIN_REQUESTED_S
+            and formula_door < SESSION_STATIC_120_MAX_FORMULA_S
+        )
+    )
+    if not qualifies:
+        return False
+    floors = dict(st.get("session_space_floors") or {})
+    floors[sp_key] = int(req_f) if req_f.is_integer() else round(req_f, 2)
+    st["session_space_floors"] = floors
+    return True
+
+
+def record_session_space_floor(
+    space_name: str,
+    requested_s: float,
+    chars: int,
+    *,
+    now_ts: float | None = None,
+) -> dict[str, Any]:
+    """Persist a learned session-only Space door floor (when qualified under Part 5) without touching `space_gates`."""
+    now = time.time() if now_ts is None else float(now_ts)
+    with _lock:
+        st = load_pool_state(force=True, now_ts=now)
+        if _maybe_apply_session_space_floor(st, space_name, requested_s, chars):
+            return save_pool_state(st, now_ts=now)
+        return st
+
+
 def record_refusal_ceiling(
     token: str | None,
     gate_s: float,
@@ -648,8 +753,8 @@ def record_refusal_ceiling(
     ttl_seconds: float = REFUSAL_CEILING_TTL_SECONDS,
     now_ts: float | None = None,
 ) -> dict[str, Any] | None:
-    """Part P1.2: record a scoped refusal ceiling (`refused_gate_s = min(existing, gate_s)`,
-    `refused_until = now + 3600s`) without hard-zeroing `remaining_s`."""
+    """Part P1.2 + 2026-11-27 2a: record a scoped refusal ceiling (`refused_gate_s = min(existing, gate_s)`),
+    extending `refused_until` ONLY when creating or tightening the ceiling and never ratcheting baseline upward."""
     if not token or not str(token).strip() or gate_s is None or float(gate_s) <= 0:
         return None
     now = time.time() if now_ts is None else float(now_ts)
@@ -660,12 +765,26 @@ def record_refusal_ceiling(
         existing_rem = (existing or {}).get("remaining_s")
         rem_s = float(existing_rem) if existing_rem is not None else DEFAULT_TOKEN_BASE_S
         base_s = float((existing or {}).get("base_s") or max(DEFAULT_TOKEN_BASE_S, rem_s))
-        existing_rg, _existing_ru = _extract_active_ceiling(existing, now)
-        new_rg = round(min(existing_rg, req_g), 2) if existing_rg is not None else req_g
-        if d_key not in _refusal_rem_baseline or existing_rg is None:
-            _refusal_rem_baseline[d_key] = rem_s
+        existing_rg, existing_ru = _extract_active_ceiling(existing, now)
+        if existing_rg is None or not existing_ru:
+            new_rg = req_g
+            new_ru = _iso_utc(now + max(0.0, float(ttl_seconds)))
+            _refusal_rem_baseline[d_key] = round(max(0.0, rem_s), 2)
         else:
-            _refusal_rem_baseline[d_key] = min(_refusal_rem_baseline[d_key], rem_s)
+            prev_base = _refusal_rem_baseline.get(d_key)
+            if prev_base is None and existing_rem is not None:
+                prev_base = float(existing_rem)
+            _refusal_rem_baseline[d_key] = (
+                round(max(0.0, min(prev_base, rem_s)), 2)
+                if prev_base is not None
+                else round(max(0.0, rem_s), 2)
+            )
+            if req_g < existing_rg:
+                new_rg = req_g
+                new_ru = _iso_utc(now + max(0.0, float(ttl_seconds)))
+            else:
+                new_rg = existing_rg
+                new_ru = existing_ru
         st["tokens"][d_key] = {
             "status": "ok",
             "remaining_s": round(max(0.0, rem_s), 2),
@@ -674,7 +793,7 @@ def record_refusal_ceiling(
             "cooldown_until": (existing or {}).get("cooldown_until") or "",
             "updated_at": _iso_utc(now),
             "refused_gate_s": new_rg,
-            "refused_until": _iso_utc(now + max(0.0, float(ttl_seconds))),
+            "refused_until": new_ru,
         }
         return save_pool_state(st, now_ts=now)
 
@@ -696,9 +815,12 @@ def record_admission_refusal(
     left_s: float,
     *,
     update_space_gate: bool = True,
+    session_mode: bool = False,
+    session_chars: int | None = None,
     now_ts: float | None = None,
 ) -> dict[str, Any]:
-    """Update `space_gates[space_name]` (when `update_space_gate` is True) and `token`'s `remaining_s` from a refusal."""
+    """Update `space_gates[space_name]` (when `update_space_gate` is True), `session_space_floors[space_name]`
+    (when `session_mode` qualifies under Part 5), and `token`'s `remaining_s` from a refusal."""
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
         st = load_pool_state(force=True, now_ts=now)
@@ -706,19 +828,33 @@ def record_admission_refusal(
             st["space_gates"][str(space_name)] = (
                 int(requested_s) if float(requested_s).is_integer() else round(float(requested_s), 2)
             )
+        if session_mode and space_name and requested_s > 0 and session_chars is not None:
+            _maybe_apply_session_space_floor(st, space_name, requested_s, session_chars)
         if token and str(token).strip():
             d_key, existing = lookup_token_entry(st, token)
             base_s = float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S) if existing else DEFAULT_TOKEN_BASE_S
+            clean_left = round(max(0.0, float(left_s)), 2)
+            existing_rg, _existing_ru = _extract_active_ceiling(existing, now)
             row_out: dict[str, Any] = {
                 "status": "ok",
-                "remaining_s": round(max(0.0, float(left_s)), 2),
+                "remaining_s": clean_left,
                 "base_s": round(max(base_s, float(left_s)), 2),
                 "resets_at": (existing or {}).get("resets_at") or _iso_utc(now + 86400.0),
                 "cooldown_until": (existing or {}).get("cooldown_until") or "",
                 "updated_at": _iso_utc(now),
             }
             _copy_active_ceiling(existing, row_out, now)
-            _refusal_rem_baseline[d_key] = round(max(0.0, float(left_s)), 2)
+            if existing_rg is not None:
+                prev_base = _refusal_rem_baseline.get(d_key)
+                if prev_base is None and existing is not None and existing.get("remaining_s") is not None:
+                    prev_base = float(existing["remaining_s"])
+                _refusal_rem_baseline[d_key] = (
+                    round(max(0.0, min(prev_base, clean_left)), 2)
+                    if prev_base is not None
+                    else clean_left
+                )
+            else:
+                _refusal_rem_baseline[d_key] = clean_left
             st["tokens"][d_key] = row_out
         return save_pool_state(st, now_ts=now)
 
@@ -1596,15 +1732,18 @@ __all__ = [
     "SESSION_CALL_BASE_GPU_S",
     "SESSION_CALL_MAX_GPU_S",
     "SESSION_CALL_PER_CHAR_GPU_S",
+    "SESSION_DECLARED_MIN_GPU_S",
     "SESSION_READY_MIN_GPU_S",
     "SPACE_TIMEOUT_COOLDOWN_SECONDS",
     "acquire_in_flight_gpu",
     "compute_env_tokens_hash",
     "compute_pool_metrics",
+    "effective_session_admission_gate_s",
     "estimate_refill_eta_label",
     "estimate_voxcpm_units_and_budget",
     "evaluate_voxcpm_admission",
     "get_drift_stats",
+    "get_session_space_floor",
     "get_space_cooldown_until",
     "get_space_gate",
     "get_space_timeout_counts",
@@ -1626,6 +1765,7 @@ __all__ = [
     "record_admission_refusal",
     "record_quota_dead",
     "record_refusal_ceiling",
+    "record_session_space_floor",
     "record_space_timeout",
     "record_success_debit",
     "release_in_flight_gpu",

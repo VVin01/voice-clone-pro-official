@@ -8351,13 +8351,21 @@ class EdgeSmartSync:
                     _q_wall = float(getattr(vox_engine, "refusal_wall_s", 0.0) or 0.0)
                     _c_skips = int(getattr(vox_engine, "ceiling_skips", 0) or 0)
                     _mf_jumps = int(getattr(vox_engine, "max_fit_jumps", 0) or 0)
+                    _sg_skips = int(getattr(vox_engine, "sub_gate_skips", 0) or 0)
+                    _adm_gates = list(getattr(vox_engine, "adm_gates_s", None) or [])
+                    _obs_doors = list(getattr(vox_engine, "observed_doors_s", None) or [])
+                    _ref_toks = int(getattr(vox_engine, "refused_tokens", 0) or 0)
+                    _ref_by_sp = dict(getattr(vox_engine, "refusals_by_space", None) or {})
                     if isinstance(_job_sp_tos, dict) and _job_sp_tos:
                         self.log(f"📊 VoxCPM 2 per-job Space timeouts so far: {_job_sp_tos}")
-                    if _q_refusals or _c_skips or _mf_jumps or (isinstance(_job_sp_tos, dict) and _job_sp_tos):
+                    if _q_refusals or _c_skips or _mf_jumps or _sg_skips or (isinstance(_job_sp_tos, dict) and _job_sp_tos):
                         self.log(
                             f"recap_voxcpm_tts_summary status=aborted quota_refusals={_q_refusals} "
                             f"refusal_wall_s={_q_wall:.2f} ceiling_skips={_c_skips} "
-                            f"max_fit_jumps={_mf_jumps} space_timeouts={dict(_job_sp_tos or {})}"
+                            f"max_fit_jumps={_mf_jumps} space_timeouts={dict(_job_sp_tos or {})} "
+                            f"sub_gate_skips={_sg_skips} adm_gates_s={_adm_gates} "
+                            f"observed_doors_s={_obs_doors} refused_tokens={_ref_toks} "
+                            f"refusals_by_space={_ref_by_sp}"
                         )
                 if vox_err is not None:
                     _done_units = len(checkpoint.get("audio") or {})
@@ -9493,7 +9501,12 @@ class EdgeSmartSync:
                     f"refusal_wall_s={float(_tc.get('refusal_wall_s', 0.0)):.2f} "
                     f"ceiling_skips={int(_tc.get('ceiling_skips', 0))} "
                     f"max_fit_jumps={int(_tc.get('max_fit_jumps', 0))} "
-                    f"space_timeouts={dict(_sp_tos or {})}"
+                    f"space_timeouts={dict(_sp_tos or {})} "
+                    f"sub_gate_skips={int(_tc.get('sub_gate_skips', 0))} "
+                    f"adm_gates_s={list(_tc.get('adm_gates_s') or [])} "
+                    f"observed_doors_s={list(_tc.get('observed_doors_s') or [])} "
+                    f"refused_tokens={int(_tc.get('refused_tokens', 0))} "
+                    f"refusals_by_space={dict(_tc.get('refusals_by_space') or {})}"
                 )
             if _tts_errors:
                 _stop_part_renderer()
