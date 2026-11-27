@@ -39,6 +39,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import threading
 import time
 from typing import Any, Callable, Mapping, Sequence
@@ -48,6 +49,7 @@ from zoneinfo import ZoneInfo
 
 from app.services.key_rotation import (
     botsetting_sync_delete,
+    botsetting_sync_mutate,
     botsetting_sync_read,
     botsetting_sync_write,
     key_id as _short_key_id,
@@ -58,6 +60,23 @@ logger = logging.getLogger(__name__)
 POOL_STATE_STORE_KEY = "aj_hf:pool_state"
 IN_FLIGHT_STORE_KEY = "aj_hf:in_flight"
 ENV_HASH_STORE_KEY = "aj_hf:env_hash"
+TRUTH_TS_STORE_KEY = "aj_hf:truth_ts"
+TOKEN_META_STORE_KEY = "aj_hf:token_meta"
+DRIFT_WINDOW_STORE_KEY = "aj_hf:drift_window"
+TRUTH_TS_RETENTION_SECONDS = 172800.0  # 48 hours
+TOKEN_META_RETENTION_SECONDS = 604800.0  # 7 days
+DRIFT_WINDOW_RETENTION_SECONDS = 86400.0  # 24 hours rolling drift window
+
+# Pro ZeroGPU subscription lapse boundary (2026-12-01T00:00:00Z).
+PRO_LAPSE_AT_UTC = datetime(2026, 12, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp()
+UNCERTAIN_STALE_DRAINED_REM_S = 45.0
+UNCERTAIN_STALE_DRAINED_CEIL_S = 60.0
+UNCERTAIN_STALE_DRAINED_AGE_S = 6.0 * 3600.0
+UNCERTAIN_AGED_PARTIAL_DELTA_S = 5.0
+UNCERTAIN_AGED_PARTIAL_AGE_S = 18.0 * 3600.0
+UNCERTAIN_NEVER_VERIFIED_AGE_S = 24.0 * 3600.0
+CERTAIN_VERIFIED_MIN_REM_S = 295.0
+PRIORITY_HIGH_REM_THRESHOLD_S = 137.0
 
 CACHE_TTL_SECONDS = 30.0
 AUTH_DEAD_QUARANTINE_SECONDS = 86400.0  # 24 hours
@@ -88,6 +107,13 @@ SESSION_FLOOR_REGIME_MAX_CHARS = 141
 SESSION_STATIC_120_MIN_REQUESTED_S = 175.0
 SESSION_STATIC_120_MAX_FORMULA_S = 150.0
 
+LEGACY_CALL_BASE_GPU_S = 18
+LEGACY_CALL_PER_CHAR_GPU_S = 0.15
+LEGACY_DECLARED_MIN_GPU_S = 25.0
+LEGACY_DECLARED_MAX_GPU_S = 55.0
+GPU_REPORTED_OVERHEAD_PAD_S = 1.0
+MIN_REPORTED_GPU_DEBIT_S = 1.0
+
 
 def session_call_gate_s(chars: int) -> float:
     """Return the GPU-second runtime/debit gate for a `/generate_session` call of `chars` characters:
@@ -95,6 +121,106 @@ def session_call_gate_s(chars: int) -> float:
     n = max(0, int(chars or 0))
     added = int(math.ceil(round(n * SESSION_CALL_PER_CHAR_GPU_S, 9)))
     return float(min(SESSION_CALL_MAX_GPU_S, SESSION_CALL_BASE_GPU_S + added))
+
+
+def session_declared_s(chars: int) -> float:
+    """Return the Space's un-multiplied declared GPU duration for `/generate_session`:
+    `min(120, max(30, 18 + int(chars * 0.085)))`."""
+    n = max(0, int(chars or 0))
+    return float(
+        min(
+            SESSION_CALL_MAX_GPU_S,
+            max(int(SESSION_DECLARED_MIN_GPU_S), SESSION_CALL_BASE_GPU_S + int(n * SESSION_CALL_PER_CHAR_GPU_S)),
+        )
+    )
+
+
+def legacy_declared_s(chars: int) -> float:
+    """Return the Space's un-multiplied declared GPU duration for `/generate`:
+    `min(55, max(25, 18 + int(chars * 0.15)))`."""
+    n = max(0, int(chars or 0))
+    return float(
+        min(
+            int(LEGACY_DECLARED_MAX_GPU_S),
+            max(int(LEGACY_DECLARED_MIN_GPU_S), LEGACY_CALL_BASE_GPU_S + int(n * LEGACY_CALL_PER_CHAR_GPU_S)),
+        )
+    )
+
+
+def legacy_declared_door_s(chars: int) -> float:
+    """Return the x1.5 Half-Blackwell door duration for `/generate`:
+    `round(min(55, max(25, 18 + int(chars * 0.15))) * 1.5, 2)`."""
+    return round(legacy_declared_s(chars) * SESSION_ADMISSION_GATE_MULTIPLIER, 2)
+
+
+def compute_method1_debit_s(gpu_s: float, *, session_mode: bool, chars: int) -> float:
+    """Method 1 debit rule: `clamp(gpu_s + 1.0, 1.0, declared_door_s)`."""
+    door_s = session_admission_gate_s(chars) if session_mode else legacy_declared_door_s(chars)
+    return round(min(float(door_s), max(MIN_REPORTED_GPU_DEBIT_S, float(gpu_s) + GPU_REPORTED_OVERHEAD_PAD_S)), 2)
+
+
+def _is_cpu_demo_space_name(space_name: str | None) -> bool:
+    norm = str(space_name or "").strip().lower().rstrip("/")
+    if not norm:
+        return False
+    if norm == "openbmb/voxcpm-demo":
+        return True
+    return bool(re.search(r"(?:^|/|-)openbmb[-/]voxcpm-demo$", norm))
+
+
+_RETRY_HMS_RE = re.compile(
+    r"try again in\s+(?:(\d+)\s+days?,\s*)?(\d+):(\d{2}):(\d{2}(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_RETRY_MS_RE = re.compile(
+    r"try again in\s+(\d+):(\d{2}(?:\.\d+)?)(?!\s*:)",
+    re.IGNORECASE,
+)
+_RETRY_UNITS_BLOCK_RE = re.compile(
+    r"try again in\s+((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)\b[\s,]*(?:and\s+)?)+)",
+    re.IGNORECASE,
+)
+_RETRY_UNIT_ITEM_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_refusal_retry_wait_s(error_text: str | None) -> float | None:
+    """Parse `Try again in {wait}` from a ZeroGPU quota refusal into positive seconds, or None."""
+    text = str(error_text or "")
+    if not text or "try again in" not in text.lower():
+        return None
+    m_hms = _RETRY_HMS_RE.search(text)
+    if m_hms is not None:
+        days = int(m_hms.group(1) or 0)
+        hours = int(m_hms.group(2) or 0)
+        mins = int(m_hms.group(3) or 0)
+        secs = float(m_hms.group(4) or 0.0)
+        tot = days * 86400.0 + hours * 3600.0 + mins * 60.0 + secs
+        return round(tot, 2) if tot > 0 else None
+    m_ms = _RETRY_MS_RE.search(text)
+    if m_ms is not None:
+        mins = int(m_ms.group(1) or 0)
+        secs = float(m_ms.group(2) or 0.0)
+        tot = mins * 60.0 + secs
+        return round(tot, 2) if tot > 0 else None
+    m_blk = _RETRY_UNITS_BLOCK_RE.search(text)
+    if m_blk is not None:
+        tot = 0.0
+        for val_s, unit_s in _RETRY_UNIT_ITEM_RE.findall(m_blk.group(1)):
+            val = float(val_s)
+            u = unit_s.lower()
+            if u.startswith("d"):
+                tot += val * 86400.0
+            elif u.startswith("h"):
+                tot += val * 3600.0
+            elif u.startswith("m"):
+                tot += val * 60.0
+            else:
+                tot += val
+        return round(tot, 2) if tot > 0 else None
+    return None
 
 
 def session_admission_gate_s(chars: int) -> float:
@@ -124,6 +250,10 @@ _mem_state: dict[str, Any] | None = None
 _mem_loaded_mono: float = 0.0
 _mem_in_flight_jobs: dict[str, dict[str, float]] = {}
 _refusal_rem_baseline: dict[str, float] = {}
+_mem_truth_ts: dict[str, float] = {}
+_mem_token_meta: dict[str, dict[str, Any]] = {}
+_mem_token_meta_loaded: bool = False
+_mem_drift_window: dict[str, dict[str, float]] = {}
 _last_seen_env_hash: str | None = None
 _known_token_digests: set[str] = set()
 
@@ -452,20 +582,401 @@ def save_pool_state(state: Mapping[str, Any], *, now_ts: float | None = None) ->
         return json.loads(json.dumps(clean))
 
 
+def _mutate_pool_state(
+    mutator_fn: Callable[[dict[str, Any]], tuple[dict[str, Any], bool]],
+    *,
+    now_ts: float | None = None,
+) -> dict[str, Any]:
+    """Atomically mutate `aj_hf:pool_state` via `botsetting_sync_mutate` (`SELECT ... FOR UPDATE`)."""
+    global _mem_state, _mem_loaded_mono
+    now = time.time() if now_ts is None else float(now_ts)
+    result_box: dict[str, Any] = {}
+    with _lock:
+        def _apply(raw_str: str | None) -> str | None:
+            base_state: dict[str, Any] | None = None
+            if raw_str:
+                try:
+                    base_state = normalize_pool_state(json.loads(raw_str), now_ts=now)
+                except Exception:
+                    base_state = None
+            if base_state is None:
+                if _mem_state is not None:
+                    base_state = normalize_pool_state(_mem_state, now_ts=now)
+                else:
+                    base_state = _empty_state()
+            updated_state, should_write = mutator_fn(base_state)
+            clean = normalize_pool_state(updated_state, now_ts=now)
+            result_box["clean"] = clean
+            if not should_write:
+                return None
+            return json.dumps(clean, separators=(",", ":"))
+
+        botsetting_sync_mutate(
+            POOL_STATE_STORE_KEY,
+            _apply,
+            read_fn=botsetting_sync_read,
+            write_fn=botsetting_sync_write,
+        )
+        clean_out = result_box.get("clean") or _empty_state()
+        _mem_state = clean_out
+        _mem_loaded_mono = time.monotonic()
+        return json.loads(json.dumps(clean_out))
+
+
+def _canonical_digest(token_or_digest: str) -> str:
+    raw_tok = str(token_or_digest).strip()
+    if len(raw_tok) == 64 and all(c in "0123456789abcdef" for c in raw_tok):
+        return raw_tok
+    return token_digest(raw_tok)
+
+
+def _merge_token_meta_entry(existing: Mapping[str, Any] | None, incoming: Mapping[str, Any]) -> dict[str, Any]:
+    base = dict(existing or {})
+    out: dict[str, Any] = {}
+    taint_a = float(base.get("taint_ts") or 0.0)
+    taint_b = float(incoming.get("taint_ts") or 0.0)
+    if max(taint_a, taint_b) > 0.0:
+        if taint_b >= taint_a:
+            out["taint_ts"] = round(taint_b, 6)
+            if incoming.get("taint_kind"):
+                out["taint_kind"] = str(incoming["taint_kind"])
+            elif base.get("taint_kind"):
+                out["taint_kind"] = str(base["taint_kind"])
+        else:
+            out["taint_ts"] = round(taint_a, 6)
+            if base.get("taint_kind"):
+                out["taint_kind"] = str(base["taint_kind"])
+    att_a = float(base.get("last_attempt_ts") or 0.0)
+    att_b = float(incoming.get("last_attempt_ts") or 0.0)
+    if max(att_a, att_b) > 0.0:
+        out["last_attempt_ts"] = round(max(att_a, att_b), 6)
+    ver_ts_a = float(base.get("verified_ts") or 0.0)
+    ver_ts_b = float(incoming.get("verified_ts") or 0.0)
+    if max(ver_ts_a, ver_ts_b) > 0.0:
+        if ver_ts_b >= ver_ts_a and incoming.get("verified_rem_s") is not None:
+            out["verified_ts"] = round(ver_ts_b, 6)
+            out["verified_rem_s"] = round(float(incoming["verified_rem_s"]), 2)
+        elif base.get("verified_rem_s") is not None:
+            out["verified_ts"] = round(ver_ts_a, 6)
+            out["verified_rem_s"] = round(float(base["verified_rem_s"]), 2)
+    upd_a = float(base.get("updated_ts") or 0.0)
+    upd_b = float(incoming.get("updated_ts") or 0.0)
+    out["updated_ts"] = round(max(upd_a, upd_b, taint_b, att_b, ver_ts_b), 6)
+    return out
+
+
+def _load_token_meta_map(*, reload_store: bool = False, now_ts: float | None = None) -> dict[str, dict[str, Any]]:
+    global _mem_token_meta_loaded
+    now = time.time() if now_ts is None else float(now_ts)
+    cutoff = now - TOKEN_META_RETENTION_SECONDS
+    with _lock:
+        if reload_store or not _mem_token_meta_loaded:
+            raw = botsetting_sync_read(TOKEN_META_STORE_KEY)
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, Mapping):
+                        for k, v in parsed.items():
+                            if not isinstance(v, Mapping):
+                                continue
+                            merged = _merge_token_meta_entry(_mem_token_meta.get(str(k)), v)
+                            if float(merged.get("updated_ts") or 0.0) >= cutoff:
+                                _mem_token_meta[str(k)] = merged
+                except Exception:
+                    pass
+            _mem_token_meta_loaded = True
+        return {k: dict(v) for k, v in _mem_token_meta.items() if float(v.get("updated_ts") or 0.0) >= cutoff}
+
+
+def _persist_token_meta_update(d_key: str, patch: Mapping[str, Any], *, clear_taint_up_to: float | None = None, now_ts: float | None = None) -> None:
+    global _mem_token_meta_loaded
+    now = time.time() if now_ts is None else float(now_ts)
+    cutoff = now - TOKEN_META_RETENTION_SECONDS
+    with _lock:
+        cur_entry = _merge_token_meta_entry(_mem_token_meta.get(d_key), {**dict(patch), "updated_ts": now})
+        if clear_taint_up_to is not None and float(cur_entry.get("taint_ts") or 0.0) <= float(clear_taint_up_to):
+            cur_entry.pop("taint_ts", None)
+            cur_entry.pop("taint_kind", None)
+        _mem_token_meta[d_key] = cur_entry
+        _mem_token_meta_loaded = True
+
+        def _mutate_meta(raw_str: str | None) -> str | None:
+            store_map: dict[str, dict[str, Any]] = {}
+            if raw_str:
+                try:
+                    parsed = json.loads(raw_str)
+                    if isinstance(parsed, Mapping):
+                        for k, v in parsed.items():
+                            if isinstance(v, Mapping):
+                                m = _merge_token_meta_entry(None, v)
+                                if float(m.get("updated_ts") or 0.0) >= cutoff:
+                                    store_map[str(k)] = m
+                except Exception:
+                    store_map = {}
+            for k, v in list(_mem_token_meta.items()):
+                if float(v.get("updated_ts") or 0.0) < cutoff:
+                    _mem_token_meta.pop(k, None)
+                else:
+                    store_map[k] = _merge_token_meta_entry(store_map.get(k), v)
+            merged_target = _merge_token_meta_entry(store_map.get(d_key), cur_entry)
+            if clear_taint_up_to is not None and float(merged_target.get("taint_ts") or 0.0) <= float(clear_taint_up_to):
+                merged_target.pop("taint_ts", None)
+                merged_target.pop("taint_kind", None)
+            store_map[d_key] = merged_target
+            _mem_token_meta.update(store_map)
+            return json.dumps(store_map, separators=(",", ":"))
+
+        botsetting_sync_mutate(
+            TOKEN_META_STORE_KEY,
+            _mutate_meta,
+            read_fn=botsetting_sync_read,
+            write_fn=botsetting_sync_write,
+        )
+
+
+def record_token_truth_timestamp(
+    token: str | None,
+    truth_ts: float | None = None,
+    *,
+    verified_rem_s: float | None = None,
+) -> float | None:
+    """Record authoritative HF balance observation timestamp in memory and `aj_hf:truth_ts`."""
+    if not token or not str(token).strip():
+        return None
+    ts = time.time() if truth_ts is None else float(truth_ts)
+    d_key = _canonical_digest(str(token).strip())
+    with _lock:
+        prev = _mem_truth_ts.get(d_key)
+        best = round(max(prev, ts), 6) if prev is not None else round(ts, 6)
+        _mem_truth_ts[d_key] = best
+        cutoff = ts - TRUTH_TS_RETENTION_SECONDS
+
+        def _mutate_truth(raw_str: str | None) -> str | None:
+            cur_map: dict[str, float] = {}
+            if raw_str:
+                try:
+                    parsed = json.loads(raw_str)
+                    if isinstance(parsed, Mapping):
+                        for k, v in parsed.items():
+                            fv = float(v)
+                            if fv >= cutoff:
+                                cur_map[str(k)] = round(fv, 6)
+                except Exception:
+                    cur_map = {}
+            for k, v in list(_mem_truth_ts.items()):
+                if v < cutoff:
+                    _mem_truth_ts.pop(k, None)
+                else:
+                    cur_map[k] = round(max(cur_map.get(k, 0.0), v), 6)
+            cur_map[d_key] = round(max(cur_map.get(d_key, 0.0), best), 6)
+            _mem_truth_ts.update(cur_map)
+            return json.dumps(cur_map, separators=(",", ":"))
+
+        botsetting_sync_mutate(
+            TRUTH_TS_STORE_KEY,
+            _mutate_truth,
+            read_fn=botsetting_sync_read,
+            write_fn=botsetting_sync_write,
+        )
+        meta_patch: dict[str, Any] = {}
+        if verified_rem_s is not None:
+            meta_patch["verified_ts"] = best
+            meta_patch["verified_rem_s"] = round(max(0.0, float(verified_rem_s)), 2)
+        existing_meta = _mem_token_meta.get(d_key) or {}
+        if meta_patch or float(existing_meta.get("taint_ts") or 0.0) > 0.0:
+            _persist_token_meta_update(d_key, meta_patch, clear_taint_up_to=best, now_ts=best)
+        return _mem_truth_ts.get(d_key, best)
+
+
+def record_token_taint(
+    token: str | None,
+    kind: str = "unverified_taint",
+    *,
+    now_ts: float | None = None,
+) -> None:
+    """Record a Method 2 failure debit or numberless generic refusal taint since last truth stamp."""
+    if not token or not str(token).strip():
+        return
+    now = time.time() if now_ts is None else float(now_ts)
+    d_key = _canonical_digest(str(token).strip())
+    with _lock:
+        truth_ts = get_token_last_truth_ts(d_key, reload_store=False) or 0.0
+        cur = _mem_token_meta.get(d_key) or {}
+        already_tainted = float(cur.get("taint_ts") or 0.0) > truth_ts
+        patch = {
+            "taint_ts": round(now, 6),
+            "taint_kind": str(kind or "unverified_taint"),
+            "last_attempt_ts": round(max(now, float(cur.get("last_attempt_ts") or 0.0)), 6),
+        }
+        if already_tainted:
+            _mem_token_meta[d_key] = _merge_token_meta_entry(cur, {**patch, "updated_ts": now})
+        else:
+            _persist_token_meta_update(d_key, patch, now_ts=now)
+
+
+def record_token_synthesis_attempt(
+    token: str | None,
+    *,
+    now_ts: float | None = None,
+) -> None:
+    """Mark that `token` participated in a synthesis attempt at `now_ts` (invalidating untouched-certain skip)."""
+    if not token or not str(token).strip():
+        return
+    now = time.time() if now_ts is None else float(now_ts)
+    d_key = _canonical_digest(str(token).strip())
+    with _lock:
+        truth_ts = get_token_last_truth_ts(d_key, reload_store=False) or 0.0
+        cur = _mem_token_meta.get(d_key) or {}
+        prev_att = float(cur.get("last_attempt_ts") or 0.0)
+        patch = {"last_attempt_ts": round(max(now, prev_att), 6)}
+        # Persist to DB only on the first attempt after a truth stamp to keep hot synthesis paths zero-SQL.
+        if truth_ts > 0.0 and prev_att <= truth_ts:
+            _persist_token_meta_update(d_key, patch, now_ts=now)
+        else:
+            _mem_token_meta[d_key] = _merge_token_meta_entry(cur, {**patch, "updated_ts": now})
+
+
+def get_token_meta(
+    token: str | None,
+    *,
+    reload_store: bool = False,
+    now_ts: float | None = None,
+) -> dict[str, Any]:
+    """Return auxiliary calibration metadata for `token` (or `{}` if none)."""
+    if not token or not str(token).strip():
+        return {}
+    d_key = _canonical_digest(str(token).strip())
+    meta_map = _load_token_meta_map(reload_store=reload_store, now_ts=now_ts)
+    return dict(meta_map.get(d_key) or {})
+
+
+def _record_runtime_drift_observation(d_key: str, positive_delta_s: float, now_ts: float) -> None:
+    """Record positive pre-overwrite balance drift observed by numeric refusals / calibration sweeps."""
+    if positive_delta_s <= 0.0:
+        return
+    cutoff = now_ts - DRIFT_WINDOW_RETENTION_SECONDS
+    with _lock:
+        prev = _mem_drift_window.get(d_key)
+        prev_d = float((prev or {}).get("delta_s") or 0.0) if (prev and float(prev.get("ts") or 0.0) >= cutoff) else 0.0
+        _mem_drift_window[d_key] = {
+            "delta_s": round(max(prev_d, float(positive_delta_s)), 2),
+            "ts": round(float(now_ts), 3),
+        }
+
+        def _mutate_dw(raw_str: str | None) -> str | None:
+            cur_dw: dict[str, dict[str, float]] = {}
+            if raw_str:
+                try:
+                    parsed = json.loads(raw_str)
+                    if isinstance(parsed, Mapping):
+                        for k, v in parsed.items():
+                            if isinstance(v, Mapping) and float(v.get("ts") or 0.0) >= cutoff:
+                                cur_dw[str(k)] = {
+                                    "delta_s": round(max(0.0, float(v.get("delta_s") or 0.0)), 2),
+                                    "ts": round(float(v.get("ts") or 0.0), 3),
+                                }
+                except Exception:
+                    cur_dw = {}
+            for k, v in list(_mem_drift_window.items()):
+                if float(v.get("ts") or 0.0) < cutoff:
+                    _mem_drift_window.pop(k, None)
+                else:
+                    existing_d = float((cur_dw.get(k) or {}).get("delta_s") or 0.0)
+                    cur_dw[k] = {
+                        "delta_s": round(max(existing_d, float(v.get("delta_s") or 0.0)), 2),
+                        "ts": round(max(float((cur_dw.get(k) or {}).get("ts") or 0.0), float(v.get("ts") or 0.0)), 3),
+                    }
+            _mem_drift_window.update(cur_dw)
+            return json.dumps(cur_dw, separators=(",", ":"))
+
+        botsetting_sync_mutate(
+            DRIFT_WINDOW_STORE_KEY,
+            _mutate_dw,
+            read_fn=botsetting_sync_read,
+            write_fn=botsetting_sync_write,
+        )
+
+
+def _summarize_runtime_drift_window(now_ts: float) -> tuple[float, int, float]:
+    cutoff = now_ts - DRIFT_WINDOW_RETENTION_SECONDS
+    with _lock:
+        raw = botsetting_sync_read(DRIFT_WINDOW_STORE_KEY)
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, Mapping):
+                    for k, v in parsed.items():
+                        if isinstance(v, Mapping) and float(v.get("ts") or 0.0) >= cutoff:
+                            prev_d = float((_mem_drift_window.get(str(k)) or {}).get("delta_s") or 0.0)
+                            _mem_drift_window[str(k)] = {
+                                "delta_s": round(max(prev_d, float(v.get("delta_s") or 0.0)), 2),
+                                "ts": round(float(v.get("ts") or 0.0), 3),
+                            }
+            except Exception:
+                pass
+        pos_sum = 0.0
+        over_cnt = 0
+        max_d = 0.0
+        for k, v in list(_mem_drift_window.items()):
+            if float(v.get("ts") or 0.0) < cutoff:
+                _mem_drift_window.pop(k, None)
+                continue
+            d = float(v.get("delta_s") or 0.0)
+            if d > 0.0:
+                pos_sum += d
+                if d > max_d:
+                    max_d = d
+                if d > 25.0:
+                    over_cnt += 1
+        return round(pos_sum, 2), int(over_cnt), round(max_d, 2)
+
+
+def get_token_last_truth_ts(
+    token: str | None,
+    *,
+    reload_store: bool = False,
+) -> float | None:
+    """Return last authoritative truth epoch timestamp for `token` (or digest), else None."""
+    if not token or not str(token).strip():
+        return None
+    d_key = _canonical_digest(str(token).strip())
+    with _lock:
+        if reload_store:
+            raw = botsetting_sync_read(TRUTH_TS_STORE_KEY)
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, Mapping):
+                        for k, v in parsed.items():
+                            fv = float(v)
+                            prev = _mem_truth_ts.get(str(k))
+                            _mem_truth_ts[str(k)] = max(prev, fv) if prev is not None else fv
+                except Exception:
+                    pass
+        return _mem_truth_ts.get(d_key)
+
+
 def reset_ledger_for_tests(*, clear_store: bool = False) -> None:
     """Reset in-memory cache (and optionally persisted KV keys) between unit tests."""
-    global _mem_state, _mem_loaded_mono, _mem_in_flight_jobs, _refusal_rem_baseline, _last_seen_env_hash, _known_token_digests
+    global _mem_state, _mem_loaded_mono, _mem_in_flight_jobs, _refusal_rem_baseline, _mem_truth_ts, _mem_token_meta, _mem_token_meta_loaded, _mem_drift_window, _last_seen_env_hash, _known_token_digests
     with _lock:
         _mem_state = None
         _mem_loaded_mono = 0.0
         _mem_in_flight_jobs = {}
         _refusal_rem_baseline = {}
+        _mem_truth_ts = {}
+        _mem_token_meta = {}
+        _mem_token_meta_loaded = False
+        _mem_drift_window = {}
         _last_seen_env_hash = None
         _known_token_digests = set()
         if clear_store:
             botsetting_sync_delete(POOL_STATE_STORE_KEY)
             botsetting_sync_delete(IN_FLIGHT_STORE_KEY)
             botsetting_sync_delete(ENV_HASH_STORE_KEY)
+            botsetting_sync_delete(TRUTH_TS_STORE_KEY)
+            botsetting_sync_delete(TOKEN_META_STORE_KEY)
+            botsetting_sync_delete(DRIFT_WINDOW_STORE_KEY)
 
 
 def lookup_token_entry(
@@ -751,6 +1262,7 @@ def record_refusal_ceiling(
     gate_s: float,
     *,
     ttl_seconds: float = REFUSAL_CEILING_TTL_SECONDS,
+    mark_generic_taint: bool = True,
     now_ts: float | None = None,
 ) -> dict[str, Any] | None:
     """Part P1.2 + 2026-11-27 2a: record a scoped refusal ceiling (`refused_gate_s = min(existing, gate_s)`),
@@ -795,17 +1307,36 @@ def record_refusal_ceiling(
             "refused_gate_s": new_rg,
             "refused_until": new_ru,
         }
-        return save_pool_state(st, now_ts=now)
+        saved = save_pool_state(st, now_ts=now)
+    if mark_generic_taint:
+        record_token_taint(token, "generic_refusal", now_ts=now)
+    return saved
 
 
 def get_drift_stats(
     *, state: Mapping[str, Any] | None = None, now_ts: float | None = None
 ) -> dict[str, int | float] | None:
-    """Part Q4.2: return persisted reconciler `drift_stats` dict if recorded, else None."""
+    """Part Q4.2 + Round 2 Part 1: return 4-key `drift_stats` dict fed by probe reconciliation,
+    numeric refusals, and the daily calibration sweep (or None when none recorded)."""
     now = time.time() if now_ts is None else float(now_ts)
     st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
     ds = st.get("drift_stats")
-    return dict(ds) if isinstance(ds, Mapping) else None
+    rw_pos, rw_over, rw_max = _summarize_runtime_drift_window(now)
+    if isinstance(ds, Mapping):
+        out = dict(ds)
+        if rw_pos > 0.0:
+            out["positive_drift_s"] = round(max(float(out.get("positive_drift_s") or 0.0), rw_pos), 2)
+            out["overestimated_tokens"] = int(max(int(out.get("overestimated_tokens") or 0), rw_over))
+            out["max_token_drift_s"] = round(max(float(out.get("max_token_drift_s") or 0.0), rw_max), 2)
+        return out
+    if rw_pos > 0.0:
+        return {
+            "positive_drift_s": rw_pos,
+            "overestimated_tokens": rw_over,
+            "max_token_drift_s": rw_max,
+            "quota_probe_errors": 0,
+        }
+    return None
 
 
 def record_admission_refusal(
@@ -817,46 +1348,97 @@ def record_admission_refusal(
     update_space_gate: bool = True,
     session_mode: bool = False,
     session_chars: int | None = None,
+    error_text: str | None = None,
+    drift_out: list[float] | None = None,
     now_ts: float | None = None,
 ) -> dict[str, Any]:
     """Update `space_gates[space_name]` (when `update_space_gate` is True), `session_space_floors[space_name]`
-    (when `session_mode` qualifies under Part 5), and `token`'s `remaining_s` from a refusal."""
+    (when `session_mode` qualifies under Part 5), and `token`'s `remaining_s` from a numeric refusal."""
     now = time.time() if now_ts is None else float(now_ts)
-    with _lock:
-        st = load_pool_state(force=True, now_ts=now)
+    tok_clean = str(token).strip() if token else ""
+
+    observed_drift: list[float] = []
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         if update_space_gate and space_name and requested_s > 0:
             st["space_gates"][str(space_name)] = (
                 int(requested_s) if float(requested_s).is_integer() else round(float(requested_s), 2)
             )
         if session_mode and space_name and requested_s > 0 and session_chars is not None:
             _maybe_apply_session_space_floor(st, space_name, requested_s, session_chars)
-        if token and str(token).strip():
-            d_key, existing = lookup_token_entry(st, token)
-            base_s = float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S) if existing else DEFAULT_TOKEN_BASE_S
+        if tok_clean:
+            d_key, existing = lookup_token_entry(st, tok_clean)
             clean_left = round(max(0.0, float(left_s)), 2)
-            existing_rg, _existing_ru = _extract_active_ceiling(existing, now)
+            existing_rem = (
+                float(existing["remaining_s"])
+                if (existing is not None and existing.get("remaining_s") is not None)
+                else DEFAULT_TOKEN_BASE_S
+            )
+            signed_drift = round(existing_rem - clean_left, 2)
+            observed_drift.clear()
+            observed_drift.append(signed_drift)
+            if drift_out is not None:
+                drift_out.clear()
+                drift_out.append(signed_drift)
+
+            existing_base_s = (
+                float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S)
+                if existing
+                else DEFAULT_TOKEN_BASE_S
+            )
+            if error_text and "free zerogpu" in str(error_text).lower() and existing_base_s > 300.0:
+                eff_base_s = round(max(300.0, clean_left), 2)
+            else:
+                eff_base_s = round(max(existing_base_s, clean_left), 2)
+
+            wait_s = parse_refusal_retry_wait_s(error_text)
+            existing_rst = str((existing or {}).get("resets_at") or "")
+            existing_rst_ts = _parse_ts(existing_rst)
+            if wait_s is not None and wait_s > 0:
+                resets_at = _iso_utc(now + wait_s)
+            elif existing_rst_ts is not None and existing_rst_ts > now:
+                resets_at = existing_rst
+            else:
+                resets_at = _iso_utc(now + 86400.0)
+
+            existing_rg, existing_ru = _extract_active_ceiling(existing, now)
             row_out: dict[str, Any] = {
                 "status": "ok",
                 "remaining_s": clean_left,
-                "base_s": round(max(base_s, float(left_s)), 2),
-                "resets_at": (existing or {}).get("resets_at") or _iso_utc(now + 86400.0),
-                "cooldown_until": (existing or {}).get("cooldown_until") or "",
+                "base_s": eff_base_s,
+                "resets_at": resets_at,
+                "cooldown_until": str((existing or {}).get("cooldown_until") or ""),
                 "updated_at": _iso_utc(now),
             }
-            _copy_active_ceiling(existing, row_out, now)
-            if existing_rg is not None:
-                prev_base = _refusal_rem_baseline.get(d_key)
-                if prev_base is None and existing is not None and existing.get("remaining_s") is not None:
-                    prev_base = float(existing["remaining_s"])
-                _refusal_rem_baseline[d_key] = (
-                    round(max(0.0, min(prev_base, clean_left)), 2)
-                    if prev_base is not None
-                    else clean_left
-                )
+            if existing_rg is not None and existing_ru:
+                if clean_left >= existing_rg:
+                    # Revealed `left_s >= existing_rg` falsifies the tighter stale ceiling.
+                    if requested_s is not None and float(requested_s) > 0:
+                        row_out["refused_gate_s"] = round(max(0.01, float(requested_s)), 2)
+                        row_out["refused_until"] = _iso_utc(now + REFUSAL_CEILING_TTL_SECONDS)
+                    _refusal_rem_baseline[d_key] = clean_left
+                else:
+                    _copy_active_ceiling(existing, row_out, now)
+                    prev_base = _refusal_rem_baseline.get(d_key)
+                    if prev_base is None and existing is not None and existing.get("remaining_s") is not None:
+                        prev_base = float(existing["remaining_s"])
+                    _refusal_rem_baseline[d_key] = (
+                        round(max(0.0, min(prev_base, clean_left)), 2)
+                        if prev_base is not None
+                        else clean_left
+                    )
             else:
                 _refusal_rem_baseline[d_key] = clean_left
             st["tokens"][d_key] = row_out
-        return save_pool_state(st, now_ts=now)
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    if tok_clean:
+        clean_ver = round(max(0.0, float(left_s)), 2)
+        record_token_truth_timestamp(tok_clean, now, verified_rem_s=clean_ver)
+        if observed_drift and observed_drift[0] > 0.0:
+            _record_runtime_drift_observation(token_digest(tok_clean), observed_drift[0], now)
+    return saved
 
 
 def record_success_debit(
@@ -864,15 +1446,30 @@ def record_success_debit(
     token: str | None,
     *,
     debit_s: float | None = None,
+    attempt_started_ts: float | None = None,
+    skipped_out: list[bool] | None = None,
     now_ts: float | None = None,
 ) -> dict[str, Any] | None:
-    """Debit `space_name`'s gate from `token`'s `remaining_s` after a successful synthesis."""
+    """Debit `space_name`'s gate (or explicit `debit_s`) from `token`'s `remaining_s` after a successful synthesis."""
     if not token or not str(token).strip():
         return None
     now = time.time() if now_ts is None else float(now_ts)
-    with _lock:
-        st = load_pool_state(force=True, now_ts=now)
-        d_key, existing = lookup_token_entry(st, token)
+    if _is_cpu_demo_space_name(space_name) or (debit_s is not None and float(debit_s) == 0.0):
+        return load_pool_state(now_ts=now)
+
+    tok_clean = str(token).strip()
+    full_d = token_digest(tok_clean)
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if attempt_started_ts is not None:
+            truth_ts = get_token_last_truth_ts(full_d, reload_store=True)
+            if truth_ts is not None and truth_ts >= float(attempt_started_ts):
+                if skipped_out is not None:
+                    skipped_out.clear()
+                    skipped_out.append(True)
+                return st, False
+
+        d_key, existing = lookup_token_entry(st, tok_clean)
         # Part P1.5b: default unknown-Space legacy/recap gate to DEFAULT_SPACE_GATE_S (60.0 s) instead of 0.0.
         known_gate = (
             float(debit_s)
@@ -882,7 +1479,7 @@ def record_success_debit(
         is_fallback_gate = known_gate <= 0.0
         gate = DEFAULT_SPACE_GATE_S if is_fallback_gate else known_gate
         if existing is None and (not st.get("tokens") or gate <= 0):
-            return st
+            return st, False
         if existing is None:
             base_s = max(DEFAULT_TOKEN_BASE_S, gate)
             new_rem = max(0.0, base_s - gate)
@@ -908,7 +1505,84 @@ def record_success_debit(
         }
         _copy_active_ceiling(existing, row_out, now)
         st["tokens"][d_key] = row_out
-        return save_pool_state(st, now_ts=now)
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    record_token_synthesis_attempt(tok_clean, now_ts=now)
+    return saved
+
+
+def record_failure_debit(
+    space_name: str,
+    token: str | None,
+    debit_s: float,
+    *,
+    attempt_started_ts: float | None = None,
+    skipped_out: list[bool] | None = None,
+    now_ts: float | None = None,
+) -> dict[str, Any] | None:
+    """Method 2: subtract estimated failure `debit_s` from `token`'s `remaining_s` (floor 0.0)
+    via atomic mutation without ever touching `_refusal_rem_baseline`, `refused_gate_s`, or `resets_at`."""
+    if not token or not str(token).strip() or debit_s is None or float(debit_s) <= 0.0:
+        return None
+    if _is_cpu_demo_space_name(space_name):
+        return None
+    now = time.time() if now_ts is None else float(now_ts)
+    tok_clean = str(token).strip()
+    full_d = token_digest(tok_clean)
+    amt = float(debit_s)
+    applied: list[bool] = []
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if attempt_started_ts is not None:
+            truth_ts = get_token_last_truth_ts(full_d, reload_store=True)
+            if truth_ts is not None and truth_ts >= float(attempt_started_ts):
+                if skipped_out is not None:
+                    skipped_out.clear()
+                    skipped_out.append(True)
+                return st, False
+
+        d_key, existing = lookup_token_entry(st, tok_clean)
+        if existing is None:
+            if not st.get("tokens"):
+                return st, False
+            base_s = DEFAULT_TOKEN_BASE_S
+            new_rem = max(0.0, base_s - amt)
+            st["tokens"][d_key] = {
+                "status": "ok",
+                "remaining_s": round(new_rem, 2),
+                "base_s": round(base_s, 2),
+                "resets_at": "",
+                "cooldown_until": "",
+                "updated_at": _iso_utc(now),
+            }
+            applied.append(True)
+            return st, True
+
+        if str(existing.get("status") or "ok").strip().lower() == "auth_dead":
+            return st, False
+
+        base_s = float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S)
+        existing_rem = existing.get("remaining_s")
+        old_rem = float(existing_rem) if existing_rem is not None else 0.0
+        new_rem = max(0.0, old_rem - amt)
+        row_out: dict[str, Any] = {
+            "status": "ok",
+            "remaining_s": round(new_rem, 2),
+            "base_s": round(base_s, 2),
+            "resets_at": str(existing.get("resets_at") or ""),
+            "cooldown_until": str(existing.get("cooldown_until") or ""),
+            "updated_at": _iso_utc(now),
+        }
+        _copy_active_ceiling(existing, row_out, now)
+        st["tokens"][d_key] = row_out
+        applied.append(True)
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    if applied:
+        record_token_taint(tok_clean, "failure_debit", now_ts=now)
+    return saved
 
 
 def record_quota_dead(
@@ -1114,6 +1788,8 @@ def reconcile_from_probe_rows(
         overestimated_tokens = 0
         max_token_drift_s = 0.0
         quota_probe_errors = 0
+        probed_balance_count = 0
+        prev_drift = st.get("drift_stats") if isinstance(st.get("drift_stats"), Mapping) else {}
 
         for idx, tok in enumerate(tokens):
             if not tok or not str(tok).strip():
@@ -1142,8 +1818,13 @@ def reconcile_from_probe_rows(
             elif probe_status == "ok":
                 rem_val = row.get("remaining_s")
                 base_val = row.get("base_s")
-                if row.get("quota_error") is not None or rem_val is None:
+                q_err = row.get("quota_error")
+                # Round 2 Part 1: `quota_probe_errors` counts only tokens actually attempted that cycle
+                # (tokens skipped via `quota_scope_unsupported` circuit breaker were not attempted).
+                if q_err != "quota_scope_unsupported" and (q_err is not None or rem_val is None):
                     quota_probe_errors += 1
+                if rem_val is not None:
+                    probed_balance_count += 1
 
                 # Part Q4.2: measure pre-overwrite ledger drift against probed ground truth.
                 if (
@@ -1221,6 +1902,12 @@ def reconcile_from_probe_rows(
             st["tokens"] = {
                 k: v for k, v in st["tokens"].items() if k in active_digests
             }
+
+        if probed_balance_count == 0:
+            rw_pos, rw_over, rw_max = _summarize_runtime_drift_window(now)
+            positive_drift_s = max(float(prev_drift.get("positive_drift_s") or 0.0), rw_pos)
+            overestimated_tokens = max(int(prev_drift.get("overestimated_tokens") or 0), rw_over)
+            max_token_drift_s = max(float(prev_drift.get("max_token_drift_s") or 0.0), rw_max)
 
         drift_stats = {
             "positive_drift_s": round(positive_drift_s, 2),
@@ -1710,6 +2397,551 @@ def has_resumer_capacity(
     return metrics.available_gpu_s >= (req * RESUMER_SAFETY_MULTIPLIER)
 
 
+# ---------------------------------------------------------------------------
+# Round 2 Part 2 & Part 3: Uncertainty Classifier + Calibration Sweep Writes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TokenUncertainty:
+    slot: int
+    token: str
+    token_digest: str
+    key_id: str
+    is_uncertain: bool
+    is_certain_full: bool
+    reason: str
+    reasons: tuple[str, ...]
+    remaining_s: float
+    base_s: float
+    updated_at_ts: float | None
+    last_truth_at: float | None
+    priority_key: tuple[int, float, int]
+
+
+def classify_token_uncertainty(
+    token: str,
+    *,
+    slot: int = 0,
+    state: Mapping[str, Any] | None = None,
+    meta: Mapping[str, Any] | None = None,
+    last_truth_at: float | None = None,
+    reload_meta: bool = False,
+    now_ts: float | None = None,
+) -> TokenUncertainty:
+    """Round 2 Part 2: classify one HF token as UNCERTAIN (rules 1–5) or CERTAIN/skipped."""
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    tok_clean = str(token or "").strip()
+    full_d = token_digest(tok_clean)
+    short_id = _short_key_id(tok_clean)
+    _d, row = lookup_token_entry(st, tok_clean)
+
+    if row is None:
+        return TokenUncertainty(
+            slot=int(slot),
+            token=tok_clean,
+            token_digest=full_d,
+            key_id=short_id,
+            is_uncertain=False,
+            is_certain_full=False,
+            reason="",
+            reasons=(),
+            remaining_s=DEFAULT_TOKEN_BASE_S,
+            base_s=DEFAULT_TOKEN_BASE_S,
+            updated_at_ts=None,
+            last_truth_at=last_truth_at,
+            priority_key=(99, 0.0, int(slot)),
+        )
+
+    status = str(row.get("status") or "ok").strip().lower()
+    rem_s = round(max(0.0, float(row.get("remaining_s") if row.get("remaining_s") is not None else 0.0)), 2)
+    base_s = round(max(0.0, float(row.get("base_s") or DEFAULT_TOKEN_BASE_S)), 2)
+    upd_ts = _parse_ts(row.get("updated_at"))
+    rst_ts = _parse_ts(row.get("resets_at"))
+    active_rg = get_token_refused_gate_s(row, now_ts=now)
+
+    if status == "auth_dead":
+        return TokenUncertainty(
+            slot=int(slot),
+            token=tok_clean,
+            token_digest=full_d,
+            key_id=short_id,
+            is_uncertain=False,
+            is_certain_full=False,
+            reason="auth_dead",
+            reasons=(),
+            remaining_s=rem_s,
+            base_s=base_s,
+            updated_at_ts=upd_ts,
+            last_truth_at=last_truth_at,
+            priority_key=(99, 0.0, int(slot)),
+        )
+
+    truth_ts = (
+        last_truth_at
+        if last_truth_at is not None
+        else get_token_last_truth_ts(full_d, reload_store=reload_meta)
+    )
+    eff_meta = (
+        dict(meta)
+        if meta is not None
+        else get_token_meta(full_d, reload_store=reload_meta, now_ts=now)
+    )
+    taint_ts = float(eff_meta["taint_ts"]) if eff_meta.get("taint_ts") is not None else None
+    last_attempt_ts = (
+        float(eff_meta["last_attempt_ts"]) if eff_meta.get("last_attempt_ts") is not None else None
+    )
+    verified_rem_s = (
+        float(eff_meta["verified_rem_s"]) if eff_meta.get("verified_rem_s") is not None else None
+    )
+
+    # Rule 2 (`pro_lapse`) checked first so a lapsed Pro token (>300 s) is never skipped as `>= 295 s` certain.
+    is_pro_lapse = (base_s > 300.0 and now >= PRO_LAPSE_AT_UTC) or (rem_s > 300.0)
+
+    # Fast-skip: verified >= 295 s with zero synthesis attempts (and zero taint) since truth stamp.
+    has_attempt_since_truth = (
+        truth_ts is not None and last_attempt_ts is not None and last_attempt_ts > truth_ts
+    )
+    has_taint_since_truth = (
+        taint_ts is not None and (truth_ts is None or taint_ts > truth_ts)
+    )
+    eff_verified_rem = verified_rem_s if verified_rem_s is not None else rem_s
+    if (
+        not is_pro_lapse
+        and truth_ts is not None
+        and eff_verified_rem >= CERTAIN_VERIFIED_MIN_REM_S
+        and rem_s >= CERTAIN_VERIFIED_MIN_REM_S
+        and active_rg is None
+        and not has_attempt_since_truth
+        and not has_taint_since_truth
+    ):
+        return TokenUncertainty(
+            slot=int(slot),
+            token=tok_clean,
+            token_digest=full_d,
+            key_id=short_id,
+            is_uncertain=False,
+            is_certain_full=True,
+            reason="certain",
+            reasons=(),
+            remaining_s=rem_s,
+            base_s=base_s,
+            updated_at_ts=upd_ts,
+            last_truth_at=truth_ts,
+            priority_key=(99, 0.0, int(slot)),
+        )
+
+    is_stale_drained = (
+        (rem_s < UNCERTAIN_STALE_DRAINED_REM_S or (active_rg is not None and active_rg <= UNCERTAIN_STALE_DRAINED_CEIL_S))
+        and (
+            (upd_ts is not None and (now - upd_ts) >= UNCERTAIN_STALE_DRAINED_AGE_S)
+            or (rst_ts is not None and rst_ts <= now)
+        )
+    )
+    is_unverified_taint = has_taint_since_truth
+    age_anchor_ts = truth_ts if truth_ts is not None else upd_ts
+    is_aged_partial = (
+        rem_s < (base_s - UNCERTAIN_AGED_PARTIAL_DELTA_S)
+        and age_anchor_ts is not None
+        and (now - age_anchor_ts) >= UNCERTAIN_AGED_PARTIAL_AGE_S
+    )
+    is_never_verified = (
+        truth_ts is None
+        and upd_ts is not None
+        and (now - upd_ts) >= UNCERTAIN_NEVER_VERIFIED_AGE_S
+    )
+
+    matched: list[str] = []
+    if is_pro_lapse:
+        matched.append("pro_lapse")
+    if is_stale_drained:
+        matched.append("stale_drained")
+    if is_unverified_taint:
+        matched.append("unverified_taint")
+    if is_aged_partial:
+        matched.append("aged_partial")
+    if is_never_verified:
+        matched.append("never_verified")
+
+    if not matched:
+        return TokenUncertainty(
+            slot=int(slot),
+            token=tok_clean,
+            token_digest=full_d,
+            key_id=short_id,
+            is_uncertain=False,
+            is_certain_full=False,
+            reason="",
+            reasons=(),
+            remaining_s=rem_s,
+            base_s=base_s,
+            updated_at_ts=upd_ts,
+            last_truth_at=truth_ts,
+            priority_key=(99, 0.0, int(slot)),
+        )
+
+    primary = matched[0]
+    # Part 3 priority order:
+    # (1) pro_lapse -> (2) stale_drained -> (3) remaining_s >= 137.0 tainted/aged descending
+    # -> (4) 45.0 <= remaining_s < 137.0 tainted/aged ascending -> (5) never_verified oldest first.
+    if is_pro_lapse:
+        prio = (1, -rem_s, int(slot))
+    elif is_stale_drained:
+        prio = (2, float(upd_ts if upd_ts is not None else 0.0), int(slot))
+    elif is_unverified_taint or is_aged_partial:
+        if rem_s >= PRIORITY_HIGH_REM_THRESHOLD_S:
+            prio = (3, -rem_s, int(slot))
+        elif rem_s >= UNCERTAIN_STALE_DRAINED_REM_S:
+            prio = (4, rem_s, int(slot))
+        else:
+            prio = (5, rem_s, int(slot))
+    else:
+        prio = (6, float(upd_ts if upd_ts is not None else 0.0), int(slot))
+
+    return TokenUncertainty(
+        slot=int(slot),
+        token=tok_clean,
+        token_digest=full_d,
+        key_id=short_id,
+        is_uncertain=True,
+        is_certain_full=False,
+        reason=primary,
+        reasons=tuple(matched),
+        remaining_s=rem_s,
+        base_s=base_s,
+        updated_at_ts=upd_ts,
+        last_truth_at=truth_ts,
+        priority_key=prio,
+    )
+
+
+def classify_pool_uncertainty(
+    tokens: Sequence[str],
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> tuple[list[TokenUncertainty], list[TokenUncertainty]]:
+    """Classify all configured HF tokens, returning `(ordered_uncertain, all_classifications)`."""
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(force=True, now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    # Reload shared truth & meta maps once up front.
+    if tokens:
+        get_token_last_truth_ts(tokens[0], reload_store=True)
+    meta_map = _load_token_meta_map(reload_store=True, now_ts=now)
+
+    all_items: list[TokenUncertainty] = []
+    for idx, tok in enumerate(tokens):
+        if not tok or not str(tok).strip():
+            continue
+        d_key = token_digest(tok)
+        item = classify_token_uncertainty(
+            tok,
+            slot=idx,
+            state=st,
+            meta=meta_map.get(d_key) or {},
+            last_truth_at=_mem_truth_ts.get(d_key),
+            reload_meta=False,
+            now_ts=now,
+        )
+        all_items.append(item)
+
+    uncertain_ordered = sorted(
+        (it for it in all_items if it.is_uncertain),
+        key=lambda it: it.priority_key,
+    )
+    return uncertain_ordered, all_items
+
+
+def _sync_engine_token_balance(token: str, remaining_s: float, *, clear_cooldown: bool = False) -> None:
+    try:
+        from app.services.voxcpm_engine import VoxCPMEngine
+
+        with VoxCPMEngine._lock:
+            VoxCPMEngine._token_balances[str(token)] = float(remaining_s)
+            if clear_cooldown:
+                VoxCPMEngine._token_cooldowns.pop(str(token), None)
+    except Exception:
+        pass
+
+
+def apply_calibration_numeric_refusal(
+    token: str,
+    left_s: float,
+    *,
+    error_text: str | None = None,
+    now_ts: float | None = None,
+) -> tuple[float, float, dict[str, Any]]:
+    """Round 2 Part 3: apply a `/probe_quota` numeric refusal (`297s requested vs. Ys left`).
+    Never sets `refused_gate_s = 297`; clears any stale ceiling `existing_rg <= Y`; stamps truth."""
+    now = time.time() if now_ts is None else float(now_ts)
+    tok_clean = str(token).strip()
+    clean_left = round(max(0.0, float(left_s)), 2)
+    box: dict[str, float] = {"before": DEFAULT_TOKEN_BASE_S}
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        d_key, existing = lookup_token_entry(st, tok_clean)
+        before_s = (
+            float(existing["remaining_s"])
+            if (existing is not None and existing.get("remaining_s") is not None)
+            else DEFAULT_TOKEN_BASE_S
+        )
+        box["before"] = round(before_s, 2)
+        existing_base_s = (
+            float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S)
+            if existing
+            else DEFAULT_TOKEN_BASE_S
+        )
+        if error_text and "free zerogpu" in str(error_text).lower() and existing_base_s > 300.0:
+            eff_base_s = round(max(300.0, clean_left), 2)
+        else:
+            eff_base_s = round(max(existing_base_s, clean_left), 2)
+
+        wait_s = parse_refusal_retry_wait_s(error_text)
+        existing_rst = str((existing or {}).get("resets_at") or "")
+        existing_rst_ts = _parse_ts(existing_rst)
+        if wait_s is not None and wait_s > 0:
+            resets_at = _iso_utc(now + wait_s)
+        elif existing_rst_ts is not None and existing_rst_ts > now:
+            resets_at = existing_rst
+        else:
+            resets_at = _iso_utc(now + 86400.0)
+
+        cd_until = "" if clean_left > 0.0 else str((existing or {}).get("cooldown_until") or "")
+        row_out: dict[str, Any] = {
+            "status": "ok",
+            "remaining_s": clean_left,
+            "base_s": eff_base_s,
+            "resets_at": resets_at,
+            "cooldown_until": cd_until,
+            "updated_at": _iso_utc(now),
+        }
+        existing_rg, existing_ru = _extract_active_ceiling(existing, now)
+        if existing_rg is not None and existing_ru:
+            if existing_rg <= clean_left:
+                _refusal_rem_baseline.pop(d_key, None)
+            else:
+                row_out["refused_gate_s"] = existing_rg
+                row_out["refused_until"] = existing_ru
+                _refusal_rem_baseline[d_key] = clean_left
+        else:
+            _refusal_rem_baseline.pop(d_key, None)
+
+        st["tokens"][d_key] = row_out
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    record_token_truth_timestamp(tok_clean, now, verified_rem_s=clean_left)
+    pos_drift = round(box["before"] - clean_left, 2)
+    if pos_drift > 0.0:
+        _record_runtime_drift_observation(token_digest(tok_clean), pos_drift, now)
+    _sync_engine_token_balance(tok_clean, clean_left, clear_cooldown=(clean_left > 0.0))
+    return box["before"], clean_left, saved
+
+
+def apply_calibration_probe_success(
+    token: str,
+    gpu_s: float,
+    *,
+    now_ts: float | None = None,
+) -> tuple[float, float, float, dict[str, Any]]:
+    """Round 2 Part 3: apply `/probe_quota` success (`debit_s = clamp(gpu_s + 1.0, 1.0, 5.0)`),
+    clearing ceiling + `_refusal_rem_baseline` + `cooldown_until`, and stamping truth."""
+    now = time.time() if now_ts is None else float(now_ts)
+    tok_clean = str(token).strip()
+    debit_s = round(min(5.0, max(1.0, float(gpu_s) + 1.0)), 2)
+    box: dict[str, float] = {"before": DEFAULT_TOKEN_BASE_S, "after": 0.0}
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        d_key, existing = lookup_token_entry(st, tok_clean)
+        before_s = (
+            float(existing["remaining_s"])
+            if (existing is not None and existing.get("remaining_s") is not None)
+            else DEFAULT_TOKEN_BASE_S
+        )
+        existing_base_s = (
+            float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S)
+            if existing
+            else DEFAULT_TOKEN_BASE_S
+        )
+        eff_base_s = (
+            DEFAULT_TOKEN_BASE_S
+            if (existing_base_s > 300.0 and now >= PRO_LAPSE_AT_UTC)
+            else existing_base_s
+        )
+        after_s = round(
+            max(0.0, min(eff_base_s - debit_s, max(before_s - debit_s, 297.0 - debit_s))),
+            2,
+        )
+        box["before"] = round(before_s, 2)
+        box["after"] = after_s
+        _refusal_rem_baseline.pop(d_key, None)
+        st["tokens"][d_key] = {
+            "status": "ok",
+            "remaining_s": after_s,
+            "base_s": round(max(eff_base_s, after_s), 2),
+            "resets_at": str((existing or {}).get("resets_at") or ""),
+            "cooldown_until": "",
+            "updated_at": _iso_utc(now),
+        }
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    record_token_truth_timestamp(tok_clean, now, verified_rem_s=box["after"])
+    pos_drift = round((box["before"] - box["after"]) - debit_s, 2)
+    if pos_drift > 0.0:
+        _record_runtime_drift_observation(token_digest(tok_clean), pos_drift, now)
+    _sync_engine_token_balance(tok_clean, box["after"], clear_cooldown=True)
+    return box["before"], box["after"], debit_s, saved
+
+
+def apply_calibration_generic_capped(
+    token: str,
+    gate_s: float = 45.0,
+    *,
+    ttl_seconds: float = 3600.0,
+    now_ts: float | None = None,
+) -> tuple[float, float, dict[str, Any]]:
+    """Round 2 Part 3: apply generic refusal at 1-char `/generate_session` door (`G = 45`):
+    `remaining_s = min(existing_rem, G - 1.0)` + `record_refusal_ceiling(token, G, ttl_seconds=3600)`."""
+    now = time.time() if now_ts is None else float(now_ts)
+    tok_clean = str(token).strip()
+    g_val = round(max(1.0, float(gate_s)), 2)
+    cap_rem = round(max(0.0, g_val - 1.0), 2)
+    box: dict[str, float] = {"before": DEFAULT_TOKEN_BASE_S, "after": cap_rem}
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        d_key, existing = lookup_token_entry(st, tok_clean)
+        before_s = (
+            float(existing["remaining_s"])
+            if (existing is not None and existing.get("remaining_s") is not None)
+            else DEFAULT_TOKEN_BASE_S
+        )
+        after_s = round(max(0.0, min(before_s, cap_rem)), 2)
+        base_s = (
+            float(existing.get("base_s") or max(DEFAULT_TOKEN_BASE_S, before_s))
+            if existing
+            else DEFAULT_TOKEN_BASE_S
+        )
+        box["before"] = round(before_s, 2)
+        box["after"] = after_s
+        row_out: dict[str, Any] = {
+            "status": "ok",
+            "remaining_s": after_s,
+            "base_s": round(max(0.0, base_s), 2),
+            "resets_at": str((existing or {}).get("resets_at") or _iso_utc(now + 86400.0)),
+            "cooldown_until": str((existing or {}).get("cooldown_until") or ""),
+            "updated_at": _iso_utc(now),
+        }
+        _copy_active_ceiling(existing, row_out, now)
+        st["tokens"][d_key] = row_out
+        return st, True
+
+    _mutate_pool_state(_mutate, now_ts=now)
+    saved = record_refusal_ceiling(
+        tok_clean,
+        g_val,
+        ttl_seconds=ttl_seconds,
+        mark_generic_taint=False,
+        now_ts=now,
+    ) or load_pool_state(now_ts=now)
+    pos_drift = round(box["before"] - box["after"], 2)
+    if pos_drift > 0.0:
+        _record_runtime_drift_observation(token_digest(tok_clean), pos_drift, now)
+    _sync_engine_token_balance(tok_clean, box["after"])
+    return box["before"], box["after"], saved
+
+
+def apply_calibration_followup_admitted(
+    token: str,
+    debit_s: float,
+    *,
+    floor_s: float = 45.0,
+    now_ts: float | None = None,
+) -> tuple[float, float, dict[str, Any]]:
+    """Round 2 Part 3: apply admitted 1-char `/generate_session` follow-up:
+    stamp truth with `remaining_s` reduced by `debit_s` from a `>= 45 s` floor."""
+    now = time.time() if now_ts is None else float(now_ts)
+    tok_clean = str(token).strip()
+    clean_debit = round(max(1.0, float(debit_s)), 2)
+    box: dict[str, float] = {"before": DEFAULT_TOKEN_BASE_S, "after": 0.0}
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        d_key, existing = lookup_token_entry(st, tok_clean)
+        before_s = (
+            float(existing["remaining_s"])
+            if (existing is not None and existing.get("remaining_s") is not None)
+            else DEFAULT_TOKEN_BASE_S
+        )
+        base_s = (
+            float(existing.get("base_s") or DEFAULT_TOKEN_BASE_S)
+            if existing
+            else DEFAULT_TOKEN_BASE_S
+        )
+        eff_base_s = (
+            DEFAULT_TOKEN_BASE_S
+            if (base_s > 300.0 and now >= PRO_LAPSE_AT_UTC)
+            else base_s
+        )
+        pre_floor_s = max(before_s, float(floor_s))
+        after_s = round(max(0.0, min(eff_base_s - clean_debit, pre_floor_s - clean_debit)), 2)
+        box["before"] = round(before_s, 2)
+        box["after"] = after_s
+        row_out: dict[str, Any] = {
+            "status": "ok",
+            "remaining_s": after_s,
+            "base_s": round(max(eff_base_s, after_s), 2),
+            "resets_at": str((existing or {}).get("resets_at") or ""),
+            "cooldown_until": "",
+            "updated_at": _iso_utc(now),
+        }
+        existing_rg, existing_ru = _extract_active_ceiling(existing, now)
+        if existing_rg is not None and existing_ru:
+            if existing_rg <= max(float(floor_s), after_s):
+                _refusal_rem_baseline.pop(d_key, None)
+            else:
+                row_out["refused_gate_s"] = existing_rg
+                row_out["refused_until"] = existing_ru
+                _refusal_rem_baseline[d_key] = after_s
+        else:
+            _refusal_rem_baseline.pop(d_key, None)
+        st["tokens"][d_key] = row_out
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    record_token_truth_timestamp(tok_clean, now, verified_rem_s=box["after"])
+    pos_drift = round((box["before"] - box["after"]) - clean_debit, 2)
+    if pos_drift > 0.0:
+        _record_runtime_drift_observation(token_digest(tok_clean), pos_drift, now)
+    _sync_engine_token_balance(tok_clean, box["after"], clear_cooldown=True)
+    return box["before"], box["after"], saved
+
+
+def record_calibration_drift_stats(
+    positive_drift_s: float,
+    overestimated_tokens: int,
+    max_token_drift_s: float,
+    *,
+    now_ts: float | None = None,
+) -> dict[str, Any]:
+    """Update `drift_stats` balance fields in `aj_hf:pool_state` from a calibration sweep
+    while keeping `drift_stats`'s exact 4-key schema and preserving `quota_probe_errors`."""
+    now = time.time() if now_ts is None else float(now_ts)
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        prev = st.get("drift_stats") if isinstance(st.get("drift_stats"), Mapping) else {}
+        rw_pos, rw_over, rw_max = _summarize_runtime_drift_window(now)
+        st["drift_stats"] = {
+            "positive_drift_s": round(max(0.0, float(positive_drift_s), rw_pos), 2),
+            "overestimated_tokens": int(max(0, int(overestimated_tokens), rw_over)),
+            "max_token_drift_s": round(max(0.0, float(max_token_drift_s), rw_max), 2),
+            "quota_probe_errors": int(prev.get("quota_probe_errors") or 0),
+        }
+        return st, True
+
+    return _mutate_pool_state(_mutate, now_ts=now)
+
+
 __all__ = [
     "AUTH_DEAD_QUARANTINE_SECONDS",
     "AdmissionDecision",
@@ -1720,6 +2952,10 @@ __all__ = [
     "CACHE_TTL_SECONDS",
     "DEFAULT_SPACE_GATE_S",
     "DEFAULT_TOKEN_BASE_S",
+    "GPU_REPORTED_OVERHEAD_PAD_S",
+    "LEGACY_DECLARED_MAX_GPU_S",
+    "LEGACY_DECLARED_MIN_GPU_S",
+    "MIN_REPORTED_GPU_DEBIT_S",
     "MIN_USABLE_DUST_GATE_S",
     "POOL_STATE_STORE_KEY",
     "PRE_JOB_SAFETY_MULTIPLIER",
@@ -1735,8 +2971,18 @@ __all__ = [
     "SESSION_DECLARED_MIN_GPU_S",
     "SESSION_READY_MIN_GPU_S",
     "SPACE_TIMEOUT_COOLDOWN_SECONDS",
+    "TOKEN_META_STORE_KEY",
+    "TRUTH_TS_STORE_KEY",
+    "TokenUncertainty",
     "acquire_in_flight_gpu",
+    "apply_calibration_followup_admitted",
+    "apply_calibration_generic_capped",
+    "apply_calibration_numeric_refusal",
+    "apply_calibration_probe_success",
+    "classify_pool_uncertainty",
+    "classify_token_uncertainty",
     "compute_env_tokens_hash",
+    "compute_method1_debit_s",
     "compute_pool_metrics",
     "effective_session_admission_gate_s",
     "estimate_refill_eta_label",
@@ -1747,6 +2993,8 @@ __all__ = [
     "get_space_cooldown_until",
     "get_space_gate",
     "get_space_timeout_counts",
+    "get_token_last_truth_ts",
+    "get_token_meta",
     "get_token_refused_gate_s",
     "get_token_refused_until",
     "get_token_remaining_s",
@@ -1756,23 +3004,32 @@ __all__ = [
     "is_token_auth_dead",
     "is_token_cooling",
     "is_token_refusal_capped",
+    "legacy_declared_door_s",
+    "legacy_declared_s",
     "load_pool_state",
     "lookup_token_entry",
     "normalize_pool_state",
+    "parse_refusal_retry_wait_s",
     "probe_whoami_status",
     "reconcile_from_probe_rows",
     "reconcile_if_env_changed",
     "record_admission_refusal",
+    "record_calibration_drift_stats",
+    "record_failure_debit",
     "record_quota_dead",
     "record_refusal_ceiling",
     "record_session_space_floor",
     "record_space_timeout",
     "record_success_debit",
+    "record_token_synthesis_attempt",
+    "record_token_taint",
+    "record_token_truth_timestamp",
     "release_in_flight_gpu",
     "reset_ledger_for_tests",
     "save_pool_state",
     "session_admission_gate_s",
     "session_call_gate_s",
+    "session_declared_s",
     "token_digest",
     "watermark_band_for_fraction",
 ]

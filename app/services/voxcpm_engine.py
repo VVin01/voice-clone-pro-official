@@ -327,7 +327,7 @@ TRANSIENT_RETRY_BACKOFF_SECONDS = 5.0
 
 
 def _is_pair_space_timeout(exc: BaseException) -> bool:
-    """True when `exc` indicates the target Space itself timed out (Part C1/C4)."""
+    """True when `exc` indicates the target Space itself timed out or had no GPU slot (Part C1/C4)."""
     if isinstance(exc, _FailoverBudgetExhaustedError):
         return False
     if isinstance(exc, TimeoutError):
@@ -335,7 +335,54 @@ def _is_pair_space_timeout(exc: BaseException) -> bool:
     low = str(exc or "").lower()
     if "total failover budget" in low:
         return False
-    return "timed out" in low or "timeout" in low
+    return (
+        "timed out" in low
+        or "timeout" in low
+        or "no gpu was available" in low
+        or "zerogpu queue timeout" in low
+    )
+
+
+_TRANSPORT_ERROR_MARKERS = (
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway timeout",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "connection closed",
+    "failed to connect",
+    "remoteprotocolerror",
+    "network is unreachable",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "broken pipe",
+    "unexpected end of stream",
+    "ssl:",
+    "tlsv1",
+)
+
+
+def _is_pair_transport_error(exc: BaseException, *, stage: Optional[str] = None) -> bool:
+    """True when `exc` is a network/HTTP/SSE transport failure (Exit 5) rather than a Space task exception (Exit 7)."""
+    if exc.__class__.__name__ == "AppError":
+        return False
+    if stage == "connect":
+        return True
+    if isinstance(exc, ConnectionError):
+        return True
+    mod_name = str(getattr(exc.__class__, "__module__", "") or "").lower()
+    if mod_name.startswith(("httpx", "httpcore", "websockets", "urllib.error")):
+        return True
+    low = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in low for marker in _TRANSPORT_ERROR_MARKERS)
 
 
 def is_voxcpm_capacity_or_congestion_error(exc: BaseException | None) -> bool:
@@ -355,6 +402,8 @@ def is_voxcpm_capacity_or_congestion_error(exc: BaseException | None) -> bool:
             return True
         if (
             "queue timed out" in low
+            or "zerogpu queue timeout" in low
+            or "no gpu was available" in low
             or "total failover budget" in low
             or "quota exhausted" in low
         ):
@@ -395,7 +444,7 @@ def has_solvent_voxcpm_tokens(engine: Any, *, gate_s: Optional[float] = None) ->
         return True
 
 
-_QUOTA_ERROR_MARKERS = ("zerogpu", "quota", "runs limit", "402", "payment required")
+_QUOTA_ERROR_MARKERS = ("zerogpu", "quota", "runs limit", "402", "payment required", "maximum allowed")
 _GATE_REQUEST_RE = re.compile(r"\d+\s*s requested")
 
 
@@ -406,6 +455,8 @@ def _quota_failure_kind(error_text: str) -> Optional[str]:
     serve on a space requesting less), "dead" for account-level quota
     exhaustion, or None when the error is not quota-class."""
     text = str(error_text or "").lower()
+    if "no gpu was available" in text or "zerogpu queue timeout" in text:
+        return None
     if not any(marker in text for marker in _QUOTA_ERROR_MARKERS):
         return None
     if _GATE_REQUEST_RE.search(text):
@@ -479,6 +530,8 @@ class JobQuotaMemory:
         self._observed_doors_s: list[float] = []
         self._refused_token_keys: set[str] = set()
         self._refusals_by_space: dict[str, int] = {}
+        self._refusal_drift_deltas_s: list[float] = []
+        self._truth_skip_debits: int = 0
 
     def gate_blocked(self, space_name: str, token: Optional[str]) -> bool:
         with self._lock:
@@ -503,14 +556,29 @@ class JobQuotaMemory:
         with self._lock:
             self._dead_tokens.add(_job_token_key(token))
 
-    def record_refused_gate(self, token: Optional[str], gate_s: float) -> None:
+    def record_refused_gate(
+        self, token: Optional[str], gate_s: float, *, left_s: Optional[float] = None
+    ) -> None:
         if not token or gate_s is None or float(gate_s) <= 0:
             return
         key = _job_token_key(token)
         g = round(float(gate_s), 2)
         with self._lock:
             prev = self._refused_gates.get(key)
-            self._refused_gates[key] = round(min(prev, g), 2) if prev is not None else g
+            if prev is not None and left_s is not None and float(left_s) >= prev:
+                self._refused_gates[key] = g
+            else:
+                self._refused_gates[key] = round(min(prev, g), 2) if prev is not None else g
+
+    def record_refusal_drift_delta(self, delta_s: float) -> None:
+        if delta_s is None:
+            return
+        with self._lock:
+            self._refusal_drift_deltas_s.append(round(float(delta_s), 2))
+
+    def record_truth_skip_debit(self, count: int = 1) -> None:
+        with self._lock:
+            self._truth_skip_debits += max(0, int(count))
 
     def record_quota_refusal(
         self,
@@ -566,6 +634,8 @@ class JobQuotaMemory:
                 "observed_doors_s": list(self._observed_doors_s),
                 "refused_tokens": len(self._refused_token_keys),
                 "refusals_by_space": dict(self._refusals_by_space),
+                "refusal_drift_deltas_s": list(self._refusal_drift_deltas_s),
+                "truth_skip_debits": int(self._truth_skip_debits),
             }
 
     def record_space_timeout(self, space_name: str) -> int:
@@ -596,6 +666,8 @@ class JobQuotaMemory:
                 or self._ceiling_skips
                 or self._max_fit_jumps
                 or self._sub_gate_skips
+                or self._refusal_drift_deltas_s
+                or self._truth_skip_debits
             ):
                 out["quota_refusals"] = self._quota_refusals
                 out["refusal_wall_s"] = round(self._refusal_wall_s, 2)
@@ -606,6 +678,8 @@ class JobQuotaMemory:
                 out["observed_doors_s"] = list(self._observed_doors_s)
                 out["refused_tokens"] = len(self._refused_token_keys)
                 out["refusals_by_space"] = dict(self._refusals_by_space)
+                out["refusal_drift_deltas_s"] = list(self._refusal_drift_deltas_s)
+                out["truth_skip_debits"] = int(self._truth_skip_debits)
             return out
 
 
@@ -713,6 +787,22 @@ def _resolve_result_path(result: Any) -> Optional[str]:
     if path_attr:
         return str(path_attr)
     return None
+
+
+def _resolve_result_and_gpu_seconds(raw_result: Any) -> tuple[Optional[str], Optional[float]]:
+    """Extract `(result_path, gpu_s)` from `g_job.result()` without breaking on bare `str` or 1-tuple skew."""
+    path = _resolve_result_path(raw_result)
+    gpu_s: Optional[float] = None
+    if (
+        isinstance(raw_result, (list, tuple))
+        and len(raw_result) >= 2
+        and not isinstance(raw_result[1], bool)
+        and isinstance(raw_result[1], (int, float))
+        and math.isfinite(raw_result[1])
+        and raw_result[1] >= 0
+    ):
+        gpu_s = float(raw_result[1])
+    return path, gpu_s
 
 
 def get_available_hf_tokens() -> List[str]:
@@ -898,15 +988,18 @@ class VoxCPMEngine:
         update_space_gate: bool = True,
         session_mode: bool = False,
         session_chars: Optional[int] = None,
+        error_text: Optional[str] = None,
+        drift_out: Optional[List[float]] = None,
     ) -> Optional[dict]:
         """Learn from a refusal — exact balance (`left`), legacy space gate (`requested`),
-        and qualified session space floor, persisting through `aj_hf:pool_state` (Part 5)."""
+        and qualified session space floor, persisting through `aj_hf:pool_state` (Part 5 & Part 6)."""
+        clean_left = round(max(0.0, float(left)), 2)
         with cls._lock:
             if update_space_gate:
                 cls._space_admission_prices[str(space_name)] = float(requested)
                 cls._last_admission_price = float(requested)
             if token:
-                cls._token_balances[str(token)] = float(left)
+                cls._token_balances[str(token)] = clean_left
         try:
             from app.services import hf_pool_ledger as _hf_ledger
 
@@ -918,36 +1011,129 @@ class VoxCPMEngine:
                 update_space_gate=update_space_gate,
                 session_mode=session_mode,
                 session_chars=session_chars,
+                error_text=error_text,
+                drift_out=drift_out,
             )
         except Exception:
             return None
 
     @classmethod
     def _record_success_balance(
-        cls, space_name: str, token: Optional[str], *, debit_s: Optional[float] = None
-    ) -> None:
-        """Debit the space's gate (or explicit `debit_s`) from the token's balance in memory and `aj_hf:pool_state`."""
+        cls,
+        space_name: str,
+        token: Optional[str],
+        *,
+        debit_s: Optional[float] = None,
+        attempt_started_ts: Optional[float] = None,
+    ) -> bool:
+        """Debit the space's gate (or explicit `debit_s`) from the token's balance in memory and `aj_hf:pool_state`.
+        Returns True iff the debit was skipped by the Part 7 truth-timestamp causality guard."""
         if not token:
-            return
+            return False
+        if is_cpu_demo_space(space_name) or (debit_s is not None and float(debit_s) == 0.0):
+            return False
+        price = (
+            float(debit_s)
+            if (debit_s is not None and debit_s > 0)
+            else cls._space_admission_prices.get(str(space_name))
+        )
+        skipped_box: List[bool] = []
+        updated_st: Optional[dict] = None
+        try:
+            from app.services import hf_pool_ledger as _hf_ledger
+
+            updated_st = _hf_ledger.record_success_debit(
+                space_name,
+                token,
+                debit_s=price,
+                attempt_started_ts=attempt_started_ts,
+                skipped_out=skipped_box,
+            )
+        except Exception:
+            updated_st = None
+
+        key = str(token)
+        if skipped_box:
+            if isinstance(updated_st, dict):
+                try:
+                    from app.services import hf_pool_ledger as _hf_ledger
+
+                    rem = _hf_ledger.get_token_remaining_s(token, state=updated_st)
+                    if rem is not None:
+                        with cls._lock:
+                            cls._token_balances[key] = float(rem)
+                except Exception:
+                    pass
+            return True
+
         with cls._lock:
-            price = float(debit_s) if (debit_s is not None and debit_s > 0) else cls._space_admission_prices.get(str(space_name))
             if price is not None:
-                key = str(token)
                 known = cls._token_balances.get(key)
                 if known is None:
                     cls._token_balances[key] = float(price)
                 else:
                     cls._token_balances[key] = max(0.0, known - float(price))
+        return False
+
+    @classmethod
+    def _record_failure_balance(
+        cls,
+        space_name: str,
+        token: Optional[str],
+        debit_s: float,
+        *,
+        attempt_started_ts: Optional[float] = None,
+    ) -> bool:
+        """Method 2: debit an estimated failure GPU spend from `token` in memory and `aj_hf:pool_state`.
+        Returns True iff skipped by the Part 7 truth-timestamp causality guard."""
+        if not token or debit_s is None or float(debit_s) <= 0.0 or is_cpu_demo_space(space_name):
+            return False
+        skipped_box: List[bool] = []
+        updated_st: Optional[dict] = None
         try:
             from app.services import hf_pool_ledger as _hf_ledger
 
-            _hf_ledger.record_success_debit(
+            updated_st = _hf_ledger.record_failure_debit(
                 space_name,
                 token,
-                debit_s=price,
+                float(debit_s),
+                attempt_started_ts=attempt_started_ts,
+                skipped_out=skipped_box,
             )
         except Exception:
-            pass
+            updated_st = None
+
+        key = str(token)
+        if skipped_box:
+            if isinstance(updated_st, dict):
+                try:
+                    from app.services import hf_pool_ledger as _hf_ledger
+
+                    rem = _hf_ledger.get_token_remaining_s(token, state=updated_st)
+                    if rem is not None:
+                        with cls._lock:
+                            cls._token_balances[key] = float(rem)
+                except Exception:
+                    pass
+            return True
+
+        with cls._lock:
+            synced = False
+            if isinstance(updated_st, dict):
+                try:
+                    from app.services import hf_pool_ledger as _hf_ledger
+
+                    rem = _hf_ledger.get_token_remaining_s(token, state=updated_st)
+                    if rem is not None:
+                        cls._token_balances[key] = float(rem)
+                        synced = True
+                except Exception:
+                    synced = False
+            if not synced:
+                known = cls._token_balances.get(key)
+                if known is not None:
+                    cls._token_balances[key] = max(0.0, known - float(debit_s))
+        return False
 
     @classmethod
     def _known_token_balance(
@@ -1244,6 +1430,18 @@ class VoxCPMEngine:
         """2026-11-27 Part 6: per-Space quota refusal counts in this job."""
         mem = self.job_memory
         return dict(mem.telemetry_counters()["refusals_by_space"]) if mem is not None else {}
+
+    @property
+    def refusal_drift_deltas_s(self) -> list[float]:
+        """Round 1 Part 6: signed `existing_rem - clean_left` deltas observed on numeric refusals."""
+        mem = self.job_memory
+        return list(mem.telemetry_counters()["refusal_drift_deltas_s"]) if mem is not None else []
+
+    @property
+    def truth_skip_debits(self) -> int:
+        """Round 1 Part 7: count of post-attempt debits skipped due to mid-flight truth overwrite."""
+        mem = self.job_memory
+        return int(mem.telemetry_counters()["truth_skip_debits"]) if mem is not None else 0
 
     def _log(self, msg: str) -> None:
         logger.info(msg)
@@ -1893,12 +2091,40 @@ class VoxCPMEngine:
                     continue
 
                 attempt_start = time.time()
-                attempt_holder: dict[str, Any] = {"job": None, "result_path": None, "exc": None}
+                attempt_holder: dict[str, Any] = {
+                    "job": None,
+                    "result_path": None,
+                    "gpu_s": None,
+                    "exc": None,
+                    "t_proc_start": None,
+                    "started_ts": None,
+                    "stage": "connect",
+                    "malformed_empty": False,
+                }
                 attempt_done_evt = threading.Event()
+
+                def _observe_proc_status(job_obj: Any) -> Optional[Any]:
+                    st_obj = job_obj.status()
+                    if st_obj is not None and attempt_holder["t_proc_start"] is None:
+                        raw_code = getattr(st_obj, "code", None)
+                        if raw_code is not None:
+                            code_val = str(getattr(raw_code, "value", raw_code)).strip().upper()
+                            if code_val in ("PROCESSING", "ITERATING", "PROGRESS"):
+                                attempt_holder["t_proc_start"] = time.time()
+                    return st_obj
 
                 def _execute_pair_attempt() -> None:
                     try:
                         client = self.get_client(space_name, hf_token=active_token)
+                        attempt_holder["started_ts"] = time.time()
+                        if active_token:
+                            try:
+                                _hf_ledger.record_token_synthesis_attempt(
+                                    active_token,
+                                    now_ts=attempt_holder["started_ts"],
+                                )
+                            except Exception:
+                                pass
                         if session_mode:
                             g_job = client.submit(
                                 text_input=clean_text,
@@ -1953,6 +2179,7 @@ class VoxCPMEngine:
                             )
 
                         attempt_holder["job"] = g_job
+                        attempt_holder["stage"] = "poll"
                         while not g_job.done():
                             # Part 4 (#1) + Part C2: cancel orphaned Gradio GPU runs BEFORE raising TimeoutError.
                             if time.time() - attempt_start > attempt_cap_sec:
@@ -1967,7 +2194,7 @@ class VoxCPMEngine:
                                 )
 
                             try:
-                                st = g_job.status()
+                                st = _observe_proc_status(g_job)
                                 eta_val = getattr(st, "eta", None)
                                 pos_val = getattr(st, "queue_position", None) or getattr(st, "position", None)
                                 if eta_val is not None and float(eta_val) > 0:
@@ -1987,8 +2214,16 @@ class VoxCPMEngine:
                             remaining_attempt = attempt_cap_sec - (time.time() - attempt_start)
                             time.sleep(max(0.05, min(2.0, remaining_attempt)))
 
+                        if attempt_holder["t_proc_start"] is None:
+                            try:
+                                _observe_proc_status(g_job)
+                            except Exception:
+                                pass
+                        attempt_holder["stage"] = "result"
                         raw_result = g_job.result()
-                        attempt_holder["result_path"] = _resolve_result_path(raw_result)
+                        r_path, r_gpu_s = _resolve_result_and_gpu_seconds(raw_result)
+                        attempt_holder["result_path"] = r_path
+                        attempt_holder["gpu_s"] = r_gpu_s
                     except BaseException as inner_exc:
                         attempt_holder["exc"] = inner_exc
                     finally:
@@ -2013,6 +2248,8 @@ class VoxCPMEngine:
                     raise attempt_holder["exc"]
 
                 result_path_str = attempt_holder["result_path"]
+                reported_gpu_s = attempt_holder["gpu_s"]
+                eff_started_ts = float(attempt_holder.get("started_ts") or attempt_start)
 
                 if result_path_str and os.path.isfile(result_path_str) and os.path.getsize(result_path_str) > 1000:
                     if eff_pin_enabled:
@@ -2046,19 +2283,50 @@ class VoxCPMEngine:
                             except Exception:
                                 pass
 
-                    VoxCPMEngine._record_success_balance(
+                    if is_cpu_demo_space(space_name):
+                        eff_debit_arg: Optional[float] = 0.0
+                    elif reported_gpu_s is not None:
+                        eff_debit_arg = _hf_ledger.compute_method1_debit_s(
+                            reported_gpu_s,
+                            session_mode=session_mode,
+                            chars=len(clean_text),
+                        )
+                    elif session_mode:
+                        eff_debit_arg = session_debit_s
+                    else:
+                        eff_debit_arg = None
+
+                    was_skipped = VoxCPMEngine._record_success_balance(
                         space_name,
                         active_token,
-                        debit_s=session_debit_s if session_mode else None,
+                        debit_s=eff_debit_arg,
+                        attempt_started_ts=eff_started_ts,
                     )
+                    if was_skipped is True and self.job_memory is not None:
+                        self.job_memory.record_truth_skip_debit(1)
                     self._log(f"✅ VoxCPM 2 Success [{tok_masked}]: {out_path.name} ({out_path.stat().st_size} bytes)")
                     return out_path
                 else:
+                    attempt_holder["malformed_empty"] = True
                     raise RuntimeError(f"VoxCPM 2 returned empty result from space '{space_name}'")
 
             except Exception as e_pair:
                 last_err = e_pair
-                attempt_wall_s = max(0.0, time.time() - attempt_start)
+                now_err = time.time()
+                attempt_wall_s = max(0.0, now_err - attempt_start)
+                t_proc = attempt_holder.get("t_proc_start")
+                gpu_elapsed_s = max(0.0, now_err - float(t_proc)) if t_proc is not None else 0.0
+                eff_started_ts = float(attempt_holder.get("started_ts") or attempt_start)
+                declared_s = (
+                    _hf_ledger.session_declared_s(len(clean_text))
+                    if session_mode
+                    else _hf_ledger.legacy_declared_s(len(clean_text))
+                )
+                declared_door_s = (
+                    _hf_ledger.session_admission_gate_s(len(clean_text))
+                    if session_mode
+                    else _hf_ledger.legacy_declared_door_s(len(clean_text))
+                )
                 err_lower = str(e_pair).lower()
                 quota_kind = _quota_failure_kind(err_lower)
                 if quota_kind is not None:
@@ -2082,6 +2350,7 @@ class VoxCPMEngine:
                     if _adm is not None:
                         if self.job_memory is not None:
                             self.job_memory.record_observed_door(float(_adm[0]))
+                        drift_box: List[float] = []
                         adm_st = VoxCPMEngine._record_admission_refusal(
                             space_name,
                             active_token,
@@ -2090,7 +2359,11 @@ class VoxCPMEngine:
                             update_space_gate=(not session_mode),
                             session_mode=session_mode,
                             session_chars=len(clean_text) if session_mode else None,
+                            error_text=str(e_pair),
+                            drift_out=drift_box,
                         )
+                        if drift_box and self.job_memory is not None:
+                            self.job_memory.record_refusal_drift_delta(drift_box[0])
                         if isinstance(adm_st, dict):
                             ledger_state = adm_st
                         refused_gate = float(_adm[0])
@@ -2100,7 +2373,11 @@ class VoxCPMEngine:
                     # Part P1.2 & P1.3: record scoped `refused_gate_s` ceiling without hard-zeroing `remaining_s`.
                     if active_token:
                         try:
-                            updated_st = _hf_ledger.record_refusal_ceiling(active_token, refused_gate)
+                            updated_st = _hf_ledger.record_refusal_ceiling(
+                                active_token,
+                                refused_gate,
+                                mark_generic_taint=(_adm is None),
+                            )
                             ledger_state = (
                                 updated_st if isinstance(updated_st, dict) else _hf_ledger.load_pool_state()
                             )
@@ -2110,7 +2387,11 @@ class VoxCPMEngine:
                     if self.job_memory is not None:
                         if quota_kind == "gate":
                             self.job_memory.record_gate(space_name, active_token)
-                        self.job_memory.record_refused_gate(active_token, refused_gate)
+                        self.job_memory.record_refused_gate(
+                            active_token,
+                            refused_gate,
+                            left_s=float(_adm[1]) if _adm is not None else None,
+                        )
 
                     if quota_kind == "gate":
                         self._log(
@@ -2118,7 +2399,7 @@ class VoxCPMEngine:
                             f"(ceiling<{refused_gate:g}s for 1h); rotating..."
                         )
                     else:
-                        if refused_gate <= 65.0:
+                        if refused_gate <= 65.0 and "maximum allowed" not in err_lower:
                             if self.job_memory is not None:
                                 self.job_memory.record_dead_token(active_token)
                             if active_token:
@@ -2165,27 +2446,88 @@ class VoxCPMEngine:
                         self._token_cooldowns[active_token] = time.time() + 1800
                         self._schedule_cooldown_persist()
                         self._log(f"⚠️ Token {tok_masked} rejected on '{space_name}'; cooling down for 30m...")
-                elif _is_pair_space_timeout(e_pair):
-                    # Part C1 & C4: Space-level 10-minute circuit breaker + running timeout telemetry
-                    # (tokens are innocent and never cooled down for a hanging Space).
-                    job_to_cnt = self.job_memory.record_space_timeout(space_name) if self.job_memory is not None else 1
-                    ledger_to_cnt = job_to_cnt
-                    try:
-                        updated_st = _hf_ledger.record_space_timeout(space_name)
-                        if isinstance(updated_st, dict):
-                            ledger_state = updated_st
-                            ledger_to_cnt = int((updated_st.get("space_timeouts") or {}).get(space_name) or job_to_cnt)
-                        else:
-                            ledger_state = _hf_ledger.load_pool_state()
-                    except Exception:
-                        pass
-                    self._log(
-                        f"🛑 Space '{space_name}' timed out (job_timeouts={job_to_cnt}, "
-                        f"ledger_timeouts={ledger_to_cnt}); Space cooled down for 10m (token {tok_masked} kept active)"
-                    )
+                elif _is_pair_space_timeout(e_pair) or isinstance(e_pair, _FailoverBudgetExhaustedError):
+                    if active_token and t_proc is not None and gpu_elapsed_s >= 5.0:
+                        fail_debit = round(min(declared_s, gpu_elapsed_s), 2)
+                        skipped_f = VoxCPMEngine._record_failure_balance(
+                            space_name,
+                            active_token,
+                            fail_debit,
+                            attempt_started_ts=eff_started_ts,
+                        )
+                        if skipped_f is True and self.job_memory is not None:
+                            self.job_memory.record_truth_skip_debit(1)
+                        ledger_state = _hf_ledger.load_pool_state()
+                    if _is_pair_space_timeout(e_pair):
+                        # Part C1 & C4: Space-level 10-minute circuit breaker + running timeout telemetry
+                        # (tokens are never cooled down for a hanging Space).
+                        job_to_cnt = self.job_memory.record_space_timeout(space_name) if self.job_memory is not None else 1
+                        ledger_to_cnt = job_to_cnt
+                        try:
+                            updated_st = _hf_ledger.record_space_timeout(space_name)
+                            if isinstance(updated_st, dict):
+                                ledger_state = updated_st
+                                ledger_to_cnt = int((updated_st.get("space_timeouts") or {}).get(space_name) or job_to_cnt)
+                            else:
+                                ledger_state = _hf_ledger.load_pool_state()
+                        except Exception:
+                            pass
+                        self._log(
+                            f"🛑 Space '{space_name}' timed out (job_timeouts={job_to_cnt}, "
+                            f"ledger_timeouts={ledger_to_cnt}); Space cooled down for 10m (token {tok_masked} kept active)"
+                        )
+                elif attempt_holder.get("malformed_empty"):
+                    if is_pinned_walk and space_name == cur_pin:
+                        pinned_non_quota_failures += 1
+                    rep_gpu = attempt_holder.get("gpu_s")
+                    if rep_gpu is not None:
+                        fail_debit = _hf_ledger.compute_method1_debit_s(
+                            float(rep_gpu),
+                            session_mode=session_mode,
+                            chars=len(clean_text),
+                        )
+                    elif t_proc is not None:
+                        fail_debit = round(min(declared_s, max(2.0, gpu_elapsed_s)), 2)
+                    else:
+                        fail_debit = 0.0
+                    if active_token and fail_debit > 0.0:
+                        skipped_f = VoxCPMEngine._record_failure_balance(
+                            space_name,
+                            active_token,
+                            fail_debit,
+                            attempt_started_ts=eff_started_ts,
+                        )
+                        if skipped_f is True and self.job_memory is not None:
+                            self.job_memory.record_truth_skip_debit(1)
+                        ledger_state = _hf_ledger.load_pool_state()
+                elif _is_pair_transport_error(e_pair, stage=attempt_holder.get("stage")):
+                    if is_pinned_walk and space_name == cur_pin:
+                        pinned_non_quota_failures += 1
+                    if active_token and t_proc is not None and gpu_elapsed_s >= 5.0:
+                        fail_debit = round(min(declared_s, gpu_elapsed_s), 2)
+                        skipped_f = VoxCPMEngine._record_failure_balance(
+                            space_name,
+                            active_token,
+                            fail_debit,
+                            attempt_started_ts=eff_started_ts,
+                        )
+                        if skipped_f is True and self.job_memory is not None:
+                            self.job_memory.record_truth_skip_debit(1)
+                        ledger_state = _hf_ledger.load_pool_state()
                 else:
                     if is_pinned_walk and space_name == cur_pin:
                         pinned_non_quota_failures += 1
+                    if active_token and not (attempt_wall_s < 3.0 and gpu_elapsed_s < 3.0) and t_proc is not None:
+                        fail_debit = round(min(declared_door_s, max(3.0, gpu_elapsed_s)), 2)
+                        skipped_f = VoxCPMEngine._record_failure_balance(
+                            space_name,
+                            active_token,
+                            fail_debit,
+                            attempt_started_ts=eff_started_ts,
+                        )
+                        if skipped_f is True and self.job_memory is not None:
+                            self.job_memory.record_truth_skip_debit(1)
+                        ledger_state = _hf_ledger.load_pool_state()
                 self._log(f"⚠️ VoxCPM 2 Pair ({space_name}, {tok_masked}) failed: {_format_pair_error(e_pair)}")
                 time.sleep(0.5)
 
@@ -2247,4 +2589,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TOKEN_BALANCE_BUCKET_SECONDS", "FREE_WALK_MAX_QUOTA_REFUSALS", "FREE_WALK_MAX_REFUSAL_WALL_S", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TOKEN_BALANCE_BUCKET_SECONDS", "FREE_WALK_MAX_QUOTA_REFUSALS", "FREE_WALK_MAX_REFUSAL_WALL_S", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError", "_resolve_result_path", "_resolve_result_and_gpu_seconds"]

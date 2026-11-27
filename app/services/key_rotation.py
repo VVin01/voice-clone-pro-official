@@ -322,6 +322,79 @@ def botsetting_sync_delete(key: str) -> bool:
         return False
 
 
+_ORIG_BOTSETTING_SYNC_READ = botsetting_sync_read
+_ORIG_BOTSETTING_SYNC_WRITE = botsetting_sync_write
+
+
+def botsetting_sync_mutate(
+    key: str,
+    fn: Callable[[str | None], str | None],
+    *,
+    read_fn: Callable[[str], str | None] | None = None,
+    write_fn: Callable[[str, str], bool] | None = None,
+) -> bool:
+    """Atomically read-modify-write one `bot_settings` row under `SELECT ... FOR UPDATE`.
+
+    Falls back to the in-process lock when the sync engine is absent or when unit tests
+    have monkeypatched `botsetting_sync_read` / `botsetting_sync_write`.
+    """
+    eff_read = read_fn or botsetting_sync_read
+    eff_write = write_fn or botsetting_sync_write
+    if (
+        eff_read is not _ORIG_BOTSETTING_SYNC_READ
+        or eff_write is not _ORIG_BOTSETTING_SYNC_WRITE
+    ):
+        with _SYNC_STORE_LOCK:
+            cur = eff_read(str(key))
+            nxt = fn(cur)
+            if nxt is None:
+                return True
+            return bool(eff_write(str(key), str(nxt)))
+
+    engine = _sync_engine()
+    if engine is None:
+        with _SYNC_STORE_LOCK:
+            fn(None)
+            return False
+
+    try:
+        from datetime import datetime, timezone
+
+        from sqlalchemy import text
+
+        dialect_name = str(getattr(getattr(engine, "dialect", None), "name", "") or "").lower()
+        select_sql = (
+            "SELECT value FROM bot_settings WHERE key = :k"
+            if dialect_name == "sqlite"
+            else "SELECT value FROM bot_settings WHERE key = :k FOR UPDATE"
+        )
+        with _SYNC_STORE_LOCK:
+            with engine.begin() as conn:
+                row = conn.execute(text(select_sql), {"k": str(key)}).first()
+                cur_val = str(row[0]) if (row is not None and row[0] is not None) else None
+                new_val = fn(cur_val)
+                if new_val is not None:
+                    now = datetime.now(timezone.utc)
+                    conn.execute(
+                        text(
+                            "INSERT INTO bot_settings (key, value, updated_at) "
+                            "VALUES (:k, :v, :t) "
+                            "ON CONFLICT (key) DO UPDATE SET "
+                            "value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
+                        ),
+                        {"k": str(key), "v": str(new_val), "t": now},
+                    )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "key_rotation: sync store mutate failed (key=%s, %s): %s",
+            key, type(exc).__name__, _redact_url_creds(exc),
+        )
+        with _SYNC_STORE_LOCK:
+            fn(None)
+        return False
+
+
 def key_id(key: str) -> str:
     """Stable non-secret identifier for a key: 12 hex chars of its SHA-256."""
     return hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:12]
@@ -1189,6 +1262,7 @@ __all__ = [
     "KeyHealth",
     "ask_groq_text_sync",
     "botsetting_sync_delete",
+    "botsetting_sync_mutate",
     "botsetting_sync_read",
     "botsetting_sync_write",
     "collect_gemini_key_pool",

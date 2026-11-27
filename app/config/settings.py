@@ -366,6 +366,8 @@ class Settings(BaseSettings):
     chunk_balancing_v2_enabled: bool = Field(default=True, alias="CHUNK_BALANCING_V2_ENABLED")
     # Session-slice clone synthesis flag (default OFF; True uses ~850-char /generate_session slices)
     clone_session_slices_enabled: bool = Field(default=False, alias="CLONE_SESSION_SLICES_ENABLED")
+    # Daily HF ZeroGPU ledger calibration sweep kill switch (default OFF; operator enables after supervised --once)
+    hf_daily_calibration_enabled: bool = Field(default=False, alias="HF_DAILY_CALIBRATION_ENABLED")
 
     # Versioned AI Prompt Registry profile ("v2" upgraded default, "v1" instant rollback)
     ai_prompt_profile: str = Field(default="v2", alias="AI_PROMPT_PROFILE")

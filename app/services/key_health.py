@@ -62,6 +62,7 @@ import copy
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -72,6 +73,8 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 900.0  # ~15 min (BN-1)
+QUOTA_SCOPE_UNSUPPORTED_ERROR = "quota_scope_unsupported"
+QUOTA_SCOPE_UNSUPPORTED_TTL_SECONDS = 86400.0  # 24 hours (Round 2 Part 1)
 _PROBE_TIMEOUT_S = 10.0
 _OVERALL_BUDGET_S = 120.0
 _MAX_WORKERS = 8
@@ -127,6 +130,65 @@ def _zero_gpu_quota(token: str) -> dict:
     }
 
 
+def _is_quota_401_403_error(exc: BaseException) -> bool:
+    """True when `get_zero_gpu_quota` failed with a 401/403-class auth/scope rejection."""
+    resp = getattr(exc, "response", None)
+    status_code = getattr(resp, "status_code", None) or getattr(exc, "code", None)
+    if status_code in (401, 403):
+        return True
+    msg = str(exc or "").lower()
+    if any(m in msg for m in ("forbidden", "unauthorized", "insufficient scope", "quota_scope_unsupported")):
+        return True
+    return bool(re.search(r"\b(?:401|403)\b", msg))
+
+
+def _token_digest_for_breaker(token: str) -> str:
+    import hashlib
+
+    raw = str(token or "").strip()
+    if len(raw) == 64 and all(c in "0123456789abcdef" for c in raw):
+        return raw
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def is_quota_scope_unsupported(token: str | None, *, now_ts: float | None = None) -> bool:
+    """Round 2 Part 1: True when `token`'s digest is marked `quota_scope_unsupported` within its 24 h TTL."""
+    if not token or not str(token).strip():
+        return False
+    now = time.time() if now_ts is None else float(now_ts)
+    d_key = _token_digest_for_breaker(str(token))
+    with _state_lock:
+        if not _mem_quota_unsupported_loaded:
+            _hydrate_quota_unsupported_locked(now)
+        exp = _mem_quota_unsupported.get(d_key)
+        if exp is None:
+            return False
+        if exp <= now:
+            _mem_quota_unsupported.pop(d_key, None)
+            return False
+        return True
+
+
+def mark_quota_scope_unsupported(
+    token: str | None,
+    *,
+    ttl_seconds: float = QUOTA_SCOPE_UNSUPPORTED_TTL_SECONDS,
+    now_ts: float | None = None,
+) -> float | None:
+    """Mark `token`'s SHA-256 digest `quota_scope_unsupported` for 24 h in memory + `bn_key_health_v1`."""
+    if not token or not str(token).strip():
+        return None
+    now = time.time() if now_ts is None else float(now_ts)
+    d_key = _token_digest_for_breaker(str(token))
+    expires_at = round(now + max(0.0, float(ttl_seconds)), 3)
+    with _state_lock:
+        if not _mem_quota_unsupported_loaded:
+            _hydrate_quota_unsupported_locked(now)
+        _mem_quota_unsupported[d_key] = expires_at
+        _persist_quota_unsupported_locked(now)
+    return expires_at
+
+
 def _probe_hf_account(index: int, token: str) -> dict:
     status, body = _http_json(
         "https://huggingface.co/api/whoami-v2",
@@ -148,6 +210,9 @@ def _probe_hf_account(index: int, token: str) -> dict:
         "quota_error": None,
         "refill": None,
     }
+    if is_quota_scope_unsupported(token):
+        row["quota_error"] = QUOTA_SCOPE_UNSUPPORTED_ERROR
+        return row
     try:
         quota = _zero_gpu_quota(token)
         row["remaining_s"] = (
@@ -157,6 +222,8 @@ def _probe_hf_account(index: int, token: str) -> dict:
         row["quota_resets_at"] = quota["resets_at"]
     except Exception as e:  # type name only — never the message (no-leak)
         row["quota_error"] = type(e).__name__
+        if _is_quota_401_403_error(e):
+            mark_quota_scope_unsupported(token)
     return row
 
 
@@ -353,6 +420,7 @@ def _overlay_space_ledger_telemetry(payload: dict, now_ts: float | None = None) 
                 for r in accounts
                 if isinstance(r, dict)
                 and r.get("status") == "ok"
+                and r.get("quota_error") != QUOTA_SCOPE_UNSUPPORTED_ERROR
                 and (r.get("quota_error") is not None or r.get("remaining_s") is None)
             )
             hf_prov["ledger_effective_s"] = round(max(0.0, ledger_eff_total - in_flight_s), 1)
@@ -364,6 +432,14 @@ def _overlay_space_ledger_telemetry(payload: dict, now_ts: float | None = None) 
                 else probe_err_fallback
             )
             hf_prov["last_drift_s"] = round(float(drift_stats.get("positive_drift_s") or 0.0), 1)
+            try:
+                from app.services import hf_calibration as _hf_cal
+
+                cal_summary = _hf_cal.get_latest_calibration_summary()
+                if cal_summary is not None:
+                    hf_prov["calibration"] = cal_summary
+            except Exception:
+                pass
     except Exception:
         logger.debug("key_health: ledger telemetry overlay skipped", exc_info=True)
     return payload
@@ -528,10 +604,77 @@ _check_lock = threading.Lock()
 _mem_payload: dict | None = None
 _mem_ts: float = 0.0
 _mem_history: list = []
+_mem_quota_unsupported: dict[str, float] = {}
+_mem_quota_unsupported_loaded: bool = False
+
+
+def _clean_quota_unsupported_map(raw: object, now_ts: float) -> dict[str, float]:
+    out: dict[str, float] = {}
+    if not isinstance(raw, dict):
+        return out
+    for k, v in raw.items():
+        try:
+            exp = float(v)
+        except (TypeError, ValueError):
+            continue
+        if exp > now_ts:
+            out[str(k)] = round(exp, 3)
+    return out
+
+
+def _hydrate_quota_unsupported_locked(now_ts: float) -> None:
+    global _mem_quota_unsupported_loaded
+    _mem_quota_unsupported_loaded = True
+    try:
+        from app.services.key_rotation import botsetting_sync_read
+
+        raw = botsetting_sync_read(_STORE_KEY)
+        if not raw:
+            return
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            loaded = _clean_quota_unsupported_map(data.get("quota_scope_unsupported"), now_ts)
+            for d_key, exp in loaded.items():
+                prev = _mem_quota_unsupported.get(d_key, 0.0)
+                if exp > prev:
+                    _mem_quota_unsupported[d_key] = exp
+    except Exception:
+        pass
+
+
+def _persist_quota_unsupported_locked(now_ts: float) -> None:
+    try:
+        from app.services import key_rotation as _kr
+
+        active_map = _clean_quota_unsupported_map(_mem_quota_unsupported, now_ts)
+        _mem_quota_unsupported.clear()
+        _mem_quota_unsupported.update(active_map)
+
+        raw = _kr.botsetting_sync_read(_STORE_KEY)
+        doc: dict = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    doc = parsed
+            except Exception:
+                doc = {}
+        if not doc:
+            doc = {"v": 1}
+        existing_map = _clean_quota_unsupported_map(doc.get("quota_scope_unsupported"), now_ts)
+        for k, exp in active_map.items():
+            if exp > existing_map.get(k, 0.0):
+                existing_map[k] = exp
+        doc["quota_scope_unsupported"] = existing_map
+        _mem_quota_unsupported.update(existing_map)
+        _kr.botsetting_sync_write(_STORE_KEY, json.dumps(doc))
+    except Exception:
+        pass
 
 
 def _load_persisted():
     """(payload, checked_ts, history) from the KV store, or None."""
+    global _mem_quota_unsupported_loaded
     try:
         from app.services.key_rotation import botsetting_sync_read
 
@@ -539,6 +682,12 @@ def _load_persisted():
         if not raw:
             return None
         data = json.loads(raw)
+        if isinstance(data, dict):
+            loaded_qu = _clean_quota_unsupported_map(data.get("quota_scope_unsupported"), time.time())
+            for k, exp in loaded_qu.items():
+                if exp > _mem_quota_unsupported.get(k, 0.0):
+                    _mem_quota_unsupported[k] = exp
+            _mem_quota_unsupported_loaded = True
         payload = data.get("payload")
         if not isinstance(payload, dict) or "providers" not in payload:
             return None
@@ -551,13 +700,53 @@ def _load_persisted():
 
 def _persist(payload: dict, checked_ts: float, history: list) -> None:
     try:
-        from app.services.key_rotation import botsetting_sync_write
+        from app.services import key_rotation as _kr
 
-        botsetting_sync_write(_STORE_KEY, json.dumps({
-            "v": 1, "checked_ts": checked_ts, "payload": payload, "history": history,
-        }))
+        now = time.time()
+        with _state_lock:
+            qu_map = _clean_quota_unsupported_map(_mem_quota_unsupported, now)
+        raw_prev = _kr.botsetting_sync_read(_STORE_KEY)
+        if raw_prev:
+            try:
+                prev_doc = json.loads(raw_prev)
+                if isinstance(prev_doc, dict):
+                    for k, exp in _clean_quota_unsupported_map(prev_doc.get("quota_scope_unsupported"), now).items():
+                        if exp > qu_map.get(k, 0.0):
+                            qu_map[k] = exp
+            except Exception:
+                pass
+        doc: dict = {
+            "v": 1,
+            "checked_ts": checked_ts,
+            "payload": payload,
+            "history": history,
+        }
+        if qu_map:
+            doc["quota_scope_unsupported"] = qu_map
+        _kr.botsetting_sync_write(_STORE_KEY, json.dumps(doc))
     except Exception:
         pass  # persistence is best-effort (the AJ pattern)
+
+
+def get_cached_hf_account_names() -> dict[int, str]:
+    """Return `{slot_index: account_name}` from cached/persisted Key Health without probing."""
+    with _state_lock:
+        payload = _mem_payload
+    if payload is None:
+        persisted = _load_persisted()
+        if persisted is not None:
+            payload = persisted[0]
+    if not isinstance(payload, dict):
+        return {}
+    accounts = ((payload.get("providers") or {}).get("hf") or {}).get("accounts") or []
+    out: dict[int, str] = {}
+    for row in accounts:
+        if isinstance(row, dict) and row.get("account"):
+            try:
+                out[int(row["index"])] = str(row["account"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
 
 
 def _snapshot_of(payload: dict, ts: float) -> dict:
@@ -616,15 +805,23 @@ def get_key_health(force_refresh: bool = False) -> dict:
         _check_lock.release()
 
 
-def _reset_cache_for_tests() -> None:
-    global _mem_payload, _mem_ts, _mem_history
+def _reset_cache_for_tests(*, clear_quota_breaker: bool = True) -> None:
+    global _mem_payload, _mem_ts, _mem_history, _mem_quota_unsupported_loaded
     with _state_lock:
         _mem_payload, _mem_ts, _mem_history = None, 0.0, []
+        _mem_quota_unsupported_loaded = False
+        if clear_quota_breaker:
+            _mem_quota_unsupported.clear()
 
 
 __all__ = [
     "CACHE_TTL_SECONDS",
+    "QUOTA_SCOPE_UNSUPPORTED_ERROR",
+    "QUOTA_SCOPE_UNSUPPORTED_TTL_SECONDS",
     "compute_refill_estimate",
+    "get_cached_hf_account_names",
     "get_key_health",
+    "is_quota_scope_unsupported",
+    "mark_quota_scope_unsupported",
     "run_key_health_check",
 ]

@@ -1060,7 +1060,8 @@ def _synthesize_voxcpm_voice_job(
                     "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
                     "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
                     "space_timeouts=%s quota_refusals=%d refusal_wall_s=%.2f ceiling_skips=%d max_fit_jumps=%d "
-                    "sub_gate_skips=%d adm_gates_s=%s observed_doors_s=%s refused_tokens=%d refusals_by_space=%s",
+                    "sub_gate_skips=%d adm_gates_s=%s observed_doors_s=%s refused_tokens=%d refusals_by_space=%s "
+                    "refusal_drift_deltas_s=%s truth_skip_debits=%d",
                     job_id,
                     len(assembled_parts),
                     0,
@@ -1089,6 +1090,8 @@ def _synthesize_voxcpm_voice_job(
                     list(getattr(engine, "observed_doors_s", None) or []),
                     int(getattr(engine, "refused_tokens", 0) or 0),
                     dict(getattr(engine, "refusals_by_space", None) or {}),
+                    list(getattr(engine, "refusal_drift_deltas_s", None) or []),
+                    int(getattr(engine, "truth_skip_debits", 0) or 0),
                 )
             else:
                 # Part 5: ANY slice fell back -> run prosody pass over assembled audio as legacy path does today.
@@ -1142,7 +1145,8 @@ def _synthesize_voxcpm_voice_job(
                     "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
                     "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
                     "space_timeouts=%s quota_refusals=%d refusal_wall_s=%.2f ceiling_skips=%d max_fit_jumps=%d "
-                    "sub_gate_skips=%d adm_gates_s=%s observed_doors_s=%s refused_tokens=%d refusals_by_space=%s",
+                    "sub_gate_skips=%d adm_gates_s=%s observed_doors_s=%s refused_tokens=%d refusals_by_space=%s "
+                    "refusal_drift_deltas_s=%s truth_skip_debits=%d",
                     job_id,
                     len(assembled_parts),
                     0,
@@ -1171,6 +1175,8 @@ def _synthesize_voxcpm_voice_job(
                     list(getattr(engine, "observed_doors_s", None) or []),
                     int(getattr(engine, "refused_tokens", 0) or 0),
                     dict(getattr(engine, "refusals_by_space", None) or {}),
+                    list(getattr(engine, "refusal_drift_deltas_s", None) or []),
+                    int(getattr(engine, "truth_skip_debits", 0) or 0),
                 )
         finally:
             stitched_wav_sess.unlink(missing_ok=True)
@@ -1528,7 +1534,8 @@ def _synthesize_voxcpm_voice_job(
             "f0_hz=%s syl_rate=%s boundary_steps=%s space_family_switched=%s "
             "session_mode=%s session_slices=%d session_fallback_used=%s pinned_space=%s "
             "space_timeouts=%s quota_refusals=%d refusal_wall_s=%.2f ceiling_skips=%d max_fit_jumps=%d "
-            "sub_gate_skips=%d adm_gates_s=%s observed_doors_s=%s refused_tokens=%d refusals_by_space=%s",
+            "sub_gate_skips=%d adm_gates_s=%s observed_doors_s=%s refused_tokens=%d refusals_by_space=%s "
+            "refusal_drift_deltas_s=%s truth_skip_debits=%d",
             job_id,
             len(chunks),
             job_prosody_retries,
@@ -1557,6 +1564,8 @@ def _synthesize_voxcpm_voice_job(
             list(getattr(engine, "observed_doors_s", None) or []),
             int(getattr(engine, "refused_tokens", 0) or 0),
             dict(getattr(engine, "refusals_by_space", None) or {}),
+            list(getattr(engine, "refusal_drift_deltas_s", None) or []),
+            int(getattr(engine, "truth_skip_debits", 0) or 0),
         )
     finally:
         stitched_wav.unlink(missing_ok=True)

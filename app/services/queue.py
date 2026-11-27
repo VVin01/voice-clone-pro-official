@@ -516,6 +516,20 @@ async def count_active_voxcpm_jobs(session: AsyncSession) -> int:
     return sum(1 for row in running_rows if is_job_voxcpm_bound(row))
 
 
+async def count_queued_voxcpm_jobs(session: AsyncSession) -> int:
+    """Count currently `QUEUED` VoxCPM jobs across standalone clone and recap."""
+    from sqlalchemy.orm import defer
+
+    queued_rows = (
+        await session.execute(
+            select(Job)
+            .options(defer(Job.input_text), defer(Job.final_script))
+            .where(Job.status == JobStatus.QUEUED.value)
+        )
+    ).scalars().all()
+    return sum(1 for row in queued_rows if is_job_voxcpm_bound(row))
+
+
 def _estimate_job_voxcpm_budget(job: Job) -> tuple[int, float, float]:
     """Return `(units, needed_gpu_s, est_audio_seconds)` for queue admission & sorting."""
     vc_state = _vc.parse_choice_state(getattr(job, "voice_choice_state", None))

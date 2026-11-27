@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # anywhere once this process has outlived the deploy-overlap window,
 # and a row this process claimed itself always has a later started_at.
 _SERVER_BOOT_AT = None
+_SHUTTING_DOWN = False
 
 
 # Batch AB: how many times the orphan sweep may rescue the same job
@@ -406,10 +407,17 @@ async def _dispatch_oldest_queued_recap() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _SERVER_BOOT_AT
+    global _SERVER_BOOT_AT, _SHUTTING_DOWN
     from app.models.schema import utc_now as _utc_now
 
+    _SHUTTING_DOWN = False
     _SERVER_BOOT_AT = _utc_now()
+    try:
+        from app.services.hf_calibration import record_web_boot_timestamp
+
+        record_web_boot_timestamp()
+    except Exception:
+        pass
     # Initialize authentic Myanmar fonts for recap engine subtitle rendering
     try:
         from app.services.recap_engine.core import ensure_system_myanmar_fonts
@@ -730,10 +738,34 @@ async def lifespan(app: FastAPI):
             except Exception:
                 _log.debug("Periodic HF pool reconciliation skipped", exc_info=True)
 
+    # Round 2 Part 4: once-daily quiet-hour HF calibration sweep (04:15–06:00 Asia/Yangon,
+    # primary instance only, gated by `hf_daily_calibration_enabled` and active/queued/boot guards).
+    async def _hf_calibration_scheduler():
+        import logging
+
+        from app.config import settings as _cal_settings
+        from app.services import hf_calibration as _hf_cal
+
+        _log = logging.getLogger("HfCalibrationScheduler")
+        if not getattr(_cal_settings, "instance_primary", True):
+            return
+        db_url = str(getattr(_cal_settings, "database_url", "") or "").lower()
+        if not db_url or "sqlite" in db_url:
+            return
+        while not _SHUTTING_DOWN:
+            await asyncio.sleep(60)
+            if _SHUTTING_DOWN:
+                break
+            try:
+                await _hf_cal.maybe_run_scheduled_calibration_sweep()
+            except Exception:
+                _log.warning("HF daily calibration scheduler check failed", exc_info=True)
+
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     recap_worker_task = asyncio.create_task(_recap_queue_worker())
     voice_choice_task = asyncio.create_task(_voice_choice_resumer())
     hf_reconciler_task = asyncio.create_task(_hf_pool_reconciler())
+    hf_calibration_task = asyncio.create_task(_hf_calibration_scheduler())
 
     # Telegram webhook registration when in webhook mode and bot attached
     try:
@@ -745,34 +777,39 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    _SHUTTING_DOWN = True
     try:
-        from app.webapp.telegram_webhook import cancel_webhook_registration
-        cancel_webhook_registration()
-    except Exception:
-        pass
+        try:
+            from app.webapp.telegram_webhook import cancel_webhook_registration
+            cancel_webhook_registration()
+        except Exception:
+            pass
 
-    # Webhook mode acks updates with 200 and processes them in
-    # background tasks; give in-flight updates a bounded chance to
-    # finish before the loop tears down, or an update accepted just
-    # before a deploy/restart would be silently lost even though
-    # Telegram already recorded it as delivered (hunt #6). The helper
-    # existed but was never wired into shutdown.
-    try:
-        from app.webapp.telegram_webhook import drain_background_tasks
-        await drain_background_tasks()
-    except Exception:
-        pass
+        # Webhook mode acks updates with 200 and processes them in
+        # background tasks; give in-flight updates a bounded chance to
+        # finish before the loop tears down, or an update accepted just
+        # before a deploy/restart would be silently lost even though
+        # Telegram already recorded it as delivered (hunt #6). The helper
+        # existed but was never wired into shutdown.
+        try:
+            from app.webapp.telegram_webhook import drain_background_tasks
+            await drain_background_tasks()
+        except Exception:
+            pass
 
-    cleanup_task.cancel()
-    recap_worker_task.cancel()
-    voice_choice_task.cancel()
-    hf_reconciler_task.cancel()
+        cleanup_task.cancel()
+        recap_worker_task.cancel()
+        voice_choice_task.cancel()
+        hf_reconciler_task.cancel()
+        hf_calibration_task.cancel()
 
-    try:
-        from app.services.key_rotation import flush_all_persistence
-        flush_all_persistence()
-    except Exception:
-        pass
+        try:
+            from app.services.key_rotation import flush_all_persistence
+            flush_all_persistence()
+        except Exception:
+            pass
+    finally:
+        _SHUTTING_DOWN = False
 
 
 webapp_app = FastAPI(

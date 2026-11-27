@@ -360,6 +360,10 @@ function renderAdminKeyHealth() {
         if (p.hf.last_drift_s > 0) {
             sub += ` · ${t("adm_keys_drift")}: ${Math.round(p.hf.last_drift_s).toLocaleString()} ${t("adm_keys_unit_s")}`;
         }
+        if (p.hf.calibration && p.hf.calibration.totals) {
+            const ct = p.hf.calibration.totals;
+            sub += ` · ${t("adm_keys_calibrated")}: ${ct.probed_count || 0}/${ct.uncertain_count || 0} (+${Math.round(ct.negative_drift_recovered_s || 0)}/-${Math.round(ct.positive_drift_corrected_s || 0)} ${t("adm_keys_unit_s")})`;
+        }
         rows.push(admKeyProviderRow("adm_keys_hf", pills, sub));
     }
     const keyRow = (prov, nameKey) => {
