@@ -4506,6 +4506,19 @@ function switchVoxCPMSubMode(mode) {
     const selectedRow = document.getElementById("voice-selected-row");
 
     if (mode === "curated") {
+        if (state.selectedReferenceFile || state.savedCustomVoiceActiveId) {
+            state.selectedReferenceFile = null;
+            state.savedCustomVoiceActiveId = "";
+            const refFileInput = document.getElementById("ref-audio-input");
+            const refLabel = document.getElementById("ref-audio-label");
+            const btnClearRef = document.getElementById("btn-clear-ref-audio");
+            const fileUploadBtn = document.querySelector(".btn-file-upload");
+            if (refFileInput) refFileInput.value = "";
+            if (refLabel) refLabel.innerText = t("ref_file_btn");
+            if (btnClearRef) btnClearRef.classList.add("hidden");
+            if (fileUploadBtn) fileUploadBtn.classList.remove("has-file");
+            if (typeof setCustomCloneStep === "function") setCustomCloneStep(1, null);
+        }
         if (btnCurated) btnCurated.classList.add("active");
         if (btnCustom) btnCustom.classList.remove("active");
         if (curatedCard) curatedCard.classList.remove("hidden");
@@ -5572,7 +5585,7 @@ async function handleVoiceGenerate() {
             : null;
         const targetModelSlug = "voxcpm-cloud-ai";
 
-        if (state.selectedReferenceFile) {
+        if (state.voxcpmSubMode === "custom" && state.selectedReferenceFile) {
             setCustomCloneStep(3);
             const formData = new FormData();
             formData.append("text", text);
@@ -5580,7 +5593,6 @@ async function handleVoiceGenerate() {
             formData.append("speed", state.speed);
             formData.append("gender_preset", "m2m");
             formData.append("engine", "voxcpm"); // VoxCPM2 only — backend default
-            if (presetVoice) formData.append("preset_voice", presetVoice);
             formData.append("reference_audio", state.selectedReferenceFile);
 
             res = await fetchWithTimeout("/api/voices/generate-with-audio", {

@@ -10,6 +10,7 @@ import re
 import shutil
 import time
 from typing import Any
+import wave
 from aiogram import Bot
 from aiogram.types import FSInputFile
 from sqlalchemy import select, update
@@ -86,6 +87,34 @@ def _implausible_audio_reason(text: str, duration_seconds: int, speed_preset) ->
             f"တိုလွန်းနေပါသည် (စာလုံး {chars} လုံး အတွက် {duration_seconds} စက္ကန့်သာ ရှိပါသည်)။ "
             "ခဏစောင့်ပြီး ပြန်စမ်းကြည့်ပါ ခင်ဗျာ။"
         )
+    return None
+
+
+DURATION_BLOAT_MIN_UNIT_CHARS = 80
+DURATION_BLOAT_MIN_CHARS_PER_SEC = 4.5
+
+
+def _probe_wav_duration_float(wav_path: Path) -> float:
+    """Zero-API-cost local WAV duration probe (float seconds) for unit bloat guard."""
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate > 0 and frames > 0:
+                return frames / float(rate)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _unit_duration_bloat_rate(text: str, duration_seconds: float) -> float | None:
+    """Return rendered chars/s when a >=80-char synthesis unit renders slower than 4.5 chars/s, else None."""
+    chars = len((text or "").strip())
+    if chars < DURATION_BLOAT_MIN_UNIT_CHARS or not duration_seconds or duration_seconds <= 0:
+        return None
+    rate = chars / float(duration_seconds)
+    if rate < DURATION_BLOAT_MIN_CHARS_PER_SEC:
+        return round(rate, 3)
     return None
 
 
@@ -662,9 +691,74 @@ def _synthesize_voxcpm_voice_job(
                 time.sleep(backoff_s)
             return engine.synthesize(**call_kw)
 
+    def _maybe_retry_duration_bloated_unit(
+        unit_label: str,
+        unit_text: str,
+        unit_wav: Path,
+        unit_kw: dict[str, Any],
+    ) -> None:
+        """Part 5 (B3): >=80-char unit rendering slower than 4.5 chars/s logs a warning
+        and retries once (zero API cost; telemetry only beyond that)."""
+        chars_n = len((unit_text or "").strip())
+        if chars_n < DURATION_BLOAT_MIN_UNIT_CHARS or not unit_wav.is_file():
+            return
+        dur_s = _probe_wav_duration_float(unit_wav)
+        bloat_rate = _unit_duration_bloat_rate(unit_text, dur_s)
+        if bloat_rate is None:
+            return
+        logger.warning(
+            "VoxCPM duration bloat detected on %s for job %s "
+            "(chars=%d, duration=%.2fs, rate=%.2f chars/s < %.1f); retrying unit once",
+            unit_label,
+            job_id,
+            chars_n,
+            dur_s,
+            bloat_rate,
+            DURATION_BLOAT_MIN_CHARS_PER_SEC,
+        )
+        backup_wav = unit_wav.parent / f"{unit_wav.name}.pre_bloat_retry.bak"
+        try:
+            shutil.copy2(unit_wav, backup_wav)
+        except Exception:
+            backup_wav = None
+        try:
+            engine.synthesize(**unit_kw)
+        except Exception as exc_bloat:
+            if backup_wav is not None and backup_wav.is_file():
+                try:
+                    shutil.copy2(backup_wav, unit_wav)
+                except Exception:
+                    pass
+            logger.warning(
+                "VoxCPM duration-bloat retry failed on %s for job %s (%s); keeping existing output",
+                unit_label,
+                job_id,
+                exc_bloat,
+            )
+            return
+        finally:
+            if backup_wav is not None:
+                backup_wav.unlink(missing_ok=True)
+
+        if unit_wav.is_file():
+            dur_after = _probe_wav_duration_float(unit_wav)
+            rate_after = _unit_duration_bloat_rate(unit_text, dur_after)
+            if rate_after is not None:
+                logger.warning(
+                    "VoxCPM duration bloat persisted after 1 retry on %s for job %s "
+                    "(chars=%d, duration=%.2fs, rate=%.2f chars/s < %.1f); keeping output (telemetry only)",
+                    unit_label,
+                    job_id,
+                    chars_n,
+                    dur_after,
+                    rate_after,
+                    DURATION_BLOAT_MIN_CHARS_PER_SEC,
+                )
+
     norm_gender = str(gender_preset or "").strip().lower()
     is_gender_flip = norm_gender in ("m2f", "f2m")
     is_custom_clone = bool(reference_wav is not None and not preset_voice)
+    _ref_only_global = _vx_mod.is_voxcpm_reference_only_mode_enabled()
     _engine_pin_eligible = (
         getattr(engine, "token_bind_index", None) is None
         and bool(getattr(engine, "pin_space_enabled", True))
@@ -692,14 +786,21 @@ def _synthesize_voxcpm_voice_job(
     active_ref_wav = Path(reference_wav) if reference_wav is not None else None
     active_ref_secs = float(reference_seconds or 0.0)
     ref_prosody: _cp.ProsodyStats | None = None
+    if is_custom_clone or _ref_only_global:
+        reference_transcript = ""
 
     ckpt_ref_file = (checkpoint_dir / "active_ref.wav") if checkpoint_dir is not None else None
     if ckpt_ref_file is not None and ckpt_ref_file.is_file() and ckpt_ref_file.stat().st_size > 0:
         active_ref_wav = ckpt_ref_file
         active_ref_secs = float(manifest.get("active_ref_secs") or active_ref_secs or 0.0)
-        if not reference_transcript and manifest.get("reference_transcript"):
+        if (
+            not is_custom_clone
+            and not _ref_only_global
+            and not reference_transcript
+            and manifest.get("reference_transcript")
+        ):
             reference_transcript = str(manifest["reference_transcript"])
-        if is_custom_clone and not is_gender_flip and not reference_transcript and not control_instruction:
+        if is_custom_clone and not is_gender_flip and not control_instruction:
             control_instruction = DEFAULT_CLONE_FIDELITY_CONTROL
         if not use_session_mode:
             ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
@@ -714,12 +815,10 @@ def _synthesize_voxcpm_voice_job(
         elif active_ref_secs <= 0:
             active_ref_secs = ref_prosody.duration_sec
 
-        if not is_gender_flip and not reference_transcript:
-            reference_transcript = _cp.transcribe_reference_slice_checked(
-                active_ref_wav,
-                max(active_ref_secs, 0.5),
-            )
-        if not is_gender_flip and not reference_transcript and not control_instruction:
+        # Part 5 (B4): custom uploads switch to reference-only mode (use_prompt_text=False);
+        # stop calling transcribe_reference_slice_checked (saves 1 Gemini call/job).
+        reference_transcript = ""
+        if not is_gender_flip and not control_instruction:
             control_instruction = DEFAULT_CLONE_FIDELITY_CONTROL
     elif (not use_session_mode) and active_ref_wav is not None and active_ref_wav.is_file():
         ref_prosody = _cp.measure_prosody(active_ref_wav, text=reference_transcript)
@@ -802,8 +901,9 @@ def _synthesize_voxcpm_voice_job(
                 logger.debug("Could not persist session clone checkpoint for %s: %s", job_id, ck_exc)
 
         extra_prompt_kw_sess: dict[str, Any] = {}
-        if is_custom_clone and not is_gender_flip:
-            extra_prompt_kw_sess["prompt_text"] = reference_transcript
+        if is_custom_clone or _ref_only_global:
+            if not is_gender_flip:
+                extra_prompt_kw_sess["prompt_text"] = ""
         elif reference_transcript:
             extra_prompt_kw_sess["prompt_text"] = reference_transcript
 
@@ -919,6 +1019,12 @@ def _synthesize_voxcpm_voice_job(
                                 idx,
                                 e_regen,
                             )
+                    _maybe_retry_duration_bloated_unit(
+                        f"session slice {idx}/{len(slices)}",
+                        slice_text,
+                        part_s,
+                        sess_kw,
+                    )
                     if checkpoint_dir is not None and part_s.is_file():
                         try:
                             checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -974,6 +1080,12 @@ def _synthesize_voxcpm_voice_job(
                                     engine.synthesize(**fb_kw)
                                 except Exception:
                                     pass
+                            _maybe_retry_duration_bloated_unit(
+                                f"session slice {idx}/{len(slices)} fallback chunk {fb_i}/{len(fb_chunks)}",
+                                fb_txt,
+                                part_fb,
+                                fb_kw,
+                            )
                             fb_parts_for_slice.append(part_fb)
                     except Exception:
                         for p_tmp in fb_parts_for_slice:
@@ -1236,8 +1348,9 @@ def _synthesize_voxcpm_voice_job(
         checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
 
     extra_prompt_kw: dict = {}
-    if is_custom_clone and not is_gender_flip:
-        extra_prompt_kw["prompt_text"] = reference_transcript
+    if is_custom_clone or _ref_only_global:
+        if not is_gender_flip:
+            extra_prompt_kw["prompt_text"] = ""
     elif reference_transcript:
         extra_prompt_kw["prompt_text"] = reference_transcript
 
@@ -1270,6 +1383,12 @@ def _synthesize_voxcpm_voice_job(
                     "VoxCPM single-call retry failed (%s); keeping existing output",
                     e_regen,
                 )
+        _maybe_retry_duration_bloated_unit(
+            "single-call unit 1/1",
+            text,
+            output_wav,
+            single_kw,
+        )
         if checkpoint_progress is not None:
             checkpoint_progress["completed_units"] = 1
             checkpoint_progress["pinned_space"] = getattr(engine, "pinned_space", None)
@@ -1355,6 +1474,12 @@ def _synthesize_voxcpm_voice_job(
                         idx,
                         e_regen,
                     )
+            _maybe_retry_duration_bloated_unit(
+                f"chunk {idx}/{len(chunks)}",
+                chunk,
+                part,
+                chunk_kw,
+            )
 
             # Part 1 (#1) + Part 4 (#3): analyze raw chunk ONCE (caching YIN contour) and
             # persist the RAW chunk in dp_refs before any rubberband pass runs.
@@ -1844,9 +1969,21 @@ async def process_single_job(
                 engine_inst = VoxCPMEngine(work_dir=temp_dir)
 
                 ref_wav = None
-                if getattr(job, "source_audio_path", None) and Path(job.source_audio_path).is_file():
+                if getattr(job, "preset_voice", None) and getattr(job, "source_audio_path", None):
+                    logger.warning(
+                        "Voice job %s carried both preset_voice=%r and source_audio_path=%r; "
+                        "ignoring source_audio_path (P0 mutual-exclusion guard)",
+                        job.id,
+                        job.preset_voice,
+                        job.source_audio_path,
+                    )
+                elif getattr(job, "source_audio_path", None) and Path(job.source_audio_path).is_file():
                     ref_wav = Path(job.source_audio_path)
-                elif getattr(model, "sample_audio_path", None) and Path(model.sample_audio_path).is_file():
+                elif (
+                    not getattr(job, "preset_voice", None)
+                    and getattr(model, "sample_audio_path", None)
+                    and Path(model.sample_audio_path).is_file()
+                ):
                     ref_wav = Path(model.sample_audio_path)
                 elif (
                     getattr(job, "source_audio_path", None)
@@ -1905,15 +2042,18 @@ async def process_single_job(
                 if getattr(job, "preset_voice", None):
                     try:
                         from app.services.curated_voices import get_persona_reference
+                        from app.services.voxcpm_engine import is_voxcpm_reference_only_mode_enabled
 
                         _p_ref_path, _p_ref_text = get_persona_reference(
                             job.preset_voice
                         )
-                        reference_transcript = _p_ref_text or ""
-                        if ref_wav is None and _p_ref_path and Path(_p_ref_path).is_file():
-                            reference_seconds = float(
-                                get_wav_duration_seconds(Path(_p_ref_path))
-                            )
+                        if ref_wav is None:
+                            if not is_voxcpm_reference_only_mode_enabled():
+                                reference_transcript = _p_ref_text or ""
+                            if _p_ref_path and Path(_p_ref_path).is_file():
+                                reference_seconds = float(
+                                    get_wav_duration_seconds(Path(_p_ref_path))
+                                )
                     except Exception:
                         reference_transcript = ""
                         reference_seconds = 0.0

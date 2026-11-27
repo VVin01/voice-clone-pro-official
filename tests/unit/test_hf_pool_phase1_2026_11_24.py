@@ -1591,7 +1591,10 @@ def test_j2_own_voice_recap_asr_prepass_invoked_and_skipped_on_gender_flip(tmp_p
         lambda p, dur: (asr_calls.append(Path(p)), plausible_burmese)[1],
     )
 
-    # Case 1: Same-gender own-voice recap -> ASR pre-pass invoked & prompt_text passed to synthesize!
+    # Case 1: Updated per Persona + Upload Conditioning Fix v2 Part 5 spec &
+    # owner approval (2026-11-27): same-gender own-voice recaps no longer call
+    # transcribe_reference_slice_checked and synthesize in reference-only mode
+    # (use_prompt_text=False / prompt_text="").
     sync1 = pkg_core.EdgeSmartSync(
         job_dir=str(tmp_path / "job_same"),
         source_path=str(src),
@@ -1603,8 +1606,8 @@ def test_j2_own_voice_recap_asr_prepass_invoked_and_skipped_on_gender_flip(tmp_p
         log=lambda _m: None,
     )
     sync1.run()
-    assert len(asr_calls) == 1
-    assert seen_prompt_texts == [plausible_burmese]
+    assert asr_calls == []
+    assert seen_prompt_texts == [""]
 
     # Case 2: Explicit m2f gender flip -> ASR pre-pass SKIPPED, prompt_text NOT forced!
     asr_calls.clear()

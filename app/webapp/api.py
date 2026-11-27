@@ -4589,6 +4589,11 @@ async def create_voice_job(
 
     ref_audio_path: Optional[str] = None
     _raw_voice_ref_id = (req.voice_ref_id or "").strip()
+    if req.preset_voice and _raw_voice_ref_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Curated persona (preset_voice) and custom reference audio cannot both be set.",
+        )
     if _raw_voice_ref_id:
         _m_ref = _RECAP_VOICE_REF_ID_RE.match(_raw_voice_ref_id)
         if not _m_ref or int(_m_ref.group(1)) != user.id:
@@ -4628,9 +4633,14 @@ async def create_voice_job(
             preset_voice=req.preset_voice,
             source_audio_path=ref_audio_path,
         )
-    except ValueError:
-        # Service-level preset_voice invariant (E4): same clean 400
-        # the endpoint pre-check above raises.
+    except ValueError as val_exc:
+        # Service-level preset_voice / mutual-exclusion invariant (E4 + 2026-11-27 P0):
+        # return clean 400.
+        if "source_audio_path" in str(val_exc):
+            raise HTTPException(
+                status_code=400,
+                detail="Curated persona (preset_voice) and custom reference audio cannot both be set.",
+            )
         raise HTTPException(status_code=400, detail=_INVALID_PRESET_VOICE_DETAIL)
     if not job:
         _free_bal_s = None
@@ -4772,6 +4782,11 @@ async def create_voice_job_with_audio(
             raise HTTPException(status_code=404, detail="အသံမော်ဒယ် ရှာမတွေ့ပါ")
 
     ref_audio_path = None
+    if preset_voice and reference_audio and reference_audio.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Curated persona (preset_voice) and custom reference audio cannot both be set.",
+        )
     if reference_audio and reference_audio.filename:
         # Batch AJ H3 + M1: the old code did `await
         # reference_audio.read()` — the WHOLE upload buffered in RAM —
@@ -4830,15 +4845,19 @@ async def create_voice_job_with_audio(
             preset_voice=preset_voice,
             source_audio_path=ref_audio_path,
         )
-    except ValueError:
-        # Service-level preset_voice invariant (E4): clean up the
-        # uploaded reference audio, then the same clean 400 the
-        # endpoint pre-check above raises.
+    except ValueError as val_exc:
+        # Service-level preset_voice / mutual-exclusion invariant (E4 + 2026-11-27 P0):
+        # clean up the uploaded reference audio, then raise clean 400.
         if ref_audio_path:
             try:
                 Path(ref_audio_path).unlink()
             except OSError:
                 pass
+        if "source_audio_path" in str(val_exc):
+            raise HTTPException(
+                status_code=400,
+                detail="Curated persona (preset_voice) and custom reference audio cannot both be set.",
+            )
         raise HTTPException(status_code=400, detail=_INVALID_PRESET_VOICE_DETAIL)
     if not job:
         # Do not leave the uploaded reference audio behind on failure.

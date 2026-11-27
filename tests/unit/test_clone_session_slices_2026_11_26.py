@@ -324,11 +324,36 @@ def test_part3_and_4_flag_on_path_selection_endpoint_params_and_recap_excluded(t
         assert kw["text_input"] == expected_slices[idx]
         assert "control_instruction" in kw
         assert kw["reference_wav_path_input"] == "FILE::ref.wav"
-        assert kw["use_prompt_text"] is True
-        assert kw["prompt_text_input"] == "မင်္ဂလာပါခင်ဗျာ။"
+        # Updated per Persona + Upload Conditioning Fix v2 Implementation Prompt
+        # (2026-11-27, Parts 5 & 6): custom uploads switch to reference-only mode.
+        assert kw["use_prompt_text"] is False
+        assert kw["prompt_text_input"] == ""
         assert kw["cfg_value_input"] == pytest.approx(2.0)
         assert kw["do_normalize"] is True
         assert kw["denoise"] is True
+
+    # 1b. Curated persona session slices keep `use_prompt_text is True` (2026-11-27 Part 6)
+    submits.clear()
+    persona_eng = vox_mod.VoxCPMEngine(
+        work_dir=tmp_path / "work_persona_sess",
+        spaces=["awints001/voxcpm2-a"],
+        hf_tokens=["hf_tok_1"],
+    )
+    worker_mod._synthesize_voxcpm_voice_job(
+        persona_eng,
+        job_id="job_persona_sess_on",
+        text=text_2k,
+        output_wav=tmp_path / "persona_sess_out.wav",
+        reference_wav=None,
+        control_instruction="Warm storyteller",
+        preset_voice="komin",
+        speed="+0%",
+        progress_cb=None,
+    )
+    assert len(submits) == len(expected_slices)
+    assert all(s["kwargs"]["api_name"] == "/generate_session" for s in submits)
+    assert all(s["kwargs"]["use_prompt_text"] is True for s in submits)
+    assert all(bool(s["kwargs"]["prompt_text_input"]) for s in submits)
 
     # 2. Bound engine (`token_bind_index=0`, recap-style worker) -> excluded from session mode!
     submits.clear()

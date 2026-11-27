@@ -168,8 +168,9 @@ def _generate_impl(
     }
     style = None
     if has_ref:
-        gen_kwargs["prompt_wav_path"] = ref_audio
+        gen_kwargs["reference_wav_path"] = ref_audio
         if use_prompt_text and prompt_text_input and prompt_text_input.strip():
+            gen_kwargs["prompt_wav_path"] = ref_audio
             gen_kwargs["prompt_text"] = prompt_text_input.strip()
     else:
         style = (control_instruction or "").strip() or None

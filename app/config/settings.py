@@ -366,6 +366,8 @@ class Settings(BaseSettings):
     chunk_balancing_v2_enabled: bool = Field(default=True, alias="CHUNK_BALANCING_V2_ENABLED")
     # Session-slice clone synthesis flag (default OFF; True uses ~850-char /generate_session slices)
     clone_session_slices_enabled: bool = Field(default=False, alias="CLONE_SESSION_SLICES_ENABLED")
+    # Global VoxCPM reference-only conditioning fallback lever (B2c, default OFF)
+    voxcpm_reference_only_mode: bool = Field(default=False, alias="VOXCPM_REFERENCE_ONLY_MODE")
     # Daily HF ZeroGPU ledger calibration sweep kill switch (default OFF; operator enables after supervised --once)
     hf_daily_calibration_enabled: bool = Field(default=False, alias="HF_DAILY_CALIBRATION_ENABLED")
 

@@ -139,6 +139,10 @@ async def create_voice_clone_job(
 
         if get_curated_voice(preset_voice) is None:
             raise ValueError(f"Unknown preset_voice: {preset_voice!r}")
+        if source_audio_path:
+            raise ValueError(
+                "VOICE_CLONE cannot set both preset_voice and source_audio_path"
+            )
 
     user, _ = await get_or_create_user(session, user_id)
 

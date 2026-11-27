@@ -8876,8 +8876,8 @@ class EdgeSmartSync:
         persona_ref_text: str = str(self.overlays.get("voxcpm_ref_text") or "")
         _recap_gender_preset = str(self.overlays.get("gender_preset") or "").strip().lower()
         _is_recap_gender_flip = _recap_gender_preset in ("m2f", "f2m")
-        if _is_recap_gender_flip and _own_voice_ref_raw:
-            # Part 4 (#3): NEVER force prompt-text mode on an explicit m2f/f2m gender flip.
+        if _own_voice_ref_raw:
+            # Part 5 (B4): own-voice recaps switch to reference-only mode (use_prompt_text=False).
             persona_ref_text = ""
 
         if not persona_ref_wav and _global_preset_v:
@@ -8887,10 +8887,16 @@ class EdgeSmartSync:
             except Exception as ref_err:
                 self.log(f"⚠️ Persona reference lookup failed ({ref_err}) — VoxCPM voice design only")
 
-        # Batch BV + HF Pool Phase 1 Part 4 (#3): pre-adapt own-voice reference ONCE per
-        # job AND run the same one-time steady-slice + Gemini ASR pre-pass (`8-22 chars/s`
-        # plausibility gate) as standalone clones so own-voice recaps unlock `/generate_clone`
-        # spaces and gain timbre stability.
+        try:
+            from app.services.voxcpm_engine import is_voxcpm_reference_only_mode_enabled as _is_ref_only
+            if _is_ref_only():
+                persona_ref_text = ""
+        except Exception:
+            pass
+
+        # Batch BV + Conditioning Fix v2 Part 5: pre-adapt own-voice reference ONCE per job
+        # and extract the silence-snapped ~10 s steady slice in reference-only mode
+        # (use_prompt_text=False; zero Gemini ASR calls per job).
         reference_trimmed = False
         if use_voxcpm and persona_ref_wav and vox_engine is not None and self.voice_choice_mode is None:
             try:
@@ -8915,23 +8921,12 @@ class EdgeSmartSync:
                         target_sec=_cp.REFERENCE_SLICE_SECONDS,
                     )
                     persona_ref_wav = str(_steady_wav)
-                    _eff_slice_secs = _steady_secs if _steady_secs > 0 else _steady_stats.duration_sec
-                    if not _is_recap_gender_flip and not persona_ref_text:
-                        _cached_asr_key = f"{Path(_steady_wav).name}:{int(Path(_steady_wav).stat().st_size)}"
-                        if checkpoint.get("own_voice_asr_key") == _cached_asr_key and "own_voice_ref_text" in checkpoint:
-                            persona_ref_text = str(checkpoint.get("own_voice_ref_text") or "")
-                        else:
-                            persona_ref_text = _cp.transcribe_reference_slice_checked(
-                                Path(_steady_wav),
-                                max(_eff_slice_secs, 0.5),
-                            )
-                            checkpoint["own_voice_asr_key"] = _cached_asr_key
-                            checkpoint["own_voice_ref_text"] = persona_ref_text
-                    if not _is_recap_gender_flip and not persona_ref_text and not self.overlays.get("voxcpm_control"):
+                    persona_ref_text = ""
+                    if not _is_recap_gender_flip and not self.overlays.get("voxcpm_control"):
                         if _DEFAULT_CLONE_FIDELITY_CONTROL:
                             self.overlays["voxcpm_control"] = _DEFAULT_CLONE_FIDELITY_CONTROL
                 except Exception as asr_pre_err:
-                    self.log(f"⚠️ Own-voice recap ASR pre-pass skipped ({asr_pre_err})")
+                    self.log(f"⚠️ Own-voice recap steady-slice pre-pass skipped ({asr_pre_err})")
 
         if use_voxcpm:
             if persona_ref_wav and persona_ref_text:

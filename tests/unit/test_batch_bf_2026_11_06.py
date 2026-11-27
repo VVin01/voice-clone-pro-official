@@ -57,8 +57,10 @@ AI_DESIGNED = ("kozayar", "komyat", "kophone", "mayoon", "machaw", "kothura")
 EIGHT = AI_DESIGNED + ("mahnin", "koaung")
 
 # The fixed Burmese passage every AI-designed reference clip speaks
-# (the design + prompt text of the 2026-11-06 build).
-DESIGN_PASSAGE = 'မင်္ဂလာပါ။ နေ့စဉ် ပြောဆိုနေတဲ့ စကားသံတွေထဲမှာ ခံစားချက် အမျိုးမျိုး ပါဝင်နေပါတယ်။ တစ်ခါတစ်ရံ နွေးထွေးစွာ ပြောတတ်ပြီး တစ်ခါတစ်ရံ ရှင်းလင်းပြတ်သားစွာ ရှင်းပြတတ်ပါတယ်။ အသံတစ်ခုရဲ့ တန်ဖိုးကို နားထောင်သူရဲ့ ရင်ထဲ ဘယ်လောက် ထိရောက်စေနိုင်သလဲ ဆိုတာနဲ့ တိုင်းတာရမှာ ဖြစ်ပါတယ်။'
+# (the design + prompt text of the 2026-11-06 build; leading "မင်္ဂလာပါ။"
+# trimmed per Persona + Upload Conditioning Fix v2 Implementation Prompt
+# 2026-11-27, Parts 3 & 6).
+DESIGN_PASSAGE = 'နေ့စဉ် ပြောဆိုနေတဲ့ စကားသံတွေထဲမှာ ခံစားချက် အမျိုးမျိုး ပါဝင်နေပါတယ်။ တစ်ခါတစ်ရံ နွေးထွေးစွာ ပြောတတ်ပြီး တစ်ခါတစ်ရံ ရှင်းလင်းပြတ်သားစွာ ရှင်းပြတတ်ပါတယ်။ အသံတစ်ခုရဲ့ တန်ဖိုးကို နားထောင်သူရဲ့ ရင်ထဲ ဘယ်လောက် ထိရောက်စေနိုင်သလဲ ဆိုတာနဲ့ တိုင်းတာရမှာ ဖြစ်ပါတယ်။'
 
 
 # ── Cache token ─────────────────────────────────────────────────────
@@ -187,13 +189,15 @@ def test_bf_persona_parameters_unchanged():
 
 def test_bf6_post_build_owner_verdicts():
     # komyat v2 (pause-only): the installed reference is the
-    # pause-edited design cut (15.14 s), not the original 17.34 s
-    # design take; the installed sample is the pause-edited master
-    # (6.00 s / 97,010 bytes), not the 8.37 s / 135,044-byte v1.
+    # pause-edited design cut with leading "မင်္ဂလာပါ။" trimmed (~13.97 s;
+    # updated from 15.14 s per Persona + Upload Conditioning Fix v2
+    # Implementation Prompt 2026-11-27, Parts 3 & 6); the installed sample
+    # is the pause-edited master (6.00 s / 97,010 bytes), not the 8.37 s /
+    # 135,044-byte v1.
     ref = REFS_DIRS[0] / "komyat.wav"
     with wave.open(str(ref), "rb") as wf:
         seconds = wf.getnframes() / wf.getframerate()
-    assert 14.0 < seconds < 16.0, seconds
+    assert 13.0 < seconds < 14.5, seconds
     sample_size = (SAMPLES_DIR / "komyat.mp3").stat().st_size
     assert 90_000 < sample_size < 110_000, sample_size
     # kothura v5 A: he now has an assets-location reference like the

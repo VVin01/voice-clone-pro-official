@@ -89,6 +89,19 @@ def space_supports_clone(space_name: str) -> bool:
     return not any(marker in name for marker in _CLONE_INCAPABLE_SPACE_MARKERS)
 
 
+def is_voxcpm_reference_only_mode_enabled() -> bool:
+    """True when dynamic setting ``voxcpm_reference_only_mode`` forces reference-only conditioning globally (B2c)."""
+    try:
+        from app.config import settings as _settings
+
+        val = getattr(_settings, "voxcpm_reference_only_mode", False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+    except Exception:
+        return False
+
+
 # Batch AT (AT-2): per-space attempt cap inside ONE unpinned synthesis call.
 MAX_ATTEMPTS_PER_SPACE = 4
 # HF Pool Phase 1 (Part 2 #3): bounded retry ladder for pinned VoxCPM2 spaces.
@@ -1556,6 +1569,7 @@ class VoxCPMEngine:
         skip_mastering: bool = False,
         session_mode: bool = False,
         pin_space_override: Optional[bool] = None,
+        reference_only: Optional[bool] = None,
         **kwargs: Any,
     ) -> Path:
         """
@@ -1587,6 +1601,12 @@ class VoxCPMEngine:
         # Resolve brisk narration tempo multiplier from speed & persona
         tempo_val = resolve_speed_tempo(speed)
 
+        eff_ref_only = (
+            is_voxcpm_reference_only_mode_enabled()
+            if reference_only is None
+            else bool(reference_only)
+        )
+
         # Persona-based control instruction & reference sample tuning
         is_persona_ref = False
         if preset_voice:
@@ -1599,9 +1619,13 @@ class VoxCPMEngine:
                     p_ref_path, p_ref_text = get_persona_reference(preset_voice)
                     if p_ref_path:
                         reference_wav = p_ref_path
-                        prompt_text = prompt_text or p_ref_text
+                        if not eff_ref_only:
+                            prompt_text = prompt_text or p_ref_text
                         is_persona_ref = True
                 self._log(f"🎭 Applied Curated Persona [{preset_voice}] for VoxCPM 2 (tempo={tempo_val:.2f}x)")
+
+        if eff_ref_only and reference_wav:
+            prompt_text = ""
 
         # Check local cache for identical text + voice configuration (mastered outputs only)
         cache_key = None

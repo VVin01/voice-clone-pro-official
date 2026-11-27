@@ -1050,20 +1050,79 @@ def select_steady_reference_slice(
         pool.sort(key=lambda item: (item[1], -item[0]))
         _, _, best_start_f, best_end_f = pool[0]
 
+    # Part 5 (B4): snap slice endpoints to the nearest >=80 ms low-RMS pause within +-0.8 s
+    # (reusing `rms_arr`) so slices never cut mid-vowel/consonant, plus 25 ms cosine fades.
+    min_pause_frames = max(1, int(round(0.080 / FRAME_STEP_SEC)))
+    max_snap_frames = int(round(0.80 / FRAME_STEP_SEC))
+
+    def _find_pause_runs(mask: np.ndarray) -> list[tuple[int, int]]:
+        runs: list[tuple[int, int]] = []
+        run_s: int | None = None
+        for f_idx, is_p in enumerate(mask):
+            if is_p:
+                if run_s is None:
+                    run_s = f_idx
+            elif run_s is not None:
+                if f_idx - run_s >= min_pause_frames:
+                    runs.append((run_s, f_idx))
+                run_s = None
+        if run_s is not None and mask.size - run_s >= min_pause_frames:
+            runs.append((run_s, int(mask.size)))
+        return runs
+
+    primary_pause_runs = _find_pause_runs(~speech_mask)
+    secondary_pause_runs = (
+        _find_pause_runs(rms_arr < max(0.008, 0.15 * p95)) if not primary_pause_runs else []
+    )
+
+    def _snap_endpoint_frame(anchor_f: int) -> int:
+        for runs_pool in (primary_pause_runs, secondary_pause_runs):
+            if not runs_pool:
+                continue
+            best_cand: tuple[int, float, int] | None = None
+            margin = min_pause_frames // 2
+            for r_s, r_e in runs_pool:
+                lo_c = r_s + margin
+                hi_c = max(lo_c, r_e - margin)
+                cut_f = min(max(anchor_f, lo_c), hi_c)
+                dist = abs(cut_f - anchor_f)
+                if dist <= max_snap_frames:
+                    mean_r = float(np.mean(rms_arr[r_s:r_e])) if r_e > r_s else 0.0
+                    cand = (dist, mean_r, cut_f)
+                    if best_cand is None or cand < best_cand:
+                        best_cand = cand
+            if best_cand is not None:
+                return best_cand[2]
+        return anchor_f
+
+    snapped_start_f = _snap_endpoint_frame(best_start_f)
+    snapped_end_f = _snap_endpoint_frame(best_end_f)
+    if snapped_end_f - snapped_start_f >= max(10, int(round(1.0 / FRAME_STEP_SEC))):
+        best_start_f = snapped_start_f
+        best_end_f = snapped_end_f
+
     start_sec = best_start_f * FRAME_STEP_SEC
     end_sec = min(total_sec, best_end_f * FRAME_STEP_SEC)
     start_samp = max(0, int(round(start_sec * sr)))
     end_samp = min(samples.size, int(round(end_sec * sr)))
-    sliced = samples[start_samp:end_samp]
+    sliced = samples[start_samp:end_samp].astype(np.float32, copy=True)
     if sliced.size < int(sr * 1.0):
         stats = _stats_from_contours(total_sec, rms_arr, f0_arr)
         return ref_path, round(total_sec, 3), stats
+
+    fade_samples = min(int(round(0.025 * sr)), sliced.size // 2)
+    if fade_samples >= 2:
+        ramp = 0.5 * (
+            1.0 - np.cos(np.pi * np.arange(fade_samples, dtype=np.float32) / float(fade_samples - 1))
+        )
+        sliced[:fade_samples] *= ramp
+        sliced[-fade_samples:] *= ramp[::-1]
 
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     stat = ref_path.stat()
     digest = hashlib.sha256(
-        f"{ref_path.resolve()}|{stat.st_size}|{int(stat.st_mtime)}|{target_sec:.1f}".encode("utf-8")
+        f"{ref_path.resolve()}|{stat.st_size}|{int(stat.st_mtime)}|{target_sec:.1f}|v2".encode("utf-8")
     ).hexdigest()[:14]
     out_slice = work_dir / f"ref_steady_{digest}.wav"
 

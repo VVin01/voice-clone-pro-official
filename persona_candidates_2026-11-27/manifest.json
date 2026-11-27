@@ -1,0 +1,76 @@
+{
+  "passage": "ညနေခင်း လေပြည်အေးလေး တိုက်ခတ်လာချိန်မှာ တောင်တန်းတွေပေါ် မြူခိုးပါးပါးလေးတွေ ဖုံးလွှမ်းလာပါတယ်။ တိတ်ဆိတ်တဲ့ ပတ်ဝန်းကျင်ထဲမှာ သစ်ရွက်လှုပ်သံကို အတိုင်းသား ကြားနေရပါတယ်။ သဘာဝရဲ့ အလှအပဟာ စိတ်ကို အေးချမ်းစေပါတယ်။",
+  "skip_mastering": true,
+  "candidates": [
+    {
+      "persona": "komin",
+      "candidate": "komin_candidate_01",
+      "wav": "komin_candidate_01.wav",
+      "txt": "komin_candidate_01.txt",
+      "duration_s": 15.56,
+      "chars": 208,
+      "chars_per_s": 13.37,
+      "skip_mastering": true
+    },
+    {
+      "persona": "komin",
+      "candidate": "komin_candidate_02",
+      "wav": "komin_candidate_02.wav",
+      "txt": "komin_candidate_02.txt",
+      "duration_s": 17.32,
+      "chars": 208,
+      "chars_per_s": 12.01,
+      "skip_mastering": true
+    },
+    {
+      "persona": "komin",
+      "candidate": "komin_candidate_03",
+      "wav": "komin_candidate_03.wav",
+      "txt": "komin_candidate_03.txt",
+      "duration_s": 16.04,
+      "chars": 208,
+      "chars_per_s": 12.97,
+      "skip_mastering": true
+    },
+    {
+      "persona": "komin",
+      "candidate": "komin_candidate_04",
+      "wav": "komin_candidate_04.wav",
+      "txt": "komin_candidate_04.txt",
+      "duration_s": 15.88,
+      "chars": 208,
+      "chars_per_s": 13.1,
+      "skip_mastering": true
+    },
+    {
+      "persona": "mahnin",
+      "candidate": "mahnin_candidate_01",
+      "wav": "mahnin_candidate_01.wav",
+      "txt": "mahnin_candidate_01.txt",
+      "duration_s": 17.64,
+      "chars": 208,
+      "chars_per_s": 11.79,
+      "skip_mastering": true
+    },
+    {
+      "persona": "mahnin",
+      "candidate": "mahnin_candidate_02",
+      "wav": "mahnin_candidate_02.wav",
+      "txt": "mahnin_candidate_02.txt",
+      "duration_s": 17.96,
+      "chars": 208,
+      "chars_per_s": 11.58,
+      "skip_mastering": true
+    },
+    {
+      "persona": "mahnin",
+      "candidate": "mahnin_candidate_03",
+      "wav": "mahnin_candidate_03.wav",
+      "txt": "mahnin_candidate_03.txt",
+      "duration_s": 17.32,
+      "chars": 208,
+      "chars_per_s": 12.01,
+      "skip_mastering": true
+    }
+  ]
+}

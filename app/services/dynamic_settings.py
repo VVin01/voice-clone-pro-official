@@ -146,6 +146,7 @@ SETTING_TYPES: dict[str, type] = {
     "clone_prosody_phase3_enabled": bool,
     "chunk_balancing_v2_enabled": bool,
     "clone_session_slices_enabled": bool,
+    "voxcpm_reference_only_mode": bool,
     "hf_daily_calibration_enabled": bool,
     "ai_prompt_profile": str,
     "voxcpm_timeout": int,

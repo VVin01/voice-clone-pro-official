@@ -139,8 +139,12 @@ def test_steady_slice_and_worker_custom_clone_conditioning_and_flip_carveout(tmp
     )
     plausible_asr = "မင်္ဂလာပါရှင့် ဒီနေ့မှာတော့ အသံပွားစနစ်အကြောင်း ရှင်းပြပေးသွားမှာ ဖြစ်ပါတယ်ရှင့်။ " * 2  # ~150 chars / 10s = 15 c/s
 
-    # Case (a): Custom clone + plausible ASR -> prompt_text reaches engine.synthesize; per-chunk skip_mastering=True; 1 master pass!
-    with patch("app.services.group_ai_admin.transcribe_voice_gemini", new=AsyncMock(return_value=plausible_asr)):
+    # Case (a): Updated per Persona + Upload Conditioning Fix v2 Part 5 spec &
+    # owner approval (2026-11-27): custom uploads no longer call
+    # transcribe_reference_slice_checked and synthesize in reference-only mode
+    # (use_prompt_text=False / prompt_text=""); per-chunk skip_mastering=True; 1 master pass!
+    asr_mock_a = AsyncMock(return_value=plausible_asr)
+    with patch("app.services.group_ai_admin.transcribe_voice_gemini", new=asr_mock_a):
         worker_mod._synthesize_voxcpm_voice_job(
             fake_engine,
             job_id="job_custom_asr_ok",
@@ -153,8 +157,10 @@ def test_steady_slice_and_worker_custom_clone_conditioning_and_flip_carveout(tmp
             progress_cb=None,
             gender_preset="m2m",
         )
+    assert asr_mock_a.await_count == 0
     assert len(synth_calls) >= 2
-    assert all(c["prompt_text"] == plausible_asr.strip() for c in synth_calls)
+    assert all(c["prompt_text"] == "" for c in synth_calls)
+    assert all(c["control_instruction"] == vox_mod.DEFAULT_CLONE_FIDELITY_CONTROL for c in synth_calls)
     assert all(c["skip_mastering"] is True for c in synth_calls)
     assert len(master_calls) == 1
     assert master_calls[0][2] == "+12%"
