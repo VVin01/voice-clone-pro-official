@@ -371,6 +371,10 @@ class Settings(BaseSettings):
     voxcpm_reference_only_mode: bool = Field(default=False, alias="VOXCPM_REFERENCE_ONLY_MODE")
     # Daily HF ZeroGPU ledger calibration sweep kill switch (default OFF; operator enables after supervised --once)
     hf_daily_calibration_enabled: bool = Field(default=False, alias="HF_DAILY_CALIBRATION_ENABLED")
+    # Expiring-quota-first token walk ordering (Pro surplus >300s + resets_at <=4h; default OFF)
+    hf_expiring_quota_first_enabled: bool = Field(
+        default=False, alias="HF_EXPIRING_QUOTA_FIRST_ENABLED"
+    )
 
     # Versioned AI Prompt Registry profile ("v2" upgraded default, "v1" instant rollback)
     ai_prompt_profile: str = Field(default="v2", alias="AI_PROMPT_PROFILE")

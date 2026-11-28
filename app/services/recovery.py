@@ -98,7 +98,10 @@ async def recover_stale_running_jobs(
         await session.refresh(job)
 
         # Step 3: Release/refund reservation & ledger charges idempotently
+        from app.services import hf_pool_ledger as _hf_ledger
         from app.services.billing import refund_or_release_job
+
+        _hf_ledger.release_in_flight_gpu(str(job.id))
 
         rel_res = await refund_or_release_job(
             session,
@@ -297,6 +300,9 @@ async def recover_stale_running_jobs(
                 }),
             )
         )
+        from app.services import hf_pool_ledger as _hf_ledger
+
+        _hf_ledger.release_in_flight_gpu(str(r_job_id))
         await session.commit()
         recovered_ids.append(str(r_job_id))
         logger.warning(

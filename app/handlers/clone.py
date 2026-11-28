@@ -86,10 +86,15 @@ async def handle_voice_choice_callback(callback: CallbackQuery):
     except Exception:
         lang = "my"
     outcome = "not_parked"
+    _is_free_park = False
     if choice and job_id:
         try:
             async with AsyncSessionLocal() as session:
                 job = await session.get(Job, job_id)
+                if job is not None:
+                    _is_free_park = _vc.is_free_choice_state(
+                        _vc.parse_choice_state(getattr(job, "voice_choice_state", None))
+                    )
                 outcome = await _vc.apply_user_choice(
                     session, job, choice, callback.from_user.id
                 )
@@ -111,7 +116,9 @@ async def handle_voice_choice_callback(callback: CallbackQuery):
     answer_key = {
         "ok_wait": "dp_choice_wait_answer",
         "ok_resume": "dp_choice_resume_answer",
-        "ok_cancel": "dp_choice_cancel_answer",
+        "ok_cancel": (
+            "dp_choice_cancel_answer_free" if _is_free_park else "dp_choice_cancel_answer"
+        ),
         "not_owner": "dp_choice_not_owner",
     }.get(outcome, "dp_choice_not_parked")
     try:

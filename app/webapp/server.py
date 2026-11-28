@@ -729,18 +729,43 @@ async def lifespan(app: FastAPI):
         db_url = str(getattr(_hf_settings, "database_url", "") or "").lower()
         if not db_url or "sqlite" in db_url:
             return
+        async def _reconcile_in_flight() -> None:
+            from sqlalchemy import select as _sa_select
+
+            from app.db.session import AsyncSessionLocal as _ASL
+            from app.models.enums import JobStatus as _JS
+            from app.models.schema import Job as _Job
+
+            async with _ASL() as _sess:
+                _running_ids = list(
+                    (
+                        await _sess.execute(
+                            _sa_select(_Job.id).where(_Job.status == _JS.RUNNING.value)
+                        )
+                    ).scalars().all()
+                )
+            await asyncio.to_thread(_hf_ledger.reconcile_in_flight_gpu, _running_ids)
+
         try:
             toks = get_available_hf_tokens()
             if toks:
                 await asyncio.to_thread(_hf_ledger.reconcile_if_env_changed, toks)
         except Exception:
             _log.debug("Initial HF pool seed skipped", exc_info=True)
+        try:
+            await _reconcile_in_flight()
+        except Exception:
+            _log.debug("Initial HF in-flight reconciliation skipped", exc_info=True)
         while True:
             await asyncio.sleep(900)  # 15 minutes
             try:
                 await asyncio.to_thread(get_key_health, True)
             except Exception:
                 _log.debug("Periodic HF pool reconciliation skipped", exc_info=True)
+            try:
+                await _reconcile_in_flight()
+            except Exception:
+                _log.debug("Periodic HF in-flight reconciliation skipped", exc_info=True)
 
     # Round 2 Part 4: once-daily quiet-hour HF calibration sweep (04:15–06:00 Asia/Yangon,
     # primary instance only, gated by `hf_daily_calibration_enabled` and active/queued/boot guards).

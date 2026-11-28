@@ -715,6 +715,10 @@ async def test_b2_no_fallback_multi_chunk_standalone_clone_quota_and_timeout(
     if paid_tier:
         assert j.status == JobStatus.WAITING_CHOICE.value
         assert snap["reserved_voice_seconds"] == 90
+    elif err_kind == "timeout":
+        assert j.status == JobStatus.WAITING_CHOICE.value
+        assert snap["reserved_voice_seconds"] == 90
+        assert (_storage / "dp_refs" / jid / "chunk01.wav").is_file()
     else:
         assert j.status == JobStatus.FAILED.value
         assert "မိနစ် လုံးဝ မဖြတ်ထားပါ" in (j.error_message or "")

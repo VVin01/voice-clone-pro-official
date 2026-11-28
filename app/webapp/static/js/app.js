@@ -1551,7 +1551,11 @@ function liveJobStageText(job) {
     }
     if (job.status === "SCRIPT_READY") return t("hist_script_ready_badge");
     // Batch DP: a parked job is waiting on its owner's voice choice
-    if (job.status === "WAITING_CHOICE") return t("live_job_status_waiting_choice");
+    if (job.status === "WAITING_CHOICE") {
+        return job.choice === "wait"
+            ? t("live_job_status_waiting_capacity")
+            : t("live_job_status_waiting_choice");
+    }
     if (job.progress_stage) {
         const stageText = t("recap_stage_" + job.progress_stage);
         if (stageText && stageText !== "recap_stage_" + job.progress_stage) return stageText;
@@ -1691,11 +1695,14 @@ function liveJobsSheetRowHtml(job) {
         ? tf("live_job_elapsed", { sec: job.elapsed_seconds }) : "";
     let action = "";
     if (isWaiting) {
-        action = `<button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','wait')">${t("dp_btn_wait")}</button>`;
-        if (isRecap) {
-            action += ` <button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','edge_all')">${t("dp_btn_edge_all")}</button>`;
+        const cancelLbl = job.tier === "free" ? t("dp_btn_cancel_free") : t("dp_btn_cancel");
+        if (job.choice !== "wait") {
+            action = `<button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','wait')">${t("dp_btn_wait")}</button> `;
         }
-        action += ` <button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','cancel')">${t("dp_btn_cancel")}</button>`;
+        if (isRecap) {
+            action += `<button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','edge_all')">${t("dp_btn_edge_all")}</button> `;
+        }
+        action += `<button type="button" class="mini-chip" onclick="submitLiveJobVoiceChoice('${job.id}','cancel')">${cancelLbl}</button>`;
     } else if (liveJobsIsActive(job.status)) {
         action = `<button type="button" class="mini-chip" onclick="liveJobOpen('${job.id}','${job.kind}')">${t("studio_inline_view")}</button>`
             + ` <button type="button" class="mini-chip" onclick="liveJobCancel('${job.id}','${job.kind}')">${t("btn_cancel_job")}</button>`;
@@ -5768,10 +5775,12 @@ function startJobPolling(jobId) {
                 LiveJobs.track({ id: jobId, kind: "voice", status: "QUEUED", progress_percent: 0, stage_index: 0, stage_total: 1 });
             } else if (data.status === "WAITING_CHOICE") {
                 setVoiceStage("working");
+                const vcChoice = data.voice_choice && data.voice_choice.choice ? data.voice_choice.choice : null;
+                const vcTier = data.voice_choice && data.voice_choice.tier ? data.voice_choice.tier : null;
                 if (progressFill) paintProgressBarFill(progressFill, { status: "WAITING_CHOICE", progress_percent: 0 });
-                if (statusMsg) statusMsg.innerText = t("live_job_status_waiting_choice");
+                if (statusMsg) statusMsg.innerText = vcChoice === "wait" ? t("live_job_status_waiting_capacity") : t("live_job_status_waiting_choice");
                 if (etaText) etaText.innerText = t("recap_waiting_choice_bot_hint");
-                LiveJobs.track({ id: jobId, kind: "voice", status: "WAITING_CHOICE", progress_percent: 0, stage_index: 0, stage_total: 1 });
+                LiveJobs.track({ id: jobId, kind: "voice", status: "WAITING_CHOICE", choice: vcChoice, tier: vcTier, progress_percent: 0, stage_index: 0, stage_total: 1 });
             } else if (data.status === "RUNNING") {
                 setVoiceStage("working");
                 if (spinner) { spinner.innerText = "⚡"; if (spinner.classList) spinner.classList.add("spinner-wave"); }
@@ -10829,7 +10838,8 @@ function startRecapJobPolling(jobId) {
             }
             if (data.status === "WAITING_CHOICE") {
                 setRecapStage(null, "WAITING_CHOICE");
-                if (statusMsg) statusMsg.innerText = t("live_job_status_waiting_choice");
+                const vcChoice = data.voice_choice && data.voice_choice.choice ? data.voice_choice.choice : null;
+                if (statusMsg) statusMsg.innerText = vcChoice === "wait" ? t("live_job_status_waiting_capacity") : t("live_job_status_waiting_choice");
                 if (stepText) stepText.innerText = `${t("recap_waiting_choice_detail")} · ${t("recap_waiting_choice_bot_hint")}`;
                 const cancelBtn = document.getElementById("btn-recap-cancel");
                 if (cancelBtn) {

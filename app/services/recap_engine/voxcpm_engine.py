@@ -11,6 +11,7 @@ from app.services.voxcpm_engine import (
     DEFAULT_VOXCPM_SPACES,
     DEFAULT_BURMESE_CONTROL,
     DEFAULT_CLONE_FIDELITY_CONTROL,
+    EXPIRING_RESET_HORIZON_SECONDS,
     JobQuotaMemory,
     JobSpacePin,
     VoxCPMQuotaExhaustedError,
@@ -19,7 +20,9 @@ from app.services.voxcpm_engine import (
     get_configured_spaces,
     has_solvent_voxcpm_tokens,
     is_cpu_demo_space,
+    is_hf_expiring_quota_first_enabled,
     is_voxcpm_capacity_or_congestion_error,
+    is_voxcpm_free_congestion_error,
     is_voxcpm_v1_space,
 )
 
@@ -29,6 +32,7 @@ __all__ = [
     "DEFAULT_VOXCPM_SPACES",
     "DEFAULT_BURMESE_CONTROL",
     "DEFAULT_CLONE_FIDELITY_CONTROL",
+    "EXPIRING_RESET_HORIZON_SECONDS",
     "JobQuotaMemory",
     "JobSpacePin",
     "VoxCPMQuotaExhaustedError",
@@ -37,6 +41,8 @@ __all__ = [
     "get_configured_spaces",
     "has_solvent_voxcpm_tokens",
     "is_cpu_demo_space",
+    "is_hf_expiring_quota_first_enabled",
     "is_voxcpm_capacity_or_congestion_error",
+    "is_voxcpm_free_congestion_error",
     "is_voxcpm_v1_space",
 ]

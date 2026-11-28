@@ -149,6 +149,7 @@ SETTING_TYPES: dict[str, type] = {
     "clone_session_slices_enabled": bool,
     "voxcpm_reference_only_mode": bool,
     "hf_daily_calibration_enabled": bool,
+    "hf_expiring_quota_first_enabled": bool,
     "ai_prompt_profile": str,
     "voxcpm_timeout": int,
     "groq_whisper_model": str,

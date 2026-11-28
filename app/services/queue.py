@@ -57,6 +57,7 @@ PRE_CHECK_SAFETY_MARGIN = 1.15
 # HF Pool Phase 1 (Part 6 #4): global VoxCPM concurrency cap, 2:1 Paid/Free
 # fairness interleaving, and 15-minute anti-starvation ceiling.
 MAX_CONCURRENT_VOXCPM_JOBS = 2
+MAX_GLOBAL_FREE_PARKED_JOBS = 20
 ANTI_STARVATION_SECONDS = 900.0
 _paid_dispatch_streak: int = 0
 
@@ -192,13 +193,23 @@ async def create_voice_clone_job(
         await session.execute(
             select(User).where(User.id == user_id).with_for_update()
         )
-        # Concurrent job limit (1 job)
+        # Concurrent job limit (1 job; includes WAITING_CHOICE for FREE non-admin users)
+        _is_free_user = user.account_category == AccountCategory.FREE.value
+        _conc_statuses = (
+            [
+                JobStatus.QUEUED.value,
+                JobStatus.RUNNING.value,
+                JobStatus.WAITING_CHOICE.value,
+            ]
+            if _is_free_user
+            else [JobStatus.QUEUED.value, JobStatus.RUNNING.value]
+        )
         concurrent_stmt = (
             select(func.count())
             .select_from(Job)
             .where(
                 Job.user_id == user_id,
-                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+                Job.status.in_(_conc_statuses),
             )
         )
         active_jobs = (await session.execute(concurrent_stmt)).scalar() or 0
@@ -269,19 +280,27 @@ async def create_voice_clone_job(
         if _limit_minutes > 0:
             today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
             _limit_seconds = _limit_minutes * 60
+            _min_statuses = (
+                [
+                    JobStatus.SUCCESS.value,
+                    JobStatus.QUEUED.value,
+                    JobStatus.RUNNING.value,
+                    JobStatus.WAITING_CHOICE.value,
+                ]
+                if _is_free_user
+                else [
+                    JobStatus.SUCCESS.value,
+                    JobStatus.QUEUED.value,
+                    JobStatus.RUNNING.value,
+                ]
+            )
             _minute_stmt = (
                 select(Job)
                 .where(
                     Job.user_id == user_id,
                     Job.job_type == JobType.VOICE_CLONE.value,
                     Job.created_at >= today_start,
-                    Job.status.in_(
-                        [
-                            JobStatus.SUCCESS.value,
-                            JobStatus.QUEUED.value,
-                            JobStatus.RUNNING.value,
-                        ]
-                    ),
+                    Job.status.in_(_min_statuses),
                 )
             )
             _consumed_seconds = 0.0
@@ -595,6 +614,35 @@ def _job_created_epoch(job: Job, fallback_now: float) -> float:
     return dt.timestamp()
 
 
+async def count_free_parked_clone_jobs(session: AsyncSession) -> int:
+    """Count global `WAITING_CHOICE` standalone voice-clone jobs owned by non-admin FREE users."""
+    stmt = (
+        select(Job.user_id)
+        .join(User, User.id == Job.user_id)
+        .where(
+            Job.status == JobStatus.WAITING_CHOICE.value,
+            Job.job_type == JobType.VOICE_CLONE.value,
+            User.account_category == AccountCategory.FREE.value,
+        )
+    )
+    uids = (await session.execute(stmt)).scalars().all()
+    return sum(1 for uid in uids if not settings.is_admin(uid))
+
+
+def _free_resumed_anchor_epoch(job: Job, fallback_now: float) -> float:
+    """For Free jobs resumed from `WAITING_CHOICE`, anchor anti-starvation wait at
+    `max(created_at, resumed_at)` so woken Free parks do not jump ahead of Paid jobs."""
+    c_ts = _job_created_epoch(job, fallback_now)
+    raw_vc = getattr(job, "voice_choice_state", None)
+    if not raw_vc:
+        return c_ts
+    st = _vc.parse_choice_state(raw_vc)
+    if not st:
+        return c_ts
+    r_ts = float(st.get("resumed_at") or 0.0)
+    return max(c_ts, r_ts) if r_ts > 0.0 else c_ts
+
+
 def order_voxcpm_fair_queue(
     candidates: list[Job],
     is_paid_by_job_id: dict[str, bool],
@@ -615,15 +663,22 @@ def order_voxcpm_fair_queue(
     free_norm: list[Job] = []
 
     for j in candidates:
-        c_ts = _job_created_epoch(j, now)
-        if (now - c_ts) >= ANTI_STARVATION_SECONDS:
+        is_p = bool(is_paid_by_job_id.get(str(j.id), False))
+        wait_anchor = _job_created_epoch(j, now) if is_p else _free_resumed_anchor_epoch(j, now)
+        if (now - wait_anchor) >= ANTI_STARVATION_SECONDS:
             starved.append(j)
-        elif is_paid_by_job_id.get(str(j.id), False):
+        elif is_p:
             paid_norm.append(j)
         else:
             free_norm.append(j)
 
-    starved.sort(key=lambda j: _job_created_epoch(j, now))
+    starved.sort(
+        key=lambda j: (
+            _job_created_epoch(j, now)
+            if is_paid_by_job_id.get(str(j.id), False)
+            else _free_resumed_anchor_epoch(j, now)
+        )
+    )
     paid_norm.sort(
         key=lambda j: (
             round(float(gpu_s_by_job_id.get(str(j.id), 0.0)), 2),

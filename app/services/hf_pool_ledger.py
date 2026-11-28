@@ -93,6 +93,9 @@ PRE_JOB_SAFETY_MULTIPLIER = 1.20
 RESUMER_SAFETY_MULTIPLIER = 1.25
 REFILL_ETA_MIN_HORIZON_SECONDS = 900.0    # +15 min floor when deficit <= 0 (D2-A)
 REFILL_ETA_MAX_HORIZON_SECONDS = 3600.0   # +60 min horizon cap (D2-A)
+CONGESTION_ETA_MIN_HORIZON_SECONDS = 600.0   # +10 min floor for Free congestion parks
+CONGESTION_ETA_MAX_HORIZON_SECONDS = 1200.0  # +20 min cap for Free congestion parks
+CONGESTION_RESUMER_INTERVAL_SECONDS = 600.0  # matches voice_choice.RESUMER_INTERVAL_SECONDS
 
 # Session-slice `/generate_session` dynamic GPU gate pricing (2026-11-26 / 2026-11-27):
 # Runtime / reservation debit: `min(120, 18 + ceil(chars * 0.085))` GPU-seconds (x1.0, unfloored).
@@ -251,6 +254,7 @@ _lock = threading.RLock()
 _mem_state: dict[str, Any] | None = None
 _mem_loaded_mono: float = 0.0
 _mem_in_flight_jobs: dict[str, dict[str, float]] = {}
+_last_evicted_stale_gpu_s: float = 0.0
 _refusal_rem_baseline: dict[str, float] = {}
 _mem_truth_ts: dict[str, float] = {}
 _mem_token_meta: dict[str, dict[str, Any]] = {}
@@ -516,9 +520,10 @@ def _write_store_state(state: dict[str, Any], *, now_ts: float | None = None) ->
 
 
 def _load_in_flight_map(now_ts: float) -> dict[str, dict[str, float]]:
-    global _mem_in_flight_jobs
+    global _mem_in_flight_jobs, _last_evicted_stale_gpu_s
     raw = botsetting_sync_read(IN_FLIGHT_STORE_KEY)
     loaded: dict[str, dict[str, float]] = {}
+    evicted_stale_gpu_s = 0.0
     if raw:
         try:
             data = json.loads(raw)
@@ -528,17 +533,24 @@ def _load_in_flight_map(now_ts: float) -> dict[str, dict[str, float]]:
                         continue
                     gpu_s = max(0.0, float(meta.get("gpu_s") or 0.0))
                     ts = float(meta.get("ts") or now_ts)
-                    if gpu_s > 0 and (now_ts - ts) < IN_FLIGHT_STALE_SECONDS:
-                        loaded[str(jid)] = {"gpu_s": round(gpu_s, 2), "ts": ts}
+                    if gpu_s > 0:
+                        if (now_ts - ts) < IN_FLIGHT_STALE_SECONDS:
+                            loaded[str(jid)] = {"gpu_s": round(gpu_s, 2), "ts": ts}
+                        else:
+                            evicted_stale_gpu_s += round(gpu_s, 2)
         except Exception:
             loaded = {}
+            evicted_stale_gpu_s = 0.0
     else:
-        loaded = {
-            jid: dict(meta)
-            for jid, meta in _mem_in_flight_jobs.items()
-            if (now_ts - float(meta.get("ts") or now_ts)) < IN_FLIGHT_STALE_SECONDS
-        }
+        for jid, meta in _mem_in_flight_jobs.items():
+            gpu_s = max(0.0, float(meta.get("gpu_s") or 0.0))
+            ts = float(meta.get("ts") or now_ts)
+            if (now_ts - ts) < IN_FLIGHT_STALE_SECONDS:
+                loaded[jid] = dict(meta)
+            elif gpu_s > 0:
+                evicted_stale_gpu_s += round(gpu_s, 2)
     _mem_in_flight_jobs = loaded
+    _last_evicted_stale_gpu_s = round(evicted_stale_gpu_s, 2)
     return loaded
 
 
@@ -2093,12 +2105,15 @@ def reconcile_if_env_changed(
 
 def acquire_in_flight_gpu(job_id: str, gpu_s: float, *, now_ts: float | None = None) -> float:
     """Increment `in_flight_gpu_s` idempotently for `job_id`. Returns updated total."""
+    global _last_evicted_stale_gpu_s
     if not job_id or gpu_s <= 0:
         st = load_pool_state(now_ts=now_ts)
         return float(st.get("in_flight_gpu_s") or 0.0)
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
+        _last_evicted_stale_gpu_s = 0.0
         jobs_map = _load_in_flight_map(now)
+        evicted_s = float(_last_evicted_stale_gpu_s or 0.0)
         prev = float((jobs_map.get(str(job_id)) or {}).get("gpu_s") or 0.0)
         target = round(max(0.0, float(gpu_s)), 2)
         jobs_map[str(job_id)] = {"gpu_s": target, "ts": now}
@@ -2106,7 +2121,8 @@ def acquire_in_flight_gpu(job_id: str, gpu_s: float, *, now_ts: float | None = N
         tracked_sum = sum(float(m.get("gpu_s") or 0.0) for m in jobs_map.values())
 
         def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-            cur_total = max(0.0, float(st.get("in_flight_gpu_s") or 0.0) - prev + target)
+            base_total = max(0.0, float(st.get("in_flight_gpu_s") or 0.0) - evicted_s)
+            cur_total = max(0.0, base_total - prev + target)
             st["in_flight_gpu_s"] = round(max(cur_total, tracked_sum), 2)
             return st, True
 
@@ -2116,16 +2132,19 @@ def acquire_in_flight_gpu(job_id: str, gpu_s: float, *, now_ts: float | None = N
 
 def release_in_flight_gpu(job_id: str, *, now_ts: float | None = None) -> float:
     """Release `job_id`'s reservation from `in_flight_gpu_s` idempotently."""
+    global _last_evicted_stale_gpu_s
     if not job_id:
         st = load_pool_state(now_ts=now_ts)
         return float(st.get("in_flight_gpu_s") or 0.0)
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
+        _last_evicted_stale_gpu_s = 0.0
         jobs_map = _load_in_flight_map(now)
+        evicted_s = float(_last_evicted_stale_gpu_s or 0.0)
         popped = jobs_map.pop(str(job_id), None)
         _save_in_flight_map(jobs_map)
-        if popped is not None:
-            delta = float(popped.get("gpu_s") or 0.0)
+        if popped is not None or evicted_s > 0.0:
+            delta = float((popped or {}).get("gpu_s") or 0.0) + evicted_s
 
             def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                 new_total = max(0.0, float(st.get("in_flight_gpu_s") or 0.0) - delta)
@@ -2136,6 +2155,40 @@ def release_in_flight_gpu(job_id: str, *, now_ts: float | None = None) -> float:
             return float(saved["in_flight_gpu_s"])
         st = load_pool_state(now_ts=now)
         return float(st.get("in_flight_gpu_s") or 0.0)
+
+
+def reconcile_in_flight_gpu(
+    active_running_job_ids: Sequence[str] | set[str] | Any,
+    *,
+    now_ts: float | None = None,
+) -> float:
+    """Intersect `aj_hf:in_flight` with live `RUNNING` job IDs, persist the pruned map,
+    and set `aj_hf:pool_state.in_flight_gpu_s = round(sum(kept gpu_s), 2)`."""
+    global _last_evicted_stale_gpu_s
+    now = time.time() if now_ts is None else float(now_ts)
+    active_ids = {str(jid) for jid in (active_running_job_ids or ()) if jid}
+    with _lock:
+        _last_evicted_stale_gpu_s = 0.0
+        jobs_map = _load_in_flight_map(now)
+        evicted_s = float(_last_evicted_stale_gpu_s or 0.0)
+        kept = {jid: dict(meta) for jid, meta in jobs_map.items() if jid in active_ids}
+        if kept != jobs_map or evicted_s > 0.0:
+            _save_in_flight_map(kept)
+        tracked_sum = round(sum(float(m.get("gpu_s") or 0.0) for m in kept.values()), 2)
+        cur_st = load_pool_state(force=True, now_ts=now)
+        cur_val = round(max(0.0, float(cur_st.get("in_flight_gpu_s") or 0.0)), 2)
+        if cur_val == tracked_sum:
+            return tracked_sum
+
+        def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+            prev_val = round(max(0.0, float(st.get("in_flight_gpu_s") or 0.0)), 2)
+            if prev_val == tracked_sum:
+                return st, False
+            st["in_flight_gpu_s"] = tracked_sum
+            return st, True
+
+        saved = _mutate_pool_state(_mutate, now_ts=now)
+        return float(saved.get("in_flight_gpu_s") or 0.0)
 
 
 @dataclass(frozen=True)
@@ -2302,6 +2355,102 @@ def estimate_refill_eta_label(
         tz = timezone(timedelta(hours=6, minutes=30))
     dt = datetime.fromtimestamp(target_ts, tz=tz)
     return dt.strftime("%H:%M")
+
+
+def congestion_resume_eta_label(
+    now_ts: float | None = None,
+    *,
+    state: Mapping[str, Any] | None = None,
+    tz_name: str = "Asia/Yangon",
+) -> str:
+    """Return Yangon `HH:MM` ETA clamped to `[+10m, +20m]` from active `space_cooldowns`
+    plus half a resumer sweep interval (`RESUMER_INTERVAL_SECONDS = 600 s`)."""
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    cds = st.get("space_cooldowns")
+    active_cd: list[float] = []
+    if isinstance(cds, Mapping):
+        for cd_str in cds.values():
+            cd_ts = _parse_ts(cd_str)
+            if cd_ts is not None and cd_ts > now:
+                active_cd.append(cd_ts)
+    if active_cd:
+        raw_target = min(active_cd) + (CONGESTION_RESUMER_INTERVAL_SECONDS * 0.5)
+    else:
+        raw_target = now + CONGESTION_RESUMER_INTERVAL_SECONDS
+    target_ts = min(
+        now + CONGESTION_ETA_MAX_HORIZON_SECONDS,
+        max(now + CONGESTION_ETA_MIN_HORIZON_SECONDS, raw_target),
+    )
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone(timedelta(hours=6, minutes=30))
+    dt = datetime.fromtimestamp(target_ts, tz=tz)
+    return dt.strftime("%H:%M")
+
+
+def has_any_non_cooling_space(
+    spaces: Sequence[str] | None = None,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> bool:
+    """True when at least one configured non-CPU, non-v1 VoxCPM2 Space is not in active
+    `space_cooldowns` (returns True when no GPU Spaces are configured)."""
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    try:
+        from app.services.voxcpm_engine import (
+            get_configured_spaces,
+            is_cpu_demo_space,
+            is_voxcpm_v1_space,
+        )
+
+        raw_spaces = list(spaces) if spaces is not None else list(get_configured_spaces())
+        gpu_spaces = [
+            str(sp).strip()
+            for sp in raw_spaces
+            if str(sp).strip()
+            and not is_voxcpm_v1_space(sp)
+            and not is_cpu_demo_space(sp)
+        ]
+    except Exception:
+        gpu_spaces = [str(sp).strip() for sp in (spaces or ()) if str(sp).strip()]
+    if not gpu_spaces:
+        return True
+    return any(not is_space_cooling(sp, state=st, now_ts=now) for sp in gpu_spaces)
+
+
+def has_solvent_token_at_gate(
+    gate_s: float = 45.0,
+    *,
+    state: Mapping[str, Any] | None = None,
+    now_ts: float | None = None,
+) -> bool:
+    """True when at least one non-dead, non-cooling, uncapped token in `state` has
+    `remaining_s >= max(45.0, gate_s)` (returns True on unseeded empty `tokens` map)."""
+    now = time.time() if now_ts is None else float(now_ts)
+    st = load_pool_state(now_ts=now) if state is None else normalize_pool_state(state, now_ts=now)
+    tokens_map = st.get("tokens") or {}
+    if not tokens_map:
+        return True
+    eff_gate = max(45.0, float(gate_s or 45.0))
+    for row in tokens_map.values():
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("status") or "ok").strip().lower() == "auth_dead":
+            continue
+        cd_ts = _parse_ts(row.get("cooldown_until"))
+        if cd_ts is not None and cd_ts > now:
+            continue
+        rg, _ru = _extract_active_ceiling(row, now)
+        if rg is not None and eff_gate >= rg:
+            continue
+        rem = max(0.0, float(row.get("remaining_s") or 0.0))
+        if rem >= eff_gate:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -3067,6 +3216,9 @@ __all__ = [
     "BAND_NORMAL",
     "BAND_SHORT_JOB",
     "CACHE_TTL_SECONDS",
+    "CONGESTION_ETA_MAX_HORIZON_SECONDS",
+    "CONGESTION_ETA_MIN_HORIZON_SECONDS",
+    "CONGESTION_RESUMER_INTERVAL_SECONDS",
     "DEFAULT_SPACE_GATE_S",
     "DEFAULT_TOKEN_BASE_S",
     "GPU_REPORTED_OVERHEAD_PAD_S",
@@ -3101,6 +3253,7 @@ __all__ = [
     "compute_env_tokens_hash",
     "compute_method1_debit_s",
     "compute_pool_metrics",
+    "congestion_resume_eta_label",
     "effective_session_admission_gate_s",
     "estimate_refill_eta_label",
     "estimate_voxcpm_units_and_budget",
@@ -3116,7 +3269,9 @@ __all__ = [
     "get_token_refused_until",
     "get_token_remaining_s",
     "handle_auth_failure",
+    "has_any_non_cooling_space",
     "has_resumer_capacity",
+    "has_solvent_token_at_gate",
     "is_space_cooling",
     "is_token_auth_dead",
     "is_token_cooling",
@@ -3130,6 +3285,7 @@ __all__ = [
     "probe_whoami_status",
     "reconcile_from_probe_rows",
     "reconcile_if_env_changed",
+    "reconcile_in_flight_gpu",
     "record_admission_refusal",
     "record_calibration_drift_stats",
     "record_failure_debit",

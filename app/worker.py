@@ -2066,7 +2066,10 @@ async def process_single_job(
                     except Exception:
                         reference_seconds = 0.0
 
-                from app.services.voxcpm_engine import is_voxcpm_capacity_or_congestion_error
+                from app.services.voxcpm_engine import (
+                    is_voxcpm_capacity_or_congestion_error,
+                    is_voxcpm_free_congestion_error,
+                )
 
                 if _dp_choice_state and _dp_choice_state.get("pinned_space"):
                     try:
@@ -2095,9 +2098,7 @@ async def process_single_job(
                     _rem_needed_gpu_s = round(
                         _rem_units * _est_gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER, 2
                     )
-                _ckpt_dir = (
-                    (settings.storage_root / "dp_refs" / str(job.id)) if _dp_paid else None
-                )
+                _ckpt_dir = settings.storage_root / "dp_refs" / str(job.id)
                 _ckpt_progress: dict[str, Any] = {
                     "completed_units": _prev_done,
                     "total_units": _est_units,
@@ -2216,11 +2217,28 @@ async def process_single_job(
                             _tot_u,
                             e_vox,
                         )
+                        _paid_q_refs = int(getattr(engine_inst, "quota_refusals", 0) or 0)
+                        _paid_sp_tos = dict(getattr(engine_inst, "space_timeouts", None) or {})
+                        _paid_reason_tag = (
+                            "quota_exhausted"
+                            if isinstance(e_vox, VoxCPMQuotaExhaustedError)
+                            else ("mixed_congestion" if _paid_q_refs > 0 else "space_timeout")
+                        )
+                        logger.info(
+                            "dp_park_event action=parked tier=paid kind=clone job=%s user=%s reason=%s done_units=%d total_units=%d needed_gpu_s=%.1f space_timeouts=%s quota_refusals=%d repark=%s",
+                            job.id,
+                            job.user_id,
+                            _paid_reason_tag,
+                            _done_u,
+                            _tot_u,
+                            _rem_gpu_s,
+                            _paid_sp_tos,
+                            _paid_q_refs,
+                            _dp_repark,
+                        )
                         return False
 
                     if (not _dp_paid) and _is_cap_err:
-                        # Part 2 (#4): Free + quota/congestion exhaustion -> fail-fast + instant restore
-                        # (0 s deducted, never park Free jobs, never fall back to Edge/persona).
                         if await _voice_job_cancelled(session, job):
                             if not settings.is_admin(job.user_id):
                                 res_ref = await refund_or_release_job(
@@ -2231,6 +2249,144 @@ async def process_single_job(
                                     await refund_job_seconds(session, job.user_id, str(job.id))
                                 await session.commit()
                             return False
+
+                        _done_u = int(_ckpt_progress.get("completed_units") or _prev_done or 0)
+                        _tot_u = max(1, int(_ckpt_progress.get("total_units") or _est_units or 1))
+                        _pinned_sp = _ckpt_progress.get("pinned_space") or getattr(
+                            engine_inst, "pinned_space", None
+                        )
+                        if is_clone_session_slices_enabled():
+                            _all_sess_slices = plan_session_slices(clean_text)
+                            _next_slice_txt = (
+                                _all_sess_slices[min(_done_u, len(_all_sess_slices) - 1)]
+                                if _all_sess_slices
+                                else clean_text
+                            )
+                            _next_door_s = float(
+                                _hf_ledger.effective_session_admission_gate_s(
+                                    len(_next_slice_txt), _pinned_sp
+                                )
+                            )
+                            if float(_ckpt_progress.get("remaining_gpu_s") or 0.0) > 0:
+                                _rem_gpu_s = round(float(_ckpt_progress["remaining_gpu_s"]), 2)
+                            else:
+                                _rem_sl = _all_sess_slices[_done_u:] or _all_sess_slices[-1:]
+                                _rem_gpu_s = round(
+                                    sum(_hf_ledger.session_call_gate_s(len(s)) for s in _rem_sl)
+                                    * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER,
+                                    2,
+                                )
+                        else:
+                            _next_door_s = max(
+                                45.0, float(_est_gate_s or _hf_ledger.DEFAULT_SPACE_GATE_S)
+                            )
+                            _rem_gpu_s = round(
+                                max(1, _tot_u - _done_u)
+                                * _est_gate_s
+                                * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER,
+                                2,
+                            )
+
+                        _is_free_cong = is_voxcpm_free_congestion_error(
+                            e_vox, engine_inst, req_gate_s=_next_door_s
+                        )
+                        _free_parked_cnt = 0
+                        if _is_free_cong:
+                            from app.services.queue import (
+                                MAX_GLOBAL_FREE_PARKED_JOBS,
+                                count_free_parked_clone_jobs,
+                            )
+
+                            _free_parked_cnt = await count_free_parked_clone_jobs(session)
+
+                        if _is_free_cong and _free_parked_cnt < MAX_GLOBAL_FREE_PARKED_JOBS:
+                            _dp_repark = bool(
+                                _dp_choice_state
+                                and _dp_choice_state.get("prompt_message_id")
+                            )
+                            _src_path = getattr(job, "source_audio_path", None)
+                            if _src_path and Path(_src_path).is_file() and "temp" in str(_src_path):
+                                _dp_ref_dir = settings.storage_root / "dp_refs"
+                                _dp_ref_dir.mkdir(parents=True, exist_ok=True)
+                                _dp_ref_copy = _dp_ref_dir / f"{job.id}{Path(_src_path).suffix or '.wav'}"
+                                shutil.copy2(_src_path, _dp_ref_copy)
+                                job.source_audio_path = str(_dp_ref_copy)
+
+                            if _dp_repark and _dp_choice_state is not None:
+                                _dp_state = dict(_dp_choice_state)
+                                _dp_state["parked_at"] = time.time()
+                                _dp_state.pop("resumed_at", None)
+                                _dp_state["completed_units"] = _done_u
+                                _dp_state["total_units"] = _tot_u
+                                _dp_state["needed_gpu_s"] = _rem_gpu_s
+                                _dp_state["pinned_space"] = str(_pinned_sp) if _pinned_sp else None
+                                _dp_state["worker_host"] = _vc.current_worker_host()
+                                _dp_state["tier"] = _vc.TIER_FREE
+                                _dp_state["park_reason"] = _vc.PARK_REASON_CONGESTION
+                                _dp_state["next_door_s"] = round(_next_door_s, 2)
+                            else:
+                                _dp_state = _vc.new_choice_state(
+                                    _vc.KIND_CLONE,
+                                    completed_units=_done_u,
+                                    total_units=_tot_u,
+                                    needed_gpu_s=_rem_gpu_s,
+                                    pinned_space=_pinned_sp,
+                                    worker_host=_vc.current_worker_host(),
+                                    tier=_vc.TIER_FREE,
+                                    park_reason=_vc.PARK_REASON_CONGESTION,
+                                    next_door_s=_next_door_s,
+                                )
+                            job.status = JobStatus.WAITING_CHOICE.value
+                            job.voice_choice_state = _vc.dump_choice_state(_dp_state)
+                            await session.commit()
+                            parked = True
+                            if bot is not None:
+                                if _dp_repark:
+                                    await _vc.refresh_choice_prompt(
+                                        bot,
+                                        chat_id=_dp_state.get("prompt_chat_id") or target_chat_id,
+                                        message_id=_dp_state.get("prompt_message_id"),
+                                        job_id=str(job.id),
+                                        kind=_vc.KIND_CLONE,
+                                        lang=lang,
+                                        state=_dp_state,
+                                    )
+                                else:
+                                    _dp_mid = await _vc.deliver_choice_prompt(
+                                        bot,
+                                        chat_id=target_chat_id,
+                                        message_id=target_msg_id,
+                                        job_id=str(job.id),
+                                        kind=_vc.KIND_CLONE,
+                                        lang=lang,
+                                        state=_dp_state,
+                                    )
+                                    if _dp_mid:
+                                        _dp_state["prompt_chat_id"] = target_chat_id
+                                        _dp_state["prompt_message_id"] = _dp_mid
+                                        job.voice_choice_state = _vc.dump_choice_state(_dp_state)
+                                        await session.commit()
+                            _free_q_refs = int(getattr(engine_inst, "quota_refusals", 0) or 0)
+                            _free_sp_tos = dict(getattr(engine_inst, "space_timeouts", None) or {})
+                            _free_reason_tag = (
+                                "mixed_congestion" if _free_q_refs > 0 else "space_timeout"
+                            )
+                            logger.info(
+                                "dp_park_event action=parked tier=free kind=clone job=%s user=%s reason=%s done_units=%d total_units=%d needed_gpu_s=%.1f space_timeouts=%s quota_refusals=%d repark=%s",
+                                job.id,
+                                job.user_id,
+                                _free_reason_tag,
+                                _done_u,
+                                _tot_u,
+                                _rem_gpu_s,
+                                _free_sp_tos,
+                                _free_q_refs,
+                                _dp_repark,
+                            )
+                            return False
+
+                        # Free + quota exhaustion (or global Free park cap full) -> fail-fast + instant restore
+                        # (0 s deducted, never fall back to Edge/persona).
                         if not settings.is_admin(job.user_id):
                             res_ref = await refund_or_release_job(
                                 session, job.user_id, str(job.id), reason="JOB_FAILED"
@@ -2253,9 +2409,9 @@ async def process_single_job(
                         await session.commit()
                         await safe_edit_status(bot, target_chat_id, target_msg_id, quota_msg)
                         _ff_reason = (
-                            "quota_exhausted"
-                            if isinstance(e_vox, VoxCPMQuotaExhaustedError)
-                            else "space_timeout"
+                            "free_park_cap"
+                            if _is_free_cong
+                            else "quota_exhausted"
                         )
                         logger.info(
                             "Free voice job %s failed-fast on quota/congestion (reason=%s, 0s deducted): %s",
@@ -2560,8 +2716,21 @@ async def process_single_job(
 
         # Batch DP: a resumed parked job that has now completed —
         # retire its choice prompt's buttons.
-        if _dp_choice_state is not None and bot is not None:
-            await _vc.clear_prompt_for_job(bot, job)
+        if _dp_choice_state is not None:
+            if bot is not None:
+                await _vc.clear_prompt_for_job(bot, job)
+            _done_tier = (
+                _vc.TIER_FREE
+                if _vc.is_free_choice_state(_dp_choice_state)
+                else _vc.TIER_PAID
+            )
+            logger.info(
+                "dp_park_event action=completed_after_park tier=%s kind=clone job=%s user=%s audio_s=%d",
+                _done_tier,
+                job.id,
+                job.user_id,
+                int(duration_seconds or 0),
+            )
 
         logger.info("Successfully completed voice job %s (duration=%ss)", job.id, duration_seconds)
         return True
@@ -2662,6 +2831,7 @@ async def _fail_timed_out_job(job_id: str) -> None:
             job.status = JobStatus.FAILED.value
             job.error_message = "Voice job timed out (worker deadline exceeded)"
             job.finished_at = utc_now()
+            _hf_ledger.release_in_flight_gpu(str(job.id))
             if not settings.is_admin(job.user_id):
                 res_ref = await refund_or_release_job(
                     session, job.user_id, str(job.id), reason="WORKER_TIMEOUT"
@@ -3017,12 +3187,22 @@ async def run_worker_loop(
 
     # Startup recovery: sweep orphaned RUNNING jobs before starting polling (primary only)
     if settings.instance_primary:
+        from sqlalchemy import select as _sa_select
+
         from app.services.recovery import recover_stale_running_jobs
         try:
             async with AsyncSessionLocal() as session:
                 recovered = await recover_stale_running_jobs(session=session, bot=bot)
                 if recovered:
                     logger.info("Recovered %d orphaned stale jobs on worker startup: %s", len(recovered), recovered)
+                _running_ids = list(
+                    (
+                        await session.execute(
+                            _sa_select(Job.id).where(Job.status == JobStatus.RUNNING.value)
+                        )
+                    ).scalars().all()
+                )
+            await asyncio.to_thread(_hf_ledger.reconcile_in_flight_gpu, _running_ids)
         except Exception as e:
             logger.warning("Error during initial stale job recovery sweep: %s", e)
 

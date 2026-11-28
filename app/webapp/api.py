@@ -3566,10 +3566,15 @@ def _serialize_voice_choice_meta(raw_state: Any, lang: str = "my") -> Optional[d
     if not st:
         return None
     kind = str(st.get("kind") or _voice_choice.KIND_CLONE)
-    eta = _voice_choice.quota_reset_estimate_label(
-        needed_gpu_s=float(st.get("needed_gpu_s") or 0.0)
-    )
-    return {
+    if _voice_choice.is_free_choice_state(st) and kind != _voice_choice.KIND_RECAP:
+        from app.services import hf_pool_ledger as _hf_ledger
+
+        eta = _hf_ledger.congestion_resume_eta_label()
+    else:
+        eta = _voice_choice.quota_reset_estimate_label(
+            needed_gpu_s=float(st.get("needed_gpu_s") or 0.0)
+        )
+    out = {
         "kind": kind,
         "choice": st.get("choice"),
         "completed_units": int(st.get("completed_units") or 0),
@@ -3579,6 +3584,9 @@ def _serialize_voice_choice_meta(raw_state: Any, lang: str = "my") -> Optional[d
         "prompt_text": _voice_choice.choice_prompt_text(kind, lang, eta=eta, state=st),
         "can_edge_all": kind == _voice_choice.KIND_RECAP,
     }
+    if st.get("tier"):
+        out["tier"] = st.get("tier")
+    return out
 
 
 def _voice_job_error_status(reason: str) -> int:
@@ -5149,10 +5157,16 @@ async def post_job_voice_choice(
             except Exception:
                 pass
 
+    _vc_st = _voice_choice.parse_choice_state(getattr(job, "voice_choice_state", None))
+    _cancel_ans_key = (
+        "dp_choice_cancel_answer_free"
+        if _voice_choice.is_free_choice_state(_vc_st)
+        else "dp_choice_cancel_answer"
+    )
     msg_key = {
         "ok_wait": "dp_choice_wait_answer",
         "ok_resume": "dp_choice_resume_answer",
-        "ok_cancel": "dp_choice_cancel_answer",
+        "ok_cancel": _cancel_ans_key,
     }.get(outcome, "dp_choice_wait_answer")
     return {
         "success": True,
@@ -5687,7 +5701,7 @@ def _live_job_payload(
                 eta_payload = _recap_eta_from_row(job, medians, None, now=now)
         except Exception:
             pass
-    return {
+    payload = {
         "id": job.id,
         "kind": kind,
         "status": status,
@@ -5705,6 +5719,12 @@ def _live_job_payload(
         "created_at": created.isoformat() if created else None,
         "finished_at": finished.isoformat() if finished else None,
     }
+    if status == JobStatus.WAITING_CHOICE.value:
+        _vc_st = _voice_choice.parse_choice_state(getattr(job, "voice_choice_state", None))
+        payload["choice"] = _vc_st.get("choice") if _vc_st else None
+        if _vc_st and _vc_st.get("tier"):
+            payload["tier"] = _vc_st.get("tier")
+    return payload
 
 
 @api_router.get("/jobs/live")
@@ -5928,6 +5948,56 @@ async def get_live_jobs(
     }
 
 
+async def _cleanup_cancelled_parked_voice_job(job: Job) -> None:
+    """Idempotently clean `dp_refs` artifacts, release `in_flight_gpu`, and retire any
+    Bot park prompt when a parked/resumed standalone voice job is cancelled via `/cancel`."""
+    try:
+        from app.services import hf_pool_ledger as _hf_ledger
+
+        _hf_ledger.release_in_flight_gpu(str(job.id))
+    except Exception:
+        pass
+    raw_vc = getattr(job, "voice_choice_state", None)
+    if not raw_vc:
+        return
+    st = _voice_choice.parse_choice_state(raw_vc)
+    _voice_choice.cleanup_clone_park_artifacts(
+        str(job.id), getattr(job, "source_audio_path", None)
+    )
+    if st is not None:
+        parked_at = float(st.get("parked_at") or 0.0)
+        wait_s = max(0.0, time.time() - parked_at) if parked_at > 0 else 0.0
+        tier_lbl = (
+            _voice_choice.TIER_FREE
+            if _voice_choice.is_free_choice_state(st)
+            else _voice_choice.TIER_PAID
+        )
+        kind_lbl = str(st.get("kind") or _voice_choice.KIND_CLONE)
+        logger.info(
+            "dp_park_event action=cancelled tier=%s kind=%s job=%s user=%s wait_s=%.1f",
+            tier_lbl,
+            kind_lbl,
+            job.id,
+            job.user_id,
+            wait_s,
+        )
+    if st and st.get("prompt_message_id") and settings.bot_token:
+        try:
+            from aiogram.client.default import DefaultBotProperties
+            from aiogram.enums import ParseMode
+
+            _c_bot = create_telegram_bot(
+                token=settings.bot_token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+            try:
+                await _voice_choice.clear_prompt_for_job(_c_bot, job)
+            finally:
+                await _c_bot.session.close()
+        except Exception:
+            pass
+
+
 async def _refund_cancelled_non_recap_job(db: AsyncSession, job: Job, *, actor: str) -> Dict[str, Any]:
     """Shared cancel refund/release path for user & admin cancels of voice/TTS jobs."""
     refund_info: Dict[str, Any] = {"refunded": False}
@@ -5961,6 +6031,7 @@ async def _refund_cancelled_non_recap_job(db: AsyncSession, job: Job, *, actor: 
                 "refunded": bool((not rel.get("already_released")) and rv > 0),
                 "voice_seconds": rv,
             }
+            await _cleanup_cancelled_parked_voice_job(job)
             return refund_info
 
         from app.services.ledger import refund_job_seconds
@@ -5975,6 +6046,7 @@ async def _refund_cancelled_non_recap_job(db: AsyncSession, job: Job, *, actor: 
         await db.commit()
         if not before:
             refund_info = {"refunded": True, "voice_seconds": "ledger debits for this job (if any)"}
+        await _cleanup_cancelled_parked_voice_job(job)
     except Exception as exc:
         logger.warning(f"Cancel refund failed for {job.id} ({actor}): {exc}")
         refund_info = {"refunded": False, "error": "refund failed — check the user's ledger manually"}

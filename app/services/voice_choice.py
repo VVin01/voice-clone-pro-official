@@ -52,8 +52,15 @@ KIND_CLONE = "clone"
 
 # Part 3 (#5): 24 h safety valve (matching ZeroGPU's 24 h rolling window).
 PARK_SAFETY_VALVE_SECONDS = 24 * 3600
+FREE_PARK_SAFETY_VALVE_SECONDS = 7200  # 2 h safety valve for Free congestion parks
+MAX_FREE_RESUMES_PER_SWEEP = 2
+FREE_PARK_MIN_DWELL_SECONDS = 120.0
 RESUMER_INTERVAL_SECONDS = 600
 WORKER_AFFINITY_SECONDS = 15 * 60  # 15 minutes checkpoint host preference
+
+TIER_FREE = "free"
+TIER_PAID = "paid"
+PARK_REASON_CONGESTION = "congestion"
 
 
 def current_worker_host() -> str:
@@ -97,9 +104,14 @@ def new_choice_state(
     needed_gpu_s: float = 0.0,
     pinned_space: Optional[str] = None,
     worker_host: Optional[str] = None,
+    tier: Optional[str] = None,
+    park_reason: Optional[str] = None,
+    next_door_s: Optional[float] = None,
 ) -> dict:
-    """Create a park record carrying progress, GPU budget, pinned space, and host."""
-    return {
+    """Create a park record carrying progress, GPU budget, pinned space, and host.
+    Optional Free-only fields (`tier`, `park_reason`, `next_door_s`) are omitted when unset
+    so Paid park JSON stays byte-identical."""
+    st: dict[str, Any] = {
         "v": 2,
         "kind": kind,
         "choice": None,
@@ -112,6 +124,18 @@ def new_choice_state(
         "pinned_space": str(pinned_space) if pinned_space else None,
         "worker_host": str(worker_host) if worker_host else current_worker_host(),
     }
+    if tier:
+        st["tier"] = str(tier)
+    if park_reason:
+        st["park_reason"] = str(park_reason)
+    if next_door_s is not None and float(next_door_s) > 0:
+        st["next_door_s"] = round(float(next_door_s), 2)
+    return st
+
+
+def is_free_choice_state(state: Optional[dict]) -> bool:
+    """True when `state` belongs to a Free-tier congestion park (`tier == 'free'`)."""
+    return bool(isinstance(state, dict) and state.get("tier") == TIER_FREE)
 
 
 def choice_mode(state: Optional[dict]) -> Optional[str]:
@@ -149,15 +173,26 @@ def quota_reset_estimate_label(needed_gpu_s: float = 0.0) -> str:
     return _hf_ledger.estimate_refill_eta_label(needed_gpu_s=float(needed_gpu_s or 0.0))
 
 
-def build_choice_keyboard(job_id: str, kind: str, lang: str):
+def build_choice_keyboard(
+    job_id: str,
+    kind: str,
+    lang: str,
+    *,
+    state: Optional[dict] = None,
+):
     """Inline buttons for the park prompt (Part 3 #7):
     - Wait & Auto-Resume (`dp:wait:<job_id>`)
     - Recap only: Redo Whole Video in Gemini / Studio (`dp:edgeall:<job_id>`)
-    - Cancel & Instant Full Refund (`dp:cancel:<job_id>`)
+    - Cancel & Instant Full Refund (`dp:cancel:<job_id>`, Free copy when `tier=='free'`)
     (`dp:edgemix` is permanently retired — Part 2 #2.)
     """
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+    cancel_key = (
+        "dp_btn_cancel_free"
+        if (is_free_choice_state(state) and kind != KIND_RECAP)
+        else "dp_btn_cancel"
+    )
     rows = [
         [InlineKeyboardButton(
             text=t("dp_btn_wait", lang),
@@ -170,7 +205,7 @@ def build_choice_keyboard(job_id: str, kind: str, lang: str):
             callback_data=f"dp:edgeall:{job_id}",
         )])
     rows.append([InlineKeyboardButton(
-        text=t("dp_btn_cancel", lang),
+        text=t(cancel_key, lang),
         callback_data=f"dp:cancel:{job_id}",
     )])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -190,6 +225,15 @@ def choice_prompt_text(
         done = int(state.get("completed_units", done) or 0)
         total = max(1, int(state.get("total_units", total) or 1))
         needed_gpu_s = float(state.get("needed_gpu_s", needed_gpu_s) or 0.0)
+    if is_free_choice_state(state) and kind != KIND_RECAP:
+        eta_str = eta or _hf_ledger.congestion_resume_eta_label()
+        return t(
+            "dp_park_prompt_clone_free",
+            lang,
+            done=max(0, int(done)),
+            total=max(1, int(total)),
+            eta=eta_str,
+        )
     eta_str = eta or quota_reset_estimate_label(needed_gpu_s=needed_gpu_s)
     key = "dp_park_prompt_recap" if kind == KIND_RECAP else "dp_park_prompt_clone"
     return t(key, lang, done=max(0, int(done)), total=max(1, int(total)), eta=eta_str)
@@ -211,7 +255,7 @@ async def send_choice_prompt(
         msg = await bot.send_message(
             chat_id=chat_id,
             text=choice_prompt_text(kind, lang, state=state),
-            reply_markup=build_choice_keyboard(job_id, kind, lang),
+            reply_markup=build_choice_keyboard(job_id, kind, lang, state=state),
         )
         return getattr(msg, "message_id", None)
     except Exception:
@@ -238,7 +282,7 @@ async def deliver_choice_prompt(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=choice_prompt_text(kind, lang, state=state),
-                reply_markup=build_choice_keyboard(job_id, kind, lang),
+                reply_markup=build_choice_keyboard(job_id, kind, lang, state=state),
             )
             return message_id
         except Exception:
@@ -266,7 +310,7 @@ async def refresh_choice_prompt(
             chat_id=chat_id,
             message_id=message_id,
             text=choice_prompt_text(kind, lang, state=state),
-            reply_markup=build_choice_keyboard(job_id, kind, lang),
+            reply_markup=build_choice_keyboard(job_id, kind, lang, state=state),
         )
     except Exception:
         pass
@@ -337,8 +381,14 @@ async def _cancel_and_refund_parked_job(session, job: Job, state: dict) -> bool:
     """Flip `WAITING_CHOICE -> CANCELLED` and refund/release 100% immediately."""
     from app.models.schema import User, utc_now
 
+    now_ts = time.time()
+    parked_at = float(state.get("parked_at") or 0.0)
+    wait_s = max(0.0, now_ts - parked_at) if parked_at > 0 else 0.0
+    tier_lbl = TIER_FREE if is_free_choice_state(state) else TIER_PAID
+    kind_lbl = str(state.get("kind") or KIND_CLONE)
+
     state["choice"] = CHOICE_CANCEL
-    state["choice_at"] = time.time()
+    state["choice_at"] = now_ts
     res = await session.execute(
         update(Job)
         .where(Job.id == job.id, Job.status == WAITING)
@@ -388,6 +438,14 @@ async def _cancel_and_refund_parked_job(session, job: Job, state: dict) -> bool:
             )
         except Exception:
             pass
+        logger.info(
+            "dp_park_event action=cancelled tier=%s kind=%s job=%s user=%s wait_s=%.1f",
+            tier_lbl,
+            kind_lbl,
+            job.id,
+            job.user_id,
+            wait_s,
+        )
         return True
 
     # Standalone Clone: release reservation (or refund legacy seconds) + clean dp_refs.
@@ -403,6 +461,14 @@ async def _cancel_and_refund_parked_job(session, job: Job, state: dict) -> bool:
             await refund_job_seconds(session, job.user_id, str(job.id))
     await session.commit()
     cleanup_clone_park_artifacts(str(job.id), getattr(job, "source_audio_path", None))
+    logger.info(
+        "dp_park_event action=cancelled tier=%s kind=%s job=%s user=%s wait_s=%.1f",
+        tier_lbl,
+        kind_lbl,
+        job.id,
+        job.user_id,
+        wait_s,
+    )
     return True
 
 
@@ -467,13 +533,24 @@ async def _flip_to_queued(session, job: Job, state: dict) -> bool:
 
 
 async def _expire_parked_job(session, job: Job, state: dict, bot) -> None:
-    """24 h safety valve: fail an unrecovered parked job and issue 100% auto-refund."""
+    """Safety valve (24 h Paid / 2 h Free): fail an unrecovered parked job and issue 100% auto-refund."""
     from app.models.schema import User, utc_now
+
+    is_free = is_free_choice_state(state)
+    valve_s = FREE_PARK_SAFETY_VALVE_SECONDS if is_free else PARK_SAFETY_VALVE_SECONDS
+    tier_lbl = TIER_FREE if is_free else TIER_PAID
+    kind_lbl = str(state.get("kind") or KIND_CLONE)
+    parked_at = float(state.get("parked_at") or 0.0)
+    wait_s = max(0.0, time.time() - parked_at) if parked_at > 0 else 0.0
 
     _hf_ledger.release_in_flight_gpu(str(job.id))
     user = await session.get(User, job.user_id)
     lang = getattr(user, "language_code", None) or "my"
-    reason = t("dp_park_expired_error", lang)
+    reason = (
+        t("dp_park_expired_error_free", lang)
+        if is_free
+        else t("dp_park_expired_error", lang)
+    )
     if state.get("kind") == KIND_RECAP:
         from app.webapp import api as _api
 
@@ -527,6 +604,15 @@ async def _expire_parked_job(session, job: Job, state: dict, bot) -> None:
             )
         except Exception:
             pass
+        logger.info(
+            "dp_park_event action=expired tier=%s kind=%s job=%s user=%s wait_s=%.1f valve_s=%d",
+            tier_lbl,
+            kind_lbl,
+            job.id,
+            job.user_id,
+            wait_s,
+            valve_s,
+        )
         return
 
     res = await session.execute(
@@ -550,56 +636,218 @@ async def _expire_parked_job(session, job: Job, state: dict, bot) -> None:
             await refund_job_seconds(session, job.user_id, str(job.id))
     await session.commit()
     cleanup_clone_park_artifacts(str(job.id), getattr(job, "source_audio_path", None))
-    if bot is not None and job.status_message_id:
+    if is_free and bot is not None:
+        await clear_choice_buttons(
+            bot,
+            chat_id=state.get("prompt_chat_id") or job.chat_id or job.user_id,
+            message_id=state.get("prompt_message_id"),
+        )
+    if bot is not None and (job.status_message_id or (is_free and state.get("prompt_message_id"))):
         try:
             from app.worker import safe_edit_status
 
+            target_mid = job.status_message_id or state.get("prompt_message_id")
+            target_cid = (
+                (job.chat_id or job.user_id)
+                if job.status_message_id
+                else (state.get("prompt_chat_id") or job.chat_id or job.user_id)
+            )
             await safe_edit_status(
                 bot,
-                job.chat_id or job.user_id,
-                job.status_message_id,
+                target_cid,
+                target_mid,
                 f"{t('status_failed', lang)}\n<i>({reason})</i>",
             )
         except Exception:
             pass
+    logger.info(
+        "dp_park_event action=expired tier=%s kind=%s job=%s user=%s wait_s=%.1f valve_s=%d",
+        tier_lbl,
+        kind_lbl,
+        job.id,
+        job.user_id,
+        wait_s,
+        valve_s,
+    )
 
 
-async def _sweep_one(session, job: Job, bot, counts: dict) -> None:
-    """Evaluate one `WAITING_CHOICE` job against its choice, ledger capacity, and 24h valve."""
+async def _sweep_one(
+    session,
+    job: Job,
+    bot,
+    counts: dict,
+    *,
+    sweep_ctx: Optional[dict] = None,
+) -> None:
+    """Evaluate one `WAITING_CHOICE` job against its tier rules, ledger capacity, and valve."""
+    now = time.time()
     state = parse_choice_state(getattr(job, "voice_choice_state", None))
     if state is None:
         counts["still_parked"] += 1
+        if sweep_ctx is not None:
+            sweep_ctx["still_parked_paid"] += 1
         return
-    choice = state.get("choice")
-    if choice == CHOICE_EDGE_ALL and state.get("kind") == KIND_RECAP:
-        if await _flip_to_queued(session, job, state):
-            counts["resumed"] += 1
-        return
+
+    is_free = is_free_choice_state(state)
+    tier_lbl = TIER_FREE if is_free else TIER_PAID
+    kind_lbl = str(state.get("kind") or KIND_CLONE)
+    parked_at = float(state.get("parked_at") or 0.0)
+    wait_s = max(0.0, now - parked_at) if parked_at > 0 else 0.0
     needed_gpu_s = float(state.get("needed_gpu_s") or 0.0)
-    if await asyncio.to_thread(_probe_capacity_compat, needed_gpu_s):
-        if await _flip_to_queued(session, job, state):
-            counts["resumed"] += 1
+
+    if not is_free:
+        choice = state.get("choice")
+        if choice == CHOICE_EDGE_ALL and state.get("kind") == KIND_RECAP:
+            if await _flip_to_queued(session, job, state):
+                counts["resumed"] += 1
+                if sweep_ctx is not None:
+                    sweep_ctx["resumed_paid"] += 1
+                logger.info(
+                    "dp_park_event action=resumed tier=%s kind=%s job=%s user=%s wait_s=%.1f needed_gpu_s=%.1f avail_gpu_s=%.1f",
+                    tier_lbl,
+                    kind_lbl,
+                    job.id,
+                    job.user_id,
+                    wait_s,
+                    needed_gpu_s,
+                    float((sweep_ctx or {}).get("available_gpu_s") or 0.0),
+                )
+            return
+        if await asyncio.to_thread(_probe_capacity_compat, needed_gpu_s):
+            if await _flip_to_queued(session, job, state):
+                counts["resumed"] += 1
+                if sweep_ctx is not None:
+                    sweep_ctx["resumed_paid"] += 1
+                    req_commit = (
+                        needed_gpu_s if needed_gpu_s > 0 else float(sweep_ctx.get("gate_s") or 60.0)
+                    ) * _hf_ledger.RESUMER_SAFETY_MULTIPLIER
+                    sweep_ctx["virtual_committed_gpu_s"] = (
+                        float(sweep_ctx.get("virtual_committed_gpu_s") or 0.0) + req_commit
+                    )
+                logger.info(
+                    "dp_park_event action=resumed tier=%s kind=%s job=%s user=%s wait_s=%.1f needed_gpu_s=%.1f avail_gpu_s=%.1f",
+                    tier_lbl,
+                    kind_lbl,
+                    job.id,
+                    job.user_id,
+                    wait_s,
+                    needed_gpu_s,
+                    float((sweep_ctx or {}).get("available_gpu_s") or 0.0),
+                )
+            return
+        if parked_at and (now - parked_at) > PARK_SAFETY_VALVE_SECONDS:
+            await _expire_parked_job(session, job, state, bot)
+            counts["expired"] += 1
+            if sweep_ctx is not None:
+                sweep_ctx["expired_paid"] += 1
+            return
+        counts["still_parked"] += 1
+        if sweep_ctx is not None:
+            sweep_ctx["still_parked_paid"] += 1
         return
-    parked_at = float(state.get("parked_at") or 0)
-    if parked_at and (time.time() - parked_at) > PARK_SAFETY_VALVE_SECONDS:
+
+    # Free congestion park evaluation:
+    # 1. Enforce 2-hour safety valve first so aged Free parks always free the user's slot.
+    if parked_at and (now - parked_at) > FREE_PARK_SAFETY_VALVE_SECONDS:
         await _expire_parked_job(session, job, state, bot)
         counts["expired"] += 1
+        if sweep_ctx is not None:
+            sweep_ctx["expired_free"] += 1
         return
+
+    ctx = sweep_ctx or {}
+    pool_st = ctx.get("pool_state")
+    if pool_st is None:
+        pool_st = _hf_ledger.load_pool_state(force=True, now_ts=now)
+    metrics = ctx.get("metrics")
+    if metrics is None:
+        metrics = _hf_ledger.compute_pool_metrics(state=pool_st, now_ts=now)
+
+    free_resumed_so_far = int(ctx.get("free_resumed") or 0)
+    virt_committed = float(ctx.get("virtual_committed_gpu_s") or 0.0)
+    eff_req = (needed_gpu_s if needed_gpu_s > 0 else float(metrics.gate_s)) * _hf_ledger.RESUMER_SAFETY_MULTIPLIER
+    dwell_ok = parked_at <= 0 or (now - parked_at) >= FREE_PARK_MIN_DWELL_SECONDS
+    cap_ok = free_resumed_so_far < MAX_FREE_RESUMES_PER_SWEEP
+    virt_ok = (not metrics.seeded) or ((float(metrics.available_gpu_s) - virt_committed) >= eff_req)
+    space_ok = _hf_ledger.has_any_non_cooling_space(state=pool_st, now_ts=now)
+    door_s = float(state.get("next_door_s") or 45.0)
+    token_ok = _hf_ledger.has_solvent_token_at_gate(door_s, state=pool_st, now_ts=now)
+
+    if (
+        cap_ok
+        and dwell_ok
+        and virt_ok
+        and space_ok
+        and token_ok
+        and await asyncio.to_thread(_probe_capacity_compat, needed_gpu_s)
+    ):
+        if await _flip_to_queued(session, job, state):
+            counts["resumed"] += 1
+            if sweep_ctx is not None:
+                sweep_ctx["resumed_free"] += 1
+                sweep_ctx["free_resumed"] = free_resumed_so_far + 1
+                sweep_ctx["virtual_committed_gpu_s"] = virt_committed + eff_req
+            logger.info(
+                "dp_park_event action=resumed tier=free kind=%s job=%s user=%s wait_s=%.1f needed_gpu_s=%.1f avail_gpu_s=%.1f",
+                kind_lbl,
+                job.id,
+                job.user_id,
+                wait_s,
+                needed_gpu_s,
+                max(0.0, float(metrics.available_gpu_s) - virt_committed),
+            )
+        return
+
     counts["still_parked"] += 1
+    if sweep_ctx is not None:
+        sweep_ctx["still_parked_free"] += 1
 
 
 async def sweep_parked_jobs(bot=None) -> dict:
-    """One resumer pass over every `WAITING_CHOICE` job."""
+    """One resumer pass over every `WAITING_CHOICE` job (Paid first, oldest `parked_at` first)."""
     from app.db.session import AsyncSessionLocal
 
     counts = {"resumed": 0, "expired": 0, "still_parked": 0}
     async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(select(Job).where(Job.status == WAITING))
-        ).scalars().all()
+        rows = list(
+            (await session.execute(select(Job).where(Job.status == WAITING))).scalars().all()
+        )
+        if not rows:
+            return counts
+
+        def _sort_key(j: Job) -> tuple[int, float, str]:
+            st = parse_choice_state(getattr(j, "voice_choice_state", None))
+            tier_rank = 1 if is_free_choice_state(st) else 0
+            p_at = float((st or {}).get("parked_at") or 0.0)
+            if p_at <= 0.0:
+                created = getattr(j, "created_at", None)
+                p_at = created.timestamp() if created is not None else 0.0
+            return (tier_rank, p_at, str(j.id))
+
+        rows.sort(key=_sort_key)
+
+        now_snap = time.time()
+        pool_st = await asyncio.to_thread(_hf_ledger.load_pool_state, force=True, now_ts=now_snap)
+        metrics = _hf_ledger.compute_pool_metrics(state=pool_st, now_ts=now_snap)
+        sweep_ctx: dict[str, Any] = {
+            "pool_state": pool_st,
+            "metrics": metrics,
+            "seeded": metrics.seeded,
+            "gate_s": metrics.gate_s,
+            "available_gpu_s": metrics.available_gpu_s,
+            "virtual_committed_gpu_s": 0.0,
+            "free_resumed": 0,
+            "resumed_paid": 0,
+            "resumed_free": 0,
+            "expired_paid": 0,
+            "expired_free": 0,
+            "still_parked_paid": 0,
+            "still_parked_free": 0,
+        }
+
         for job in rows:
             try:
-                await _sweep_one(session, job, bot, counts)
+                await _sweep_one(session, job, bot, counts, sweep_ctx=sweep_ctx)
             except Exception:
                 try:
                     await session.rollback()
@@ -610,6 +858,21 @@ async def sweep_parked_jobs(bot=None) -> dict:
                     getattr(job, "id", "?"), exc_info=True,
                 )
                 counts["still_parked"] += 1
+                st_err = parse_choice_state(getattr(job, "voice_choice_state", None))
+                if is_free_choice_state(st_err):
+                    sweep_ctx["still_parked_free"] += 1
+                else:
+                    sweep_ctx["still_parked_paid"] += 1
+
+        logger.info(
+            "dp_park_sweep_summary resumed_paid=%d resumed_free=%d expired_paid=%d expired_free=%d still_parked_paid=%d still_parked_free=%d",
+            sweep_ctx["resumed_paid"],
+            sweep_ctx["resumed_free"],
+            sweep_ctx["expired_paid"],
+            sweep_ctx["expired_free"],
+            sweep_ctx["still_parked_paid"],
+            sweep_ctx["still_parked_free"],
+        )
     if counts["resumed"] or counts["expired"]:
         logger.info("DP resumer sweep: %s", counts)
     return counts

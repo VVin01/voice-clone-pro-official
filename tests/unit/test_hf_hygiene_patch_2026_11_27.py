@@ -407,19 +407,32 @@ async def test_d2b_worker_free_fail_fast_logs_reason_tag_without_changing_user_c
             snap = await billing_mod.get_wallet_snapshot(session, uid)
 
     assert ok is False
-    assert job.status == JobStatus.FAILED.value
-    assert "မိနစ် လုံးဝ မဖြတ်ထားပါ" in (job.error_message or "")
-    assert "10m" in (job.error_message or "")
-    assert snap["reserved_voice_seconds"] == 0
-    assert snap["available_voice_seconds"] == 600
+    if err_kind == "timeout":
+        assert job.status == JobStatus.WAITING_CHOICE.value
+        assert snap["reserved_voice_seconds"] == 60
+        assert snap["available_voice_seconds"] == 540
+        park_logs = [
+            r.getMessage()
+            for r in caplog.records
+            if "dp_park_event action=parked tier=free" in r.getMessage()
+            and f"job={jid}" in r.getMessage()
+        ]
+        assert len(park_logs) == 1
+        assert f"reason={expected_reason}" in park_logs[0]
+    else:
+        assert job.status == JobStatus.FAILED.value
+        assert "မိနစ် လုံးဝ မဖြတ်ထားပါ" in (job.error_message or "")
+        assert "10m" in (job.error_message or "")
+        assert snap["reserved_voice_seconds"] == 0
+        assert snap["available_voice_seconds"] == 600
 
-    ff_logs = [
-        r.getMessage()
-        for r in caplog.records
-        if f"Free voice job {jid} failed-fast on quota/congestion" in r.getMessage()
-    ]
-    assert len(ff_logs) == 1
-    assert f"reason={expected_reason}" in ff_logs[0]
+        ff_logs = [
+            r.getMessage()
+            for r in caplog.records
+            if f"Free voice job {jid} failed-fast on quota/congestion" in r.getMessage()
+        ]
+        assert len(ff_logs) == 1
+        assert f"reason={expected_reason}" in ff_logs[0]
 
     # Confirm `vc_mod.quota_reset_estimate_label()` still honors exact 5-char HH:MM pin
     eta_lbl = vc_mod.quota_reset_estimate_label()

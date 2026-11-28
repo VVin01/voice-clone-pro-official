@@ -102,6 +102,23 @@ def is_voxcpm_reference_only_mode_enabled() -> bool:
         return False
 
 
+EXPIRING_RESET_HORIZON_SECONDS = 14400.0  # 4 hours rolling-window expiry horizon
+
+
+def is_hf_expiring_quota_first_enabled() -> bool:
+    """True when dynamic setting ``hf_expiring_quota_first_enabled`` promotes Pro-surplus
+    (>300 s) and imminent-reset (<=4 h) solvent tokens to the head of the walk."""
+    try:
+        from app.config import settings as _settings
+
+        val = getattr(_settings, "hf_expiring_quota_first_enabled", False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+    except Exception:
+        return False
+
+
 # Batch AT (AT-2): per-space attempt cap inside ONE unpinned synthesis call.
 MAX_ATTEMPTS_PER_SPACE = 4
 # HF Pool Phase 1 (Part 2 #3): bounded retry ladder for pinned VoxCPM2 spaces.
@@ -423,6 +440,62 @@ def is_voxcpm_capacity_or_congestion_error(exc: BaseException | None) -> bool:
             return True
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
     return False
+
+
+def is_voxcpm_free_congestion_error(
+    exc: BaseException | None,
+    engine: Any = None,
+    *,
+    req_gate_s: Optional[float] = None,
+) -> bool:
+    """True when a Free-tier synthesis failure is transient Space/queue congestion
+    eligible for `WAITING_CHOICE` parking (3-part rule):
+    1. Not `VoxCPMQuotaExhaustedError` anywhere in the exception chain.
+    2. Timeout / queue-full / failover-budget marker present in the chain or `engine.space_timeouts`.
+    3. If `quota_refusals > 0` (or mixed quota+timeout error), at least one solvent uncapped
+       token at the next unit's door (`max(45.0, req_gate_s)`) must still exist.
+    """
+    if exc is None or isinstance(exc, VoxCPMQuotaExhaustedError):
+        return False
+
+    has_timeout_marker = bool(getattr(engine, "space_timeouts", None))
+    saw_quota_marker = int(getattr(engine, "quota_refusals", 0) or 0) > 0
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, VoxCPMQuotaExhaustedError):
+            return False
+        if isinstance(cur, TimeoutError):
+            has_timeout_marker = True
+        low = str(cur).lower()
+        if _quota_failure_kind(low) is not None:
+            saw_quota_marker = True
+        if (
+            "timed out" in low
+            or "timeout" in low
+            or "no gpu was available" in low
+            or "zerogpu queue timeout" in low
+            or "total failover budget" in low
+        ):
+            has_timeout_marker = True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+
+    if not has_timeout_marker:
+        return False
+
+    if saw_quota_marker:
+        eff_gate = max(45.0, float(req_gate_s or 45.0))
+        if engine is not None and (getattr(engine, "hf_tokens", None) or get_available_hf_tokens()):
+            return bool(has_solvent_voxcpm_tokens(engine, gate_s=eff_gate))
+        try:
+            from app.services import hf_pool_ledger as _hf_ledger
+
+            return bool(_hf_ledger.has_solvent_token_at_gate(eff_gate))
+        except Exception:
+            return False
+
+    return True
 
 
 def has_solvent_voxcpm_tokens(engine: Any, *, gate_s: Optional[float] = None) -> bool:
@@ -1809,21 +1882,55 @@ class VoxCPMEngine:
 
         def _best_then_max_order(toks: List[Optional[str]]) -> List[Optional[str]]:
             """Part P3.2 + 2026-11-27 Part 3: Best-Fit for the first 2 rounds, then Max-Fit
-            (descending `remaining_s` head tokens) on ALL walks (pinned and unpinned)."""
-            if len(toks) <= 2:
-                return list(toks)
-            head_two = list(toks[:2])
-            tail = list(toks[2:])
+            (descending `remaining_s` head tokens) on ALL walks (pinned and unpinned).
+            When `hf_expiring_quota_first_enabled` is True, solvent non-cooling tokens with
+            `remaining_s > 300.0` (Pro surplus) or `0 < resets_at - now <= 14400 s` lead Round 0."""
+            def _legacy_order(items: List[Optional[str]]) -> List[Optional[str]]:
+                if len(items) <= 2:
+                    return list(items)
+                head_two = list(items[:2])
+                tail = list(items[2:])
 
-            def _max_fit_key(t: Optional[str]) -> tuple[int, int, float, int]:
-                tsk = _token_sort_key(t)
-                bal = VoxCPMEngine._known_token_balance(t, ledger_state=ledger_state) if t is not None else None
-                has_bal = 0 if bal is not None else 1
-                neg_bal = -(float(bal) if bal is not None else 0.0)
-                return (tsk, has_bal, neg_bal, pos_index.get(t, 0))
+                def _max_fit_key(t: Optional[str]) -> tuple[int, int, float, int]:
+                    tsk = _token_sort_key(t)
+                    bal = VoxCPMEngine._known_token_balance(t, ledger_state=ledger_state) if t is not None else None
+                    has_bal = 0 if bal is not None else 1
+                    neg_bal = -(float(bal) if bal is not None else 0.0)
+                    return (tsk, has_bal, neg_bal, pos_index.get(t, 0))
 
-            tail.sort(key=_max_fit_key)
-            return head_two + tail
+                tail.sort(key=_max_fit_key)
+                return head_two + tail
+
+            if not is_hf_expiring_quota_first_enabled():
+                return _legacy_order(toks)
+
+            expiring_head: List[tuple[tuple[float, float, int], str]] = []
+            expiring_set: set[str] = set()
+            for t in toks:
+                if t is None or _is_cooling(t):
+                    continue
+                bal = VoxCPMEngine._known_token_balance(t, ledger_state=ledger_state)
+                _d, row = _hf_ledger.lookup_token_entry(ledger_state, t)
+                rst_ts = _hf_ledger._parse_ts((row or {}).get("resets_at")) if row else None
+                imminent_reset = (
+                    rst_ts is not None
+                    and 0.0 < (float(rst_ts) - now) <= EXPIRING_RESET_HORIZON_SECONDS
+                )
+                pro_surplus = (
+                    bal is not None and float(bal) > float(_hf_ledger.DEFAULT_TOKEN_BASE_S)
+                )
+                if pro_surplus or imminent_reset:
+                    eff_rst = float(rst_ts) if (rst_ts is not None and float(rst_ts) > now) else float("inf")
+                    neg_bal = -(float(bal) if bal is not None else 0.0)
+                    expiring_head.append(((eff_rst, neg_bal, pos_index.get(t, 0)), t))
+                    expiring_set.add(t)
+
+            if not expiring_head:
+                return _legacy_order(toks)
+
+            expiring_head.sort(key=lambda item: item[0])
+            rest = [t for t in toks if t not in expiring_set]
+            return [t for _k, t in expiring_head] + _legacy_order(rest)
 
         def _is_space_cooling_now(sp: str) -> bool:
             return _hf_ledger.is_space_cooling(sp, state=ledger_state)
@@ -2613,4 +2720,4 @@ class VoxCPMEngine:
         )
 
 
-__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TOKEN_BALANCE_BUCKET_SECONDS", "FREE_WALK_MAX_QUOTA_REFUSALS", "FREE_WALK_MAX_REFUSAL_WALL_S", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_voxcpm_capacity_or_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError", "_resolve_result_path", "_resolve_result_and_gpu_seconds"]
+__all__ = ["VoxCPMEngine", "DEFAULT_VOXCPM_SPACE", "DEFAULT_BURMESE_CONTROL", "DEFAULT_CLONE_FIDELITY_CONTROL", "get_available_hf_tokens", "space_supports_clone", "is_voxcpm_v1_space", "is_cpu_demo_space", "master_voxcpm_audio", "space_api_endpoints", "space_endpoint_family", "SPACE_API_ENDPOINTS", "MAX_ATTEMPTS_PER_SPACE", "MAX_PINNED_SPACE_TOKENS", "MAX_REPIN_SPACE_TOKENS", "PAIR_ATTEMPT_TIMEOUT_CAP_SECONDS", "SEGMENT_BUDGET_FREE_SECONDS", "SEGMENT_BUDGET_PAID_SECONDS", "TOKEN_BALANCE_BUCKET_SECONDS", "FREE_WALK_MAX_QUOTA_REFUSALS", "FREE_WALK_MAX_REFUSAL_WALL_S", "EXPIRING_RESET_HORIZON_SECONDS", "TRANSIENT_RETRY_BACKOFF_SECONDS", "is_hf_expiring_quota_first_enabled", "is_voxcpm_capacity_or_congestion_error", "is_voxcpm_free_congestion_error", "has_solvent_voxcpm_tokens", "PRESET_MAP_YEYEE", "DEFAULT_VOXCPM_SPACES", "JobQuotaMemory", "JobSpacePin", "VoxCPMQuotaExhaustedError", "_resolve_result_path", "_resolve_result_and_gpu_seconds"]
