@@ -513,7 +513,11 @@ async def count_active_voxcpm_jobs(session: AsyncSession) -> int:
     running_rows = (
         await session.execute(
             select(Job)
-            .options(defer(Job.input_text), defer(Job.final_script))
+            .options(
+                defer(Job.input_text),
+                defer(Job.final_script),
+                defer(Job.recap_config),
+            )
             .where(Job.status == JobStatus.RUNNING.value)
         )
     ).scalars().all()
@@ -527,14 +531,22 @@ async def count_queued_voxcpm_jobs(session: AsyncSession) -> int:
     queued_rows = (
         await session.execute(
             select(Job)
-            .options(defer(Job.input_text), defer(Job.final_script))
+            .options(
+                defer(Job.input_text),
+                defer(Job.final_script),
+                defer(Job.recap_config),
+            )
             .where(Job.status == JobStatus.QUEUED.value)
         )
     ).scalars().all()
     return sum(1 for row in queued_rows if is_job_voxcpm_bound(row))
 
 
-def _estimate_job_voxcpm_budget(job: Job) -> tuple[int, float, float]:
+def _estimate_job_voxcpm_budget(
+    job: Job,
+    *,
+    text_override: str | None = None,
+) -> tuple[int, float, float]:
     """Return `(units, needed_gpu_s, est_audio_seconds)` for queue admission & sorting."""
     vc_state = _vc.parse_choice_state(getattr(job, "voice_choice_state", None))
     if vc_state and float(vc_state.get("needed_gpu_s") or 0.0) > 0:
@@ -562,13 +574,14 @@ def _estimate_job_voxcpm_budget(job: Job) -> tuple[int, float, float]:
             duration_seconds=dur,
         )
         return u, needed, dur
+    raw_text = (job.input_text or "") if text_override is None else text_override
     est_s = float(
         job.seconds_estimated
-        or estimate_voice_job_seconds(job.input_text or "", job.speed_preset or DEFAULT_SPEED)
+        or estimate_voice_job_seconds(raw_text, job.speed_preset or DEFAULT_SPEED)
     )
     u, _g, needed = _hf_ledger.estimate_voxcpm_units_and_budget(
         kind="clone",
-        text=job.input_text or "",
+        text=raw_text,
     )
     return u, needed, est_s
 
@@ -734,6 +747,7 @@ async def claim_next_queued_job(
     *,
     skip_local_source: bool | None = None,
     allow_recap: bool | None = None,
+    hydrate_winner: bool = True,
 ) -> Job | None:
     """Find the next eligible QUEUED job and atomically transition it to RUNNING.
 
@@ -745,6 +759,8 @@ async def claim_next_queued_job(
     - Pre-execution ledger admission check (`QUEUED -> RUNNING` only when
       `effective_usable_gpu_s - in_flight_gpu_s >= needed_gpu_s` and `solvent_slots >= units`).
     """
+    from sqlalchemy.orm import defer
+
     global _paid_dispatch_streak
 
     if skip_local_source is None:
@@ -757,7 +773,15 @@ async def claim_next_queued_job(
         skip_local_source=skip_local_source,
         allow_recap=allow_recap,
     )
-    query = select(Job).where(*preds)
+    query = (
+        select(Job)
+        .options(
+            defer(Job.input_text),
+            defer(Job.final_script),
+            defer(Job.recap_config),
+        )
+        .where(*preds)
+    )
 
     candidate_stmt = query.order_by(Job.created_at).limit(25)
     candidates = list((await session.execute(candidate_stmt)).scalars().all())
@@ -817,22 +841,49 @@ async def claim_next_queued_job(
 
         is_paid_map[jid] = int(cand.user_id) in paid_users
         if is_job_voxcpm_bound(cand):
-            u, needed_s, est_s = _estimate_job_voxcpm_budget(cand)
-            units_map[jid] = u
-            gpu_s_map[jid] = needed_s
-            est_sec_map[jid] = est_s
             vox_candidates.append(cand)
         else:
             non_vox_candidates.append(cand)
 
-    ordered_vox = order_voxcpm_fair_queue(
-        vox_candidates, is_paid_map, gpu_s_map
-    )
     # Non-VoxCPM jobs (e.g. Gemini/Edge recaps) keep their exact FIFO slot positions;
     # VoxCPM slots are filled in `ordered_vox` order (or omitted when VoxCPM cap is full).
     if active_voxcpm >= MAX_CONCURRENT_VOXCPM_JOBS:
         ordered_all = non_vox_candidates
     else:
+        need_text_ids: list[str] = []
+        for cand in vox_candidates:
+            if _is_recap_row(cand):
+                continue
+            vc_state = _vc.parse_choice_state(getattr(cand, "voice_choice_state", None))
+            if vc_state and float(vc_state.get("needed_gpu_s") or 0.0) > 0:
+                continue
+            need_text_ids.append(str(cand.id))
+
+        prefetched_texts: dict[str, str] = {}
+        if need_text_ids:
+            text_rows = (
+                await session.execute(
+                    select(Job.id, Job.input_text).where(Job.id.in_(need_text_ids))
+                )
+            ).all()
+            for tid, raw_txt in text_rows:
+                prefetched_texts[str(tid)] = raw_txt or ""
+            for tid in need_text_ids:
+                prefetched_texts.setdefault(tid, "")
+
+        for cand in vox_candidates:
+            jid = str(cand.id)
+            override = prefetched_texts[jid] if jid in prefetched_texts else None
+            u, needed_s, est_s = _estimate_job_voxcpm_budget(
+                cand, text_override=override
+            )
+            units_map[jid] = u
+            gpu_s_map[jid] = needed_s
+            est_sec_map[jid] = est_s
+
+        ordered_vox = order_voxcpm_fair_queue(
+            vox_candidates, is_paid_map, gpu_s_map
+        )
         vox_ids = {str(c.id) for c in vox_candidates}
         vox_iter = iter(ordered_vox)
         ordered_all = []
@@ -905,7 +956,10 @@ async def claim_next_queued_job(
                 _paid_dispatch_streak += 1
             else:
                 _paid_dispatch_streak = 0
-        return await session.get(Job, candidate_id)
+        if not hydrate_winner:
+            cand.status = JobStatus.RUNNING.value
+            return cand
+        return await session.get(Job, candidate_id, populate_existing=True)
 
     return None
 

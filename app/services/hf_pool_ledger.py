@@ -2134,7 +2134,7 @@ def release_in_flight_gpu(job_id: str, *, now_ts: float | None = None) -> float:
 
             saved = _mutate_pool_state(_mutate, now_ts=now)
             return float(saved["in_flight_gpu_s"])
-        st = load_pool_state(force=True, now_ts=now)
+        st = load_pool_state(now_ts=now)
         return float(st.get("in_flight_gpu_s") or 0.0)
 
 

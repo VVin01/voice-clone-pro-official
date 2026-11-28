@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.models.schema import BotSetting, Job, MinuteLedgerEvent, VoiceModel, utc_now
 
@@ -53,7 +54,17 @@ async def get_user_history_jobs(
 ) -> list[Job]:
     """Fetch recent voice clone jobs for user, excluding records prior to clearance timestamp."""
     cleared_at = await get_user_history_cleared_at(session, user_id)
-    stmt = select(Job).where(Job.user_id == user_id).order_by(Job.created_at.desc()).limit(limit * 2)
+    stmt = (
+        select(Job)
+        .options(
+            defer(Job.input_text),
+            defer(Job.final_script),
+            defer(Job.recap_config),
+        )
+        .where(Job.user_id == user_id)
+        .order_by(Job.created_at.desc())
+        .limit(limit * 2)
+    )
     jobs = list((await session.execute(stmt)).scalars().all())
     if cleared_at is not None:
         cl_utc = _normalize_dt(cleared_at)

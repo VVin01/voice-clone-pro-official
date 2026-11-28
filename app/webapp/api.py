@@ -1195,7 +1195,11 @@ async def _recap_active_job_count(db, user_id: int) -> int:
     return len(reg_ids | db_active_ids)
 
 
-def _recap_job_config(job) -> Optional["RecapConfigRequest"]:
+def _recap_job_config(
+    job,
+    *,
+    input_text_override: Optional[str] = None,
+) -> Optional["RecapConfigRequest"]:
     """Rebuild the submit-time config for a recap Job row.
 
     Used by user retry (batch L) and the History re-run prefill: the
@@ -1210,11 +1214,14 @@ def _recap_job_config(job) -> Optional["RecapConfigRequest"]:
             return RecapConfigRequest(**state["config"])
         except Exception:
             return None
-    source_url = getattr(job, "source_audio_path", None) or job.input_text or ""
+    raw_input_text = (
+        (job.input_text or "") if input_text_override is None else input_text_override
+    )
+    source_url = getattr(job, "source_audio_path", None) or raw_input_text or ""
     if not source_url:
         return None
     clean_title = _clean_recap_display_title(
-        convert_zawgyi_to_unicode(job.input_text or ""), source_url
+        convert_zawgyi_to_unicode(raw_input_text), source_url
     ) or "Movie Recap Video"
     try:
         return RecapConfigRequest(
@@ -3816,6 +3823,8 @@ async def get_user_profile(
         return snap
 
     async def _group_jobs_and_tts(sess: AsyncSession):
+        from sqlalchemy.orm import defer
+
         recap_id = None
         voice_id = None
         tts_id = None
@@ -3823,6 +3832,11 @@ async def get_user_profile(
             recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
             stmt_active = (
                 select(Job)
+                .options(
+                    defer(Job.input_text),
+                    defer(Job.final_script),
+                    defer(Job.recap_config),
+                )
                 .where(
                     Job.user_id == user_id,
                     or_(
@@ -4986,7 +5000,19 @@ async def get_job_status(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Poll job status for real-time progress & audio delivery."""
-    job = await db.get(Job, str(job_id))
+    from sqlalchemy.orm import defer
+
+    job = (
+        await db.execute(
+            select(Job)
+            .options(
+                defer(Job.input_text),
+                defer(Job.final_script),
+                defer(Job.recap_config),
+            )
+            .where(Job.id == str(job_id))
+        )
+    ).scalar_one_or_none()
     if not job or (job.user_id != user.id and not settings.is_admin(user.id)):
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -5557,7 +5583,14 @@ def _reconcile_recap_registry_with_db_job(
     return entry
 
 
-def _live_job_payload(job, registry_entry=None, now=None, medians=None) -> Dict[str, Any]:
+def _live_job_payload(
+    job,
+    registry_entry=None,
+    now=None,
+    medians=None,
+    *,
+    input_preview: Optional[str] = None,
+) -> Dict[str, Any]:
     """Serialize one Job row (+ live recap registry entry) for the
     bulk live-jobs response. Pure apart from the registry read the
     caller passes in, so it is unit-testable without a request.
@@ -5636,7 +5669,8 @@ def _live_job_payload(job, registry_entry=None, now=None, medians=None) -> Dict[
             elapsed = max(0, int((end - created).total_seconds()))
         except Exception:
             elapsed = None
-    raw_title = _clean_recap_display_title(job.input_text) if is_recap else (job.input_text or "")
+    src_text = (job.input_text or "") if input_preview is None else input_preview
+    raw_title = _clean_recap_display_title(src_text) if is_recap else src_text
     title = (raw_title or "")[:70]
     eta_payload = {
         "eta_seconds": None,
@@ -5684,9 +5718,14 @@ async def get_live_jobs(
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=LIVE_JOBS_RECENT_TERMINAL_MINUTES)
+    input_preview_col = func.substr(Job.input_text, 1, 120).label("input_preview")
     stmt = (
-        select(Job)
-        .options(defer(Job.final_script), defer(Job.recap_config))
+        select(Job, input_preview_col)
+        .options(
+            defer(Job.final_script),
+            defer(Job.recap_config),
+            defer(Job.input_text),
+        )
         .where(
             Job.user_id == user.id,
             or_(
@@ -5701,7 +5740,9 @@ async def get_live_jobs(
         .limit(LIVE_JOBS_LIMIT)
     )
     res = await db.execute(stmt)
-    jobs = list(res.scalars().all())
+    live_rows = list(res.all())
+    jobs = [j for j, _ in live_rows]
+    preview_by_id = {str(j.id): (prev or "") for j, prev in live_rows}
 
     def _live_row_needs_recap_cfg(j: Job) -> bool:
         is_rc = (
@@ -5752,7 +5793,13 @@ async def get_live_jobs(
             or job.engine == "recap"
         )
         entry = _reconcile_recap_registry_with_db_job(job.id, job) if is_rc_job else None
-        payload = _live_job_payload(job, entry, now=now, medians=live_medians)
+        payload = _live_job_payload(
+            job,
+            entry,
+            now=now,
+            medians=live_medians,
+            input_preview=preview_by_id.get(str(job.id), ""),
+        )
         # Voice queue position: the shared truthful counter (older
         # active jobs ahead of this one, across kinds — the voice
         # concurrency gate counts the same pool).
@@ -5777,14 +5824,20 @@ async def get_live_jobs(
     ]
     if unseen_reg_ids:
         rec_res = await db.execute(
-            select(Job)
-            .options(defer(Job.final_script), defer(Job.recap_config))
+            select(Job, input_preview_col)
+            .options(
+                defer(Job.final_script),
+                defer(Job.recap_config),
+                defer(Job.input_text),
+            )
             .where(
                 Job.id.in_(unseen_reg_ids),
                 Job.user_id == user.id,
             )
         )
-        rec_jobs = list(rec_res.scalars().all())
+        rec_rows = list(rec_res.all())
+        rec_jobs = [j for j, _ in rec_rows]
+        rec_preview_by_id = {str(j.id): (prev or "") for j, prev in rec_rows}
         rec_need_cfg = [j for j in rec_jobs if _live_row_needs_recap_cfg(j)]
         if rec_need_cfg:
             rcfg_rows = (
@@ -5802,7 +5855,13 @@ async def get_live_jobs(
             reconciled_entry = _reconcile_recap_registry_with_db_job(db_job.id, db_job)
             if db_job.status in _LIVE_ACTIVE_STATUSES and len(out) < LIVE_JOBS_LIMIT:
                 out.append(
-                    _live_job_payload(db_job, reconciled_entry, now=now, medians=live_medians)
+                    _live_job_payload(
+                        db_job,
+                        reconciled_entry,
+                        now=now,
+                        medians=live_medians,
+                        input_preview=rec_preview_by_id.get(str(db_job.id), ""),
+                    )
                 )
 
     # Registry-only recap jobs (no DB row — e.g. DB insert failed at submit):
@@ -13615,9 +13674,18 @@ async def get_user_history(
     the media retention window (default 24 hours). Older jobs are purged by
     the retention sweep together with their files.
     """
+    from sqlalchemy.orm import defer
+    from sqlalchemy.orm.attributes import set_committed_value
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=_media_retention_days())
+    input_preview_col = func.substr(Job.input_text, 1, 120).label("input_preview")
     stmt = (
-        select(Job)
+        select(Job, input_preview_col)
+        .options(
+            defer(Job.final_script),
+            defer(Job.recap_config),
+            defer(Job.input_text),
+        )
         .where(
             Job.user_id == user.id,
             Job.created_at >= cutoff,
@@ -13627,7 +13695,41 @@ async def get_user_history(
         .limit(60)
     )
     res = await db.execute(stmt)
-    jobs = res.scalars().all()
+    hist_rows = list(res.all())
+    jobs = [j for j, _ in hist_rows]
+    preview_by_id = {str(j.id): (prev or "") for j, prev in hist_rows}
+
+    recap_hist_jobs = [
+        j for j in jobs if (j.job_type == JobType.RECAP.value or str(j.id).startswith("rc_"))
+    ]
+    if recap_hist_jobs:
+        rc_rows = (
+            await db.execute(
+                select(Job.id, Job.recap_config).where(
+                    Job.id.in_([j.id for j in recap_hist_jobs])
+                )
+            )
+        ).all()
+        rc_by_id = {str(jid): rcfg for jid, rcfg in rc_rows}
+        for rj in recap_hist_jobs:
+            set_committed_value(rj, "recap_config", rc_by_id.get(str(rj.id)))
+        legacy_url_jobs = [
+            rj
+            for rj in recap_hist_jobs
+            if not getattr(rj, "recap_config", None)
+            and not getattr(rj, "source_audio_path", None)
+        ]
+        if legacy_url_jobs:
+            leg_rows = (
+                await db.execute(
+                    select(Job.id, Job.input_text).where(
+                        Job.id.in_([rj.id for rj in legacy_url_jobs])
+                    )
+                )
+            ).all()
+            leg_by_id = {str(jid): rtxt for jid, rtxt in leg_rows}
+            for rj in legacy_url_jobs:
+                set_committed_value(rj, "input_text", leg_by_id.get(str(rj.id)))
 
     out = []
     for j in jobs:
@@ -13699,7 +13801,8 @@ async def get_user_history(
                             deliverables[_dk], _audio_token
                         )
 
-        raw_snippet = _clean_recap_display_title(j.input_text) if is_recap else (j.input_text or "")
+        _j_preview = preview_by_id.get(str(j.id), "")
+        raw_snippet = _clean_recap_display_title(_j_preview) if is_recap else _j_preview
         _hist_entry = RECAP_JOBS_REGISTRY.get(j.id) if is_recap else None
         _hist_parts = ((_hist_entry or {}).get("parts") or []) if is_recap else []
         _ref_trimmed = False  # Batch BU: set for voice jobs in the else-branch below
@@ -13776,7 +13879,15 @@ async def get_user_history(
         _hist_source_available = None
         _hist_can_retry = None
         if is_recap:
-            _cfg_obj = _recap_job_config(j)
+            _legacy_txt_override = (
+                None
+                if (
+                    not getattr(j, "recap_config", None)
+                    and not getattr(j, "source_audio_path", None)
+                )
+                else _j_preview
+            )
+            _cfg_obj = _recap_job_config(j, input_text_override=_legacy_txt_override)
             if _cfg_obj is not None:
                 _hist_cfg = _cfg_obj.model_dump()
                 _hist_source_available = _recap_source_available(_cfg_obj.url)

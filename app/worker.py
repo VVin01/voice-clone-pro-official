@@ -2790,6 +2790,7 @@ async def claim_and_process_next_job(
             engine_filter=engine_filter,
             skip_local_source=skip_local_source,
             allow_recap=eff_allow_recap,
+            hydrate_winner=False,
         )
         if not job:
             return False
@@ -3137,7 +3138,7 @@ async def run_worker_loop(
                 _backoff.on_job_claimed()
                 _backoff.on_job_completed(_now_after)
             else:
-                sleep_s = _backoff.on_empty_tick(_now_after, active=bool(_active_recap_tasks))
+                sleep_s = _backoff.on_empty_tick(_now_after, active=False)
                 await asyncio.sleep(sleep_s)
         except asyncio.CancelledError:
             logger.info("Worker loop cancelled, shutting down.")

@@ -295,8 +295,11 @@ async def _dispatch_oldest_queued_recap() -> bool:
         if probe is None:
             return False
 
+        from sqlalchemy.orm import defer
+
         stmt = (
             select(Job)
+            .options(defer(Job.final_script))
             .where(*_recap_queued_preds)
             .order_by(Job.created_at)
             .limit(15)

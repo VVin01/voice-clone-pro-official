@@ -153,24 +153,53 @@ async def tts_cap_consumed_seconds(session: AsyncSession, user_id: int) -> float
     RUNNING rows count their submit estimate, FAILED / CANCELLED rows
     count nothing. Each row's cost is reduced by the referral seconds
     it drew (AW-10: only the remainder counts against the cap)."""
+    from sqlalchemy.orm import defer
+
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    stmt = select(Job).where(
-        Job.user_id == user_id,
-        Job.job_type == JobType.TTS.value,
-        Job.created_at >= today_start,
+    stmt = (
+        select(Job)
+        .options(
+            defer(Job.input_text),
+            defer(Job.final_script),
+            defer(Job.recap_config),
+        )
+        .where(
+            Job.user_id == user_id,
+            Job.job_type == JobType.TTS.value,
+            Job.created_at >= today_start,
+        )
     )
-    rows = (await session.execute(stmt)).scalars().all()
+    rows = list((await session.execute(stmt)).scalars().all())
+    need_text_ids: list[str] = []
+    for job in rows:
+        if job.status == JobStatus.SUCCESS.value:
+            if float(job.seconds_consumed or 0) <= 0 and float(job.seconds_estimated or 0) <= 0:
+                need_text_ids.append(str(job.id))
+        elif job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+            if float(job.seconds_estimated or 0) <= 0:
+                need_text_ids.append(str(job.id))
+    fallback_texts: dict[str, str] = {}
+    if need_text_ids:
+        txt_rows = (
+            await session.execute(
+                select(Job.id, Job.input_text).where(Job.id.in_(need_text_ids))
+            )
+        ).all()
+        fallback_texts = {str(jid): (txt or "") for jid, txt in txt_rows}
+
     active_costs: list[tuple[Job, float]] = []
     for job in rows:
         if job.status == JobStatus.SUCCESS.value:
             cost = float(job.seconds_consumed or 0)
             if cost <= 0:
                 cost = float(job.seconds_estimated or 0) or estimate_tts_seconds(
-                    job.input_text or "", job.speed_preset or TTS_DEFAULT_SPEED
+                    fallback_texts.get(str(job.id), ""),
+                    job.speed_preset or TTS_DEFAULT_SPEED,
                 )
         elif job.status in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
             cost = float(job.seconds_estimated or 0) or estimate_tts_seconds(
-                job.input_text or "", job.speed_preset or TTS_DEFAULT_SPEED
+                fallback_texts.get(str(job.id), ""),
+                job.speed_preset or TTS_DEFAULT_SPEED,
             )
         else:
             continue
