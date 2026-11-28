@@ -16,3 +16,7 @@ tests/
 docs/
 .github/
 start_bot.bat
+.agents/
+.agent/
+.serena/
+.impeccable.md
