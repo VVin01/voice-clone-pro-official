@@ -727,7 +727,7 @@ async def check_calibration_guards(
             cached_date = _mem_last_sweep_date_mmt
         if cached_date == today_mmt:
             return GuardStatus(False, "already_swept_today")
-        persisted_rep = load_calibration_report()
+        persisted_rep = await asyncio.to_thread(load_calibration_report)
         if isinstance(persisted_rep, Mapping) and persisted_rep.get("last_sweep_date_mmt") == today_mmt:
             with _cal_lock:
                 _mem_last_sweep_date_mmt = today_mmt
@@ -736,7 +736,7 @@ async def check_calibration_guards(
     eff_boot_age = (
         float(boot_age_s)
         if boot_age_s is not None
-        else get_effective_boot_age_s(now_ts=now, in_web_process=in_web_process)
+        else await asyncio.to_thread(get_effective_boot_age_s, now_ts=now, in_web_process=in_web_process)
     )
     if eff_boot_age < BOOT_GUARD_MIN_AGE_S:
         return GuardStatus(False, "boot_age_below_600s")
@@ -751,13 +751,16 @@ async def check_calibration_guards(
             await ds_mod.refresh_dynamic_settings_if_changed(session)
         except Exception:
             pass
-        if scheduled and not bool(getattr(settings, "hf_daily_calibration_enabled", False)):
-            return GuardStatus(False, "kill_switch_disabled")
-        if bool(getattr(settings, "maintenance_mode", False)):
-            return GuardStatus(False, "maintenance_mode")
-        st = await asyncio.to_thread(hf_ledger.load_pool_state, force=True, now_ts=now)
-        if float((st or {}).get("in_flight_gpu_s") or 0.0) > 0.0:
-            return GuardStatus(False, "in_flight_gpu_nonzero")
+    if scheduled and not bool(getattr(settings, "hf_daily_calibration_enabled", False)):
+        return GuardStatus(False, "kill_switch_disabled")
+    if bool(getattr(settings, "maintenance_mode", False)):
+        return GuardStatus(False, "maintenance_mode")
+
+    st = await asyncio.to_thread(hf_ledger.load_pool_state, force=True, now_ts=now)
+    if float((st or {}).get("in_flight_gpu_s") or 0.0) > 0.0:
+        return GuardStatus(False, "in_flight_gpu_nonzero")
+
+    async with sess_maker() as session:
         active_cnt = await count_active_voxcpm_jobs(session)
         if active_cnt != 0:
             return GuardStatus(False, "active_voxcpm_jobs")
@@ -799,7 +802,7 @@ async def _execute_guarded_sweep_async(
     async def _check_live_job_guards_async() -> bool:
         if shut_fn() or bool(getattr(settings, "maintenance_mode", False)):
             return False
-        st = hf_ledger.load_pool_state(force=True)
+        st = await asyncio.to_thread(hf_ledger.load_pool_state, force=True)
         if float((st or {}).get("in_flight_gpu_s") or 0.0) > 0.0:
             return False
         async with sess_maker() as s:

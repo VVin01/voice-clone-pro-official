@@ -114,6 +114,45 @@ def _enforce_maintenance_access(user: User) -> None:
         raise HTTPException(status_code=403, detail=MAINTENANCE_MODE_DETAIL)
 
 
+async def _end_clean_readonly_txn(db: Any) -> None:
+    """End a clean read-only autobegin transaction so pooled connections do not sit
+    `idle in transaction` across slow external I/O or file streaming.
+
+    Preserves loaded scalar column values via `set_committed_value` across `rollback()`
+    while keeping ORM instances persistent in `db` (so later `db.refresh(...)` or
+    in-session mutations continue to work).
+    """
+    if not isinstance(db, AsyncSession):
+        return
+    if db.new or db.dirty or db.deleted:
+        return
+    in_tx_fn = getattr(db, "in_transaction", None)
+    if callable(in_tx_fn) and not in_tx_fn():
+        return
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        sync_sess = getattr(db, "sync_session", None)
+        snapshots: list[tuple[Any, dict[str, Any]]] = []
+        if sync_sess is not None:
+            for obj in list(sync_sess.identity_map.values()):
+                st = sa_inspect(obj)
+                loaded_cols = {
+                    attr.key: st.dict[attr.key]
+                    for attr in st.mapper.column_attrs
+                    if attr.key in st.dict
+                }
+                if loaded_cols:
+                    snapshots.append((obj, loaded_cols))
+        await db.rollback()
+        for obj, loaded_cols in snapshots:
+            for col_key, col_val in loaded_cols.items():
+                set_committed_value(obj, col_key, col_val)
+    except Exception:
+        pass
+
+
 # ── Dependency: Authenticate Telegram User ──────────────────────────────────
 async def get_current_user(
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
@@ -5016,8 +5055,13 @@ async def get_voxcpm_pool_status(
     """Return read-only VoxCPM pool watermark status for Mini App Recap Step 3 (Part 7).
     Never exposes raw tokens or token digests."""
     lang = user.language_code or "my"
-    metrics = _hf_ledger.compute_pool_metrics()
-    eta = _hf_ledger.estimate_refill_eta_label() if metrics.seeded else ""
+
+    def _read_pool_status() -> tuple[Any, str]:
+        m = _hf_ledger.compute_pool_metrics()
+        e = _hf_ledger.estimate_refill_eta_label() if m.seeded else ""
+        return m, e
+
+    metrics, eta = await asyncio.to_thread(_read_pool_status)
     return {
         "seeded": metrics.seeded,
         "band": metrics.band,
@@ -5991,6 +6035,7 @@ async def download_job_audio(
 
     is_stream = "/stream/" in request.url.path
     disposition = "inline" if is_stream else "attachment"
+    await _end_clean_readonly_txn(db)
 
     return FileResponse(
         path=str(target_path),
@@ -9450,6 +9495,14 @@ async def _run_recap_background_job(
         )
 
 
+async def _release_in_flight_gpu_async(job_id: str) -> None:
+    """Release a recap job's HF pool reservation off the asyncio event loop."""
+    try:
+        await asyncio.shield(asyncio.to_thread(_hf_ledger.release_in_flight_gpu, job_id))
+    except BaseException:
+        pass
+
+
 async def _execute_recap_background_job(
     job_id: str,
     req: RecapConfigRequest,
@@ -9532,12 +9585,13 @@ async def _execute_recap_background_job(
 
     job_dir = settings.storage_root / "recap_output" / job_id
     if phase in ("full", "render") and str(getattr(req, "tts_engine", "")).lower() == "voxcpm" and voice_choice_mode is None:
-        _est_u, _est_g, _est_gpu_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+        _est_u, _est_g, _est_gpu_s = await asyncio.to_thread(
+            _hf_ledger.estimate_voxcpm_units_and_budget,
             kind="recap",
             planned_segments=entry.get("segments_count"),
             duration_seconds=float(entry.get("source_duration_seconds") or req.duration_seconds or 60.0),
         )
-        _hf_ledger.acquire_in_flight_gpu(job_id, _est_gpu_s)
+        await asyncio.to_thread(_hf_ledger.acquire_in_flight_gpu, job_id, _est_gpu_s)
     try:
         from app.services.downloader import MediaDownloader
         from app.db.session import AsyncSessionLocal
@@ -10725,7 +10779,7 @@ async def _execute_recap_background_job(
         # PARK (`WAITING_CHOICE`) — reservation held, 0 settled, completed
         # segments preserved in workspace checkpoint, owner prompted with
         # Wait / Redo in Gemini-Studio / Cancel & Instant Full Refund.
-        _hf_ledger.release_in_flight_gpu(job_id)
+        await _release_in_flight_gpu_async(job_id)
         _done_u = int(getattr(park_req, "completed_units", 0) or 0)
         _tot_u = max(
             1,
@@ -10736,7 +10790,7 @@ async def _execute_recap_background_job(
             ),
         )
         _pinned_sp = getattr(park_req, "pinned_space", None)
-        _gate_s = _hf_ledger.get_space_gate(_pinned_sp)
+        _gate_s = await asyncio.to_thread(_hf_ledger.get_space_gate, _pinned_sp)
         _rem_gpu_s = round(
             max(1, _tot_u - _done_u) * _gate_s * _hf_ledger.PRE_JOB_SAFETY_MULTIPLIER, 2
         )
@@ -10875,7 +10929,7 @@ async def _execute_recap_background_job(
             logger.warning(f"Recap job {job_id}: cancelled-job media strip failed: {strip_err}")
         raise
     except Exception as e:
-        _hf_ledger.release_in_flight_gpu(job_id)
+        await _release_in_flight_gpu_async(job_id)
         logger.error(f"Background recap job {job_id} error: {e}", exc_info=True)
         entry["status"] = "FAILED"
 
@@ -10980,7 +11034,7 @@ async def _execute_recap_background_job(
         except Exception as strip_err:
             logger.warning(f"Recap job {job_id}: failed-job media strip failed: {strip_err}")
     finally:
-        _hf_ledger.release_in_flight_gpu(job_id)
+        await _release_in_flight_gpu_async(job_id)
 
 
 def _sweep_expired_download_dirs(cutoff: datetime) -> int:
@@ -11566,6 +11620,7 @@ async def create_recap_job(
     _req_url = (req.url or "").strip()
     _verified_url_info: Optional[Dict[str, Any]] = None
     if _req_url.startswith(("http://", "https://")):
+        await _end_clean_readonly_txn(db)
         try:
             from app.services.downloader import extract_first_url as _extract_first, unshorten_url as _unshorten
             from app.services.url_safety import validate_public_url as _validate_url
@@ -11813,11 +11868,13 @@ async def create_recap_job(
     _recap_submit_park = False
     _recap_submit_dp_state: Optional[dict] = None
     if req.tts_engine == "voxcpm" and not req.script_review:
-        _est_vox_units, _est_vox_gate, _est_vox_needed_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+        _est_vox_units, _est_vox_gate, _est_vox_needed_s = await asyncio.to_thread(
+            _hf_ledger.estimate_voxcpm_units_and_budget,
             kind="recap",
             duration_seconds=float(checked_duration or req.duration_seconds or 60.0),
         )
-        _recap_adm = _hf_ledger.evaluate_voxcpm_admission(
+        _recap_adm = await asyncio.to_thread(
+            _hf_ledger.evaluate_voxcpm_admission,
             kind="recap",
             is_paid=bool(is_vip or is_admin_user),
             units=_est_vox_units,
@@ -12534,7 +12591,8 @@ async def render_recap_job(
                 _exact_segs = len((_plan_obj or {}).get("segments") or [])
             except Exception:
                 _exact_segs = 0
-        _u_est, _g_est, _need_s = _hf_ledger.estimate_voxcpm_units_and_budget(
+        _u_est, _g_est, _need_s = await asyncio.to_thread(
+            _hf_ledger.estimate_voxcpm_units_and_budget,
             kind="recap",
             planned_segments=_exact_segs if _exact_segs > 0 else None,
             duration_seconds=float(entry.get("source_duration_seconds") or req.duration_seconds or 60.0),
@@ -12544,7 +12602,8 @@ async def render_recap_job(
             or user.account_category == AccountCategory.PURCHASED.value
             or settings.is_admin(user.id)
         )
-        _render_adm = _hf_ledger.evaluate_voxcpm_admission(
+        _render_adm = await asyncio.to_thread(
+            _hf_ledger.evaluate_voxcpm_admission,
             kind="recap",
             is_paid=_is_paid_render,
             units=_u_est,
@@ -12973,6 +13032,7 @@ async def download_recap_file(
     # the browser instead of saving it.
     is_stream = "/stream/" in request.url.path
     disposition = "inline" if is_stream else "attachment"
+    await _end_clean_readonly_txn(db)
 
     return FileResponse(
         path=str(file_path),
@@ -13036,6 +13096,7 @@ async def send_recap_to_telegram(
         actual=_actual_outcome,
     )
     voice_label = _voice_pres["header_voice"] or "Smart Sync AI"
+    await _end_clean_readonly_txn(db)
 
     delivered, fail_reason = await _send_recap_telegram_delivery(
         chat_id=user.id,
@@ -15266,6 +15327,7 @@ async def get_admin_audit_log(
 async def get_admin_key_health(
     refresh: int = 0,
     admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Batch BN: API key health (HF/Gemini/Groq pools + Space stages)
     for the Admin tab's Key Health screen.
@@ -15278,6 +15340,7 @@ async def get_admin_key_health(
     """
     from app.services import key_health as _key_health
 
+    await _end_clean_readonly_txn(db)
     return await asyncio.to_thread(_key_health.get_key_health, bool(refresh))
 
 

@@ -53,6 +53,19 @@ engine = create_async_engine(
 
 if settings.database_url.startswith("sqlite"):
     event.listen(engine.sync_engine, "connect", set_sqlite_pragma)
+else:
+    from app.db.diagnostics import install_postgres_session_listener
+
+    install_postgres_session_listener(
+        engine.sync_engine,
+        engine_kind="async",
+        lock_timeout_ms=10000,
+        idle_in_tx_timeout_ms=60000,
+    )
+
+from app.db.diagnostics import register_engine_watchdog as _register_engine_watchdog
+
+_register_engine_watchdog(engine.sync_engine, engine_kind="async")
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -669,4 +682,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
         finally:
-            await session.close()
+            try:
+                await session.close()
+            except Exception:
+                pass

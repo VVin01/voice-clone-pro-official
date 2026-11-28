@@ -552,10 +552,19 @@ def _save_in_flight_map(jobs_map: dict[str, dict[str, float]]) -> None:
 
 
 def load_pool_state(*, force: bool = False, now_ts: float | None = None) -> dict[str, Any]:
-    """Return the current pool state, reloading from `bot_settings` on 30 s TTL or `force`."""
+    """Return the current pool state, reloading from `bot_settings` on 30 s TTL or `force`.
+
+    Non-forced reads within TTL serve the immutable in-memory snapshot via an atomic
+    reference read without blocking behind `_lock` or `_SYNC_STORE_LOCK`.
+    """
     global _mem_state, _mem_loaded_mono
     now = time.time() if now_ts is None else float(now_ts)
     mono = time.monotonic()
+    if not force:
+        snap = _mem_state
+        loaded_mono = _mem_loaded_mono
+        if snap is not None and (mono - loaded_mono) < CACHE_TTL_SECONDS:
+            return normalize_pool_state(snap, now_ts=now)
     with _lock:
         expired = (mono - _mem_loaded_mono) >= CACHE_TTL_SECONDS
         if force or _mem_state is None or expired:
@@ -567,9 +576,8 @@ def load_pool_state(*, force: bool = False, now_ts: float | None = None) -> dict
             else:
                 _mem_state = normalize_pool_state(_mem_state, now_ts=now)
             _mem_loaded_mono = mono
-        else:
-            _mem_state = normalize_pool_state(_mem_state, now_ts=now)
-        return json.loads(json.dumps(_mem_state))
+            return json.loads(json.dumps(_mem_state))
+        return normalize_pool_state(_mem_state, now_ts=now)
 
 
 def save_pool_state(state: Mapping[str, Any], *, now_ts: float | None = None) -> dict[str, Any]:
@@ -585,16 +593,19 @@ def save_pool_state(state: Mapping[str, Any], *, now_ts: float | None = None) ->
 
 
 def _mutate_pool_state(
-    mutator_fn: Callable[[dict[str, Any]], tuple[dict[str, Any], bool]],
+    mutator_fn: Callable[..., tuple[dict[str, Any], bool]],
     *,
     now_ts: float | None = None,
+    aux_keys: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Atomically mutate `aj_hf:pool_state` via `botsetting_sync_mutate` (`SELECT ... FOR UPDATE`)."""
     global _mem_state, _mem_loaded_mono
     now = time.time() if now_ts is None else float(now_ts)
+    clean_aux = tuple(str(k) for k in (aux_keys or ()) if str(k))
+    has_aux = bool(clean_aux)
     result_box: dict[str, Any] = {}
     with _lock:
-        def _apply(raw_str: str | None) -> str | None:
+        def _resolve_base(raw_str: str | None) -> dict[str, Any]:
             base_state: dict[str, Any] | None = None
             if raw_str:
                 try:
@@ -606,20 +617,41 @@ def _mutate_pool_state(
                     base_state = normalize_pool_state(_mem_state, now_ts=now)
                 else:
                     base_state = _empty_state()
-            updated_state, should_write = mutator_fn(base_state)
-            clean = normalize_pool_state(updated_state, now_ts=now)
-            result_box["clean"] = clean
-            if not should_write:
-                return None
-            return json.dumps(clean, separators=(",", ":"))
+            return base_state
+
+        if has_aux:
+            def _apply(raw_str: str | None, aux_map: Mapping[str, str | None]) -> str | None:
+                base_state = _resolve_base(raw_str)
+                updated_state, should_write = mutator_fn(base_state, aux_map)
+                clean = normalize_pool_state(updated_state, now_ts=now)
+                result_box["clean"] = clean
+                if not should_write:
+                    return None
+                return json.dumps(clean, separators=(",", ":"))
+        else:
+            def _apply(raw_str: str | None) -> str | None:
+                base_state = _resolve_base(raw_str)
+                updated_state, should_write = mutator_fn(base_state)
+                clean = normalize_pool_state(updated_state, now_ts=now)
+                result_box["clean"] = clean
+                if not should_write:
+                    return None
+                return json.dumps(clean, separators=(",", ":"))
 
         botsetting_sync_mutate(
             POOL_STATE_STORE_KEY,
             _apply,
             read_fn=botsetting_sync_read,
             write_fn=botsetting_sync_write,
+            aux_keys=clean_aux,
         )
-        clean_out = result_box.get("clean") or _empty_state()
+        clean_out = result_box.get("clean")
+        if clean_out is None:
+            clean_out = (
+                normalize_pool_state(_mem_state, now_ts=now)
+                if _mem_state is not None
+                else _empty_state()
+            )
         _mem_state = clean_out
         _mem_loaded_mono = time.monotonic()
         return json.loads(json.dumps(clean_out))
@@ -931,6 +963,21 @@ def _summarize_runtime_drift_window(now_ts: float) -> tuple[float, int, float]:
                 if d > 25.0:
                     over_cnt += 1
         return round(pos_sum, 2), int(over_cnt), round(max_d, 2)
+
+
+def _resolve_truth_ts_from_aux(d_key: str, raw_truth_json: str | None) -> float | None:
+    """Merge an auxiliary-read `aj_hf:truth_ts` JSON string into `_mem_truth_ts` in pure CPU."""
+    if raw_truth_json:
+        try:
+            parsed = json.loads(raw_truth_json)
+            if isinstance(parsed, Mapping):
+                for k, v in parsed.items():
+                    fv = float(v)
+                    prev = _mem_truth_ts.get(str(k))
+                    _mem_truth_ts[str(k)] = max(prev, fv) if prev is not None else fv
+        except Exception:
+            pass
+    return _mem_truth_ts.get(d_key)
 
 
 def get_token_last_truth_ts(
@@ -1252,11 +1299,12 @@ def record_session_space_floor(
 ) -> dict[str, Any]:
     """Persist a learned session-only Space door floor (when qualified under Part 5) without touching `space_gates`."""
     now = time.time() if now_ts is None else float(now_ts)
-    with _lock:
-        st = load_pool_state(force=True, now_ts=now)
-        if _maybe_apply_session_space_floor(st, space_name, requested_s, chars):
-            return save_pool_state(st, now_ts=now)
-        return st
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        changed = _maybe_apply_session_space_floor(st, space_name, requested_s, chars)
+        return st, changed
+
+    return _mutate_pool_state(_mutate, now_ts=now)
 
 
 def record_refusal_ceiling(
@@ -1273,8 +1321,8 @@ def record_refusal_ceiling(
         return None
     now = time.time() if now_ts is None else float(now_ts)
     req_g = round(max(0.01, float(gate_s)), 2)
-    with _lock:
-        st = load_pool_state(force=True, now_ts=now)
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         d_key, existing = lookup_token_entry(st, token)
         existing_rem = (existing or {}).get("remaining_s")
         rem_s = float(existing_rem) if existing_rem is not None else DEFAULT_TOKEN_BASE_S
@@ -1309,7 +1357,9 @@ def record_refusal_ceiling(
             "refused_gate_s": new_rg,
             "refused_until": new_ru,
         }
-        saved = save_pool_state(st, now_ts=now)
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
     if mark_generic_taint:
         record_token_taint(token, "generic_refusal", now_ts=now)
     return saved
@@ -1434,12 +1484,14 @@ def record_admission_refusal(
             st["tokens"][d_key] = row_out
         return st, True
 
-    saved = _mutate_pool_state(_mutate, now_ts=now)
+    # Stamp `aj_hf:truth_ts` BEFORE committing the `aj_hf:pool_state` update so any
+    # concurrent debit acquiring `FOR UPDATE` after us is guaranteed to observe it.
     if tok_clean:
         clean_ver = round(max(0.0, float(left_s)), 2)
         record_token_truth_timestamp(tok_clean, now, verified_rem_s=clean_ver)
-        if observed_drift and observed_drift[0] > 0.0:
-            _record_runtime_drift_observation(token_digest(tok_clean), observed_drift[0], now)
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    if tok_clean and observed_drift and observed_drift[0] > 0.0:
+        _record_runtime_drift_observation(token_digest(tok_clean), observed_drift[0], now)
     return saved
 
 
@@ -1462,9 +1514,13 @@ def record_success_debit(
     tok_clean = str(token).strip()
     full_d = token_digest(tok_clean)
 
-    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def _apply_debit_to_state(
+        st: dict[str, Any],
+        aux_map: Mapping[str, str | None] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
         if attempt_started_ts is not None:
-            truth_ts = get_token_last_truth_ts(full_d, reload_store=True)
+            raw_truth = aux_map.get(TRUTH_TS_STORE_KEY) if aux_map is not None else None
+            truth_ts = _resolve_truth_ts_from_aux(full_d, raw_truth)
             if truth_ts is not None and truth_ts >= float(attempt_started_ts):
                 if skipped_out is not None:
                     skipped_out.clear()
@@ -1509,7 +1565,14 @@ def record_success_debit(
         st["tokens"][d_key] = row_out
         return st, True
 
-    saved = _mutate_pool_state(_mutate, now_ts=now)
+    if attempt_started_ts is not None:
+        saved = _mutate_pool_state(
+            _apply_debit_to_state,
+            now_ts=now,
+            aux_keys=(TRUTH_TS_STORE_KEY,),
+        )
+    else:
+        saved = _mutate_pool_state(lambda st: _apply_debit_to_state(st, None), now_ts=now)
     record_token_synthesis_attempt(tok_clean, now_ts=now)
     return saved
 
@@ -1535,9 +1598,13 @@ def record_failure_debit(
     amt = float(debit_s)
     applied: list[bool] = []
 
-    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def _apply_fail_to_state(
+        st: dict[str, Any],
+        aux_map: Mapping[str, str | None] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
         if attempt_started_ts is not None:
-            truth_ts = get_token_last_truth_ts(full_d, reload_store=True)
+            raw_truth = aux_map.get(TRUTH_TS_STORE_KEY) if aux_map is not None else None
+            truth_ts = _resolve_truth_ts_from_aux(full_d, raw_truth)
             if truth_ts is not None and truth_ts >= float(attempt_started_ts):
                 if skipped_out is not None:
                     skipped_out.clear()
@@ -1581,7 +1648,14 @@ def record_failure_debit(
         applied.append(True)
         return st, True
 
-    saved = _mutate_pool_state(_mutate, now_ts=now)
+    if attempt_started_ts is not None:
+        saved = _mutate_pool_state(
+            _apply_fail_to_state,
+            now_ts=now,
+            aux_keys=(TRUTH_TS_STORE_KEY,),
+        )
+    else:
+        saved = _mutate_pool_state(lambda st: _apply_fail_to_state(st, None), now_ts=now)
     if applied:
         record_token_taint(tok_clean, "failure_debit", now_ts=now)
     return saved
@@ -1597,8 +1671,8 @@ def record_quota_dead(
     if not token or not str(token).strip():
         return None
     now = time.time() if now_ts is None else float(now_ts)
-    with _lock:
-        st = load_pool_state(now_ts=now)
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         d_key, existing = lookup_token_entry(st, token)
         base_s = float((existing or {}).get("base_s") or DEFAULT_TOKEN_BASE_S)
         resets_at = (existing or {}).get("resets_at") or _iso_utc(now + 86400.0)
@@ -1610,7 +1684,9 @@ def record_quota_dead(
             "cooldown_until": _iso_utc(now + max(0.0, float(cooldown_seconds))),
             "updated_at": _iso_utc(now),
         }
-        return save_pool_state(st, now_ts=now)
+        return st, True
+
+    return _mutate_pool_state(_mutate, now_ts=now)
 
 
 def record_space_timeout(
@@ -1625,8 +1701,8 @@ def record_space_timeout(
     if not sp:
         return None
     now = time.time() if now_ts is None else float(now_ts)
-    with _lock:
-        st = load_pool_state(now_ts=now)
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         cds = dict(st.get("space_cooldowns") or {})
         if float(cooldown_seconds) > 0:
             cds[sp] = _iso_utc(now + float(cooldown_seconds))
@@ -1634,7 +1710,9 @@ def record_space_timeout(
         tos = dict(st.get("space_timeouts") or {})
         tos[sp] = int(tos.get(sp) or 0) + 1
         st["space_timeouts"] = tos
-        return save_pool_state(st, now_ts=now)
+        return st, True
+
+    return _mutate_pool_state(_mutate, now_ts=now)
 
 
 def get_space_cooldown_until(
@@ -1725,8 +1803,8 @@ def handle_auth_failure(
     now = time.time() if now_ts is None else float(now_ts)
     probe = whoami_fn or probe_whoami_status
     status_code, _acct = probe(str(token).strip())
-    with _lock:
-        st = load_pool_state(force=True, now_ts=now)
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         d_key, existing = lookup_token_entry(st, token)
         base_s = float((existing or {}).get("base_s") or DEFAULT_TOKEN_BASE_S)
         resets_at = (existing or {}).get("resets_at") or ""
@@ -1741,8 +1819,7 @@ def handle_auth_failure(
                 "cooldown_until": _iso_utc(now + AUTH_DEAD_QUARANTINE_SECONDS),
                 "updated_at": _iso_utc(now),
             }
-            save_pool_state(st, now_ts=now)
-            return True
+            return st, True
         if status_code == 200:
             rem_s = float(existing_rem) if existing_rem is not None else base_s
             row_ok: dict[str, Any] = {
@@ -1755,8 +1832,7 @@ def handle_auth_failure(
             }
             _copy_active_ceiling(existing, row_ok, now)
             st["tokens"][d_key] = row_ok
-            save_pool_state(st, now_ts=now)
-            return False
+            return st, True
         # Transport error on confirmation probe: conservative 30m cooldown, status stays ok.
         rem_s = float(existing_rem) if existing_rem is not None else 0.0
         row_cd: dict[str, Any] = {
@@ -1769,8 +1845,10 @@ def handle_auth_failure(
         }
         _copy_active_ceiling(existing, row_cd, now)
         st["tokens"][d_key] = row_cd
-        save_pool_state(st, now_ts=now)
-        return False
+        return st, True
+
+    _mutate_pool_state(_mutate, now_ts=now)
+    return status_code in (401, 403)
 
 
 def reconcile_from_probe_rows(
@@ -1783,8 +1861,10 @@ def reconcile_from_probe_rows(
     preserving active refusal ceilings unless probed balance rose >= 25 s (Part P1.4)
     and recording additive `drift_stats` (Part Q4.2)."""
     now = time.time() if now_ts is None else float(now_ts)
-    with _lock:
-        st = load_pool_state(force=True, now_ts=now)
+    rw_pos, rw_over, rw_max = _summarize_runtime_drift_window(now)
+    summary_box: dict[str, Any] = {}
+
+    def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         active_digests: set[str] = set()
         positive_drift_s = 0.0
         overestimated_tokens = 0
@@ -1912,7 +1992,6 @@ def reconcile_from_probe_rows(
             }
 
         if probed_balance_count == 0:
-            rw_pos, rw_over, rw_max = _summarize_runtime_drift_window(now)
             positive_drift_s = max(float(prev_drift.get("positive_drift_s") or 0.0), rw_pos)
             overestimated_tokens = max(int(prev_drift.get("overestimated_tokens") or 0), rw_over)
             max_token_drift_s = max(float(prev_drift.get("max_token_drift_s") or 0.0), rw_max)
@@ -1924,16 +2003,22 @@ def reconcile_from_probe_rows(
             "quota_probe_errors": int(quota_probe_errors),
         }
         st["drift_stats"] = drift_stats
-        logger.info(
-            "hf_pool_reconcile_summary tokens=%d positive_drift_s=%.1f overestimated_tokens=%d "
-            "max_token_drift_s=%.1f quota_probe_errors=%d",
-            len(active_digests),
-            drift_stats["positive_drift_s"],
-            drift_stats["overestimated_tokens"],
-            drift_stats["max_token_drift_s"],
-            drift_stats["quota_probe_errors"],
-        )
-        return save_pool_state(st, now_ts=now)
+        summary_box["tokens"] = len(active_digests)
+        summary_box["drift_stats"] = drift_stats
+        return st, True
+
+    saved = _mutate_pool_state(_mutate, now_ts=now)
+    ds_logged = summary_box.get("drift_stats") or saved.get("drift_stats") or {}
+    logger.info(
+        "hf_pool_reconcile_summary tokens=%d positive_drift_s=%.1f overestimated_tokens=%d "
+        "max_token_drift_s=%.1f quota_probe_errors=%d",
+        int(summary_box.get("tokens") or 0),
+        float(ds_logged.get("positive_drift_s") or 0.0),
+        int(ds_logged.get("overestimated_tokens") or 0),
+        float(ds_logged.get("max_token_drift_s") or 0.0),
+        int(ds_logged.get("quota_probe_errors") or 0),
+    )
+    return saved
 
 
 def reconcile_if_env_changed(
@@ -2013,16 +2098,19 @@ def acquire_in_flight_gpu(job_id: str, gpu_s: float, *, now_ts: float | None = N
         return float(st.get("in_flight_gpu_s") or 0.0)
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
-        st = load_pool_state(force=True, now_ts=now)
         jobs_map = _load_in_flight_map(now)
         prev = float((jobs_map.get(str(job_id)) or {}).get("gpu_s") or 0.0)
         target = round(max(0.0, float(gpu_s)), 2)
         jobs_map[str(job_id)] = {"gpu_s": target, "ts": now}
         _save_in_flight_map(jobs_map)
-        cur_total = max(0.0, float(st.get("in_flight_gpu_s") or 0.0) - prev + target)
         tracked_sum = sum(float(m.get("gpu_s") or 0.0) for m in jobs_map.values())
-        st["in_flight_gpu_s"] = round(max(cur_total, tracked_sum), 2)
-        saved = save_pool_state(st, now_ts=now)
+
+        def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+            cur_total = max(0.0, float(st.get("in_flight_gpu_s") or 0.0) - prev + target)
+            st["in_flight_gpu_s"] = round(max(cur_total, tracked_sum), 2)
+            return st, True
+
+        saved = _mutate_pool_state(_mutate, now_ts=now)
         return float(saved["in_flight_gpu_s"])
 
 
@@ -2033,16 +2121,20 @@ def release_in_flight_gpu(job_id: str, *, now_ts: float | None = None) -> float:
         return float(st.get("in_flight_gpu_s") or 0.0)
     now = time.time() if now_ts is None else float(now_ts)
     with _lock:
-        st = load_pool_state(force=True, now_ts=now)
         jobs_map = _load_in_flight_map(now)
         popped = jobs_map.pop(str(job_id), None)
         _save_in_flight_map(jobs_map)
         if popped is not None:
             delta = float(popped.get("gpu_s") or 0.0)
-            new_total = max(0.0, float(st.get("in_flight_gpu_s") or 0.0) - delta)
-            st["in_flight_gpu_s"] = round(new_total, 2)
-            saved = save_pool_state(st, now_ts=now)
+
+            def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+                new_total = max(0.0, float(st.get("in_flight_gpu_s") or 0.0) - delta)
+                st["in_flight_gpu_s"] = round(new_total, 2)
+                return st, True
+
+            saved = _mutate_pool_state(_mutate, now_ts=now)
             return float(saved["in_flight_gpu_s"])
+        st = load_pool_state(force=True, now_ts=now)
         return float(st.get("in_flight_gpu_s") or 0.0)
 
 
@@ -2743,8 +2835,8 @@ def apply_calibration_numeric_refusal(
         st["tokens"][d_key] = row_out
         return st, True
 
-    saved = _mutate_pool_state(_mutate, now_ts=now)
     record_token_truth_timestamp(tok_clean, now, verified_rem_s=clean_left)
+    saved = _mutate_pool_state(_mutate, now_ts=now)
     pos_drift = round(box["before"] - clean_left, 2)
     if pos_drift > 0.0:
         _record_runtime_drift_observation(token_digest(tok_clean), pos_drift, now)
@@ -2799,8 +2891,14 @@ def apply_calibration_probe_success(
         }
         return st, True
 
+    best_ts = record_token_truth_timestamp(tok_clean, now) or round(now, 6)
     saved = _mutate_pool_state(_mutate, now_ts=now)
-    record_token_truth_timestamp(tok_clean, now, verified_rem_s=box["after"])
+    _persist_token_meta_update(
+        _canonical_digest(tok_clean),
+        {"verified_ts": best_ts, "verified_rem_s": round(max(0.0, float(box["after"])), 2)},
+        clear_taint_up_to=best_ts,
+        now_ts=best_ts,
+    )
     pos_drift = round((box["before"] - box["after"]) - debit_s, 2)
     if pos_drift > 0.0:
         _record_runtime_drift_observation(token_digest(tok_clean), pos_drift, now)
@@ -2921,8 +3019,14 @@ def apply_calibration_followup_admitted(
         st["tokens"][d_key] = row_out
         return st, True
 
+    best_ts = record_token_truth_timestamp(tok_clean, now) or round(now, 6)
     saved = _mutate_pool_state(_mutate, now_ts=now)
-    record_token_truth_timestamp(tok_clean, now, verified_rem_s=box["after"])
+    _persist_token_meta_update(
+        _canonical_digest(tok_clean),
+        {"verified_ts": best_ts, "verified_rem_s": round(max(0.0, float(box["after"])), 2)},
+        clear_taint_up_to=best_ts,
+        now_ts=best_ts,
+    )
     pos_drift = round((box["before"] - box["after"]) - clean_debit, 2)
     if pos_drift > 0.0:
         _record_runtime_drift_observation(token_digest(tok_clean), pos_drift, now)
@@ -2940,10 +3044,10 @@ def record_calibration_drift_stats(
     """Update `drift_stats` balance fields in `aj_hf:pool_state` from a calibration sweep
     while keeping `drift_stats`'s exact 4-key schema and preserving `quota_probe_errors`."""
     now = time.time() if now_ts is None else float(now_ts)
+    rw_pos, rw_over, rw_max = _summarize_runtime_drift_window(now)
 
     def _mutate(st: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         prev = st.get("drift_stats") if isinstance(st.get("drift_stats"), Mapping) else {}
-        rw_pos, rw_over, rw_max = _summarize_runtime_drift_window(now)
         st["drift_stats"] = {
             "positive_drift_s": round(max(0.0, float(positive_drift_s), rw_pos), 2),
             "overestimated_tokens": int(max(0, int(overestimated_tokens), rw_over)),

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from pathlib import Path
 import signal
 import sys
@@ -54,6 +55,7 @@ def main(
     sweep_kwargs: Mapping[str, Any] | None = None,
     now_ts: float | None = None,
     out_fn: Callable[[str], None] = print,
+    hard_exit_fn: Callable[[int], None] = os._exit,
 ) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -77,10 +79,13 @@ def main(
             )
         return 0
 
-    stop_flag = {"sig": False}
+    stop_flag = {"sig": False, "count": 0}
 
-    def _on_sig(_signum, _frame):
+    def _on_sig(signum, _frame):
+        stop_flag["count"] = int(stop_flag["count"]) + 1
         stop_flag["sig"] = True
+        if stop_flag["count"] >= 2:
+            hard_exit_fn(128 + int(signum))
 
     prev_int = signal.getsignal(signal.SIGINT)
     prev_term = signal.getsignal(signal.SIGTERM)

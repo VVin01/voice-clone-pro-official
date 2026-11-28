@@ -356,7 +356,8 @@ async def _dispatch_oldest_queued_recap() -> bool:
             if is_vox and active_vox >= MAX_CONCURRENT_VOXCPM_JOBS:
                 continue
             if is_vox:
-                adm = _hf_ledger.evaluate_voxcpm_admission(
+                adm = await asyncio.to_thread(
+                    _hf_ledger.evaluate_voxcpm_admission,
                     kind="recap",
                     is_paid=is_paid_map.get(jid, False),
                     units=units_map.get(jid, 1),

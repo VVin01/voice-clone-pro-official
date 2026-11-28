@@ -1751,6 +1751,9 @@ async def process_recap_job(
         return False
 
     RECAP_JOBS_REGISTRY[jid] = plan["entry"]
+    # Release the pooled connection's read transaction before the minutes-long
+    # recap pipeline runs (mirroring process_single_job's voice commit).
+    await session.commit()
 
     try:
         await _execute_recap_background_job(

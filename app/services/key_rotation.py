@@ -49,6 +49,7 @@ import random
 import re
 import threading
 import time
+import traceback
 from datetime import datetime
 from typing import Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
@@ -115,8 +116,60 @@ _PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 _SYNC_ENGINE = None
 _SYNC_ENGINE_URL: str | None = None
 _SYNC_STORE_OVERRIDE: str | None = None
-_SYNC_STORE_LOCK = threading.Lock()
+_SYNC_STORE_LOCK = threading.RLock()
+_IN_MUTATE = threading.local()
 _PERSIST_DEBOUNCE_SECONDS = 2.0
+_PG_LOCK_RETRY_SQLSTATES = frozenset({"55P03", "40P01"})
+_MUTATE_RETRY_WINDOWS: tuple[tuple[float, float], ...] = ((0.15, 0.40), (0.45, 0.95))
+
+
+def _check_not_in_mutate(op_name: str, key: str) -> bool:
+    """Refuse nested store operations invoked from inside a `botsetting_sync_mutate` callback."""
+    if getattr(_IN_MUTATE, "active", False):
+        stack_str = "".join(traceback.format_stack()[:-1]).rstrip()
+        logger.error(
+            "key_rotation: illegal nested %s(key=%s) inside botsetting_sync_mutate callback; "
+            "refusing nested store access:\n%s",
+            op_name,
+            key,
+            stack_str,
+        )
+        return False
+    return True
+
+
+def _is_pg_lock_or_deadlock_error(exc: BaseException) -> bool:
+    """True iff `exc` carries PostgreSQL SQLSTATE `55P03` (lock_not_available) or `40P01` (deadlock_detected)."""
+    for candidate in (exc, getattr(exc, "orig", None), getattr(exc, "__cause__", None)):
+        if candidate is None:
+            continue
+        code = str(
+            getattr(candidate, "pgcode", None)
+            or getattr(candidate, "sqlstate", None)
+            or ""
+        ).strip().upper()
+        if code in _PG_LOCK_RETRY_SQLSTATES:
+            return True
+    orig_obj = getattr(exc, "orig", exc)
+    if type(orig_obj).__name__ in ("LockNotAvailable", "DeadlockDetected"):
+        return True
+    return False
+
+
+def _invoke_mutate_callback(
+    fn: Callable[..., str | None],
+    cur_val: str | None,
+    aux_values: dict[str, str | None],
+    has_aux: bool,
+) -> str | None:
+    prev = bool(getattr(_IN_MUTATE, "active", False))
+    _IN_MUTATE.active = True
+    try:
+        if has_aux:
+            return fn(cur_val, aux_values)
+        return fn(cur_val)
+    finally:
+        _IN_MUTATE.active = prev
 
 
 def configure_sync_store(url: str | None) -> None:
@@ -228,11 +281,18 @@ def _sync_engine():
     if not url or ":memory:" in url:
         return None
     sync_url = _to_sync_url(url)
+    fast_eng = _SYNC_ENGINE
+    if fast_eng is not None and _SYNC_ENGINE_URL == sync_url:
+        return fast_eng
     with _SYNC_STORE_LOCK:
         if _SYNC_ENGINE is not None and _SYNC_ENGINE_URL == sync_url:
             return _SYNC_ENGINE
         try:
             from sqlalchemy import create_engine
+            from app.db.diagnostics import (
+                install_postgres_session_listener,
+                register_engine_watchdog,
+            )
 
             _SYNC_ENGINE = create_engine(
                 sync_url,
@@ -242,6 +302,14 @@ def _sync_engine():
                 pool_recycle=1800,
             )
             _SYNC_ENGINE_URL = sync_url
+            install_postgres_session_listener(
+                _SYNC_ENGINE,
+                engine_kind="sync",
+                lock_timeout_ms=3000,
+                statement_timeout_ms=8000,
+                idle_in_tx_timeout_ms=15000,
+            )
+            register_engine_watchdog(_SYNC_ENGINE, engine_kind="sync")
         except Exception as exc:
             logger.warning(
                 "key_rotation: sync store unavailable (%s): %s",
@@ -254,6 +322,8 @@ def _sync_engine():
 
 def botsetting_sync_read(key: str) -> str | None:
     """Read one bot_settings value synchronously (None on any failure)."""
+    if not _check_not_in_mutate("botsetting_sync_read", str(key)):
+        return None
     engine = _sync_engine()
     if engine is None:
         return None
@@ -264,6 +334,9 @@ def botsetting_sync_read(key: str) -> str | None:
             row = conn.execute(
                 text("SELECT value FROM bot_settings WHERE key = :k"), {"k": str(key)}
             ).first()
+            rollback_fn = getattr(conn, "rollback", None)
+            if callable(rollback_fn):
+                rollback_fn()
         return str(row[0]) if row is not None else None
     except Exception as exc:
         logger.warning(
@@ -275,6 +348,8 @@ def botsetting_sync_read(key: str) -> str | None:
 
 def botsetting_sync_write(key: str, value: str) -> bool:
     """Atomically upsert one bot_settings value synchronously (False on failure)."""
+    if not _check_not_in_mutate("botsetting_sync_write", str(key)):
+        return False
     engine = _sync_engine()
     if engine is None:
         return False
@@ -305,6 +380,8 @@ def botsetting_sync_write(key: str, value: str) -> bool:
 
 def botsetting_sync_delete(key: str) -> bool:
     """Delete one bot_settings value synchronously (False on failure)."""
+    if not _check_not_in_mutate("botsetting_sync_delete", str(key)):
+        return False
     engine = _sync_engine()
     if engine is None:
         return False
@@ -328,16 +405,23 @@ _ORIG_BOTSETTING_SYNC_WRITE = botsetting_sync_write
 
 def botsetting_sync_mutate(
     key: str,
-    fn: Callable[[str | None], str | None],
+    fn: Callable[..., str | None],
     *,
     read_fn: Callable[[str], str | None] | None = None,
     write_fn: Callable[[str, str], bool] | None = None,
+    aux_keys: Sequence[str] = (),
 ) -> bool:
     """Atomically read-modify-write one `bot_settings` row under `SELECT ... FOR UPDATE`.
 
     Falls back to the in-process lock when the sync engine is absent or when unit tests
     have monkeypatched `botsetting_sync_read` / `botsetting_sync_write`.
     """
+    if not _check_not_in_mutate("botsetting_sync_mutate", str(key)):
+        return False
+    clean_aux_keys = tuple(str(k) for k in (aux_keys or ()) if str(k))
+    has_aux = bool(clean_aux_keys)
+    empty_aux = {ak: None for ak in clean_aux_keys}
+
     eff_read = read_fn or botsetting_sync_read
     eff_write = write_fn or botsetting_sync_write
     if (
@@ -346,7 +430,8 @@ def botsetting_sync_mutate(
     ):
         with _SYNC_STORE_LOCK:
             cur = eff_read(str(key))
-            nxt = fn(cur)
+            aux_map = {ak: eff_read(ak) for ak in clean_aux_keys} if has_aux else {}
+            nxt = _invoke_mutate_callback(fn, cur, aux_map, has_aux)
             if nxt is None:
                 return True
             return bool(eff_write(str(key), str(nxt)))
@@ -354,45 +439,64 @@ def botsetting_sync_mutate(
     engine = _sync_engine()
     if engine is None:
         with _SYNC_STORE_LOCK:
-            fn(None)
+            _invoke_mutate_callback(fn, None, empty_aux, has_aux)
             return False
 
-    try:
-        from datetime import datetime, timezone
+    from datetime import datetime, timezone
+    from sqlalchemy import text
 
-        from sqlalchemy import text
+    dialect_name = str(getattr(getattr(engine, "dialect", None), "name", "") or "").lower()
+    select_sql = (
+        "SELECT value FROM bot_settings WHERE key = :k"
+        if dialect_name == "sqlite"
+        else "SELECT value FROM bot_settings WHERE key = :k FOR UPDATE"
+    )
 
-        dialect_name = str(getattr(getattr(engine, "dialect", None), "name", "") or "").lower()
-        select_sql = (
-            "SELECT value FROM bot_settings WHERE key = :k"
-            if dialect_name == "sqlite"
-            else "SELECT value FROM bot_settings WHERE key = :k FOR UPDATE"
-        )
-        with _SYNC_STORE_LOCK:
-            with engine.begin() as conn:
-                row = conn.execute(text(select_sql), {"k": str(key)}).first()
-                cur_val = str(row[0]) if (row is not None and row[0] is not None) else None
-                new_val = fn(cur_val)
-                if new_val is not None:
-                    now = datetime.now(timezone.utc)
-                    conn.execute(
-                        text(
-                            "INSERT INTO bot_settings (key, value, updated_at) "
-                            "VALUES (:k, :v, :t) "
-                            "ON CONFLICT (key) DO UPDATE SET "
-                            "value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
-                        ),
-                        {"k": str(key), "v": str(new_val), "t": now},
-                    )
-        return True
-    except Exception as exc:
-        logger.warning(
-            "key_rotation: sync store mutate failed (key=%s, %s): %s",
-            key, type(exc).__name__, _redact_url_creds(exc),
-        )
-        with _SYNC_STORE_LOCK:
-            fn(None)
-        return False
+    max_attempts = 1 + len(_MUTATE_RETRY_WINDOWS)
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            with _SYNC_STORE_LOCK:
+                with engine.begin() as conn:
+                    row = conn.execute(text(select_sql), {"k": str(key)}).first()
+                    cur_val = str(row[0]) if (row is not None and row[0] is not None) else None
+                    aux_map = {}
+                    if has_aux:
+                        for ak in clean_aux_keys:
+                            arow = conn.execute(
+                                text("SELECT value FROM bot_settings WHERE key = :k"),
+                                {"k": ak},
+                            ).first()
+                            aux_map[ak] = (
+                                str(arow[0]) if (arow is not None and arow[0] is not None) else None
+                            )
+                    new_val = _invoke_mutate_callback(fn, cur_val, aux_map, has_aux)
+                    if new_val is not None:
+                        now = datetime.now(timezone.utc)
+                        conn.execute(
+                            text(
+                                "INSERT INTO bot_settings (key, value, updated_at) "
+                                "VALUES (:k, :v, :t) "
+                                "ON CONFLICT (key) DO UPDATE SET "
+                                "value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
+                            ),
+                            {"k": str(key), "v": str(new_val), "t": now},
+                        )
+            return True
+        except Exception as exc:
+            last_exc = exc
+            if attempt < len(_MUTATE_RETRY_WINDOWS) and _is_pg_lock_or_deadlock_error(exc):
+                lo, hi = _MUTATE_RETRY_WINDOWS[attempt]
+                time.sleep(random.uniform(lo, hi))
+                continue
+            break
+
+    logger.warning(
+        "key_rotation: sync store mutate failed (key=%s, %s): %s",
+        key, type(last_exc).__name__, _redact_url_creds(last_exc),
+    )
+    _invoke_mutate_callback(fn, None, empty_aux, has_aux)
+    return False
 
 
 def key_id(key: str) -> str:

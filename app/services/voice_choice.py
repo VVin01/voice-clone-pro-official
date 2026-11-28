@@ -19,6 +19,7 @@ congestion exhaustion, it PARKS (`WAITING_CHOICE`) with its reservation held:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -575,7 +576,7 @@ async def _sweep_one(session, job: Job, bot, counts: dict) -> None:
             counts["resumed"] += 1
         return
     needed_gpu_s = float(state.get("needed_gpu_s") or 0.0)
-    if _probe_capacity_compat(needed_gpu_s):
+    if await asyncio.to_thread(_probe_capacity_compat, needed_gpu_s):
         if await _flip_to_queued(session, job, state):
             counts["resumed"] += 1
         return
