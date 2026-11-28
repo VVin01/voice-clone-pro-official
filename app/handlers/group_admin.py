@@ -28,6 +28,7 @@ import html
 import inspect
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from aiogram import Bot, F, Router
@@ -393,6 +394,65 @@ async def _post_moderator_notice_and_delete(
         logger.warning("group_ai_admin: moderator notice failed: %s", exc)
 
 
+_cmd_cleanup_last_notice_mono: dict[int, float] = {}
+_monotonic = time.monotonic
+
+
+def reset_command_cleanup_throttle() -> None:
+    """Reset in-memory per-chat command-cleanup notice throttle timestamps."""
+    _cmd_cleanup_last_notice_mono.clear()
+
+
+async def _command_cleanup_on(session: AsyncSession | None) -> bool:
+    async with _session_or_new(session) as s:
+        return await gai.is_enabled(s) and await gai.is_command_cleanup_enabled(s)
+
+
+async def _cleanup_foreign_group_command(
+    message: Message,
+    sender: Bot | Any,
+    *,
+    cmd_kind: str,
+    author_id: int | None = None,
+) -> None:
+    """Best-effort delete foreign/handler-less group command + 1/30m anonymous 60s-TTL notice."""
+    from app.handlers import group_moderation as gm_handlers
+
+    chat_id = int(message.chat.id)
+    try:
+        await sender.delete_message(chat_id=chat_id, message_id=message.message_id)
+    except Exception as exc:
+        logger.warning("group_ai_admin: command cleanup delete_message failed: %s", exc)
+
+    now = _monotonic()
+    prev = _cmd_cleanup_last_notice_mono.get(chat_id)
+    if prev is None or (now - prev) >= gai.COMMAND_CLEANUP_NOTICE_COOLDOWN_SECONDS:
+        _cmd_cleanup_last_notice_mono[chat_id] = now
+        try:
+            sent_notice = await sender.send_message(
+                chat_id,
+                gai.strip_emoji(gai.COMMAND_CLEANUP_NOTICE_TEXT),
+                **_plain_send_kw(message),
+            )
+            notice_mid = getattr(sent_notice, "message_id", None)
+            if isinstance(notice_mid, int):
+                gm_handlers._schedule_message_deletion(
+                    sender,
+                    chat_id,
+                    notice_mid,
+                    delay_seconds=gm_handlers.GROUP_NOTICE_TTL_SECONDS,
+                )
+        except Exception as exc:
+            if _cmd_cleanup_last_notice_mono.get(chat_id) == now:
+                if prev is None:
+                    _cmd_cleanup_last_notice_mono.pop(chat_id, None)
+                else:
+                    _cmd_cleanup_last_notice_mono[chat_id] = prev
+            logger.warning("group_ai_admin: command cleanup notice send failed: %s", exc)
+
+    _log_decision(message, author_id, "command_cleanup", cmd_kind)
+
+
 async def _execute_moderation(
     message: Message,
     bot: Bot | None,
@@ -581,6 +641,16 @@ async def handle_group_message(
                 sender_chat_id=message.sender_chat.id if message.sender_chat else None,
             )
             if reason is not None:
+                if reason == "command":
+                    cmd_kind = gai.foreign_command_kind(message.text)
+                    if cmd_kind is not None and await _command_cleanup_on(session):
+                        await _cleanup_foreign_group_command(
+                            message,
+                            sender,
+                            cmd_kind=cmd_kind,
+                            author_id=user.id if user else None,
+                        )
+                        return
                 _log_decision(message, user.id if user else None, "prefiltered", reason)
                 return
 

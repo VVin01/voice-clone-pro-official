@@ -225,6 +225,7 @@ class Settings(BaseSettings):
     group_ai_moderation_whitelist: str = Field(default="", alias="GROUP_AI_MODERATION_WHITELIST")
     group_ai_voice_enabled: bool = Field(default=True, alias="GROUP_AI_VOICE_ENABLED")
     group_ai_voice_daily_cap: int = Field(default=60, alias="GROUP_AI_VOICE_DAILY_CAP")
+    group_command_cleanup_enabled: bool = Field(default=True, alias="GROUP_COMMAND_CLEANUP_ENABLED")
     group_ai_knowledge_sheet: str = Field(default="", alias="GROUP_AI_KNOWLEDGE_SHEET")
     group_ai_knowledge_sheet_saved_at: str = Field(default="", alias="GROUP_AI_KNOWLEDGE_SHEET_SAVED_AT")
     group_ai_knowledge_sheet_saved_by: str = Field(default="", alias="GROUP_AI_KNOWLEDGE_SHEET_SAVED_BY")

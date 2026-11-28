@@ -16842,6 +16842,7 @@ class AdminSettingsPayload(BaseModel):
     group_ai_moderation_whitelist: Optional[str] = None
     group_ai_voice_enabled: Optional[bool] = None
     group_ai_voice_daily_cap: Optional[int] = None
+    group_command_cleanup_enabled: Optional[bool] = None
     # Batch BX: the bot private-chat AI joins the payload beside its
     # group sibling (registered dynamic settings read per message).
     private_ai_enabled: Optional[bool] = None
@@ -16929,6 +16930,7 @@ async def get_admin_settings(
         "group_ai_moderation_whitelist": str(getattr(settings, "group_ai_moderation_whitelist", "") or ""),
         "group_ai_voice_enabled": bool(getattr(settings, "group_ai_voice_enabled", True)),
         "group_ai_voice_daily_cap": int(getattr(settings, "group_ai_voice_daily_cap", 60)),
+        "group_command_cleanup_enabled": bool(getattr(settings, "group_command_cleanup_enabled", True)),
         # Batch BX: private-chat AI — the toggle defaults ON (owner
         # order), so the getattr default here is True, not False.
         "private_ai_enabled": bool(getattr(settings, "private_ai_enabled", True)),

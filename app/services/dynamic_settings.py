@@ -105,6 +105,7 @@ SETTING_TYPES: dict[str, type] = {
     "group_ai_moderation_whitelist": str,
     "group_ai_voice_enabled": bool,
     "group_ai_voice_daily_cap": int,
+    "group_command_cleanup_enabled": bool,
     "group_ai_knowledge_sheet": str,
     "group_ai_knowledge_sheet_saved_at": str,
     "group_ai_knowledge_sheet_saved_by": str,

@@ -84,6 +84,13 @@ COMMUNITY_GROUP_ID = -1003795677289
 BOT_USERNAME = "voiceclonepro_bot"
 
 KILL_SWITCH_KEY = "group_ai_admin_enabled"
+COMMAND_CLEANUP_KEY = "group_command_cleanup_enabled"
+COMMAND_CLEANUP_NOTICE_COOLDOWN_SECONDS = 1800
+COMMAND_CLEANUP_NOTICE_TEXT = (
+    "Command များကို Group ထဲတွင် သုံး၍ မရပါရှင့်။ "
+    "Voice Clone နှင့် Video Recap အသုံးပြုရန် @voiceclonepro_bot သို့ ဝင်ပြီး "
+    "Open (Mini App) ကို နှိပ်၍ အသုံးပြုပေးပါရှင့်။"
+)
 
 # Anti-spam defaults. The live values are BotSettings (keys below),
 # re-read per candidate message exactly like the kill switch; these
@@ -463,6 +470,43 @@ async def get_voice_daily_cap(session: Any = None) -> int:
 
         val = getattr(settings, "group_ai_voice_daily_cap", DEFAULT_VOICE_DAILY_CAP)
     return _positive_int(val, DEFAULT_VOICE_DAILY_CAP)
+
+
+async def is_command_cleanup_enabled(session: Any = None) -> bool:
+    """Return True if Group foreign/start command cleanup is enabled."""
+    try:
+        from app.services.dynamic_settings import get_dynamic_setting
+
+        val = await get_dynamic_setting(session, COMMAND_CLEANUP_KEY, None)
+    except Exception:
+        val = None
+    if val is None:
+        from app.config import settings
+
+        val = getattr(settings, COMMAND_CLEANUP_KEY, True)
+    return _truthy(val)
+
+
+_SLASH_COMMAND_RE = re.compile(r"^/([a-zA-Z0-9_]{1,32})(?:@([a-zA-Z0-9_]{3,32}))?$")
+
+
+def foreign_command_kind(text: str | None, bot_username: str = BOT_USERNAME) -> str | None:
+    if not text:
+        return None
+    stripped = text.strip()
+    if not stripped.startswith("/"):
+        return None
+    head = stripped.split(maxsplit=1)[0]
+    m = _SLASH_COMMAND_RE.match(head)
+    if not m:
+        return None
+    cmd, mention = m.group(1).lower(), (m.group(2) or "").lower()
+    own = (bot_username or BOT_USERNAME).lstrip("@").lower()
+    if mention and mention != own:
+        return "foreign_mention"
+    if cmd == "start":
+        return "start"
+    return None
 
 
 # ---------------------------------------------------------------------------
